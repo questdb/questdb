@@ -94,7 +94,7 @@ public final class WindowJoinStep implements Mutable {
     }
 
     /**
-     * The window join execution order planning records for the step; null for a step whose filter is constant false,
+     * The window join execution operator planning records for the step; null for a step whose filter is constant false,
      * which null-extends its master instead of joining.
      */
     public Algorithm getAlgorithm() {

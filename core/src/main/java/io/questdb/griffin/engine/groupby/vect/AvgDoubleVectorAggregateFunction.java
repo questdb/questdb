@@ -38,9 +38,6 @@ import io.questdb.std.Vect;
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
 
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_NANO_HOUR_INT;
-
 public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     private final int columnIndex;

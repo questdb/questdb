@@ -54,14 +54,15 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -191,7 +192,9 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+        public void initRecordComparator(BytecodeAssembler asm,
+                                         RecordComparatorCompiler comparatorCompiler,
+                                         ListColumnFilter columnFilter,
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,
@@ -199,16 +202,15 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                                          ObjList<CharSequence> orderBy,
                                          IntList orderByDirection) throws SqlException {
             if (chainTypes.getColumnCount() == 0) {
-                ListColumnFilter listColumnFilter = sqlGenerator.getIndexColumnFilter();
-                listColumnFilter.clear();
+                columnFilter.clear();
                 for (int i = 0, size = orderIndices.size(); i < size; i++) {
-                    listColumnFilter.add(Math.abs(orderIndices.getQuick(i)));
+                    columnFilter.add(Math.abs(orderIndices.getQuick(i)));
                 }
 
                 for (int i = 0, size = metadata.getColumnCount(); i < size; i++) {
                     chainTypes.add(metadata.getColumnType(i));
                 }
-                recordSink = RecordSinkFactory.getInstance(configuration, sqlGenerator.getAsm(), chainTypes, listColumnFilter);
+                recordSink = RecordSinkFactory.getInstance(configuration, asm, chainTypes, columnFilter);
                 final long sinkBudget = (long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2;
                 // DENSE_RANK() reuses this class, so the budget message has to name whichever of
                 // the two the user actually ran. Reporting RANK() for a dense_rank() query defeats
@@ -221,7 +223,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 singleRecordSinkB = new SingleRecordSink(sinkBudget, MemoryTag.NATIVE_RECORD_CHAIN, owner,
                         SingleRecordSink.CONFIG_KEYS_WINDOW_STORE);
             } else {
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
+                this.recordComparator = comparatorCompiler.newInstance(metadata, orderIndices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
             }
         }
@@ -619,7 +621,9 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+        public void initRecordComparator(BytecodeAssembler asm,
+                                         RecordComparatorCompiler comparatorCompiler,
+                                         ListColumnFilter columnFilter,
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,
@@ -636,16 +640,14 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 // comparator and rank maps are built over a matching compacted metadata so they read
                 // those same slots back.
                 final int orderByCount = orderIndices.size();
-
-                ListColumnFilter listColumnFilter = sqlGenerator.getIndexColumnFilter();
-                listColumnFilter.clear();
+                columnFilter.clear();
                 final GenericRecordMetadata orderByMetadata = new GenericRecordMetadata();
                 final IntList compactOrderIndices = new IntList(orderByCount);
                 streamingSymbolTableIndices = new int[orderByCount];
                 for (int i = 0; i < orderByCount; i++) {
                     final int encoded = orderIndices.getQuick(i);
                     final int orderByColumn = Math.abs(encoded) - 1;
-                    listColumnFilter.add(orderByColumn + 1);
+                    columnFilter.add(orderByColumn + 1);
                     final TableColumnMetadata src = metadata.getColumnMetadata(orderByColumn);
                     final int orderByColumnType = src.getColumnType();
                     // The compacted MapValue holds the previous row's ORDER BY values, and computeNext
@@ -682,8 +684,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 }
 
                 chainTypeIndex = orderByCount;
-                recordValueSink = RecordValueSinkFactory.getInstance(sqlGenerator.getAsm(), metadata, listColumnFilter);
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(orderByMetadata, compactOrderIndices);
+                recordValueSink = RecordValueSinkFactory.getInstance(asm, metadata, columnFilter);
+                this.recordComparator = comparatorCompiler.newInstance(orderByMetadata, compactOrderIndices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(orderByMetadata, compactOrderIndices);
                 if (liveView) {
                     // Capture the chain-prefix types (the compacted ORDER BY columns) before the
@@ -723,7 +725,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                         false,
                         false
                 );
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
+                this.recordComparator = comparatorCompiler.newInstance(metadata, orderIndices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
             }
         }

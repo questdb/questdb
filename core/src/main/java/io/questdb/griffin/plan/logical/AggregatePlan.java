@@ -49,7 +49,7 @@ public final class AggregatePlan extends GroupingPlan {
     }
 
     /**
-     * The GROUP BY execution order planning records for the aggregate; null for a count, a posting-index distinct
+     * The GROUP BY execution operator planning records for the aggregate; null for a count, a posting-index distinct
      * and a horizon join, which build no GROUP BY.
      */
     public Algorithm getAlgorithm() {

@@ -29,7 +29,6 @@ import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
@@ -37,6 +36,7 @@ import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -49,12 +49,10 @@ import io.questdb.std.ObjList;
 
 /**
  * Rewrite state {@link Decorrelation} shares with its collaborators: the master join of the step being
- * rewritten, the mapping from outer columns to the columns that satisfy them, column ids, names and bound
- * calls.
+ * rewritten, the mapping from outer columns to the columns that satisfy them, column ids and names.
  */
 final class DecorrelationContext implements Mutable {
     static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
-    final ObjList<BoundExpression> callArguments;
     final ObjList<JoinInput> carrierSteps = new ObjList<>();
     final ObjList<LogicalPlan> chain;
     final IntList chainOuterIds = new IntList();
@@ -71,7 +69,17 @@ final class DecorrelationContext implements Mutable {
     final IntIntHashMap substitution = new IntIntHashMap();
     private final OutputSchema tmpSchema;
     private IntList columnIdSink;
+    private IntList readIds;
+    private final ExpressionVisitor columnIdReads = expression -> expression instanceof ColumnExpression column
+            && readIds.contains(column.getColumnId()) ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    private final ExpressionVisitor outerIdReads = expression -> expression instanceof OuterColumnExpression outer
+            && readIds.contains(outer.getColumnId()) ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    private int readMappingBase;
+    private OutputSchema readOutput;
+    private final ExpressionVisitor outputColumnReads = expression -> expression instanceof ColumnExpression column
+            && readOutput.getColumnIndexById(column.getColumnId()) > -1 ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private final PlanVisitor outerRefNames = this::findOuterRefName;
+    private final ExpressionVisitor unmappedOuterReads = this::findUnmappedOuter;
     private final ExpressionVisitor columnIdCollector = expression -> {
         if (expression instanceof ColumnExpression column && !columnIdSink.contains(column.getColumnId())) {
             columnIdSink.add(column.getColumnId());
@@ -87,7 +95,6 @@ final class DecorrelationContext implements Mutable {
             OptimiserContext context,
             PlanNodePools planNodes,
             CharacterStore characterStore,
-            ObjList<BoundExpression> callArguments,
             IntList tmpColumnIds,
             IntList mappedOuterIds,
             IntList mappedColumnIds,
@@ -97,7 +104,6 @@ final class DecorrelationContext implements Mutable {
         this.context = context;
         this.planNodes = planNodes;
         this.characterStore = characterStore;
-        this.callArguments = callArguments;
         this.tmpColumnIds = tmpColumnIds;
         this.mappedOuterIds = mappedOuterIds;
         this.mappedColumnIds = mappedColumnIds;
@@ -138,6 +144,10 @@ final class DecorrelationContext implements Mutable {
         return sequence;
     }
 
+    private static boolean reads(BoundExpression expression, ExpressionVisitor visitor) {
+        return expression != null && !expression.walk(visitor);
+    }
+
     private int findOuterRefName(LogicalPlan plan) {
         final OutputSchema output = plan.getOutput();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
@@ -146,6 +156,11 @@ final class DecorrelationContext implements Mutable {
             }
         }
         return TreeWalk.CONTINUE;
+    }
+
+    private int findUnmappedOuter(BoundExpression expression) {
+        return expression instanceof OuterColumnExpression outer && masterOuterIds.contains(outer.getColumnId())
+                && mappedColumn(outer.getColumnId(), readMappingBase, mappedOuterIds.size()) < 0 ? TreeWalk.STOP : TreeWalk.CONTINUE;
     }
 
     private void recordCarriers(JoinInput step, BoundExpression expression) {
@@ -163,25 +178,8 @@ final class DecorrelationContext implements Mutable {
         tmpColumnIds.setPos(base);
     }
 
-    static void appendMissingColumns(OutputSchema target, OutputSchema source) {
-        for (int i = 0, n = source.getColumnCount(); i < n; i++) {
-            if (target.getColumnIndexById(source.getColumnId(i)) < 0) {
-                target.add(source.getColumnId(i), source.getColumnName(i), source.getColumnType(i), source.getMetadata(i), false,
-                        source.getColumnQualifier(i));
-            }
-        }
-    }
-
     static boolean isTrue(BoundExpression condition) {
         return condition == null || condition instanceof ConstantExpression constant && constant.getLongValue() != 0;
-    }
-
-    /**
-     * The aggregate key column that a projection's exposed column reads.
-     */
-    static int keyColumnId(ProjectPlan project, int exposedId) {
-        final BoundExpression expression = project.getExpressions().getQuick(project.getOutput().getColumnIndexById(exposedId));
-        return expression instanceof ColumnExpression column ? column.getColumnId() : -1;
     }
 
     static int pairIndex(IntList pairs, int key) {
@@ -191,20 +189,6 @@ final class DecorrelationContext implements Mutable {
             }
         }
         return -1;
-    }
-
-    static void rebuildJoinOutput(JoinPlan join) {
-        final OutputSchema output = join.getOutput();
-        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
-            final JoinInput input = join.getInputs().getQuick(i);
-            final OutputSchema source = input.getSourceOutput();
-            for (int c = 0, m = source.getColumnCount(); c < m; c++) {
-                if (output.getColumnIndexById(source.getColumnId(c)) < 0) {
-                    output.add(source.getColumnId(c), source.getColumnName(c), source.getColumnType(c), source.getMetadata(c), false,
-                            input.getBindingAlias());
-                }
-            }
-        }
     }
 
     /**
@@ -251,19 +235,6 @@ final class DecorrelationContext implements Mutable {
         }
         output.setTimestampColumnId(timestampId);
         copy.clear();
-    }
-
-    BoundExpression bindCall(CharSequence name, int position, OutputSchema input) throws SqlException {
-        final BoundExpression bound = context.bindCall(name, position, callArguments, input);
-        callArguments.clear();
-        return bound;
-    }
-
-    BoundExpression bindCall(CharSequence name, int position, BoundExpression left, BoundExpression right, OutputSchema input) throws SqlException {
-        callArguments.clear();
-        callArguments.add(left);
-        callArguments.add(right);
-        return bindCall(name, position, input);
     }
 
     void collectColumnIds(BoundExpression expression, IntList sink) {
@@ -397,18 +368,36 @@ final class DecorrelationContext implements Mutable {
         return entry.toImmutable();
     }
 
+    /**
+     * True when the expression reads one of the columns.
+     */
+    boolean readsAnyColumn(BoundExpression expression, IntList columnIds) {
+        readIds = columnIds;
+        return reads(expression, columnIdReads);
+    }
+
+    /**
+     * True when the expression reads a column of the output.
+     */
     boolean readsAnyColumn(BoundExpression expression, OutputSchema output) {
-        if (expression == null) {
-            return false;
-        }
-        final int columnBase = tmpColumnIds.size();
-        collectColumnIds(expression, tmpColumnIds);
-        boolean isFound = false;
-        for (int i = columnBase, n = tmpColumnIds.size(); i < n && !isFound; i++) {
-            isFound = output.getColumnIndexById(tmpColumnIds.getQuick(i)) > -1;
-        }
-        tmpColumnIds.setPos(columnBase);
-        return isFound;
+        readOutput = output;
+        return reads(expression, outputColumnReads);
+    }
+
+    /**
+     * True when the expression reads one of the outer columns.
+     */
+    boolean readsAnyOuter(BoundExpression expression, IntList outerIds) {
+        readIds = outerIds;
+        return reads(expression, outerIdReads);
+    }
+
+    /**
+     * True when the expression reads an outer column of the master that no mapping above {@code base} satisfies.
+     */
+    boolean readsUnmappedOuter(BoundExpression expression, int base) {
+        readMappingBase = base;
+        return reads(expression, unmappedOuterReads);
     }
 
     /**

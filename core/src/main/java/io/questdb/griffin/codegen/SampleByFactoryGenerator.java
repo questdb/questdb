@@ -76,7 +76,6 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.std.BytecodeAssembler;
@@ -170,7 +169,7 @@ final class SampleByFactoryGenerator {
     }
 
     /**
-     * The SAMPLE BY factory the generator would pick from the built base, which order planning must have recorded.
+     * The SAMPLE BY factory the generator would pick from the built base, which operator planning must have recorded.
      * Reads the base without converting it.
      */
     private static SampleByPlan.Algorithm generatorAlgorithm(
@@ -826,9 +825,7 @@ final class SampleByFactoryGenerator {
     }
 
     RecordCursorFactory generateSampleBy(GenerationFrame frame, SampleByPlan sample, SqlExecutionContext executionContext) throws SqlException {
-        final LogicalPlan sampled = sample.getInput();
-        final RecordCursorFactory base = codeGenerator.generate(frame,
-                !sample.isTimestampRequired() && LogicalPlans.isTimestampDeclarationOnly(sampled) ? sampled.inputAt(0) : sampled, executionContext);
+        final RecordCursorFactory base = codeGenerator.generate(frame, LogicalPlans.sampleByBase(sample), executionContext);
         return generateSampleBy(frame, sample, base, executionContext);
     }
 
@@ -893,14 +890,8 @@ final class SampleByFactoryGenerator {
             final ObjList<GroupByFunction> aggregates = new ObjList<>(calls.size());
             final OutputSchema output = plan.getOutput();
             records = new ObjList<>(output.getColumnCount());
-            records.setPos(output.getColumnCount());
-            for (int i = 0, n = calls.size(); i < n; i++) {
-                final FunctionExpression call = calls.getQuick(i);
-                final GroupByFunction function = (GroupByFunction) instantiator.instantiateAggregate(call, input, baseMetadata, executionContext);
-                records.setQuick(keys.size() + i, function);
-                aggregates.add(function);
-                function.initValueTypes(valueTypes);
-            }
+            AggregateFactoryGenerator.instantiateAggregates(plan, baseMetadata, instantiator, executionContext, aggregates, records, valueTypes);
+            AggregateFactoryGenerator.layOutColumnKeys(plan, baseMetadata, records, keyTypes, valueTypes, listColumnFilterA, frame.keySlots);
             final int fillCount = plan.getFillTokens().size();
             fillConstants = new ObjList<>(fillCount);
             fillConstants.setPos(fillCount);
@@ -911,7 +902,6 @@ final class SampleByFactoryGenerator {
                 }
             }
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
-            int lastKeyIndex = -1;
             int symbolKeyIndex = -1;
             boolean isFirstLast = plan.getFillMode() == SampleByPlan.FILL_NONE;
             final IntList firstLastIndexes = columnIndexes;
@@ -928,14 +918,6 @@ final class SampleByFactoryGenerator {
                 final int type = baseMetadata.getColumnType(index);
                 if (column.getColumnId() == plan.getTimestampColumnId()) {
                     metadata.setTimestampIndex(i);
-                } else {
-                    if (lastKeyIndex != index) {
-                        listColumnFilterA.add(index + 1);
-                        keyTypes.add(type);
-                        lastKeyIndex = index;
-                    }
-                    records.setQuick(i, GroupByUtils.createColumnFunction(baseMetadata,
-                            valueTypes.getColumnCount() + keyTypes.getColumnCount(), type, index));
                 }
                 final String name = Chars.toString(output.getColumnName(i));
                 metadata.add(new TableColumnMetadata(name, type, baseMetadata.getColumnIndexType(index),

@@ -25,6 +25,7 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.SqlException;
@@ -47,6 +48,8 @@ import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanRewriter;
+import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
@@ -67,6 +70,7 @@ import io.questdb.std.ObjectPool;
 final class FilterPushdown implements OptimiserPass {
     private static final ExpressionVisitor NULL_LITERALS = FilterPushdown::nullLiteral;
     private static final int OFFSET_LEAVES = 3;
+    private static final ConjunctTest ORDER_INDEPENDENT_CONJUNCTS = LogicalPlans::isOrderIndependent;
     private static final int OTHER_LEAVES = 4;
     private static final int PLAIN_LEAVES = 2;
     private static final int RUNTIME_LEAVES = 1;
@@ -75,16 +79,26 @@ final class FilterPushdown implements OptimiserPass {
     private final OptimiserContext context;
     private final ObjList<BoundExpression> tmpExpressions;
     private final ObjectPool<FilterPlan> filters;
+    private final IntList joinConjunctTargets = new IntList();
+    private final PlanRewriter joinFilters = this::pushJoinFilters;
     private final IntList latestKeyPositions;
     private final ColumnExpression mappingColumn = new ColumnExpression();
     private final ProjectPlan mappingProjection = new ProjectPlan();
     private final ObjectPool<ColumnExpression> narrowingColumns;
     private final ObjectPool<ProjectPlan> narrowingProjects;
+    private final PlanVisitor sharedDomainFilters = this::filterSharedDomain;
     private final IntList transitiveFactOrigins;
     private final ObjList<BoundExpression> transitiveFacts;
+    private ProjectPlan conjunctScope;
+    private final ConjunctTest computedProjectionConjuncts = conjunct -> isComputedProjectionPushable(conjunct, conjunctScope);
+    private final ConjunctTest keyConjuncts = conjunct -> isKeyOnly(conjunct, conjunctScope);
+    private final ConjunctTest projectionConjuncts = conjunct -> canPushThroughProjection(conjunct, conjunctScope);
     private boolean isLatestKeyScope;
+    private int joinConjunctIndex;
     private LogicalPlan latestKeyLimit;
     private SortPlan latestKeySort;
+    private int selectedJoinSource;
+    private final ConjunctTest selectedJoinConjuncts = conjunct -> joinConjunctTargets.getQuick(joinConjunctIndex++) == selectedJoinSource;
     private int singleColumnId;
     private final ExpressionVisitor singleColumnReads = expression -> {
         if (expression instanceof ColumnExpression column) {
@@ -121,16 +135,18 @@ final class FilterPushdown implements OptimiserPass {
 
     @Override
     public LogicalPlan apply(LogicalPlan plan) throws SqlException {
-        pushJoinFilters(plan);
+        plan.rewriteBottomUp(joinFilters);
         // Pushdown and pruning read the ordered-branch marks when they drop an aggregate's input order.
         aggregateInputOrder.collectOrderedBranchAggregates(plan);
         final LogicalPlan pushed = pushDownFilters(plan);
-        filterSharedDomains(pushed);
+        pushed.walkBottomUp(sharedDomainFilters);
         return pushed;
     }
 
     @Override
     public void clear() {
+        conjunctScope = null;
+        joinConjunctTargets.clear();
         isLatestKeyScope = false;
         latestKeyLimit = null;
         latestKeySort = null;
@@ -244,6 +260,17 @@ final class FilterPushdown implements OptimiserPass {
      * Whether the value is spelled from literals, bind variables, operators, casts and runtime-constant
      * functions only. A constant folded from a call counts as that call.
      */
+    /**
+     * Whether the conjunct reads only plain projected columns and projected timestamp offsets: dateadd with constant
+     * unit and INT stride over the input's designated timestamp. A conjunct over an offset compares it with constants
+     * only, so interval extraction below can invert the offset.
+     */
+    private static boolean isComputedProjectionPushable(BoundExpression conjunct, ProjectPlan project) {
+        final int leaves = projectedLeaves(conjunct, project);
+        return LogicalPlans.isOrderIndependent(conjunct) && leaves != OTHER_LEAVES
+                && (leaves != OFFSET_LEAVES || !hasInputTimestamp(project));
+    }
+
     private static boolean isConstantSpelling(BoundExpression expression) {
         if (expression instanceof ConstantExpression constant) {
             return constant.getSource() == null || isConstantSpelling(constant.getSource());
@@ -420,6 +447,15 @@ final class FilterPushdown implements OptimiserPass {
     // Bind variables report non-determinism for plan caching, yet hold one value per execution.
     private static boolean isUnstable(BoundExpression predicate) {
         return !LogicalPlans.isStableWithinExecution(predicate);
+    }
+
+    /**
+     * The join input the conjunct can move to, or -1 when it stays above the join.
+     */
+    private static int joinConjunctTarget(BoundExpression conjunct, JoinPlan join, int lastInput) {
+        final int source = joinSourceOrdinal(conjunct, join);
+        return source >= 0 && (LogicalPlans.isOrderIndependent(conjunct) || isColumnValueComparison(conjunct))
+                && LogicalPlans.canPushJoinFilter(join, source, lastInput) ? source : -1;
     }
 
     private static int joinSourceOrdinal(BoundExpression expression, JoinPlan join) {
@@ -694,18 +730,15 @@ final class FilterPushdown implements OptimiserPass {
      * A decorrelation domain re-reads a master input; the master's own filters also narrow the
      * domain to the keys the join can match.
      */
-    private void filterSharedDomains(LogicalPlan plan) {
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            filterSharedDomains(plan.inputAt(i));
-        }
+    private int filterSharedDomain(LogicalPlan plan) {
         if (!(plan instanceof AggregatePlan aggregate) || aggregate.getSharedSource() == null
                 || !(aggregate.getInput() instanceof ScanPlan scan)) {
-            return;
+            return TreeWalk.CONTINUE;
         }
         final LogicalPlan source = LogicalPlans.skipFilters(aggregate.getSharedSource().getInput());
         if (source == aggregate.getSharedSource().getInput() || !(source instanceof ScanPlan sourceScan)
                 || !sourceScan.getTableToken().equals(scan.getTableToken())) {
-            return;
+            return TreeWalk.CONTINUE;
         }
         final int position = aggregate.getPosition();
         final ProjectPlan mapping = narrowingProjects.next().of(scan, position);
@@ -729,6 +762,7 @@ final class FilterPushdown implements OptimiserPass {
             }
         }
         aggregate.replaceInput(0, input);
+        return TreeWalk.CONTINUE;
     }
 
     private ProjectPlan groupingKeyView(AggregatePlan aggregate) {
@@ -909,9 +943,10 @@ final class FilterPushdown implements OptimiserPass {
             final UnaryPlan crossed;
             final BoundExpression predicate;
             if (input instanceof ProjectPlan project && !LogicalPlans.isColumnProjection(project)) {
-                final BoundExpression movable = selectComputedProjectionConjuncts(filter.getPredicate(), project, true);
+                conjunctScope = project;
+                final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), computedProjectionConjuncts);
                 if (movable != null) {
-                    final BoundExpression residual = selectComputedProjectionConjuncts(filter.getPredicate(), project, false);
+                    final BoundExpression residual = context.getRewriter().getSplitRemainder();
                     final BoundExpression substituted = context.getRewriter().substituteProjection(movable, project);
                     final FilterPlan pushed = filters.next().of(project.getInput(), substituted, substituted.getPosition());
                     pushed.deriveOutput();
@@ -932,9 +967,10 @@ final class FilterPushdown implements OptimiserPass {
                     if (!LogicalPlans.isOrderIndependent(filter.getPredicate())) {
                         return result;
                     }
-                    final BoundExpression movable = selectProjectionConjuncts(filter.getPredicate(), project, true);
+                    conjunctScope = project;
+                    final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), projectionConjuncts);
                     if (movable != null) {
-                        final BoundExpression residual = selectProjectionConjuncts(filter.getPredicate(), project, false);
+                        final BoundExpression residual = context.getRewriter().getSplitRemainder();
                         final BoundExpression remapped = context.getRewriter().remapColumns(movable, project);
                         final FilterPlan pushed = filters.next().of(project.getInput(), remapped, remapped.getPosition());
                         pushed.deriveOutput();
@@ -965,11 +1001,11 @@ final class FilterPushdown implements OptimiserPass {
                 continue;
             } else if (input instanceof SortPlan sort) {
                 if (!LogicalPlans.isOrderIndependent(filter.getPredicate())) {
-                    final BoundExpression movable = selectOrderIndependentConjuncts(filter.getPredicate(), true);
+                    final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), ORDER_INDEPENDENT_CONJUNCTS);
                     if (movable == null) {
                         return result;
                     }
-                    final BoundExpression residual = selectOrderIndependentConjuncts(filter.getPredicate(), false);
+                    final BoundExpression residual = context.getRewriter().getSplitRemainder();
                     final LogicalPlan belowSort = sort.getInput();
                     final FilterPlan pushed = filters.next().of(belowSort, movable, movable.getPosition());
                     pushed.deriveOutput();
@@ -1012,11 +1048,12 @@ final class FilterPushdown implements OptimiserPass {
                 if (keys == null || isUnstable(filter.getPredicate())) {
                     return result;
                 }
-                final BoundExpression movable = selectKeyConjuncts(filter.getPredicate(), keys, true);
+                conjunctScope = keys;
+                final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), keyConjuncts);
                 if (movable == null) {
                     return result;
                 }
-                final BoundExpression residual = selectKeyConjuncts(filter.getPredicate(), keys, false);
+                final BoundExpression residual = context.getRewriter().getSplitRemainder();
                 final BoundExpression remapped = context.getRewriter().remapColumns(movable, keys);
                 final FilterPlan pushed = filters.next().of(aggregate.getInput(), remapped, remapped.getPosition());
                 pushed.deriveOutput();
@@ -1038,11 +1075,12 @@ final class FilterPushdown implements OptimiserPass {
                 if (keys == null || !LogicalPlans.isOrderIndependent(filter.getPredicate())) {
                     return result;
                 }
-                final BoundExpression movable = selectKeyConjuncts(filter.getPredicate(), keys, true);
+                conjunctScope = keys;
+                final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), keyConjuncts);
                 if (movable == null) {
                     return result;
                 }
-                final BoundExpression residual = selectKeyConjuncts(filter.getPredicate(), keys, false);
+                final BoundExpression residual = context.getRewriter().getSplitRemainder();
                 final FilterPlan pushed = filters.next().of(fillInput, movable, movable.getPosition());
                 pushed.deriveOutput();
                 input.replaceInput(0, pushDownFilter(pushed));
@@ -1073,7 +1111,7 @@ final class FilterPushdown implements OptimiserPass {
                 final FilterPlan pushed = filters.next().of(scan, keys, keys.getPosition());
                 pushed.deriveOutput();
                 input.replaceInput(0, pushed);
-                final BoundExpression residual = withoutConjunct(filter.getPredicate(), selector);
+                final BoundExpression residual = context.getRewriter().removeConjunct(filter.getPredicate(), selector);
                 if (residual != null) {
                     filter.of(input, residual, filter.getPosition());
                     return result;
@@ -1156,12 +1194,9 @@ final class FilterPushdown implements OptimiserPass {
      * pushes key filters and single-source ON/WHERE conjuncts into join inputs, hoists conjuncts to
      * the earliest step that can evaluate them and derives transitive filters over equi-join keys.
      */
-    private void pushJoinFilters(LogicalPlan plan) throws SqlException {
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            pushJoinFilters(plan.inputAt(i));
-        }
+    private LogicalPlan pushJoinFilters(LogicalPlan plan) throws SqlException {
         if (!(plan instanceof JoinPlan join)) {
-            return;
+            return plan;
         }
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         for (int i = 0, n = ordered.size(); i < n; i++) {
@@ -1183,6 +1218,7 @@ final class FilterPushdown implements OptimiserPass {
         deriveTransitiveFilters(join, null);
         join.getFilterConjuncts().clear();
         join.getFilterConjunctOrigins().clear();
+        return plan;
     }
 
     private boolean pushSetBranch(SetOperationPlan operation, int branchIndex, BoundExpression predicate, int timestampIndex) throws SqlException {
@@ -1224,10 +1260,18 @@ final class FilterPushdown implements OptimiserPass {
         if (predicate == null) {
             return null;
         }
-        final BoundExpression residual = selectJoinConjuncts(predicate, join, lastInput, -1);
-        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
-            pushSourceJoinFilter(join.getInputs().getQuick(i), selectJoinConjuncts(predicate, join, lastInput, i));
+        final int base = joinConjunctTargets.size();
+        tmpExpressions.clear();
+        LogicalPlans.collectConjuncts(predicate, tmpExpressions);
+        for (int i = 0, n = tmpExpressions.size(); i < n; i++) {
+            joinConjunctTargets.add(joinConjunctTarget(tmpExpressions.getQuick(i), join, lastInput));
         }
+        tmpExpressions.clear();
+        final BoundExpression residual = selectJoinConjuncts(predicate, base, -1);
+        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
+            pushSourceJoinFilter(join.getInputs().getQuick(i), selectJoinConjuncts(predicate, base, i));
+        }
+        joinConjunctTargets.setPos(base);
         return residual;
     }
 
@@ -1247,80 +1291,15 @@ final class FilterPushdown implements OptimiserPass {
         return pushed != filter;
     }
 
-    /**
-     * Selects conjuncts over plain projected columns and projected timestamp offsets: dateadd
-     * with constant unit and INT stride over the input's designated timestamp. A conjunct over an
-     * offset compares it with constants only, so interval extraction below can invert the offset.
-     */
-    private BoundExpression selectComputedProjectionConjuncts(BoundExpression predicate, ProjectPlan project, boolean isMovable) {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            return context.getRewriter().replaceConjunction(call,
-                    selectComputedProjectionConjuncts(call.argumentAt(0), project, isMovable),
-                    selectComputedProjectionConjuncts(call.argumentAt(1), project, isMovable));
-        }
-        final int leaves = projectedLeaves(predicate, project);
-        final boolean isPushable = LogicalPlans.isOrderIndependent(predicate) && leaves != OTHER_LEAVES
-                && (leaves != OFFSET_LEAVES || !hasInputTimestamp(project));
-        return isPushable == isMovable ? predicate : null;
-    }
-
-    private BoundExpression selectJoinConjuncts(BoundExpression predicate, JoinPlan join, int lastInput, int selectedSource) {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2
-                && call.isAnd()) {
-            final BoundExpression left = selectJoinConjuncts(call.argumentAt(0), join, lastInput, selectedSource);
-            final BoundExpression right = selectJoinConjuncts(call.argumentAt(1), join, lastInput, selectedSource);
-            return context.getRewriter().replaceConjunction(call, left, right);
-        }
-        final int source = joinSourceOrdinal(predicate, join);
-        final int target = source >= 0 && (LogicalPlans.isOrderIndependent(predicate) || isColumnValueComparison(predicate))
-                && LogicalPlans.canPushJoinFilter(join, source, lastInput) ? source : -1;
-        return target == selectedSource ? predicate : null;
-    }
-
-    private BoundExpression selectKeyConjuncts(BoundExpression predicate, ProjectPlan keys, boolean isMovable) {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2
-                && call.isAnd()) {
-            return context.getRewriter().replaceConjunction(call,
-                    selectKeyConjuncts(call.argumentAt(0), keys, isMovable),
-                    selectKeyConjuncts(call.argumentAt(1), keys, isMovable));
-        }
-        return isKeyOnly(predicate, keys) == isMovable ? predicate : null;
-    }
-
-    private BoundExpression selectOrderIndependentConjuncts(BoundExpression predicate, boolean isMovable) {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2
-                && call.isAnd()) {
-            return context.getRewriter().replaceConjunction(call,
-                    selectOrderIndependentConjuncts(call.argumentAt(0), isMovable),
-                    selectOrderIndependentConjuncts(call.argumentAt(1), isMovable));
-        }
-        return LogicalPlans.isOrderIndependent(predicate) == isMovable ? predicate : null;
-    }
-
-    private BoundExpression selectProjectionConjuncts(BoundExpression predicate, ProjectPlan project, boolean isMovable) {
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2
-                && call.isAnd()) {
-            return context.getRewriter().replaceConjunction(call,
-                    selectProjectionConjuncts(call.argumentAt(0), project, isMovable),
-                    selectProjectionConjuncts(call.argumentAt(1), project, isMovable));
-        }
-        return canPushThroughProjection(predicate, project) == isMovable ? predicate : null;
+    private BoundExpression selectJoinConjuncts(BoundExpression predicate, int base, int source) throws SqlException {
+        joinConjunctIndex = base;
+        selectedJoinSource = source;
+        return context.getRewriter().retainConjuncts(predicate, selectedJoinConjuncts);
     }
 
     private int singleColumnId(BoundExpression expression) {
         singleColumnId = -1;
         expression.walk(singleColumnReads);
         return singleColumnId;
-    }
-
-    private BoundExpression withoutConjunct(BoundExpression predicate, BoundExpression conjunct) {
-        if (predicate == conjunct) {
-            return null;
-        }
-        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            return context.getRewriter().replaceConjunction(call,
-                    withoutConjunct(call.argumentAt(0), conjunct), withoutConjunct(call.argumentAt(1), conjunct));
-        }
-        return predicate;
     }
 }

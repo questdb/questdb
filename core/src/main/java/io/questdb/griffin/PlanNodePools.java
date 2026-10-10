@@ -84,15 +84,15 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<FunctionExpression> functions;
     public final ObjectPool<HorizonJoinPlan> horizonJoinPlans;
     public final ObjectPool<HorizonJoinSlave> horizonJoinSlaves;
-    final ObjectPool<JoinDependency> joinDependencies;
-    final ObjectPool<JoinEquality> joinEqualities;
+    public final ObjectPool<JoinDependency> joinDependencies;
+    public final ObjectPool<JoinEquality> joinEqualities;
     public final ObjectPool<JoinGraph> joinGraphs;
     public final ObjectPool<JoinInput> joinInputs;
     public final ObjectPool<JoinPlan> joins;
     public final ObjectPool<LatestByPlan> latestByPlans;
     public final ObjectPool<LimitPlan> limits;
     public final int maxRetainedExpressions;
-    final int maxRetainedJoinContexts;
+    public final int maxRetainedJoinContexts;
     public final ObjectPool<OuterColumnExpression> outerColumns;
     public final ObjectPool<BindVariableExpression> parameters;
     public final ObjectPool<ProjectPlan> projects;

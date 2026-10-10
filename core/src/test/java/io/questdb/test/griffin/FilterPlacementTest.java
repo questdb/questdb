@@ -40,7 +40,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Pins the operators that apply the filter of their input themselves, as order planning records it on the operator,
+ * Pins the operators that apply the filter of their input themselves, as operator planning records it on the operator,
  * and the factories the generator builds from that choice.
  */
 public class FilterPlacementTest extends AbstractCairoTest {

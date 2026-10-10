@@ -41,7 +41,7 @@ public final class LimitPlan extends ForwardingPlan {
     }
 
     /**
-     * Which operator applies the LIMIT, or null before order planning decided it.
+     * Which operator applies the LIMIT, or null before operator planning decided it.
      */
     public Application getApplication() {
         return application;

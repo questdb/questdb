@@ -41,6 +41,23 @@ public final class JoinPlan extends LogicalPlan {
     private JoinGraph graph;
     private boolean hasExplicitTimestamp;
 
+    /**
+     * Appends, hidden and under the input's binding alias, every column of an input's source the output lacks.
+     */
+    public void addMissingInputColumns() {
+        final OutputSchema output = getOutput();
+        for (int i = 0, n = inputs.size(); i < n; i++) {
+            final JoinInput input = inputs.getQuick(i);
+            final OutputSchema source = input.getSourceOutput();
+            for (int c = 0, m = source.getColumnCount(); c < m; c++) {
+                if (output.getColumnIndexById(source.getColumnId(c)) < 0) {
+                    output.add(source.getColumnId(c), source.getColumnName(c), source.getColumnType(c), source.getMetadata(c), false,
+                            input.getBindingAlias());
+                }
+            }
+        }
+    }
+
     @Override
     public void clear() {
         super.clear();

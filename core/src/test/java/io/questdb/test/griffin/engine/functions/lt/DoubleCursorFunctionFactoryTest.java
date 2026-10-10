@@ -778,6 +778,40 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     }
 
     @Test
+    public void testWindowJoinWorkerAggregateCloneCompilationFailureFreesPartialClones() throws Exception {
+        runWithPool((compiler, ctx) -> {
+            execute(
+                    compiler,
+                    "create table trades as (" +
+                            "  select x::double qty, timestamp_sequence(10_000_000, 10_000_000) ts" +
+                            "  from long_sequence(1_000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            execute(
+                    compiler,
+                    "create table prices as (" +
+                            "  select x::double price, timestamp_sequence(10_000_000, 10_000_000) ts" +
+                            "  from long_sequence(1_000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            final String query = "SELECT avg(p.price + alloc(32) + (case when test_fault() then 1.0 else 2.0 end)) a " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p RANGE BETWEEN 1 seconds PRECEDING AND 1 seconds FOLLOWING EXCLUDE PREVAILING";
+            TestFaultFunctionFactory.armToFailAfterCompiles(3);
+            try {
+                compiler.compile(query, ctx);
+                Assert.fail("compilation should have failed with the injected fault");
+            } catch (Throwable e) {
+                TestUtils.assertContains(e.getMessage(), "test_fault: injected compile failure");
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    @Test
     public void testSampleByFillLinearCursorComparisonKey() throws Exception {
         // regression: compiling the scalar sub-query of a cursor-comparison key must not corrupt
         // generateSampleBy's projection scratch state, and the execution plan must render across
@@ -824,9 +858,9 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     ctx
             );
             final String query = "SELECT avg(qty + alloc(32) + (case when test_fault() then 1.0 else 2.0 end)) a FROM t";
-            // owner assembly compiles test_fault() once, then each of the 4 worker clones
+            // test_fault() compiles twice before the worker clones, then each of the 4 worker clones
             // compiles it once more; fail on the second clone
-            TestFaultFunctionFactory.armToFailAfterCompiles(2);
+            TestFaultFunctionFactory.armToFailAfterCompiles(3);
             try {
                 compiler.compile(query, ctx);
                 Assert.fail("compilation should have failed with the injected fault");
@@ -851,9 +885,9 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             final String query = "SELECT t.qty + alloc(32) + (case when test_fault() then 1.0 else 2.0 end) > (SELECT max(price) FROM prices) k, avg(p.price) a " +
                     "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0) AS h " +
                     "GROUP BY k ORDER BY k";
-            // owner assembly compiles test_fault() once, then each of the 4 worker clones
+            // test_fault() compiles twice before the worker clones, then each of the 4 worker clones
             // compiles it once more; fail on the second clone
-            TestFaultFunctionFactory.armToFailAfterCompiles(2);
+            TestFaultFunctionFactory.armToFailAfterCompiles(3);
             try {
                 compiler.compile(query, ctx);
                 Assert.fail("compilation should have failed with the injected fault");

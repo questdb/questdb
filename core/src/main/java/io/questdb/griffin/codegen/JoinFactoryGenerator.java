@@ -49,7 +49,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
@@ -61,7 +60,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
@@ -120,7 +118,6 @@ import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
@@ -148,8 +145,8 @@ import java.util.Arrays;
 import static io.questdb.cairo.ColumnType.*;
 
 final class JoinFactoryGenerator {
-    private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = JoinFactoryGenerator::createFullFatAsOfJoin;
-    private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = JoinFactoryGenerator::createFullFatLtJoin;
+    private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = AsOfJoinRecordCursorFactory::new;
+    private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = LtJoinRecordCursorFactory::new;
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final StringSink conditionSink;
@@ -200,82 +197,6 @@ final class JoinFactoryGenerator {
         this.slaveSymbolKeyColumns = slaveSymbolKeyColumns;
     }
 
-    private static RecordCursorFactory createFullFatAsOfJoin(
-            CairoConfiguration configuration,
-            RecordMetadata metadata,
-            RecordCursorFactory masterFactory,
-            RecordCursorFactory slaveFactory,
-            @Transient ColumnTypes mapKeyTypes,
-            @Transient ColumnTypes mapValueTypes,
-            @Transient ColumnTypes slaveColumnTypes,
-            RecordSink masterKeySink,
-            RecordSink slaveKeySink,
-            int columnSplit,
-            RecordValueSink slaveValueSink,
-            IntList columnIndex,
-            Plannable joinContext,
-            ColumnFilter masterTableKeyColumns,
-            long toleranceInterval,
-            int slaveValueTimestampIndex
-    ) {
-        return new AsOfJoinRecordCursorFactory(
-                configuration,
-                metadata,
-                masterFactory,
-                slaveFactory,
-                mapKeyTypes,
-                mapValueTypes,
-                slaveColumnTypes,
-                masterKeySink,
-                slaveKeySink,
-                columnSplit,
-                slaveValueSink,
-                columnIndex,
-                joinContext,
-                masterTableKeyColumns,
-                toleranceInterval,
-                slaveValueTimestampIndex
-        );
-    }
-
-    private static RecordCursorFactory createFullFatLtJoin(
-            CairoConfiguration configuration,
-            RecordMetadata metadata,
-            RecordCursorFactory masterFactory,
-            RecordCursorFactory slaveFactory,
-            @Transient ColumnTypes mapKeyTypes,
-            @Transient ColumnTypes mapValueTypes,
-            @Transient ColumnTypes slaveColumnTypes,
-            RecordSink masterKeySink,
-            RecordSink slaveKeySink,
-            int columnSplit,
-            RecordValueSink slaveValueSink,
-            IntList columnIndex,
-            Plannable joinContext,
-            ColumnFilter masterTableKeyColumns,
-            long toleranceInterval,
-            int slaveValueTimestampIndex
-    ) {
-        return new LtJoinRecordCursorFactory(
-                configuration,
-                metadata,
-                masterFactory,
-                slaveFactory,
-                mapKeyTypes,
-                mapValueTypes,
-                slaveColumnTypes,
-                masterKeySink,
-                slaveKeySink,
-                columnSplit,
-                slaveValueSink,
-                columnIndex,
-                joinContext,
-                masterTableKeyColumns,
-                toleranceInterval,
-                slaveValueTimestampIndex
-        );
-    }
-
     private static FunctionExpression findWindowJoinSymbolEquality(BoundExpression predicate, OutputSchema scope, RecordMetadata metadata, int splitIndex) {
         if (!(predicate instanceof FunctionExpression call)) {
             return null;
@@ -315,67 +236,6 @@ final class JoinFactoryGenerator {
             final GroupByFunction function = (GroupByFunction) instantiator.instantiateAggregate(call, scope, joinMetadata, executionContext);
             groupByFunctions.add(function);
             function.initValueTypes(valueTypes);
-        }
-    }
-
-    private static ObjList<ObjList<GroupByFunction>> instantiateWorkerAggregates(
-            ObjList<FunctionExpression> aggregates, ObjList<GroupByFunction> owners, OutputSchema scope, RecordMetadata metadata,
-            int workerCount, FunctionInstantiator instantiator, SqlExecutionContext executionContext
-    ) throws SqlException {
-        boolean isThreadSafe = true;
-        for (int i = 0, n = owners.size(); i < n && isThreadSafe; i++) {
-            isThreadSafe = owners.getQuick(i).isThreadSafe();
-        }
-        if (isThreadSafe || workerCount == 0) {
-            return null;
-        }
-        final ObjList<ObjList<GroupByFunction>> workers = new ObjList<>(workerCount);
-        instantiator.beginWorkerClones();
-        try {
-            for (int w = 0; w < workerCount; w++) {
-                final PerWorkerFunctionList<GroupByFunction> functions = new PerWorkerFunctionList<>(owners.size());
-                workers.add(functions);
-                for (int i = 0, n = owners.size(); i < n; i++) {
-                    final GroupByFunction owner = owners.getQuick(i);
-                    if (owner.isThreadSafe()) {
-                        functions.add(owner, false);
-                    } else {
-                        final GroupByFunction function = (GroupByFunction) instantiator.instantiateAggregate(aggregates.getQuick(i), scope, metadata, executionContext);
-                        functions.add(function, true);
-                        function.initValueIndex(owner.getValueIndex());
-                    }
-                }
-            }
-            return workers;
-        } catch (Throwable th) {
-            for (int w = 0, n = workers.size(); w < n; w++) {
-                PerWorkerFunctionList.close(workers.getQuick(w), th);
-            }
-            throw th;
-        } finally {
-            instantiator.endWorkerClones();
-        }
-    }
-
-    private static ObjList<Function> instantiateWorkers(
-            BoundExpression expression, OutputSchema scope, RecordMetadata metadata, int workerCount,
-            FunctionInstantiator instantiator, SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (workerCount == 0) {
-            return null;
-        }
-        final ObjList<Function> workers = new ObjList<>(workerCount);
-        instantiator.beginWorkerClones();
-        try {
-            for (int i = 0; i < workerCount; i++) {
-                workers.add(instantiator.instantiate(expression, scope, metadata, executionContext));
-            }
-            return workers;
-        } catch (Throwable th) {
-            Misc.freeObjList(workers, th);
-            throw th;
-        } finally {
-            instantiator.endWorkerClones();
         }
     }
 
@@ -434,17 +294,6 @@ final class JoinFactoryGenerator {
         }
         outerMetadata.setTimestampIndex(LogicalPlans.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex(), splitIndex));
         return isIdentity ? null : columnIndex;
-    }
-
-    private static BoundExpression removeConjunct(BoundExpression predicate, BoundExpression target, BoundExpressionRewriter rewriter) {
-        if (predicate == target) {
-            return null;
-        }
-        if (predicate instanceof FunctionExpression call && call.isAnd() && call.getArgumentCount() == 2) {
-            return rewriter.replaceConjunction(call, removeConjunct(call.argumentAt(0), target, rewriter),
-                    removeConjunct(call.argumentAt(1), target, rewriter));
-        }
-        return predicate;
     }
 
     private static void resolveKeys(OutputSchema input, IntList ids, IntList indexes) {
@@ -1424,7 +1273,6 @@ final class JoinFactoryGenerator {
     ) throws SqlException {
         JoinRecordMetadata metadata = null;
         Function onFilter = null;
-        Function postFilter = null;
         RecordCursorFactory result = null;
         try {
             final JoinKind joinType = step.getJoinType();
@@ -1507,32 +1355,30 @@ final class JoinFactoryGenerator {
             if (onFilter != null) {
                 // INNER residual ON gates matched pairs, together with the post-join filter.
                 // Outer residual ON is owned by the join and must run before unmatched rows are NULL-extended.
-                BoundExpression predicate = onResidual;
                 if (postJoinFilter != null) {
-                    predicate = frame.expressionRewriter.combineConjunction(onResidual, postJoinFilter, onResidual.getPosition());
+                    final BoundExpression predicate = frame.expressionRewriter.combineConjunction(onResidual, postJoinFilter, onResidual.getPosition());
                     postJoinFilter = null;
                     final Function residualFilter = onFilter;
                     onFilter = null;
                     residualFilter.close();
-                    onFilter = instantiator.instantiate(predicate, step.getOutput(), result.getMetadata(), executionContext);
+                    final RecordCursorFactory owned = result;
+                    result = null;
+                    result = filterGenerator.generatePostJoin(frame, step, predicate, owned, executionContext);
+                } else {
+                    final RecordCursorFactory owned = result;
+                    final Function ownedFilter = onFilter;
+                    result = null;
+                    onFilter = null;
+                    result = filterGenerator.generatePostJoin(frame, step, onResidual, owned, ownedFilter, executionContext);
                 }
-                final RecordCursorFactory owned = result;
-                final Function ownedFilter = onFilter;
-                result = null;
-                onFilter = null;
-                result = filterGenerator.generatePostJoin(frame, predicate, step.getOutput(), owned, ownedFilter, instantiator, executionContext);
             }
             if (postJoinFilter != null) {
-                postFilter = instantiator.instantiate(postJoinFilter, step.getOutput(), result.getMetadata(), executionContext);
                 final RecordCursorFactory owned = result;
-                final Function ownedFilter = postFilter;
                 result = null;
-                postFilter = null;
-                result = filterGenerator.generatePostJoin(frame, postJoinFilter, step.getOutput(), owned, ownedFilter, instantiator, executionContext);
+                result = filterGenerator.generatePostJoin(frame, step, postJoinFilter, owned, executionContext);
             }
             return result;
         } catch (Throwable th) {
-            Misc.free(postFilter, th);
             Misc.free(onFilter, th);
             Misc.free(metadata, th);
             Misc.free(master, th);
@@ -1559,17 +1405,8 @@ final class JoinFactoryGenerator {
             if (step.getJoinType() == JoinKind.UNNEST) {
                 master = generateUnnest(step.getUnnest(), masterOutput, master,
                         masterAlias, step.getBindingAlias(), frame.functionInstantiator, executionContext);
-                final BoundExpression predicate = step.getPostJoinFilter();
-                if (predicate != null) {
-                    final Function filter;
-                    try {
-                        filter = frame.functionInstantiator.instantiate(predicate, step.getOutput(), master.getMetadata(), executionContext);
-                    } catch (Throwable th) {
-                        Misc.free(master, th);
-                        throw th;
-                    }
-                    master = filterGenerator.generate(frame, predicate, step.getOutput(), master, filter,
-                            frame.functionInstantiator, executionContext, SqlCodeGenerator.hasUpdateScan(join));
+                if (step.getPostJoinFilter() != null) {
+                    master = filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), master, executionContext);
                 }
                 masterOutput = step.getOutput();
                 masterAlias = null;
@@ -1602,9 +1439,8 @@ final class JoinFactoryGenerator {
             master = switch (step.getJoinType()) {
                 case ASOF, LT ->
                         generateTemporal(frame, step, masterOutput, masterAlias, master, slave, slave.getMetadata(), null, null,
-                                frame.functionInstantiator, executionContext);
-                case SPLICE ->
-                        generateSplice(frame, step, masterOutput, masterAlias, master, slave, frame.functionInstantiator, executionContext);
+                                executionContext);
+                case SPLICE -> generateSplice(frame, step, masterOutput, masterAlias, master, slave, executionContext);
                 default ->
                         generate(frame, step, masterOutput, masterAlias, master, slave, frame.functionInstantiator, executionContext);
             };
@@ -2058,11 +1894,9 @@ final class JoinFactoryGenerator {
             CharSequence masterAlias,
             RecordCursorFactory master,
             RecordCursorFactory slave,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         RecordCursorFactory result = null;
-        Function postFilter = null;
         try {
             if (step.getJoinType() != JoinKind.SPLICE) {
                 throw new IllegalStateException("unsupported logical splice join type");
@@ -2086,16 +1920,12 @@ final class JoinFactoryGenerator {
             result = generateJoinSplice(frame, step.getAlgorithm() == JoinInput.Algorithm.FULL_FAT_SPLICE, ownedMaster, masterMetadata, masterAlias, ownedSlave,
                     slaveMetadata, step.getBindingAlias(), step.getPosition(), condition);
             if (step.getPostJoinFilter() != null) {
-                postFilter = instantiator.instantiate(step.getPostJoinFilter(), step.getOutput(), result.getMetadata(), executionContext);
                 final RecordCursorFactory owned = result;
-                final Function ownedFilter = postFilter;
                 result = null;
-                postFilter = null;
-                result = filterGenerator.generatePostJoin(frame, step.getPostJoinFilter(), step.getOutput(), owned, ownedFilter, instantiator, executionContext);
+                result = filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), owned, executionContext);
             }
             return result;
         } catch (Throwable th) {
-            Misc.free(postFilter, th);
             Misc.free(master, th);
             Misc.free(slave, th);
             Misc.free(result, th);
@@ -2120,7 +1950,6 @@ final class JoinFactoryGenerator {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final ProjectPlan projection = LogicalPlans.temporalSlaveProjection(step.getInput());
-        final FilterPlan filter = LogicalPlans.temporalStolenFilter(step.getInput());
         final PreparedFilter prepared = frame.pushPreparedFilter();
         final RecordCursorFactory factory;
         try {
@@ -2128,7 +1957,7 @@ final class JoinFactoryGenerator {
             frame.isJoinSlaveInput = true;
             final RecordCursorFactory slave;
             try {
-                slave = codeGenerator.generateStolenFilter(frame, filter, prepared, executionContext);
+                slave = codeGenerator.generateStolenFilter(frame, LogicalPlans.temporalStolenFilter(step.getInput()), prepared, executionContext);
             } catch (Throwable th) {
                 Misc.free(master, th);
                 throw th;
@@ -2150,7 +1979,7 @@ final class JoinFactoryGenerator {
                 }
             }
             factory = generateTemporal(frame, step, masterOutput, masterAlias, master, slave, slaveMetadata, crossIndex, prepared,
-                    frame.functionInstantiator, executionContext);
+                    executionContext);
         } catch (Throwable th) {
             frame.popPreparedFilter(th);
             throw th;
@@ -2169,11 +1998,9 @@ final class JoinFactoryGenerator {
             RecordMetadata slaveMetadata,
             @Nullable IntList slaveCrossIndex,
             @Nullable PreparedFilter stolenFilter,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         RecordCursorFactory result = null;
-        Function postFilter = null;
         try {
             final JoinKind joinType = step.getJoinType();
             if (joinType != JoinKind.ASOF && joinType != JoinKind.LT) {
@@ -2227,16 +2054,12 @@ final class JoinFactoryGenerator {
                         slaveMetadata.getTimestampIndex(), step.getOutput());
             }
             if (step.getPostJoinFilter() != null) {
-                postFilter = instantiator.instantiate(step.getPostJoinFilter(), step.getOutput(), result.getMetadata(), executionContext);
                 final RecordCursorFactory owned = result;
-                final Function ownedFilter = postFilter;
                 result = null;
-                postFilter = null;
-                result = filterGenerator.generatePostJoin(frame, step.getPostJoinFilter(), step.getOutput(), owned, ownedFilter, instantiator, executionContext);
+                result = filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), owned, executionContext);
             }
             return result;
         } catch (Throwable th) {
-            Misc.free(postFilter, th);
             Misc.free(master, th);
             Misc.free(slave, th);
             Misc.free(result, th);
@@ -2365,12 +2188,10 @@ final class JoinFactoryGenerator {
             throws SqlException {
         final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
         final boolean isFilterStolen = steps.size() > 0 && steps.getQuick(0).getAlgorithm() == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER;
-        final PreparedFilter prepared = isFilterStolen ? frame.pushPreparedFilter() : null;
+        final PreparedFilter prepared = frame.pushPreparedFilter(isFilterStolen);
         RecordCursorFactory master;
         try {
-            master = isFilterStolen
-                    ? codeGenerator.generateStolenFilter(frame, LogicalPlans.stolenFilter(windowJoin.getMaster()), prepared, executionContext)
-                    : codeGenerator.generate(frame, windowJoin.getMaster(), executionContext);
+            master = codeGenerator.generateSource(frame, windowJoin.getMaster(), prepared, executionContext);
             for (int i = 0, n = steps.size(); i < n; i++) {
                 final WindowJoinStep step = steps.getQuick(i);
                 final RecordCursorFactory slave;
@@ -2384,14 +2205,10 @@ final class JoinFactoryGenerator {
                         i == 0 ? prepared : null, executionContext);
             }
         } catch (Throwable th) {
-            if (isFilterStolen) {
-                frame.popPreparedFilter(th);
-            }
+            frame.popPreparedFilter(prepared, th);
             throw th;
         }
-        if (isFilterStolen) {
-            frame.popPreparedFilter();
-        }
+        frame.popPreparedFilter(prepared);
         if (windowJoin.isEmpty()) {
             final RecordCursorFactory empty;
             try {
@@ -2474,7 +2291,7 @@ final class JoinFactoryGenerator {
                     final int right = scope.getColumnIndexById(((ColumnExpression) equality.argumentAt(1)).getColumnId());
                     leftSymbolIndex = Math.min(left, right);
                     rightSymbolIndex = Math.max(left, right) - splitIndex;
-                    filter = removeConjunct(filter, equality, frame.expressionRewriter);
+                    filter = frame.expressionRewriter.removeConjunct(filter, equality);
                 }
             }
             if (filter != null) {
@@ -2542,15 +2359,17 @@ final class JoinFactoryGenerator {
                         bindVarFunctions = stolenFilter.getBindVarFunctions();
                     }
                     master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-                    workerJoinFilters = joinFilter == null || joinFilter.isThreadSafe() ? null
-                            : instantiateWorkers(filter, scope, joinMetadata, workerCount, instantiator, executionContext);
-                    workerGroupByFunctions = instantiateWorkerAggregates(
-                            aggregates, groupByFunctions, scope, joinMetadata, workerCount, instantiator, executionContext);
-                    if (leftSymbolIndex == -1) {
-                        workerLoFuncs = windowLoFunc == null || windowLoFunc.isThreadSafe() ? null
-                                : instantiateWorkers(step.getLoExpression(), step.getMasterScope(), master.getMetadata(), workerCount, instantiator, executionContext);
-                        workerHiFuncs = windowHiFunc == null || windowHiFunc.isThreadSafe() ? null
-                                : instantiateWorkers(step.getHiExpression(), step.getMasterScope(), master.getMetadata(), workerCount, instantiator, executionContext);
+                    if (workerCount > 0) {
+                        workerJoinFilters = joinFilter == null ? null
+                                : instantiator.instantiateWorkers(filter, scope, joinMetadata, joinFilter, workerCount, executionContext);
+                        workerGroupByFunctions = instantiator.instantiateWorkerAggregates(
+                                aggregates, scope, joinMetadata, groupByFunctions, workerCount, executionContext);
+                        if (leftSymbolIndex == -1) {
+                            workerLoFuncs = windowLoFunc == null ? null : instantiator.instantiateWorkers(step.getLoExpression(), step.getMasterScope(),
+                                    master.getMetadata(), windowLoFunc, workerCount, executionContext);
+                            workerHiFuncs = windowHiFunc == null ? null : instantiator.instantiateWorkers(step.getHiExpression(), step.getMasterScope(),
+                                    master.getMetadata(), windowHiFunc, workerCount, executionContext);
+                        }
                     }
                     final Function ownedJoinFilter = joinFilter;
                     final ObjList<GroupByFunction> ownedGroupByFunctions = groupByFunctions;

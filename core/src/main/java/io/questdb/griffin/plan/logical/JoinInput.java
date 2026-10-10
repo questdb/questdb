@@ -112,7 +112,7 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * How the generator joins this step to its master, or null before order planning decided it.
+     * How the generator joins this step to its master, or null before operator planning decided it.
      */
     public Algorithm getAlgorithm() {
         return algorithm;
@@ -173,7 +173,7 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * Which input drives the step, or null before order planning decided it.
+     * Which input drives the step, or null before operator planning decided it.
      */
     public MasterSide getMasterSide() {
         return masterSide;
@@ -252,7 +252,7 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * Records the algorithm; the master side of a light INNER hash join stays undecided until order planning decides
+     * Records the algorithm; the master side of a light INNER hash join stays undecided until operator planning decides
      * it.
      */
     public void setAlgorithm(Algorithm algorithm) {

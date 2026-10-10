@@ -173,13 +173,11 @@ final class SortFactoryGenerator {
         final ProjectPlan projection = LogicalPlans.parallelTopKProjection(sort);
         final LogicalPlan source = projection != null ? projection.getInput() : sort.getInput();
         final boolean isFilterStolen = sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K;
-        final PreparedFilter prepared = isFilterStolen ? frame.pushPreparedFilter() : null;
+        final PreparedFilter prepared = frame.pushPreparedFilter(isFilterStolen);
         final RecordCursorFactory topK;
         RecordCursorFactory leaf = null;
         try {
-            leaf = isFilterStolen
-                    ? codeGenerator.generateStolenFilter(frame, LogicalPlans.stolenFilter(source), prepared, executionContext)
-                    : codeGenerator.generate(frame, source, executionContext);
+            leaf = codeGenerator.generateSource(frame, source, prepared, executionContext);
             final long count;
             try (Function lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext)) {
                 count = lo.getLong(null);
@@ -222,14 +220,10 @@ final class SortFactoryGenerator {
                     recordComparatorCompiler, keys, leafMetadata, count, executionContext.getSharedQueryWorkerCount());
         } catch (Throwable th) {
             Misc.free(leaf, th);
-            if (isFilterStolen) {
-                frame.popPreparedFilter(th);
-            }
+            frame.popPreparedFilter(prepared, th);
             throw th;
         }
-        if (isFilterStolen) {
-            frame.popPreparedFilter();
-        }
+        frame.popPreparedFilter(prepared);
         return projection != null ? projectionGenerator.generateProjection(frame, projection, topK,
                 PhysicalProperties.timestampIndex(sort), executionContext) : topK;
     }
@@ -326,17 +320,8 @@ final class SortFactoryGenerator {
         if (limit.getApplication() == LimitPlan.Application.INPUT) {
             return generate(frame, sort, base, null, null, limit.getPosition());
         }
-        Function lo = null;
-        final Function hi;
-        try {
-            lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
-            hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
-        } catch (Throwable th) {
-            Misc.free(lo, th);
-            Misc.free(base, th);
-            throw th;
-        }
-        return generate(frame, sort, base, lo, hi, limit.getPosition());
+        codeGenerator.instantiateLimit(frame, limit, base, executionContext);
+        return generate(frame, sort, base, frame.limitLo, frame.limitHi, limit.getPosition());
     }
 
 }

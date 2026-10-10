@@ -54,73 +54,41 @@ import static io.questdb.griffin.bind.BindContext.sourceAlias;
  * {@link SqlBinder} steps, then the SET assignments as a {@link ProjectPlan} whose columns carry the
  * target column names and types.
  */
-public final class UpdateBinder implements Mutable {
+final class UpdateBinder implements Mutable {
     private final SqlBinder binder;
     private final BindContext ctx;
     private final JoinBinder joinBinder;
     private final OrderBinder orderBinder;
     private final ObjList<CharSequence> tableColumnNames = new ObjList<>();
     private final IntList tableColumnTypes = new IntList();
-    private final ObjList<CharSequence> targetNames = new ObjList<>();
+    private final UpdateTarget target;
     private final WindowBinder windowBinder;
-    private long metadataVersion;
-    private int tableId;
-    private CharSequence tableName;
-    private int tablePosition;
-    private TableToken tableToken;
     private int timestampIndex = -1;
 
-    UpdateBinder(BindContext ctx, SqlBinder binder, WindowBinder windowBinder, JoinBinder joinBinder, OrderBinder orderBinder) {
+    UpdateBinder(BindContext ctx, SqlBinder binder, WindowBinder windowBinder, JoinBinder joinBinder, OrderBinder orderBinder, UpdateTarget target) {
         this.ctx = ctx;
         this.binder = binder;
         this.windowBinder = windowBinder;
         this.joinBinder = joinBinder;
         this.orderBinder = orderBinder;
+        this.target = target;
     }
 
     @Override
     public void clear() {
         tableColumnNames.clear();
         tableColumnTypes.clear();
-        targetNames.clear();
-        metadataVersion = 0;
-        tableId = 0;
-        tableName = null;
-        tablePosition = 0;
-        tableToken = null;
+        target.clear();
         timestampIndex = -1;
     }
 
-    public long getMetadataVersion() {
-        return metadataVersion;
-    }
-
-    public ObjList<CharSequence> getTableColumnNames() {
-        return tableColumnNames;
-    }
-
-    public IntList getTableColumnTypes() {
-        return tableColumnTypes;
-    }
-
-    public int getTableId() {
-        return tableId;
-    }
-
-    public CharSequence getTableName() {
-        return tableName;
-    }
-
-    public int getTablePosition() {
-        return tablePosition;
-    }
-
-    public TableToken getTableToken() {
-        return tableToken;
-    }
-
-    public ObjList<CharSequence> getTargetNames() {
-        return targetNames;
+    private static boolean isAssignable(int type, int targetType) {
+        return type == targetType
+                || type == ColumnType.IPv4 && (targetType == ColumnType.STRING || targetType == ColumnType.VARCHAR)
+                || targetType == ColumnType.IPv4 && (type == ColumnType.STRING || type == ColumnType.VARCHAR)
+                || ColumnType.isTimestamp(targetType) && ColumnType.isConvertibleFrom(type, targetType)
+                || ColumnType.isSymbolOrString(targetType) && ColumnType.isConvertibleFrom(type, ColumnType.STRING)
+                || targetType == ColumnType.VARCHAR && ColumnType.isConvertibleFrom(type, ColumnType.VARCHAR);
     }
 
     private SqlException aggregateException(QueryModel model) {
@@ -182,6 +150,7 @@ public final class UpdateBinder implements Mutable {
         final IntList targetTypes = project.getUpdateTargetTypes();
         final OutputSchema output = project.getOutput();
         final ObjList<QueryColumn> targets = model.getBottomUpColumns();
+        final ObjList<CharSequence> targetNames = target.getColumnNames();
         targetNames.clear();
         boolean hasConversions = false;
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
@@ -213,6 +182,14 @@ public final class UpdateBinder implements Mutable {
         }
         if (!hasConversions) {
             targetTypes.clear();
+            return;
+        }
+        for (int i = 0, n = targetTypes.size(); i < n; i++) {
+            final int type = output.getColumnType(i);
+            final int targetType = targetTypes.getQuick(i);
+            if (!isAssignable(type, targetType)) {
+                throw SqlException.inconvertibleTypes(targets.getQuick(i).getAst().position, type, "", targetType, output.getColumnName(i));
+            }
         }
     }
 
@@ -295,11 +272,7 @@ public final class UpdateBinder implements Mutable {
             } else {
                 ctx.planTables.acquire(metadata.getTableToken(), metadata.getMetadataVersion(), tableName.position, executionContext);
             }
-            this.tableName = tableName.token;
-            tablePosition = tableName.position;
-            tableToken = metadata.getTableToken();
-            tableId = metadata.getTableId();
-            metadataVersion = metadata.getMetadataVersion();
+            target.of(tableName.token, tableName.position, metadata.getTableToken(), metadata.getTableId(), metadata.getMetadataVersion());
             timestampIndex = -1;
             tableColumnNames.clear();
             tableColumnTypes.clear();

@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -108,24 +107,21 @@ import static io.questdb.griffin.model.QueryModel.CREATE_MAT_VIEW;
  * when it throws, so a caller never closes an input it has handed over.
  */
 public class SqlCodeGenerator implements Mutable, Closeable {
-    public static final int GKK_MICRO_HOUR_INT = 1;
-    public static final int GKK_NANO_HOUR_INT = 2;
-    public static final int GKK_VANILLA_INT = 0;
     private static final int MAX_RETAINED_FRAMES = 32;
     private static final PlanVisitor UPDATE_SCANS = plan -> plan instanceof ScanPlan scan && scan.isUpdate() ? TreeWalk.STOP : TreeWalk.CONTINUE;
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     private final AggregateFactoryGenerator aggregateGenerator;
-    private final BytecodeAssembler asm;
     private final CairoConfiguration configuration;
     private final OutputSchema emptySchema;
+    private final BoundExpressionRewriter expressionRewriter;
     private final FilterFactoryGenerator filterGenerator;
+    private final FunctionInstantiator functionInstantiator;
+    private final TableFunctionSources functionSources;
     private final ObjList<GenerationFrame> generationFrames = new ObjList<>();
-    private final ListColumnFilter indexColumnFilter = new ListColumnFilter();
     private final MemoryCARW jitIRMem;
     private final JoinFactoryGenerator joinGenerator;
     private final LatestByFactoryGenerator latestByGenerator;
     private final ProjectionFactoryGenerator projectionGenerator;
-    private final RecordComparatorCompiler recordComparatorCompiler;
     private final SampleByFactoryGenerator sampleByGenerator;
     private final ScanFactoryGenerator scanGenerator;
     private final SetOperationFactoryGenerator setOperationGenerator;
@@ -143,6 +139,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             EntityColumnFilter entityColumnFilter,
             OutputSchema emptySchema,
             PlanTables planTables,
+            BoundExpressionRewriter expressionRewriter,
+            FunctionInstantiator functionInstantiator,
+            TableFunctionSources functionSources,
             StringSink tmpSink,
             IntHashSet tmpIds,
             IntList tmpIndexes,
@@ -152,10 +151,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) {
         try {
             this.configuration = configuration;
-            this.asm = asm;
             this.emptySchema = emptySchema;
+            this.expressionRewriter = expressionRewriter;
+            this.functionInstantiator = functionInstantiator;
+            this.functionSources = functionSources;
             this.tmpSink = tmpSink;
-            this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
+            final RecordComparatorCompiler recordComparatorCompiler = new RecordComparatorCompiler(asm);
             this.jitIRMem = Vm.getCARWInstance(
                     configuration.getSqlJitIRMemoryPageSize(),
                     configuration.getSqlJitIRMemoryMaxPages(),
@@ -167,8 +168,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final PageFrameReduceTaskFactory reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
             this.filterGenerator = new FilterFactoryGenerator(configuration, characterStore, jitIRMem, reduceTaskFactory, tmpSink,
                     tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpLongs);
-            this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, filterGenerator, asm, emptySchema, entityColumnFilter,
-                    planTables, tmpIndexes, tmpValues);
+            this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, filterGenerator, asm, entityColumnFilter, tmpIndexes, tmpValues);
             this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionResolver.getFunctionFactoryCache(), asm,
                     entityColumnFilter, reduceTaskFactory, tmpSink, tmpIds, tmpMasterKeys, tmpSlaveKeys);
             this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, tmpIndexes);
@@ -215,36 +215,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    public RecordCursorFactory generate(
-            LogicalPlan root,
-            FunctionInstantiator functionInstantiator,
-            BoundExpressionRewriter expressionRewriter,
-            TableFunctionSources functionSources,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
+    public RecordCursorFactory generate(LogicalPlan root, SqlExecutionContext executionContext) throws SqlException {
         if (root == null) {
             throw new IllegalStateException("query is not bound");
         }
         if (generationFrames.size() == generationDepth) {
-            generationFrames.add(new GenerationFrame(configuration, tmpSink, tmpLongs));
+            generationFrames.add(new GenerationFrame(configuration, tmpSink, tmpLongs, expressionRewriter, functionInstantiator, functionSources));
         }
         final GenerationFrame frame = generationFrames.getQuick(generationDepth++);
         try {
             frame.clear();
-            frame.functionInstantiator = functionInstantiator;
-            frame.intervalBounds.of(functionInstantiator);
-            frame.expressionRewriter = expressionRewriter;
-            frame.functionSources = functionSources;
-            try {
-                projectionGenerator.setReferenceCounts(frame, root.getOutput(), 1);
-                projectionGenerator.collectColumnReferenceCounts(frame, root);
-                return generate(frame, root, executionContext);
-            } finally {
-                frame.functionInstantiator = null;
-                frame.intervalBounds.of(null);
-                frame.expressionRewriter = null;
-                frame.functionSources = null;
-            }
+            projectionGenerator.setReferenceCounts(frame, root.getOutput(), 1);
+            projectionGenerator.collectColumnReferenceCounts(frame, root);
+            return generate(frame, root, executionContext);
         } finally {
             generationDepth--;
         }
@@ -266,10 +249,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new ExplainPlanFactory(owned, format);
     }
 
-    public BytecodeAssembler getAsm() {
-        return asm;
-    }
-
     /**
      * The generation depth the next {@link #generate} call builds its plan at: 0 outside generation, one more for each
      * plan generating around it.
@@ -281,14 +260,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @TestOnly
     public int getGenerationFrameCount() {
         return generationFrames.size();
-    }
-
-    public ListColumnFilter getIndexColumnFilter() {
-        return indexColumnFilter;
-    }
-
-    public RecordComparatorCompiler getRecordComparatorCompiler() {
-        return recordComparatorCompiler;
     }
 
     // used in tests
@@ -357,23 +328,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * The scan whose access path the factory of the plan is: a scan, a filter or LATEST BY fused into one.
-     */
-    private static ScanPlan scanSource(LogicalPlan plan) {
-        LogicalPlan source = plan instanceof LatestByPlan latest ? latest.getInput() : plan;
-        if (source instanceof FilterPlan) {
-            source = source.inputAt(0);
-        }
-        return source instanceof ScanPlan scan ? scan : null;
-    }
-
-    /**
      * Asserts that every physical property the plan derives agrees with the factory codegen built for it. Outside a
      * table scan, codegen substitutes the empty factory wherever it proves a result empty, from facts the plan does
      * not carry; a scan builds it exactly where its access path is empty.
      */
     private static RecordCursorFactory verifyPhysicalProperties(LogicalPlan plan, RecordCursorFactory factory) {
-        final ScanPlan scan = scanSource(plan);
+        final ScanPlan scan = plan instanceof LatestByPlan latest ? LogicalPlans.latestByScan(latest) : LogicalPlans.scanThroughFilter(plan);
         if (scan == null && factory instanceof EmptyTableRecordCursorFactory) {
             return factory;
         }
@@ -397,8 +357,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final LogicalPlan input = plan.inputAt(0);
         final BoundExpression residual = plan instanceof FilterPlan filter ? filter.getPredicate() : null;
         final RecordCursorFactory base;
-        if (residual != null && input instanceof ScanPlan scan
-                && !scan.isWalClientUpdate()) {
+        if (plan instanceof FilterPlan filter && residual != null && LogicalPlans.fusedScan(filter) instanceof ScanPlan scan) {
             return scanGenerator.generateFiltered(frame, scan, residual, executionContext);
         } else if (plan instanceof LimitPlan limit && input instanceof DistinctPlan distinct) {
             base = aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext);
@@ -458,17 +417,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (limit.getApplication() == LimitPlan.Application.INPUT) {
                     return base;
                 }
-                Function lo = null;
-                final Function hi;
-                try {
-                    lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
-                    hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
-                } catch (Throwable th) {
-                    Misc.free(lo, th);
-                    Misc.free(base, th);
-                    throw th;
-                }
-                return new LimitRecordCursorFactory(base, lo, hi, limit.getPosition());
+                instantiateLimit(frame, limit, base, executionContext);
+                return new LimitRecordCursorFactory(base, frame.limitLo, frame.limitHi, limit.getPosition());
             }
             default -> {
                 final IllegalStateException failure = new IllegalStateException("unknown logical operation");
@@ -561,12 +511,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     windowGenerator.generateWindow(frame, window, project, executionContext);
             case ProjectPlan project when project.inputAt(0) instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ->
                     joinGenerator.generateWindowJoin(frame, windowJoin, project, executionContext);
-            case LatestByPlan latest -> {
-                final LogicalPlan source = latest.getInput() instanceof FilterPlan filter ? filter.getInput() : latest.getInput();
-                yield source instanceof ScanPlan scan
-                        ? scanGenerator.generateLatestBy(frame, latest, scan, executionContext)
-                        : latestByGenerator.generateLatestBy(frame, latest, executionContext);
-            }
+            case LatestByPlan latest when LogicalPlans.latestByScan(latest) instanceof ScanPlan scan ->
+                    scanGenerator.generateLatestBy(frame, latest, scan, executionContext);
+            case LatestByPlan latest -> latestByGenerator.generateLatestBy(frame, latest, executionContext);
             case SampleByPlan sample -> sampleByGenerator.generateSampleBy(frame, sample, executionContext);
             case FillPlan fill -> {
                 final RecordCursorFactory base = generate(frame, fill.getInput(), executionContext);
@@ -577,6 +524,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case DistinctPlan distinct -> aggregateGenerator.generateDistinct(frame, distinct, null, executionContext);
             case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getInput()) ->
                     sortGenerator.generateSortedLimit(frame, limit.getInput(), limit, executionContext);
+            case AggregatePlan aggregate when LogicalPlans.postingDistinctScan(aggregate) != null ->
+                    scanGenerator.generatePostingDistinct(frame, aggregate, executionContext);
             case AggregatePlan aggregate -> aggregateGenerator.generateAggregate(frame, aggregate, executionContext);
             case JoinPlan join -> joinGenerator.generateJoin(frame, join, executionContext);
             case WindowJoinPlan windowJoin ->
@@ -588,6 +537,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Builds the factory of the source a parallel consumer reads: without the filter the consumer steals from it into
+     * {@code stolen}, see {@link #generateStolenFilter}, or whole when {@code stolen} is null.
+     */
+    RecordCursorFactory generateSource(GenerationFrame frame, LogicalPlan source, @Nullable PreparedFilter stolen,
+                                       SqlExecutionContext executionContext) throws SqlException {
+        return stolen != null
+                ? generateStolenFilter(frame, LogicalPlans.stolenFilter(source), stolen, executionContext)
+                : generate(frame, source, executionContext);
+    }
+
+    /**
      * Builds the factory under a filter node a parallel consumer steals, without the filter, and prepares the filter
      * over it in {@code target}, which owns the filter function from then on, also on failure. The caller owns the
      * returned factory.
@@ -596,9 +556,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throws SqlException {
         final LogicalPlan input = filter.getInput();
         final BoundExpression predicate = filter.getPredicate();
+        final ScanPlan scan = LogicalPlans.fusedScan(filter);
         final RecordCursorFactory leaf;
-        if (LogicalPlans.isFusedFilter(filter)) {
-            leaf = scanGenerator.generateStolenFilter(frame, (ScanPlan) input, predicate, target, executionContext);
+        if (scan != null) {
+            leaf = scanGenerator.generateStolenFilter(frame, scan, predicate, target, executionContext);
         } else {
             leaf = generate(frame, input, executionContext);
             try {
@@ -624,6 +585,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw failure;
         }
         return leaf;
+    }
+
+    /**
+     * Instantiates the bounds of the LIMIT into {@link GenerationFrame#limitLo} and {@link GenerationFrame#limitHi}, null
+     * without a hi bound, for the caller to hand over at once. Frees the factory the LIMIT applies to on failure.
+     */
+    void instantiateLimit(GenerationFrame frame, LimitPlan limit, RecordCursorFactory base, SqlExecutionContext executionContext)
+            throws SqlException {
+        Function lo = null;
+        final Function hi;
+        try {
+            lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
+            hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
+        } catch (Throwable th) {
+            Misc.free(lo, th);
+            Misc.free(base, th);
+            throw th;
+        }
+        frame.limitLo = lo;
+        frame.limitHi = hi;
     }
 
     private static class RecordCursorFactoryStub implements RecordCursorFactory {

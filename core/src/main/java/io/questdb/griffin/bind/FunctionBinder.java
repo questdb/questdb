@@ -139,7 +139,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
      */
     @TestOnly
     public static FunctionBinder newStandalone(SqlCompilerImpl compiler, FunctionParser parser) {
-        return compiler.newStandaloneFunctionBinder(parser);
+        return compiler.newStandaloneBinder(parser).ctx.functionBinder;
     }
 
     /**
@@ -376,7 +376,12 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         try {
             ctx.preparedFunctions.clear();
         } finally {
-            ctx.clearExpressions();
+            try {
+                ctx.functionInstantiator.clear();
+            } finally {
+                clear();
+                ctx.expressionRewriter.clear();
+            }
             ctx.planNodes.clearExpressions();
         }
     }

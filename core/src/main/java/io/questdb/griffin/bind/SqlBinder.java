@@ -30,12 +30,12 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.BoundExpressionRewriter;
+import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.ExpressionParser;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.JoinOrderSolver;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanTables;
@@ -90,13 +90,12 @@ import static io.questdb.griffin.bind.OrderBinder.*;
 import static io.questdb.griffin.bind.TemporalJoinBinder.*;
 
 public final class SqlBinder implements Mutable {
-    public final BindContext ctx;
+    final BindContext ctx;
     private final AggregateBinder aggregateBinder;
     private final CairoConfiguration configuration;
     private final FunctionParser functionParser;
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<CharSequence>> hintScopes;
     private final JoinBinder joinBinder;
-    private final JoinOrderSolver joinOrder;
     private final LateralBinder lateralBinder;
     private final OrderBinder orderBinder;
     private final PivotBinder pivotBinder;
@@ -123,29 +122,32 @@ public final class SqlBinder implements Mutable {
             PlanTables planTables,
             PreparedFunctions preparedFunctions,
             TableFunctionSources functionSources,
+            BoundExpressionRewriter expressionRewriter,
+            FunctionInstantiator functionInstantiator,
+            JoinGraphBuilder joinGraphBuilder,
+            UpdateTarget updateTarget,
             OutputSchema emptySchema,
-            IntHashSet tmpIds,
+            ObjList<BoundExpression> tmpArguments,
+            IntList tmpPositions,
+            OutputSchema tmpScope,
             IntList tmpIndexes,
-            IntList tmpValues,
-            IntList tmpSlaveKeys,
             StringSink tmpSink
     ) {
         this.configuration = configuration;
         this.functionParser = functionParser;
         this.hintScopes = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 4, configuration.getSqlModelPoolCapacity());
         this.ctx = new BindContext(subqueryCompiler, functionParser, scopes, sqlNodePool, characterStore, planNodePools, planTables,
-                preparedFunctions, functionSources, tmpIndexes);
+                preparedFunctions, functionSources, expressionRewriter, functionInstantiator, tmpArguments, tmpPositions, tmpScope, tmpIndexes);
         this.windowBinder = new WindowBinder(ctx, functionParser);
         this.lateralBinder = new LateralBinder(ctx, this, configuration.getSqlModelPoolCapacity());
-        this.joinOrder = new JoinOrderSolver(planNodePools, tmpIds, tmpIndexes, tmpValues, tmpSlaveKeys);
-        this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, joinOrder);
+        this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, joinGraphBuilder);
         this.sampleByBinder = new SampleByBinder(ctx, this, configuration, functionParser, emptySchema, windowBinder, joinBinder);
         this.orderBinder = new OrderBinder(ctx, emptySchema, sampleByBinder);
         this.aggregateBinder = new AggregateBinder(ctx, this, configuration, orderBinder, sampleByBinder);
         this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder);
         this.pivotBinder = new PivotBinder(ctx, this, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
                 tmpSink, subqueryCompiler);
-        this.updateBinder = new UpdateBinder(ctx, this, windowBinder, joinBinder, orderBinder);
+        this.updateBinder = new UpdateBinder(ctx, this, windowBinder, joinBinder, orderBinder, updateTarget);
     }
 
     public static int getOutputColumnPosition(LogicalPlan output, int index) {
@@ -170,6 +172,14 @@ public final class SqlBinder implements Mutable {
         return plan;
     }
 
+    /**
+     * Binds a stand-alone expression of a statement over the scope, which no alias qualifies.
+     */
+    public BoundExpression bindExpression(ExpressionNode expression, OutputSchema scope, int preferredType, SqlExecutionContext executionContext)
+            throws SqlException {
+        return ctx.functionBinder.bind(expression, scope, null, preferredType, executionContext);
+    }
+
     @Override
     public void clear() {
         ctx.clear();
@@ -187,20 +197,18 @@ public final class SqlBinder implements Mutable {
         referencedColumns.clear();
     }
 
-    public BoundExpressionRewriter getExpressionRewriter() {
-        return ctx.expressionRewriter;
+    /**
+     * Empties the temporaries of the function binder, which the compiler clears with the expression stages it owns.
+     */
+    public void clearExpressions() {
+        ctx.functionBinder.clear();
     }
 
-    public FunctionBinder getFunctionBinder() {
+    /**
+     * The binder of calls over bound expressions, for the stages after binding.
+     */
+    public CallBinder getCallBinder() {
         return ctx.functionBinder;
-    }
-
-    public FunctionInstantiator getFunctionInstantiator() {
-        return ctx.functionInstantiator;
-    }
-
-    public JoinOrderSolver getJoinOrderSolver() {
-        return joinOrder;
     }
 
     public IntList getOutputColumnPositions(LogicalPlan root) {
@@ -214,10 +222,6 @@ public final class SqlBinder implements Mutable {
 
     public SqlParserCallback getParserCallback() {
         return parserCallback;
-    }
-
-    public UpdateBinder getUpdateBinder() {
-        return updateBinder;
     }
 
     /**

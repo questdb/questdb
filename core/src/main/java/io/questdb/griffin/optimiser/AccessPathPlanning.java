@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.TableAccessInfo;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.IntervalAnalysis;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
@@ -64,19 +63,19 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
 /**
- * Decides how every scan of a query level, and of each sub-query it reads, reads its table, once order planning has
- * recorded what the consumers of the scan require, and records the decision on the {@link ScanPlan}: the access path,
- * the index it reads and how, the key values, sub-query or pattern that drive it, the requested order it delivers,
- * the residual it filters with and the intervals it relies on. It reads the table table, the interval analysis
- * of the predicate, the pattern declarations and the configuration; the code generator builds exactly what it
- * records.
+ * Decides how every scan of a query level, and of each sub-query it reads, reads its table, once
+ * {@link OrderPlanning} has recorded what the consumers of the scan require, and records the decision on the
+ * {@link ScanPlan}: the access path, the index it reads and how, the key values, sub-query or pattern that drive it,
+ * the requested order it delivers, the residual it filters with and the intervals it relies on. It reads the table
+ * table, the interval analysis of the predicate, the pattern declarations and the configuration; the code generator
+ * builds exactly what it records.
  * <p>
  * A decision depends on where the generator builds the scan, which this pass follows as the generator walks the
  * plan: the generation depth of the query level, whether a consumer requires the designated timestamp, see
- * {@link OrderPlanning#requiresInputTimestamp}, and the intervals of a window join master that the scan of its
+ * {@link OperatorPlanning#requiresInputTimestamp}, and the intervals of a window join master that the scan of its
  * slave narrows to. Every scan gets an access path; a static error the generator raises before it reads the
  * decision, such as an invalid interval bound, fails planning with the same message and position. Once it has
- * planned the inputs of a node, the walk hands the node to {@link OrderPlanning#planOperators} with the timestamp
+ * planned the inputs of a node, the walk hands the node to {@link OperatorPlanning#planOperators} with the timestamp
  * requirement of its consumer, which rejects what the generator cannot build.
  */
 final class AccessPathPlanning {
@@ -91,8 +90,7 @@ final class AccessPathPlanning {
     private final IntervalAnalysis intervals;
     private final IntList keyIndexes = new IntList();
     private final SymbolKeyExtractor keys = new SymbolKeyExtractor();
-    private final MatchSymbolFunctionFactory matchSymbolFactory = new MatchSymbolFunctionFactory();
-    private final OrderPlanning orderPlanning;
+    private final OperatorPlanning operatorPlanning;
     private final LongList prefixes = new LongList();
     private final IntList tableColumnIndexes = new IntList();
     private final ObjList<Subquery> subqueries = new ObjList<>();
@@ -117,10 +115,10 @@ final class AccessPathPlanning {
     private WindowJoinStep pendingStep;
     private TableAccessInfo table;
 
-    AccessPathPlanning(CairoConfiguration configuration, OptimiserContext context, OrderPlanning orderPlanning) {
+    AccessPathPlanning(CairoConfiguration configuration, OptimiserContext context, OperatorPlanning operatorPlanning) {
         this.configuration = configuration;
         this.context = context;
-        this.orderPlanning = orderPlanning;
+        this.operatorPlanning = operatorPlanning;
         this.intervals = new IntervalAnalysis(configuration);
     }
 
@@ -219,8 +217,7 @@ final class AccessPathPlanning {
         final FunctionExpression positive = pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
         final int keyIndex = output.getColumnIndexById(((ColumnExpression) positive.argumentAt(0)).getColumnId());
         final boolean isSymbolTableStatic = table.isSymbolTableStatic(tableColumnIndexes.getQuick(keyIndex));
-        final FunctionFactory factory = "!~".equals(pattern.getName()) ? matchSymbolFactory : positive.getOverload().getFactory();
-        return factory.isSymbolKeySetProvider(positive.getArguments(), isSymbolTableStatic);
+        return MatchSymbolFunctionFactory.positivePatternFactory(pattern).isSymbolKeySetProvider(positive.getArguments(), isSymbolTableStatic);
     }
 
     private void planIndexed(ScanPlan scan, BoundExpression residual) {
@@ -454,7 +451,7 @@ final class AccessPathPlanning {
             isCapturing = false;
             pendingStep = null;
             try {
-                orderPlanning.countSharedConsumers(subquery.getRoot());
+                operatorPlanning.countSharedConsumers(subquery.getRoot());
                 walk(subquery.getRoot(), false);
             } finally {
                 depth = savedDepth;
@@ -618,47 +615,44 @@ final class AccessPathPlanning {
 
     /**
      * Plans the scans under the node, each input of which requires its designated timestamp as
-     * {@link OrderPlanning#requiresInputTimestamp} decides from {@code isTimestampRequired}, the requirement of the
+     * {@link OperatorPlanning#requiresInputTimestamp} decides from {@code isTimestampRequired}, the requirement of the
      * node's consumer, then the operators of the node.
      */
     private void walk(LogicalPlan plan, boolean isTimestampRequired) throws SqlException {
         switch (plan) {
             case ScanPlan scan -> planScan(scan, null, null, isTimestampRequired);
-            case FilterPlan filter when filter.getInput() instanceof ScanPlan scan && !scan.isWalClientUpdate() -> {
-                planScan(scan, filter.getPredicate(), null, orderPlanning.requiresInputTimestamp(filter, 0, isTimestampRequired));
+            case FilterPlan filter when LogicalPlans.fusedScan(filter) instanceof ScanPlan scan -> {
+                planScan(scan, filter.getPredicate(), null, operatorPlanning.requiresInputTimestamp(filter, 0, isTimestampRequired));
                 planSubqueries(scan);
             }
             case LatestByPlan latest -> walkLatestBy(latest, isTimestampRequired);
             case AggregatePlan aggregate -> walkAggregate(aggregate, isTimestampRequired);
             case JoinPlan join -> walkJoin(join, isTimestampRequired);
             case WindowJoinPlan windowJoin -> walkWindowJoin(windowJoin, isTimestampRequired);
-            case SampleByPlan sample -> {
-                final LogicalPlan sampled = sample.getInput();
-                walk(!sample.isTimestampRequired() && LogicalPlans.isTimestampDeclarationOnly(sampled) ? sampled.inputAt(0) : sampled,
-                        orderPlanning.requiresInputTimestamp(sample, 0, isTimestampRequired));
-            }
+            case SampleByPlan sample ->
+                    walk(LogicalPlans.sampleByBase(sample), operatorPlanning.requiresInputTimestamp(sample, 0, isTimestampRequired));
             default -> {
                 for (int i = 0, n = plan.inputCount(); i < n; i++) {
-                    walk(plan.inputAt(i), orderPlanning.requiresInputTimestamp(plan, i, isTimestampRequired));
+                    walk(plan.inputAt(i), operatorPlanning.requiresInputTimestamp(plan, i, isTimestampRequired));
                 }
             }
         }
         planSubqueries(plan);
-        orderPlanning.planOperators(plan, isTimestampRequired);
+        operatorPlanning.planOperators(plan, isTimestampRequired);
     }
 
     private void walkAggregate(AggregatePlan aggregate, boolean isTimestampRequired) throws SqlException {
         if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
-            final boolean isHorizonTimestampRequired = orderPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired);
-            walk(horizon.getMaster(), orderPlanning.requiresInputTimestamp(horizon, 0, isHorizonTimestampRequired));
+            final boolean isHorizonTimestampRequired = operatorPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired);
+            walk(horizon.getMaster(), operatorPlanning.requiresInputTimestamp(horizon, 0, isHorizonTimestampRequired));
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
-                walk(horizon.getSlaves().getQuick(i).getInput(), orderPlanning.requiresInputTimestamp(horizon, i + 1, isHorizonTimestampRequired));
+                walk(horizon.getSlaves().getQuick(i).getInput(), operatorPlanning.requiresInputTimestamp(horizon, i + 1, isHorizonTimestampRequired));
             }
             planSubqueries(horizon);
             return;
         }
         if (!planPosting(aggregate)) {
-            walk(aggregate.getInput(), orderPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired));
+            walk(aggregate.getInput(), operatorPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired));
             return;
         }
         final LogicalPlan input = aggregate.getInput();
@@ -674,12 +668,12 @@ final class AccessPathPlanning {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         final boolean wasCapturing = isCapturing;
         try {
-            walk(ordered.getQuick(0).getInput(), orderPlanning.requiresInputTimestamp(join, 0, isTimestampRequired));
+            walk(ordered.getQuick(0).getInput(), operatorPlanning.requiresInputTimestamp(join, 0, isTimestampRequired));
             isCapturing = false;
             for (int i = 1, n = ordered.size(); i < n; i++) {
                 final JoinInput step = ordered.getQuick(i);
                 if (step.getInput() != null) {
-                    walk(step.getInput(), orderPlanning.requiresInputTimestamp(join, i, isTimestampRequired));
+                    walk(step.getInput(), operatorPlanning.requiresInputTimestamp(join, i, isTimestampRequired));
                 }
             }
         } finally {
@@ -689,17 +683,17 @@ final class AccessPathPlanning {
 
     private void walkLatestBy(LatestByPlan latest, boolean isTimestampRequired) throws SqlException {
         final LogicalPlan input = latest.getInput();
-        final LogicalPlan source = input instanceof FilterPlan filter ? filter.getInput() : input;
-        final boolean isInputTimestampRequired = orderPlanning.requiresInputTimestamp(latest, 0, isTimestampRequired);
-        if (source instanceof ScanPlan scan) {
+        final ScanPlan scan = LogicalPlans.latestByScan(latest);
+        final boolean isInputTimestampRequired = operatorPlanning.requiresInputTimestamp(latest, 0, isTimestampRequired);
+        if (scan != null) {
             planScan(scan, input instanceof FilterPlan filter ? filter.getPredicate() : null, latest, isInputTimestampRequired);
-            if (input != source) {
+            if (input != scan) {
                 planSubqueries(input);
             }
             planSubqueries(scan);
             return;
         }
-        walk(LogicalPlans.isTimestampDeclarationOnly(input) ? input.inputAt(0) : input, isInputTimestampRequired);
+        walk(LogicalPlans.latestByBase(latest), isInputTimestampRequired);
     }
 
     private void walkWindowJoin(WindowJoinPlan windowJoin, boolean isTimestampRequired) throws SqlException {
@@ -713,12 +707,12 @@ final class AccessPathPlanning {
         capturedTypes.setQuick(level, MODEL_NONE);
         try {
             isCapturing = true;
-            walk(windowJoin.getMaster(), orderPlanning.requiresInputTimestamp(windowJoin, 0, isTimestampRequired));
+            walk(windowJoin.getMaster(), operatorPlanning.requiresInputTimestamp(windowJoin, 0, isTimestampRequired));
             isCapturing = false;
             for (int i = 0, n = windowJoin.getSteps().size(); i < n; i++) {
                 final WindowJoinStep step = windowJoin.getSteps().getQuick(i);
                 pendingStep = capturedTypes.getQuick(level) != MODEL_NONE && step.isTableSource() && !step.isDynamic() ? step : null;
-                walk(step.getSlave(), orderPlanning.requiresInputTimestamp(windowJoin, i + 1, isTimestampRequired));
+                walk(step.getSlave(), operatorPlanning.requiresInputTimestamp(windowJoin, i + 1, isTimestampRequired));
                 pendingStep = null;
             }
         } finally {
@@ -747,10 +741,10 @@ final class AccessPathPlanning {
         pendingStep = null;
         this.depth = depth;
         try {
-            orderPlanning.countSharedConsumers(root);
+            operatorPlanning.countSharedConsumers(root);
             walk(root, isTimestampRequired);
         } finally {
-            orderPlanning.settleMasterSides();
+            operatorPlanning.settleMasterSides();
         }
     }
 

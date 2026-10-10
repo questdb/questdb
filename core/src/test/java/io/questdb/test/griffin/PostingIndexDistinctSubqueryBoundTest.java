@@ -30,7 +30,7 @@ import org.junit.Test;
 
 /**
  * Regression coverage for the posting-index DISTINCT fast path in
- * {@code AggregateFactoryGenerator.tryPostingIndex()} when the base table's WHERE clause
+ * {@code ScanFactoryGenerator.generatePostingDistinct()} when the base table's WHERE clause
  * carries a scalar-subquery designated-timestamp bound (a plain {@code ts >= (SELECT ...)}
  * or a nested {@code LATEST ON ...} subquery).
  *

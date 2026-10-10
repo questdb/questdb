@@ -46,7 +46,11 @@ import io.questdb.std.Misc;
  * operands through the functions it builds.
  */
 public final class InstantiatedIntervalBounds implements IntervalBoundSource {
-    private FunctionInstantiator instantiator;
+    private final FunctionInstantiator instantiator;
+
+    public InstantiatedIntervalBounds(FunctionInstantiator instantiator) {
+        this.instantiator = instantiator;
+    }
 
     @Override
     public Function compileTickExpr(TimestampDriver timestampDriver, CairoConfiguration configuration, CharSequence seq, int lo, int lim, int position)
@@ -101,10 +105,6 @@ public final class InstantiatedIntervalBounds implements IntervalBoundSource {
     public Function newMonotonicInverter(Function head, Function lo, short loAdjustment, long loValue, Function hi, short hiAdjustment,
                                          long hiValue, boolean isBetween, TimestampDriver timestampDriver) {
         return new TimestampMonotonicInverter(head, lo, loAdjustment, loValue, hi, hiAdjustment, hiValue, isBetween, timestampDriver);
-    }
-
-    public void of(FunctionInstantiator instantiator) {
-        this.instantiator = instantiator;
     }
 
     @Override

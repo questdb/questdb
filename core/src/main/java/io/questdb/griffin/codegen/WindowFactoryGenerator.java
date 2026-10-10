@@ -90,6 +90,7 @@ final class WindowFactoryGenerator {
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
+    private final ListColumnFilter indexColumnFilter = new ListColumnFilter();
     private final StringSink nameSink = new StringSink();
     private final RecordComparatorCompiler recordComparatorCompiler;
 
@@ -594,7 +595,7 @@ final class WindowFactoryGenerator {
                             directions.setQuick(k, 1 - directions.getQuick(k));
                         }
                     }
-                    function.initRecordComparator(codeGenerator, bindMetadata, chainTypes, order,
+                    function.initRecordComparator(asm, recordComparatorCompiler, indexColumnFilter, bindMetadata, chainTypes, order,
                             spec.getOrderByPositions(), orderNames, directions);
                 }
                 function.setColumnIndex(outputIndex);

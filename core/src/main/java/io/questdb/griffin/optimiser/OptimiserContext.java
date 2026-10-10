@@ -27,6 +27,8 @@ package io.questdb.griffin.optimiser;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CallBinder;
+import io.questdb.griffin.CharacterStore;
+import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanTables;
@@ -46,7 +48,9 @@ import io.questdb.std.ObjList;
  * passes read it.
  */
 final class OptimiserContext implements Mutable {
+    private final ObjList<BoundExpression> callArguments;
     private final CallBinder callBinder;
+    private final CharacterStore characterStore;
     private final TableFunctionSources functionSources;
     private final FunctionInstantiator instantiator;
     private final BoundExpressionRewriter rewriter;
@@ -60,7 +64,9 @@ final class OptimiserContext implements Mutable {
             FunctionInstantiator instantiator,
             TableFunctionSources functionSources,
             PlanNodePools planNodes,
-            PlanTables planTables
+            PlanTables planTables,
+            CharacterStore characterStore,
+            ObjList<BoundExpression> callArguments
     ) {
         this.planNodes = planNodes;
         this.planTables = planTables;
@@ -68,6 +74,8 @@ final class OptimiserContext implements Mutable {
         this.callBinder = callBinder;
         this.instantiator = instantiator;
         this.functionSources = functionSources;
+        this.characterStore = characterStore;
+        this.callArguments = callArguments;
     }
 
     @Override
@@ -76,10 +84,30 @@ final class OptimiserContext implements Mutable {
     }
 
     /**
-     * Binds a call over already-bound arguments, see {@link CallBinder#bindCall}.
+     * Binds the call {@code name} over the already-bound {@link #getCallArguments}, which it clears, see
+     * {@link CallBinder#bindCall}.
      */
-    BoundExpression bindCall(CharSequence name, int position, ObjList<? extends BoundExpression> args, OutputSchema input) throws SqlException {
-        return callBinder.bindCall(name, position, args, input, executionContext);
+    BoundExpression bindCall(CharSequence name, int position, OutputSchema input) throws SqlException {
+        final BoundExpression bound = callBinder.bindCall(name, position, callArguments, input, executionContext);
+        callArguments.clear();
+        return bound;
+    }
+
+    /**
+     * Binds the call {@code name} over the two already-bound arguments.
+     */
+    BoundExpression bindCall(CharSequence name, int position, BoundExpression left, BoundExpression right, OutputSchema input) throws SqlException {
+        callArguments.clear();
+        callArguments.add(left);
+        callArguments.add(right);
+        return bindCall(name, position, input);
+    }
+
+    /**
+     * The arguments the next {@link #bindCall(CharSequence, int, OutputSchema)} binds.
+     */
+    ObjList<BoundExpression> getCallArguments() {
+        return callArguments;
     }
 
     SqlExecutionContext getExecutionContext() {
@@ -114,5 +142,22 @@ final class OptimiserContext implements Mutable {
 
     void of(SqlExecutionContext executionContext) {
         this.executionContext = executionContext;
+    }
+
+    /**
+     * The name, or the name with the lowest numeric suffix, that no column of the output has in any case.
+     */
+    CharSequence uniqueName(OutputSchema output, CharSequence name) {
+        if (!output.hasColumnName(name)) {
+            return name;
+        }
+        for (int suffix = 1; ; suffix++) {
+            final CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(name).put(suffix);
+            final CharSequence candidate = entry.toImmutable();
+            if (!output.hasColumnName(candidate)) {
+                return candidate;
+            }
+        }
     }
 }

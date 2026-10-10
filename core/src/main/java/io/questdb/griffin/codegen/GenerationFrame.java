@@ -53,6 +53,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -67,8 +68,12 @@ import java.io.Closeable;
  */
 final class GenerationFrame implements Closeable, Mutable {
     final IntList columnReferenceCounts = new IntList();
+    final BoundExpressionRewriter expressionRewriter;
+    final FunctionInstantiator functionInstantiator;
+    final TableFunctionSources functionSources;
+    final InstantiatedIntervalBounds intervalBounds;
     final IntervalExtractor intervals;
-    final InstantiatedIntervalBounds intervalBounds = new InstantiatedIntervalBounds();
+    final IntList keySlots = new IntList();
     final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     final LongList latestPrefixes = new LongList();
     final ListColumnFilter listColumnFilterA = new ListColumnFilter();
@@ -96,20 +101,31 @@ final class GenerationFrame implements Closeable, Mutable {
     final WindowFactoryGenerator.WindowPartitionKeys windowPartitionKeys = new WindowFactoryGenerator.WindowPartitionKeys();
     final ObjList<WindowFunction> windowSpecFunctions = new ObjList<>();
     final ObjList<WindowMapSpec> windowSpecs = new ObjList<>();
+    final ObjList<BoundExpression> workerKeyExpressions = new ObjList<>();
     final BitSet writeSymbolAsString = new BitSet();
     private final ObjList<PreparedFilter> preparedFilters = new ObjList<>();
     private final ObjList<TableColumnMetadata> projectionSlotColumns = new ObjList<>();
-    BoundExpressionRewriter expressionRewriter;
-    FunctionInstantiator functionInstantiator;
-    TableFunctionSources functionSources;
     boolean isJoinSlaveInput;
+    Function limitHi;
+    Function limitLo;
     RecordCursorFactory sharedHeadFactory;
     int sharedHeadId;
     LogicalPlan sharedHeadTarget;
     PreparedFilter stolenFilter;
     private int preparedFilterCount;
 
-    GenerationFrame(CairoConfiguration configuration, StringSink tmpSink, LongList tmpLongs) {
+    GenerationFrame(
+            CairoConfiguration configuration,
+            StringSink tmpSink,
+            LongList tmpLongs,
+            BoundExpressionRewriter expressionRewriter,
+            FunctionInstantiator functionInstantiator,
+            TableFunctionSources functionSources
+    ) {
+        this.expressionRewriter = expressionRewriter;
+        this.functionInstantiator = functionInstantiator;
+        this.functionSources = functionSources;
+        this.intervalBounds = new InstantiatedIntervalBounds(functionInstantiator);
         this.intervals = new IntervalExtractor(configuration, tmpSink, tmpLongs);
         this.overrideIntervals = new IntervalExtractor(configuration, tmpSink, tmpLongs);
     }
@@ -118,10 +134,7 @@ final class GenerationFrame implements Closeable, Mutable {
     public void clear() {
         Throwable failure = Misc.clearBestEffort(null, intervals);
         failure = Misc.clearBestEffort(failure, overrideIntervals);
-        expressionRewriter = null;
-        functionInstantiator = null;
-        intervalBounds.of(null);
-        functionSources = null;
+        keySlots.clear();
         keyTypes.clear();
         valueTypes.clear();
         listColumnFilterA.clear();
@@ -129,8 +142,11 @@ final class GenerationFrame implements Closeable, Mutable {
         patternArguments.clear();
         writeSymbolAsString.clear();
         isJoinSlaveInput = false;
+        limitHi = null;
+        limitLo = null;
         latestPrefixes.clear();
         patternConjuncts.clear();
+        workerKeyExpressions.clear();
         patternPositions.clear();
         projectionScope.clear();
         columnReferenceCounts.clear();
@@ -178,6 +194,25 @@ final class GenerationFrame implements Closeable, Mutable {
     }
 
     /**
+     * Pops the holder {@link #pushPreparedFilter(boolean)} pushed, if any, freeing what its consumer did not adopt.
+     */
+    void popPreparedFilter(@Nullable PreparedFilter filter) {
+        if (filter != null) {
+            popPreparedFilter();
+        }
+    }
+
+    /**
+     * Pops the holder {@link #pushPreparedFilter(boolean)} pushed, if any, on the consumer's failure, freeing what it
+     * holds.
+     */
+    void popPreparedFilter(@Nullable PreparedFilter filter, Throwable primary) {
+        if (filter != null) {
+            popPreparedFilter(primary);
+        }
+    }
+
+    /**
      * Pops the innermost holder on the consumer's failure, freeing what it holds.
      */
     void popPreparedFilter(Throwable primary) {
@@ -209,6 +244,15 @@ final class GenerationFrame implements Closeable, Mutable {
         }
         preparedFilterCount++;
         return filter;
+    }
+
+    /**
+     * The holder of the filter a parallel consumer steals when {@code isFilterStolen}, see {@link #pushPreparedFilter()};
+     * null otherwise.
+     */
+    @Nullable
+    PreparedFilter pushPreparedFilter(boolean isFilterStolen) {
+        return isFilterStolen ? pushPreparedFilter() : null;
     }
 
     void setReferenceCount(int columnId, int count) {

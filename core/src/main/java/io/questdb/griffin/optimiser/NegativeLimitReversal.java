@@ -26,11 +26,13 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.PlanRewriter;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
@@ -46,6 +48,7 @@ import io.questdb.std.ObjectPool;
 final class NegativeLimitReversal implements OptimiserPass {
     private final ObjectPool<ConstantExpression> constants;
     private final IntList limitKeyIds;
+    private final PlanRewriter negativeLimits = this::reverseNegativeLimit;
     private final ObjList<LogicalPlan> restoredSorts;
     private final ObjectPool<SortPlan> sorts;
 
@@ -57,7 +60,7 @@ final class NegativeLimitReversal implements OptimiserPass {
     }
 
     @Override
-    public LogicalPlan apply(LogicalPlan plan) {
+    public LogicalPlan apply(LogicalPlan plan) throws SqlException {
         return reverseNegativeLimits(plan);
     }
 
@@ -92,19 +95,12 @@ final class NegativeLimitReversal implements OptimiserPass {
      * {@code ORDER BY ts, a LIMIT -n} becomes {@code ORDER BY ts, a} over {@code ORDER BY ts DESC, a DESC LIMIT n}.
      * An enclosing sort replaces the restoring one.
      */
-    private LogicalPlan reverseNegativeLimits(LogicalPlan root) {
+    private LogicalPlan reverseNegativeLimits(LogicalPlan root) throws SqlException {
         restoredSorts.clear();
-        return reverseNegativeLimits0(root);
+        return root.rewriteBottomUp(negativeLimits);
     }
 
-    private LogicalPlan reverseNegativeLimits0(LogicalPlan plan) {
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final LogicalPlan input = plan.inputAt(i);
-            final LogicalPlan reversed = reverseNegativeLimits0(input);
-            if (reversed != input) {
-                plan.replaceInput(i, reversed);
-            }
-        }
+    private LogicalPlan reverseNegativeLimit(LogicalPlan plan) {
         if (plan instanceof SortPlan) {
             LogicalPlan parent = plan;
             while (parent.inputAt(0) instanceof ProjectPlan) {

@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
@@ -35,6 +34,7 @@ import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.WeekTimestampNanosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampNanosSampler;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -468,7 +468,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public int getGKKHourInt() {
-        return SqlCodeGenerator.GKK_NANO_HOUR_INT;
+        return VectorAggregateFunction.GKK_NANO_HOUR_INT;
     }
 
     @Override

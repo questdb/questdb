@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -57,6 +58,19 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
     public static boolean isSymbolKeyScanCounterEnabled = false;
     @TestOnly
     public static final AtomicLong testSymbolKeyScans = new AtomicLong();
+    private static final MatchSymbolFunctionFactory INSTANCE = new MatchSymbolFunctionFactory();
+
+    /**
+     * The factory of the function that matches the positive form of a symbol pattern: this one for {@code !~}, else the
+     * overload of the pattern, or of the pattern its {@code not} negates.
+     */
+    public static FunctionFactory positivePatternFactory(FunctionExpression pattern) {
+        if ("!~".equals(pattern.getName())) {
+            return INSTANCE;
+        }
+        final FunctionExpression positive = pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
+        return positive.getOverload().getFactory();
+    }
 
     public static boolean symbolMatches(Function arg, Record rec, IntList symbolKeys) {
         final int key = arg.getInt(rec);

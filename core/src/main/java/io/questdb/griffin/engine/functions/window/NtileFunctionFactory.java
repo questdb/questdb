@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -40,13 +41,14 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -188,7 +190,9 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+        public void initRecordComparator(BytecodeAssembler asm,
+                                         RecordComparatorCompiler comparatorCompiler,
+                                         ListColumnFilter columnFilter,
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,
@@ -310,7 +314,9 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+        public void initRecordComparator(BytecodeAssembler asm,
+                                         RecordComparatorCompiler comparatorCompiler,
+                                         ListColumnFilter columnFilter,
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,

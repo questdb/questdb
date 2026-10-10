@@ -44,7 +44,6 @@ import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.optimiser.DecorrelationContext.keyColumnId;
 import static io.questdb.griffin.optimiser.ScalarCompensation.isImplicitlyKeyedByOuterColumns;
 
 /**
@@ -146,7 +145,7 @@ final class CorrelatedChainRewriter {
         final OutputSchema output = ordered.getOutput();
         final WindowSpec spec = ctx.planNodes.windowSpecs.next().of(ctx.planNodes.unboundedWindow);
         for (int k = base, n = ctx.mappedOuterIds.size(); k < n; k++) {
-            final int columnId = wrapper != null ? keyColumnId(wrapper, ctx.mappedColumnIds.getQuick(k)) : ctx.mappedColumnIds.getQuick(k);
+            final int columnId = wrapper != null ? LogicalPlans.projectedSourceColumnId(wrapper, ctx.mappedColumnIds.getQuick(k)) : ctx.mappedColumnIds.getQuick(k);
             spec.getPartitionBy().add(ctx.planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
         }
         if (ordered instanceof SortPlan sort) {
@@ -227,7 +226,7 @@ final class CorrelatedChainRewriter {
         final ColumnExpression rank = ctx.planNodes.columns.next().of(rowNumberId, rowNumber.getDataType(), position);
         final BoundExpression predicate;
         if (lo == null && hi == null) {
-            predicate = ctx.bindCall("=", position, rank, ctx.planNodes.constants.next().ofInt(1, position), window.getOutput());
+            predicate = ctx.context.bindCall("=", position, rank, ctx.planNodes.constants.next().ofInt(1, position), window.getOutput());
         } else {
             final BoundExpression upper = compensation.limitComparison(">=", hi == null ? lo : hi, rank, window.getOutput(), position);
             predicate = hi != null && lo != null

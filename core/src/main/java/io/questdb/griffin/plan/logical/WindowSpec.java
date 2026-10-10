@@ -168,7 +168,7 @@ public final class WindowSpec implements Mutable {
      */
     /**
      * True when the input of the window delivers the rows in this window's ORDER BY, so the window need not order
-     * them; order planning decides it.
+     * them; operator planning decides it.
      */
     public boolean isOrderDelivered() {
         return isOrderDelivered;

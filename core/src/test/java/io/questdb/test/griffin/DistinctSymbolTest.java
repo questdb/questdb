@@ -31,7 +31,7 @@ public class DistinctSymbolTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctOverPostingIndexRejectPathDoesNotLeakIntervalBound() throws Exception {
-        // The DISTINCT-over-posting-index optimisation (AggregateFactoryGenerator.tryPostingIndex)
+        // The DISTINCT-over-posting-index optimisation (ScanFactoryGenerator.generatePostingDistinct)
         // extracts intervals from the WHERE clause, then abandons them when the clause leaves a
         // residual filter. Abandoning them without clearing the IntervalExtractor orphans whatever
         // the extraction compiled into the runtime interval builder. alloc_ts() makes the orphan

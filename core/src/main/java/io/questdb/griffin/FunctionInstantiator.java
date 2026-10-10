@@ -35,6 +35,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -353,6 +355,118 @@ public final class FunctionInstantiator implements Mutable {
     }
 
     /**
+     * Builds one aggregate list per worker, aligned with the owners: a worker shares a thread-safe
+     * owner and owns its own clone of any other. Returns null when every owner is thread-safe; on
+     * failure closes the clones built so far.
+     */
+    public ObjList<ObjList<GroupByFunction>> instantiateWorkerAggregates(
+            ObjList<FunctionExpression> expressions,
+            OutputSchema input,
+            RecordMetadata metadata,
+            ObjList<GroupByFunction> owners,
+            int workerCount,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (isThreadSafe(owners)) {
+            return null;
+        }
+        final ObjList<ObjList<GroupByFunction>> workers = new ObjList<>(workerCount);
+        beginWorkerClones();
+        try {
+            for (int w = 0; w < workerCount; w++) {
+                final PerWorkerFunctionList<GroupByFunction> functions = new PerWorkerFunctionList<>(owners.size());
+                workers.add(functions);
+                for (int i = 0, n = owners.size(); i < n; i++) {
+                    final GroupByFunction owner = owners.getQuick(i);
+                    if (owner.isThreadSafe()) {
+                        functions.add(owner, false);
+                    } else {
+                        final GroupByFunction function = (GroupByFunction) instantiateAggregate(expressions.getQuick(i), input, metadata, executionContext);
+                        functions.add(function, true);
+                        function.initValueIndex(owner.getValueIndex());
+                    }
+                }
+            }
+            return workers;
+        } catch (Throwable th) {
+            closeWorkers(workers, th);
+            throw th;
+        } finally {
+            endWorkerClones();
+        }
+    }
+
+    /**
+     * Builds one function list per worker, aligned with the owners: a worker shares a thread-safe
+     * owner and owns its own clone of any other. Returns null when every owner is thread-safe; on
+     * failure closes the clones built so far.
+     */
+    public ObjList<ObjList<Function>> instantiateWorkerFunctions(
+            ObjList<BoundExpression> expressions,
+            OutputSchema input,
+            RecordMetadata metadata,
+            ObjList<Function> owners,
+            int workerCount,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (isThreadSafe(owners)) {
+            return null;
+        }
+        final ObjList<ObjList<Function>> workers = new ObjList<>(workerCount);
+        beginWorkerClones();
+        try {
+            for (int w = 0; w < workerCount; w++) {
+                final PerWorkerFunctionList<Function> functions = new PerWorkerFunctionList<>(owners.size());
+                workers.add(functions);
+                for (int i = 0, n = owners.size(); i < n; i++) {
+                    final Function owner = owners.getQuick(i);
+                    if (owner.isThreadSafe()) {
+                        functions.add(owner, false);
+                    } else {
+                        functions.add(instantiate(expressions.getQuick(i), input, metadata, executionContext), true);
+                    }
+                }
+            }
+            return workers;
+        } catch (Throwable th) {
+            closeWorkers(workers, th);
+            throw th;
+        } finally {
+            endWorkerClones();
+        }
+    }
+
+    /**
+     * Builds one owned clone of the owner per worker. Returns null when the owner is thread-safe;
+     * on failure frees the clones built so far.
+     */
+    public ObjList<Function> instantiateWorkers(
+            BoundExpression expression,
+            OutputSchema input,
+            RecordMetadata metadata,
+            Function owner,
+            int workerCount,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (owner.isThreadSafe()) {
+            return null;
+        }
+        final ObjList<Function> workers = new ObjList<>(workerCount);
+        beginWorkerClones();
+        try {
+            for (int i = 0; i < workerCount; i++) {
+                workers.add(instantiate(expression, input, metadata, executionContext));
+            }
+            return workers;
+        } catch (Throwable th) {
+            Misc.freeObjList(workers, th);
+            throw th;
+        } finally {
+            endWorkerClones();
+        }
+    }
+
+    /**
      * Evaluates a folded equality on the NULL its column takes when a join NULL-extends it.
      */
     public boolean isNullRejecting(FunctionExpression call, int columnArgument, SqlExecutionContext executionContext) {
@@ -410,8 +524,23 @@ public final class FunctionInstantiator implements Mutable {
         }
     }
 
+    private static void closeWorkers(ObjList<? extends ObjList<? extends Function>> workers, Throwable primary) {
+        for (int i = 0, n = workers.size(); i < n; i++) {
+            PerWorkerFunctionList.close(workers.getQuick(i), primary);
+        }
+    }
+
     private static boolean hasArrayColumnLayoutDependency(BoundExpression expression) {
         return !expression.walk(ARRAY_LAYOUT_SENSITIVE_CALLS);
+    }
+
+    private static boolean isThreadSafe(ObjList<? extends Function> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).isThreadSafe()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean requiresReconstruction(BoundExpression expression) {

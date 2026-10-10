@@ -36,9 +36,6 @@ import io.questdb.std.Vect;
 import java.util.concurrent.atomic.DoubleAccumulator;
 import java.util.function.DoubleBinaryOperator;
 
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_NANO_HOUR_INT;
-
 public class MinDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MIN = Math::min;

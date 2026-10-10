@@ -43,7 +43,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Pins the order-sensitive operator decisions order planning records on the plan, and the factories the generator
+ * Pins the order-sensitive operator decisions operator planning records on the plan, and the factories the generator
  * builds from them.
  */
 public class OrderOperatorPlanningTest extends AbstractCairoTest {

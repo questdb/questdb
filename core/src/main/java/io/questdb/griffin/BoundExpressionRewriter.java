@@ -59,6 +59,7 @@ public final class BoundExpressionRewriter implements Mutable {
     private final ObjectPool<ObjList<BoundExpression>> rewriteArguments;
     private final ObjectPool<TypeExpression> types;
     private boolean isReplacementPlaced;
+    private BoundExpression splitRemainder;
 
     /**
      * Allocates descriptions from the given pools, which their owner empties, and retargets the given preparations;
@@ -93,6 +94,7 @@ public final class BoundExpressionRewriter implements Mutable {
     @Override
     public void clear() {
         rewriteArguments.clear();
+        splitRemainder = null;
     }
 
     /**
@@ -195,6 +197,13 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
+     * The conjuncts the last {@link #splitConjuncts} left: those that failed its test, in their AND tree shape.
+     */
+    public BoundExpression getSplitRemainder() {
+        return splitRemainder;
+    }
+
+    /**
      * Copies the expression with the value itself at the first reference to the column, so its preparation is
      * adopted there, and its own copy at every further reference; preparations of rewritten calls stay with the
      * original.
@@ -254,6 +263,20 @@ public final class BoundExpressionRewriter implements Mutable {
         return isChanged ? functions.next().of(call, args) : call;
     }
 
+    /**
+     * Drops the conjunct with the given identity from the AND tree, or returns null when the
+     * predicate is that conjunct.
+     */
+    public BoundExpression removeConjunct(BoundExpression predicate, BoundExpression conjunct) {
+        if (predicate == conjunct) {
+            return null;
+        }
+        if (predicate instanceof FunctionExpression call && call.isAnd() && call.getArgumentCount() == 2) {
+            return replaceConjunction(call, removeConjunct(call.argumentAt(0), conjunct), removeConjunct(call.argumentAt(1), conjunct));
+        }
+        return predicate;
+    }
+
     public BoundExpression replaceConjunction(FunctionExpression original, BoundExpression left, BoundExpression right) {
         assert original.isAnd()
                 && original.getArgumentCount() == 2;
@@ -261,6 +284,39 @@ public final class BoundExpressionRewriter implements Mutable {
             return original;
         }
         return conjunction(original.getOverload(), left, right, original.getPosition());
+    }
+
+    /**
+     * Returns the conjuncts of the AND tree that pass the test, in their tree shape: the predicate itself when every
+     * conjunct passes, null when none does or the predicate is null. The test sees each conjunct once, left to right.
+     */
+    public BoundExpression retainConjuncts(BoundExpression predicate, ConjunctTest test) throws SqlException {
+        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
+            final BoundExpression left = retainConjuncts(call.argumentAt(0), test);
+            return replaceConjunction(call, left, retainConjuncts(call.argumentAt(1), test));
+        }
+        return predicate == null || test.test(predicate) ? predicate : null;
+    }
+
+    /**
+     * Splits the AND tree in one walk, seeing each conjunct once, left to right: returns the conjuncts that pass the
+     * test and leaves those that fail for {@link #getSplitRemainder}, each side in its tree shape as
+     * {@link #retainConjuncts} builds it. The test must not split.
+     */
+    public BoundExpression splitConjuncts(BoundExpression predicate, ConjunctTest test) throws SqlException {
+        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
+            final BoundExpression leftMatches = splitConjuncts(call.argumentAt(0), test);
+            final BoundExpression leftRemainder = splitRemainder;
+            final BoundExpression rightMatches = splitConjuncts(call.argumentAt(1), test);
+            splitRemainder = replaceConjunction(call, leftRemainder, splitRemainder);
+            return replaceConjunction(call, leftMatches, rightMatches);
+        }
+        if (predicate == null || test.test(predicate)) {
+            splitRemainder = null;
+            return predicate;
+        }
+        splitRemainder = predicate;
+        return null;
     }
 
     /**
@@ -531,5 +587,13 @@ public final class BoundExpressionRewriter implements Mutable {
             args.add(unwrapProjectedOffsets(call.argumentAt(i)));
         }
         return functions.next().of(call, args);
+    }
+
+    /**
+     * Decides whether a conjunct of an AND tree passes.
+     */
+    @FunctionalInterface
+    public interface ConjunctTest {
+        boolean test(BoundExpression conjunct) throws SqlException;
     }
 }

@@ -325,7 +325,7 @@ final class LatestByFactoryGenerator {
     RecordCursorFactory generateLatestBy(GenerationFrame frame, LatestByPlan latest, SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan input = latest.getInput();
         // LATEST BY locates its timestamp by position; a declaration alone adds nothing.
-        final RecordCursorFactory base = codeGenerator.generate(frame, LogicalPlans.isTimestampDeclarationOnly(input) ? input.inputAt(0) : input, executionContext);
+        final RecordCursorFactory base = codeGenerator.generate(frame, LogicalPlans.latestByBase(latest), executionContext);
         final OutputSchema schema = input.getOutput();
         final int timestampIndex = schema.getColumnIndexById(latest.getTimestampColumnId());
         final IntList keyIndexes = latestByColumnIndexes;

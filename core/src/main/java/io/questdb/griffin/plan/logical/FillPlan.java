@@ -75,7 +75,7 @@ public final class FillPlan extends ForwardingPlan {
     }
 
     /**
-     * The order the fill reads its input buckets in, which order planning records; null before planning.
+     * The order the fill reads its input buckets in, which operator planning records; null before planning.
      */
     public Algorithm getAlgorithm() {
         return algorithm;

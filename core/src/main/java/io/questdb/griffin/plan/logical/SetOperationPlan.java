@@ -116,7 +116,7 @@ public final class SetOperationPlan extends LogicalPlan {
 
     /**
      * True when the UNION ALL merges its branches, each in the requested timestamp order, instead of concatenating
-     * them; order planning decides it.
+     * them; operator planning decides it.
      */
     public boolean isMerged() {
         return isMerged;

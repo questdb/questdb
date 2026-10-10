@@ -332,7 +332,7 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
-     * How the generator executes the filter over the residual, which order planning records where the generator
+     * How the generator executes the filter over the residual, which operator planning records where the generator
      * builds one whose execution it chooses: over page frames, over a covering index and within a pattern scan.
      */
     public FilterPlan.Algorithm getResidualAlgorithm() {

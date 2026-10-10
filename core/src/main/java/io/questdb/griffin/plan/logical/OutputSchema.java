@@ -109,6 +109,18 @@ public final class OutputSchema implements Mutable {
         }
     }
 
+    /**
+     * Appends, hidden, every column of {@code source} the schema lacks, with its name, type, metadata and qualifier.
+     */
+    public void addMissingColumnsFrom(OutputSchema source) {
+        for (int i = 0, n = source.getColumnCount(); i < n; i++) {
+            if (getColumnIndexById(source.getColumnId(i)) < 0) {
+                add(source.getColumnId(i), source.getColumnName(i), source.getColumnType(i), source.getMetadata(i), false,
+                        source.getColumnQualifier(i));
+            }
+        }
+    }
+
     @Override
     public void clear() {
         columnIds.clear();
@@ -201,6 +213,18 @@ public final class OutputSchema implements Mutable {
 
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    /**
+     * Whether a column, visible or not, has the name in any case.
+     */
+    public boolean hasColumnName(CharSequence name) {
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(columnNames.getQuick(i), name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public boolean hasColumnQualifier(CharSequence qualifier) {

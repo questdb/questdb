@@ -48,6 +48,24 @@ public final class JoinGraph implements Mutable {
     private BoundExpression constantFilter;
     private int constantFilterPosition;
 
+    /**
+     * Appends, as parent and child pairs, the edges the join semantics impose on the outer or temporal step at
+     * {@code step}, of join type {@code type}, whatever its keys: the first input before a temporal or UNNEST step,
+     * and before an UNNEST each input it reads.
+     */
+    public static void addSemanticEdges(ObjList<JoinInput> inputs, int step, JoinKind type, IntList edges) {
+        if (type.isTemporal() || type == JoinKind.UNNEST) {
+            edges.add(0);
+            edges.add(step);
+        }
+        if (type == JoinKind.UNNEST) {
+            final ObjList<BoundExpression> expressions = inputs.getQuick(step).getUnnest().getExpressions();
+            for (int i = 0, n = expressions.size(); i < n; i++) {
+                addUnnestEdges(inputs, expressions.getQuick(i), step, edges);
+            }
+        }
+    }
+
     public void addResidual(BoundExpression residual, int origin) {
         residuals.add(residual);
         residualOwners.add(origin);
@@ -112,6 +130,24 @@ public final class JoinGraph implements Mutable {
     public void setConstantFilter(BoundExpression constantFilter, int position) {
         this.constantFilter = constantFilter;
         this.constantFilterPosition = position;
+    }
+
+    private static void addUnnestEdges(ObjList<JoinInput> inputs, BoundExpression expression, int step, IntList edges) {
+        if (expression instanceof ColumnExpression column) {
+            for (int i = 0; i < step; i++) {
+                if (inputs.getQuick(i).getSourceOutput().getColumnIndexById(column.getColumnId()) >= 0) {
+                    edges.add(i);
+                    edges.add(step);
+                    return;
+                }
+            }
+            throw new IllegalStateException("UNNEST argument is outside its preceding join inputs");
+        }
+        if (expression instanceof FunctionExpression function) {
+            for (int i = 0, n = function.getArgumentCount(); i < n; i++) {
+                addUnnestEdges(inputs, function.argumentAt(i), step, edges);
+            }
+        }
     }
 
     private int residualOwnersLo(int residual) {

@@ -45,6 +45,7 @@ import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
@@ -52,6 +53,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
@@ -90,17 +92,30 @@ public final class LogicalPlans {
     private LogicalPlans() {
     }
 
+    /**
+     * The input the generator builds a GROUP BY over: the aggregate's input past renames, without a projection that
+     * only declares the designated timestamp.
+     */
+    public static LogicalPlan aggregateBase(AggregatePlan aggregate) {
+        return timestampDeclarationBase(skipRenames(aggregate.getInput()));
+    }
+
     public static boolean canPushJoinFilter(JoinPlan join, int source, int lastInput) {
-        if (join.getInputs().getQuick(source).getInput() == null) {
-            return false;
-        }
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
-        final int sourcePosition = ordered.indexOf(join.getInputs().getQuick(source));
-        if (sourcePosition < 0 || sourcePosition > lastInput) {
+        return canPushJoinFilter(ordered, ordered.indexOf(join.getInputs().getQuick(source)), lastInput);
+    }
+
+    /**
+     * Whether a filter of the columns of the join step at {@code position} alone can evaluate on its input before the
+     * step at {@code lastPosition}: the step is not the outer or temporal side of its join, and no RIGHT or FULL join
+     * up to that step joins after it.
+     */
+    public static boolean canPushJoinFilter(ObjList<JoinInput> steps, int position, int lastPosition) {
+        if (position < 0 || position > lastPosition || steps.getQuick(position).getInput() == null) {
             return false;
         }
-        if (sourcePosition > 0) {
-            switch (ordered.getQuick(sourcePosition).getJoinType()) {
+        if (position > 0) {
+            switch (steps.getQuick(position).getJoinType()) {
                 case LEFT_OUTER, RIGHT_OUTER, FULL_OUTER, ASOF, LT, SPLICE -> {
                     return false;
                 }
@@ -108,8 +123,8 @@ public final class LogicalPlans {
                 }
             }
         }
-        for (int i = sourcePosition + 1; i <= lastInput; i++) {
-            if (ordered.getQuick(i).getJoinType().isMasterNulling()) {
+        for (int i = position + 1; i <= lastPosition; i++) {
+            if (steps.getQuick(i).getJoinType().isMasterNulling()) {
                 return false;
             }
         }
@@ -268,6 +283,13 @@ public final class LogicalPlans {
                 return null;
             }
         }
+    }
+
+    /**
+     * The table scan the generator builds the filter into, or null when it filters the factory of its input.
+     */
+    public static ScanPlan fusedScan(FilterPlan filter) {
+        return filter.getInput() instanceof ScanPlan scan && !scan.isWalClientUpdate() ? scan : null;
     }
 
     /**
@@ -482,12 +504,12 @@ public final class LogicalPlans {
      * True when the generator builds the filter into the factory of the table scan under it.
      */
     public static boolean isFusedFilter(FilterPlan filter) {
-        return filter.getInput() instanceof ScanPlan scan && !scan.isWalClientUpdate();
+        return fusedScan(filter) != null;
     }
 
     /**
      * True when the generator builds no factory for the projection over the factory of its input, see
-     * {@link #isIdentityProjection(ProjectPlan, RecordMetadata, int, int)}, whose columns order planning takes to be
+     * {@link #isIdentityProjection(ProjectPlan, RecordMetadata, int, int)}, whose columns operator planning takes to be
      * the input's output schema. Over a join of several inputs, or a filter over one, the factory names its columns
      * qualifier.name, so the generator builds a selection where this answers true; the planner reads the answer only
      * to look through the projection for a filter, a scan or page frames, which such a join exposes no more than the
@@ -585,6 +607,14 @@ public final class LogicalPlans {
         final LogicalPlan input = project.getInput();
         return !(input instanceof WindowPlan window && isWindowOutputProjection(project, window))
                 && !(input instanceof WindowJoinPlan && isColumnOnlyProjection(project));
+    }
+
+    /**
+     * Whether the generator folds the constant filter the join step applies to its joined rows: any constant after
+     * UNNEST, only a literal after another join.
+     */
+    public static boolean isPostJoinFilterFolded(JoinInput step, BoundExpression filter) {
+        return step.getJoinType() == JoinKind.UNNEST || filter instanceof ConstantExpression constant && constant.isLiteral();
     }
 
     /**
@@ -743,6 +773,22 @@ public final class LogicalPlans {
         return -1;
     }
 
+    /**
+     * The input the generator builds a LATEST BY over when it reads no table scan directly: its input, without a
+     * projection that only declares the designated timestamp.
+     */
+    public static LogicalPlan latestByBase(LatestByPlan latest) {
+        return timestampDeclarationBase(latest.getInput());
+    }
+
+    /**
+     * The table scan a LATEST BY reads directly, optionally through one filter, which the generator builds the LATEST
+     * BY into; null otherwise.
+     */
+    public static ScanPlan latestByScan(LatestByPlan latest) {
+        return scanThroughFilter(latest.getInput());
+    }
+
     public static long limitValue(ConstantExpression constant) {
         return switch (ColumnType.tagOf(constant.getDataType())) {
             case ColumnType.NULL -> Numbers.LONG_NULL;
@@ -802,6 +848,15 @@ public final class LogicalPlans {
         return isPeelableProjection(generatedPlan(projection.getInput())) ? null : projection;
     }
 
+    /**
+     * The scan of a posting index the generator builds a DISTINCT of the aggregate's single SYMBOL key from, read
+     * directly or through one filter, whose predicate the scan's intervals implement whole; null otherwise.
+     */
+    public static ScanPlan postingDistinctScan(AggregatePlan aggregate) {
+        final ScanPlan scan = scanThroughFilter(aggregate.getInput());
+        return scan != null && scan.getAccessPath() == ScanPlan.AccessPath.POSTING_DISTINCT ? scan : null;
+    }
+
     public static int projectedColumnIndex(ProjectPlan project, int columnId) {
         final ObjList<BoundExpression> expressions = project.getExpressions();
         for (int i = 0, n = expressions.size(); i < n; i++) {
@@ -812,9 +867,6 @@ public final class LogicalPlans {
         return -1;
     }
 
-    /**
-     * Index of the first expression that passes the column through without a cast.
-     */
     /**
      * The input column the projection passes through as the given output column, or -1 when it computes that column.
      */
@@ -827,7 +879,7 @@ public final class LogicalPlans {
      * The designated timestamp of the factory of a projection over an input whose factory designates
      * {@code inputTimestampIndex}: the one it declares, else the column its requested order reaches when that column
      * is the input's timestamp, else the timestamp it selects, lost when that column only passes through an input
-     * that designates none, or when order planning dropped it from a computing projection over a window join.
+     * that designates none, or when operator planning dropped it from a computing projection over a window join.
      */
     public static int projectedTimestampIndex(ProjectPlan project, int inputTimestampIndex) {
         final LogicalPlan input = project.getInput();
@@ -843,6 +895,9 @@ public final class LogicalPlans {
         return input instanceof WindowJoinPlan && !isColumnOnlyProjection(project) && project.isTimestampDropped() ? -1 : timestampIndex;
     }
 
+    /**
+     * Index of the first expression that passes the column through without a cast.
+     */
     public static int projectedUncastColumnIndex(ProjectPlan project, int columnId) {
         final ObjList<BoundExpression> expressions = project.getExpressions();
         for (int i = 0, n = expressions.size(); i < n; i++) {
@@ -893,6 +948,22 @@ public final class LogicalPlans {
      */
     public static boolean readsOnlyOuterColumns(FunctionExpression call) {
         return hasOuterColumn(call) && !readsColumn(call);
+    }
+
+    /**
+     * The input the generator builds a SAMPLE BY over: its input, without a projection that only declares the
+     * designated timestamp unless the SAMPLE BY reads the timestamp that projection declares.
+     */
+    public static LogicalPlan sampleByBase(SampleByPlan sample) {
+        final LogicalPlan sampled = sample.getInput();
+        return sample.isTimestampRequired() ? sampled : timestampDeclarationBase(sampled);
+    }
+
+    /**
+     * The table scan the plan is, or the one directly under it when it is a filter; null otherwise.
+     */
+    public static ScanPlan scanThroughFilter(LogicalPlan plan) {
+        return (plan instanceof FilterPlan filter ? filter.getInput() : plan) instanceof ScanPlan scan ? scan : null;
     }
 
     /**
@@ -1176,6 +1247,10 @@ public final class LogicalPlans {
                     stability(operation.getLeft(), isParallelGroupByEnabled) & stability(operation.getRight(), isParallelGroupByEnabled);
             default -> 0;
         };
+    }
+
+    private static LogicalPlan timestampDeclarationBase(LogicalPlan plan) {
+        return isTimestampDeclarationOnly(plan) ? plan.inputAt(0) : plan;
     }
 
     /**

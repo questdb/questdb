@@ -76,7 +76,7 @@ public final class SampleByPlan extends GroupingPlan {
     }
 
     /**
-     * The SAMPLE BY factory order planning records for the node; null before planning.
+     * The SAMPLE BY factory operator planning records for the node; null before planning.
      */
     public Algorithm getAlgorithm() {
         return algorithm;
@@ -224,7 +224,7 @@ public final class SampleByPlan extends GroupingPlan {
 
     /**
      * How the generator samples: interpolating a FILL(LINEAR); reading the first and last values of each bucket
-     * straight from the bitmap index of the single symbol key a table scan filters on, which order planning never
+     * straight from the bitmap index of the single symbol key a table scan filters on, which operator planning never
      * picks over a table whose parquet partitions store a column under a converted type; or aggregating each bucket
      * in the SAMPLE BY cursor, without a fill or filling keyless buckets with constants.
      */

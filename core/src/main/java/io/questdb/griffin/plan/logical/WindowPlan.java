@@ -52,7 +52,7 @@ public final class WindowPlan extends UnaryPlan {
     }
 
     /**
-     * The window factory order planning records for the window; null before planning.
+     * The window factory operator planning records for the window; null before planning.
      */
     public Algorithm getAlgorithm() {
         return algorithm;

@@ -25,6 +25,7 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
@@ -57,7 +58,6 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -99,10 +99,12 @@ final class Decorrelation implements OptimiserPass {
     private final DecorrelationDomains domains;
     private final CorrelationKeys keys;
     private final ObjList<BoundExpression> liftedConjuncts;
+    private final ConjunctTest bodyConjuncts = this::keepsBodyConjunct;
     private final IntList liftedSelectionIds = new IntList();
     private final ObjList<BoundExpression> liftedSelections = new ObjList<>();
     private final CorrelatedChainRewriter rewriter;
     private LogicalPlan branchTop;
+    private int liftBase;
     private JoinPlan pendingJoin;
     private final PlanVisitor masterOuterIds = this::collectNodeMasterOuterIds;
     private final PlanVisitor masterOuterReads = this::findMasterOuterColumn;
@@ -115,7 +117,6 @@ final class Decorrelation implements OptimiserPass {
             OptimiserContext context,
             PlanNodePools planNodes,
             CharacterStore characterStore,
-            ObjList<BoundExpression> callArguments,
             ObjList<BoundExpression> tmpConjuncts,
             IntList tmpIndexes,
             IntList tmpValues,
@@ -126,7 +127,7 @@ final class Decorrelation implements OptimiserPass {
     ) {
         this.context = context;
         liftedConjuncts = tmpConjuncts;
-        ctx = new DecorrelationContext(context, planNodes, characterStore, callArguments, tmpIndexes, tmpValues, tmpKeys, tmpPlans,
+        ctx = new DecorrelationContext(context, planNodes, characterStore, tmpIndexes, tmpValues, tmpKeys, tmpPlans,
                 tmpSchema);
         domains = new DecorrelationDomains(ctx, tmpSteps);
         keys = new CorrelationKeys(ctx);
@@ -468,7 +469,7 @@ final class Decorrelation implements OptimiserPass {
                         }
                     }
                 }
-                rebuildJoinOutput(join);
+                join.addMissingInputColumns();
                 dropOuterConjuncts(join);
                 return join;
             }
@@ -557,7 +558,7 @@ final class Decorrelation implements OptimiserPass {
             if (liftedConjuncts.size() > 0 || liftedSelections.size() > 0) {
                 liftAboveStep(join, step, body, masterBase);
             }
-            rebuildJoinOutput(join);
+            join.addMissingInputColumns();
             if (scalarBody != null) {
                 final BoundExpression guard = limit == null ? null : compensation.limitGuard(ctx.masterExpression(limitLo), ctx.masterExpression(limitHi), join.getOutput());
                 if (!isLeft && isTrivialCondition) {
@@ -634,16 +635,16 @@ final class Decorrelation implements OptimiserPass {
         return !plan.walkTopDown(masterOuterReads);
     }
 
-    private boolean isUnmappedOuter(BoundExpression expression, int base) {
-        final int columnBase = ctx.tmpColumnIds.size();
-        ctx.outerColumnReads.collect(expression, ctx.tmpColumnIds);
-        boolean isFound = false;
-        for (int i = columnBase, n = ctx.tmpColumnIds.size(); i < n && !isFound; i++) {
-            final int outerId = ctx.tmpColumnIds.getQuick(i);
-            isFound = ctx.masterOuterIds.contains(outerId) && ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size()) < 0;
+    /**
+     * Keeps a conjunct in the body unless it reads outer columns no equality satisfies, which it records in
+     * {@link #liftedConjuncts} instead.
+     */
+    private boolean keepsBodyConjunct(BoundExpression conjunct) {
+        if (ctx.readsUnmappedOuter(conjunct, liftBase) && isLiftable(conjunct)) {
+            liftedConjuncts.add(conjunct);
+            return false;
         }
-        ctx.tmpColumnIds.setPos(columnBase);
-        return isFound;
+        return true;
     }
 
     /**
@@ -666,7 +667,7 @@ final class Decorrelation implements OptimiserPass {
         for (int i = 0, n = liftedSelections.size(); i < n; i++) {
             exposeLiftedColumns(project, liftedSelections.getQuick(i));
         }
-        rebuildJoinOutput(join);
+        join.addMissingInputColumns();
         for (int i = 0, n = liftedConjuncts.size(); i < n; i++) {
             final BoundExpression conjunct = context.getRewriter().remapColumns(liftedConjuncts.getQuick(i), ctx.substitution);
             step.setOnResidual(step.getOnResidual() == null ? conjunct : context.getRewriter().combineConjunction(step.getOnResidual(), conjunct, conjunct.getPosition()));
@@ -684,41 +685,9 @@ final class Decorrelation implements OptimiserPass {
         }
     }
 
-    /**
-     * Returns the conjuncts of the predicate that stay in the body, recording in {@link #liftedConjuncts} those
-     * that read outer columns no equality satisfies.
-     */
-    private BoundExpression liftConjuncts(BoundExpression predicate, int base) {
-        if (predicate == null) {
-            return null;
-        }
-        if (predicate instanceof FunctionExpression call && call.isAnd()) {
-            final BoundExpression left = liftConjuncts(call.argumentAt(0), base);
-            final BoundExpression right = liftConjuncts(call.argumentAt(1), base);
-            if (left == null) {
-                return right;
-            }
-            if (right == null) {
-                return left;
-            }
-            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : context.getRewriter().replaceConjunction(call, left, right);
-        }
-        if (isUnmappedOuter(predicate, base) && isLiftable(predicate)) {
-            liftedConjuncts.add(predicate);
-            return null;
-        }
-        return predicate;
-    }
-
     private CharSequence liftedName(OutputSchema output, CharSequence name) {
-        if (output.getColumnIndexQuiet(name) < 0) {
-            boolean isTaken = false;
-            for (int i = 0, n = output.getColumnCount(); i < n && !isTaken; i++) {
-                isTaken = Chars.equalsIgnoreCase(output.getColumnName(i), name);
-            }
-            if (!isTaken) {
-                return name;
-            }
+        if (!output.hasColumnName(name)) {
+            return name;
         }
         final CharacterStoreEntry entry = ctx.characterStore.newEntry();
         entry.put("__qdb_lifted_").put(ctx.carrierSequence++).put('_').put(name);
@@ -730,9 +699,10 @@ final class Decorrelation implements OptimiserPass {
      * columns no equality satisfies above the step: the conjuncts join its ON, the columns a projection over
      * the join computes. The outer columns they read are then no longer the body's.
      */
-    private void liftOuterTerms(FilterPlan filter, LogicalPlan source, int chainBase, int chainOuterBase, int deferredBase, int base) {
+    private void liftOuterTerms(FilterPlan filter, LogicalPlan source, int chainBase, int chainOuterBase, int deferredBase, int base) throws SqlException {
+        liftBase = base;
         if (filter != null) {
-            final BoundExpression remaining = liftConjuncts(filter.getPredicate(), base);
+            final BoundExpression remaining = context.getRewriter().retainConjuncts(filter.getPredicate(), bodyConjuncts);
             filter.of(filter.getInput(), remaining != null ? remaining : ctx.planNodes.constants.next().ofBoolean(true, filter.getPosition()), filter.getPosition());
         }
         if (source instanceof JoinPlan join) {
@@ -740,7 +710,7 @@ final class Decorrelation implements OptimiserPass {
             for (int i = 1, n = join.getInputs().size(); i < n; i++) {
                 final JoinInput input = join.getInputs().getQuick(i);
                 if (LogicalPlans.orderedSteps(join).indexOf(input) >= lastMasterNulling) {
-                    input.setPostJoinFilter(liftConjuncts(input.getPostJoinFilter(), base));
+                    input.setPostJoinFilter(context.getRewriter().retainConjuncts(input.getPostJoinFilter(), bodyConjuncts));
                 }
             }
         }
@@ -749,7 +719,7 @@ final class Decorrelation implements OptimiserPass {
                 final ObjList<BoundExpression> expressions = project.getExpressions();
                 for (int k = 0, m = expressions.size(); k < m; k++) {
                     final BoundExpression expression = expressions.getQuick(k);
-                    if (project.getOutput().isVisible(k) && !(expression instanceof OuterColumnExpression) && isUnmappedOuter(expression, base)
+                    if (project.getOutput().isVisible(k) && !(expression instanceof OuterColumnExpression) && ctx.readsUnmappedOuter(expression, base)
                             && isLiftable(expression) && hasNullableOuterTypes(expression)) {
                         liftedSelectionIds.add(project.getOutput().getColumnId(k));
                         liftedSelections.add(expression);
@@ -852,7 +822,7 @@ final class Decorrelation implements OptimiserPass {
             join.getInputs().add(step);
             join.getOrderedInputs().add(step);
         }
-        rebuildJoinOutput(join);
+        join.addMissingInputColumns();
         return join;
     }
 

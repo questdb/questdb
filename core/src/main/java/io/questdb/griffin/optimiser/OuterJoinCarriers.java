@@ -38,13 +38,11 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.optimiser.DecorrelationContext.rebuildJoinOutput;
 
 /**
  * Satisfies the outer columns of a block whose source join has a step that null-extends its master: a RIGHT, FULL or
@@ -80,15 +78,6 @@ final class OuterJoinCarriers implements Mutable {
         slaveIds.clear();
         markerId = -1;
         slaveMarkerId = -1;
-    }
-
-    private static boolean hasName(OutputSchema output, CharSequence name) {
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            if (Chars.equalsIgnoreCase(output.getColumnName(i), name)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -127,8 +116,8 @@ final class OuterJoinCarriers implements Mutable {
         ctx.mappedColumnIds.setPos(lo);
         slaveMarkerId = -1;
         if (isMarked) {
-            ctx.callArguments.clear();
-            final FunctionExpression marker = (FunctionExpression) ctx.bindCall("count", position, domain.getInput().getOutput());
+            ctx.context.getCallArguments().clear();
+            final FunctionExpression marker = (FunctionExpression) ctx.context.bindCall("count", position, domain.getInput().getOutput());
             domain.getAggregates().add(marker);
             slaveMarkerId = ctx.context.newColumnId();
             domain.getOutput().add(slaveMarkerId, markerName(), marker.getDataType(), false);
@@ -166,7 +155,7 @@ final class OuterJoinCarriers implements Mutable {
             }
         }
         input.setInput(crossed);
-        rebuildJoinOutput(join);
+        join.addMissingInputColumns();
     }
 
     private int deferredColumn(JoinInput input, int outerId, int deferredBase) {
@@ -275,18 +264,18 @@ final class OuterJoinCarriers implements Mutable {
             project.getExpressions().add(ctx.planNodes.columns.next().of(columnId, type, position));
             final int forwardedId = ctx.context.newColumnId();
             forwardedIds.put(columnId, forwardedId);
-            output.add(forwardedId, uniqueName(output, nestedOutput.getColumnName(i)), type, nestedOutput.getMetadata(i), nestedOutput.isVisible(i),
+            output.add(forwardedId, ctx.context.uniqueName(output, nestedOutput.getColumnName(i)), type, nestedOutput.getMetadata(i), nestedOutput.isVisible(i),
                     nestedOutput.getColumnQualifier(i));
         }
         final IntList outerIds = domains.domainOuterIds;
         for (int i = 0, n = outerIds.size(); i < n; i++) {
-            final BoundExpression isSlaveRow = ctx.bindCall("=", position, ctx.column(nestedOutput, markerId, position),
+            final BoundExpression isSlaveRow = ctx.context.bindCall("=", position, ctx.column(nestedOutput, markerId, position),
                     ctx.planNodes.constants.next().ofNull(position), nestedOutput);
-            ctx.callArguments.clear();
-            ctx.callArguments.add(isSlaveRow);
-            ctx.callArguments.add(ctx.column(nestedOutput, slaveIds.getQuick(i), position));
-            ctx.callArguments.add(ctx.column(nestedOutput, carrierIds.getQuick(i), position));
-            final BoundExpression carrier = ctx.bindCall("case", position, nestedOutput);
+            ctx.context.getCallArguments().clear();
+            ctx.context.getCallArguments().add(isSlaveRow);
+            ctx.context.getCallArguments().add(ctx.column(nestedOutput, slaveIds.getQuick(i), position));
+            ctx.context.getCallArguments().add(ctx.column(nestedOutput, carrierIds.getQuick(i), position));
+            final BoundExpression carrier = ctx.context.bindCall("case", position, nestedOutput);
             project.getExpressions().add(carrier);
             final int carrierId = ctx.context.newColumnId();
             output.add(carrierId, ctx.outerRefName(outerIds.getQuick(i)), carrier.getDataType(), false);
@@ -353,22 +342,8 @@ final class OuterJoinCarriers implements Mutable {
                 joinOutput.setColumnId(i, forwardedId);
             }
         }
-        rebuildJoinOutput(join);
+        join.addMissingInputColumns();
         return join;
-    }
-
-    private CharSequence uniqueName(OutputSchema output, CharSequence name) {
-        if (!hasName(output, name)) {
-            return name;
-        }
-        for (int suffix = 1; ; suffix++) {
-            final CharacterStoreEntry entry = ctx.characterStore.newEntry();
-            entry.put(name).put(suffix);
-            final CharSequence candidate = entry.toImmutable();
-            if (!hasName(output, candidate)) {
-                return candidate;
-            }
-        }
     }
 
     /**
@@ -403,7 +378,7 @@ final class OuterJoinCarriers implements Mutable {
                     final JoinInput domainStep = ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domains.domainAlias(), position);
                     join.getInputs().add(domainStep);
                     steps.insert(first, 1, domainStep);
-                    rebuildJoinOutput(join);
+                    join.addMissingInputColumns();
                     from = first + 1;
                     last++;
                 }
@@ -469,7 +444,7 @@ final class OuterJoinCarriers implements Mutable {
             for (int i = Math.max(last + 1, 1), n = steps.size(); i < n; i++) {
                 keyDeferred(steps.getQuick(i), base, deferredBase, false);
             }
-            rebuildJoinOutput(join);
+            join.addMissingInputColumns();
         }
         for (int i = 0, n = outerIds.size(); i < n; i++) {
             ctx.addMapping(outerIds.getQuick(i), carrierIds.getQuick(i));

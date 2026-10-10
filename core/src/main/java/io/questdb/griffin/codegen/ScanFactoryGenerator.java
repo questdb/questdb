@@ -32,6 +32,7 @@ import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.idx.IndexReader;
@@ -69,6 +70,7 @@ import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestBySubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
@@ -76,6 +78,7 @@ import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -91,6 +94,7 @@ import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortKeys;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
+import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -108,7 +112,6 @@ final class ScanFactoryGenerator {
     private final CairoConfiguration configuration;
     private final FilterFactoryGenerator filterGenerator;
     private final LatestByFactoryGenerator latestByGenerator;
-    private final MatchSymbolFunctionFactory matchSymbolFactory = new MatchSymbolFunctionFactory();
     private final PageFrameReduceTaskFactory reduceTaskFactory;
     private final PlanTables planTables;
 
@@ -235,7 +238,12 @@ final class ScanFactoryGenerator {
                 scan.getViewName(), scan.getViewPosition(), scan.isUpdate())
                 : new IntervalPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), intervalModel,
                 readerMetadata.getTimestampIndex(), readerMetadata, order, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
-        frames.setAuthorizedColumnIndexes(scan.getAuthorizedColumnIndexes());
+        try {
+            frames.setAuthorizedColumnIndexes(scan.getAuthorizedColumnIndexes());
+        } catch (Throwable th) {
+            Misc.free(frames, th);
+            throw th;
+        }
         return frames;
     }
 
@@ -461,6 +469,26 @@ final class ScanFactoryGenerator {
             return factory;
         }
         return filterScan(frame, factory, scan, residual, executionContext);
+    }
+
+    private RecordCursorFactory generatePostingDistinctScan(AggregatePlan aggregate, ScanPlan scan, IntervalExtractor scanIntervals,
+                                                            TableReader reader) {
+        final ColumnExpression key = (ColumnExpression) aggregate.getGroupingExpressions().getQuick(0);
+        final TableReaderMetadata tableMetadata = reader.getMetadata();
+        final int index = scan.getSourceColumnIndexes().getQuick(scan.getOutput().getColumnIndexById(key.getColumnId()));
+        final TableColumnMetadata column = tableMetadata.getColumnMetadata(index);
+        final GenericRecordMetadata metadata = new GenericRecordMetadata().add(new TableColumnMetadata(
+                Chars.toString(aggregate.getOutput().getColumnName(0)), key.getDataType(), column.getIndexType(),
+                column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), null, column.getWriterIndex(),
+                false, 0, column.isSymbolCacheFlag(), column.getSymbolCapacity()));
+        final IntList indexes = new IntList();
+        indexes.add(index);
+        if (scanIntervals != null && tableMetadata.getTimestampIndex() != index) {
+            indexes.add(tableMetadata.getTimestampIndex());
+        }
+        final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, reader),
+                GenericRecordMetadata.copyOfNew(tableMetadata), PartitionFrameCursorFactory.ORDER_ASC);
+        return new PostingIndexDistinctRecordCursorFactory(metadata, frames, index, 0, indexes);
     }
 
     private RecordCursorFactory generateReaderScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
@@ -698,8 +726,8 @@ final class ScanFactoryGenerator {
                 frame.patternArguments.add(frame.functionInstantiator.instantiate(pattern.argumentAt(i), input, metadata, executionContext));
                 frame.patternPositions.add(pattern.getArgumentPosition(i));
             }
-            final Function match = matchSymbolFactory.newInstance(pattern.getPosition(), frame.patternArguments, frame.patternPositions,
-                    configuration, executionContext);
+            final Function match = MatchSymbolFunctionFactory.positivePatternFactory(pattern).newInstance(pattern.getPosition(),
+                    frame.patternArguments, frame.patternPositions, configuration, executionContext);
             frame.patternArguments.clear();
             return match;
         } catch (Throwable th) {
@@ -838,6 +866,28 @@ final class ScanFactoryGenerator {
             throw th;
         } finally {
             frame.latestPrefixes.clear();
+        }
+        return SqlCodeGenerator.clearAfter(frame.intervals, factory);
+    }
+
+    /**
+     * Builds the DISTINCT of the aggregate's single key from the posting index its scan reads, see
+     * {@link LogicalPlans#postingDistinctScan}.
+     */
+    RecordCursorFactory generatePostingDistinct(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext)
+            throws SqlException {
+        final ScanPlan scan = LogicalPlans.postingDistinctScan(aggregate);
+        final BoundExpression predicate = aggregate.getInput() instanceof FilterPlan filter ? filter.getPredicate() : null;
+        final RecordCursorFactory factory;
+        try {
+            if (predicate != null) {
+                frame.intervals.extract(predicate, scan.getNativeTimestampColumnId(), scan.getOutput(), frame.intervalBounds,
+                        frame.expressionRewriter, scan.getDepth(), executionContext);
+            }
+            factory = generatePostingDistinctScan(aggregate, scan, predicate == null ? null : frame.intervals, planTables.of(scan));
+        } catch (Throwable th) {
+            Misc.clear(frame.intervals, th);
+            throw th;
         }
         return SqlCodeGenerator.clearAfter(frame.intervals, factory);
     }

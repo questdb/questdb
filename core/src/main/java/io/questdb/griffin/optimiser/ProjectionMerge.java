@@ -25,6 +25,7 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -35,6 +36,7 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanRewriter;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
@@ -48,6 +50,7 @@ import io.questdb.std.ObjList;
  * an aggregate.
  */
 final class ProjectionMerge implements OptimiserPass {
+    private final PlanRewriter columnProjectCollapses = this::collapseColumnProject;
     private final OptimiserContext context;
 
     ProjectionMerge(OptimiserContext context) {
@@ -55,8 +58,8 @@ final class ProjectionMerge implements OptimiserPass {
     }
 
     @Override
-    public LogicalPlan apply(LogicalPlan plan) {
-        return collapseColumnProjects(plan);
+    public LogicalPlan apply(LogicalPlan plan) throws SqlException {
+        return plan.rewriteBottomUp(columnProjectCollapses);
     }
 
     @Override
@@ -235,14 +238,7 @@ final class ProjectionMerge implements OptimiserPass {
         aggregate.replaceInput(0, inner.getInput());
     }
 
-    private LogicalPlan collapseColumnProjects(LogicalPlan plan) {
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final LogicalPlan input = plan.inputAt(i);
-            final LogicalPlan collapsed = collapseColumnProjects(input);
-            if (collapsed != input) {
-                plan.replaceInput(i, collapsed);
-            }
-        }
+    private LogicalPlan collapseColumnProject(LogicalPlan plan) throws SqlException {
         if (plan instanceof AggregatePlan aggregate) {
             absorbColumnProject(aggregate);
             return plan;
@@ -334,12 +330,12 @@ final class ProjectionMerge implements OptimiserPass {
         }
     }
 
-    private LogicalPlan sortOverProject(ProjectPlan project, SortPlan sort) {
+    private LogicalPlan sortOverProject(ProjectPlan project, SortPlan sort) throws SqlException {
         for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
             sort.getColumnIds().setQuick(i, project.getOutput().getColumnId(LogicalPlans.projectedUncastColumnIndex(project, sort.getColumnIds().getQuick(i))));
         }
         project.replaceInput(0, sort.getInput());
-        sort.replaceInput(0, collapseColumnProjects(project));
+        sort.replaceInput(0, project.rewriteBottomUp(columnProjectCollapses));
         return sort;
     }
 

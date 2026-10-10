@@ -41,7 +41,7 @@ public final class FilterPlan extends ForwardingPlan {
     }
 
     /**
-     * How the generator executes the filter over its input, which order planning records; null for a filter fused
+     * How the generator executes the filter over its input, which operator planning records; null for a filter fused
      * into the scan under it, whose scan records it, and for a predicate the generator folds or gates once.
      */
     public Algorithm getAlgorithm() {

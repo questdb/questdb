@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Mutable;
 
 /**
@@ -54,6 +55,23 @@ public abstract sealed class LogicalPlan implements Mutable
     public abstract int inputCount();
 
     public abstract void replaceInput(int index, LogicalPlan input);
+
+    /**
+     * Rewrites the inputs of the plan, depth first, replacing each input the rewriter replaces, and then the plan;
+     * returns the node that replaces the plan.
+     */
+    public final LogicalPlan rewriteBottomUp(PlanRewriter rewriter) throws SqlException {
+        for (int i = 0, n = inputCount(); i < n; i++) {
+            final LogicalPlan input = inputAt(i);
+            if (input != null) {
+                final LogicalPlan rewritten = input.rewriteBottomUp(rewriter);
+                if (rewritten != input) {
+                    replaceInput(i, rewritten);
+                }
+            }
+        }
+        return rewriter.rewrite(this);
+    }
 
     public void setPosition(int position) {
         this.position = position;

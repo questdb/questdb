@@ -31,12 +31,12 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.FunctionInstantiator;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -48,8 +48,8 @@ import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
@@ -192,7 +192,8 @@ final class FilterFactoryGenerator {
             if (limitCount != null) {
                 limit = instantiator.instantiate(limitCount, input, executionContext);
             }
-            workerFilters = compileWorkers(predicate, input, base.getMetadata(), filter, instantiator, executionContext);
+            workerFilters = instantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
+                    executionContext.getSharedQueryWorkerCount(), executionContext);
         } catch (Throwable th) {
             Misc.free(limit, th);
             Misc.free(filter, th);
@@ -214,33 +215,6 @@ final class FilterFactoryGenerator {
             for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
                 collectColumnIndexes(call.argumentAt(i), input, columns);
             }
-        }
-    }
-
-    static ObjList<Function> compileWorkers(
-            BoundExpression predicate,
-            OutputSchema input,
-            RecordMetadata metadata,
-            Function filter,
-            FunctionInstantiator instantiator,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (filter.isThreadSafe()) {
-            return null;
-        }
-        final int count = executionContext.getSharedQueryWorkerCount();
-        final ObjList<Function> workers = new ObjList<>(count);
-        instantiator.beginWorkerClones();
-        try {
-            for (int i = 0; i < count; i++) {
-                workers.add(instantiator.instantiate(predicate, input, metadata, executionContext));
-            }
-            return workers;
-        } catch (Throwable th) {
-            Misc.freeObjList(workers, th);
-            throw th;
-        } finally {
-            instantiator.endWorkerClones();
         }
     }
 
@@ -272,7 +246,7 @@ final class FilterFactoryGenerator {
 
     /**
      * Consumes both executable roots on entry, including on failure; builds the parallel filter when
-     * {@code isParallel}, as order planning records it, else the serial one.
+     * {@code isParallel}, as operator planning records it, else the serial one.
      */
     RecordCursorFactory generate(
             GenerationFrame frame,
@@ -291,24 +265,8 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * Consumes both executable roots on entry, including on failure; a join's filter runs on one thread.
-     */
-    RecordCursorFactory generate(
-            GenerationFrame frame,
-            BoundExpression predicate,
-            OutputSchema input,
-            RecordCursorFactory base,
-            Function filter,
-            FunctionInstantiator instantiator,
-            SqlExecutionContext executionContext,
-            boolean isUpdate
-    ) throws SqlException {
-        return generate(frame, predicate, input, base, filter, instantiator, executionContext, isUpdate, false, null, false);
-    }
-
-    /**
      * Consumes the covering factory and filter, including on failure; builds the parallel filter when
-     * {@code isParallel}, as order planning records it, else the serial one.
+     * {@code isParallel}, as operator planning records it, else the serial one.
      */
     RecordCursorFactory generateCovering(
             BoundExpression predicate, OutputSchema input, CoveringIndexRecordCursorFactory base, Function filter,
@@ -326,7 +284,8 @@ final class FilterFactoryGenerator {
                 }
                 columns = new IntHashSet();
                 collectColumnIndexes(predicate, input, columns);
-                workers = compileWorkers(predicate, input, base.getMetadata(), filter, instantiator, executionContext);
+                workers = instantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
+                        executionContext.getSharedQueryWorkerCount(), executionContext);
             }
             final int limitPosition = limitCount == null ? 0 : limitCount.getPosition();
             isAdopted = true;
@@ -377,19 +336,42 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * Like a join-level filter, keeps a constant folded from functions as a filter; only a literal constant folds.
+     * Instantiates the filter the join step applies to its joined rows over the factory and filters the factory with
+     * it, see {@link #generatePostJoin(GenerationFrame, JoinInput, BoundExpression, RecordCursorFactory, Function, SqlExecutionContext)}.
+     * Consumes the factory on entry, including on failure.
      */
     RecordCursorFactory generatePostJoin(
             GenerationFrame frame,
+            JoinInput step,
             BoundExpression predicate,
-            OutputSchema input,
             RecordCursorFactory base,
-            Function filter,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return generate(frame, predicate, input, base, filter, instantiator, executionContext, false, false, null, false,
-                predicate instanceof ConstantExpression constant && constant.isLiteral());
+        final Function filter;
+        try {
+            filter = frame.functionInstantiator.instantiate(predicate, step.getOutput(), base.getMetadata(), executionContext);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
+        return generatePostJoin(frame, step, predicate, base, filter, executionContext);
+    }
+
+    /**
+     * Filters the factory on one thread with the filter the join step applies to its joined rows, folding a constant
+     * as {@link LogicalPlans#isPostJoinFilterFolded} decides. Consumes both executable roots on entry, including on
+     * failure.
+     */
+    RecordCursorFactory generatePostJoin(
+            GenerationFrame frame,
+            JoinInput step,
+            BoundExpression predicate,
+            RecordCursorFactory base,
+            Function filter,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return generate(frame, predicate, step.getOutput(), base, filter, frame.functionInstantiator, executionContext, false, false, null,
+                false, LogicalPlans.isPostJoinFilterFolded(step, predicate));
     }
 
     /**
@@ -430,7 +412,8 @@ final class FilterFactoryGenerator {
                 ));
             }
         }
-        target.setWorkers(compileWorkers(predicate, input, leaf.getMetadata(), target.getFilter(), instantiator, executionContext));
+        target.setWorkers(instantiator.instantiateWorkers(predicate, input, leaf.getMetadata(), target.getFilter(),
+                executionContext.getSharedQueryWorkerCount(), executionContext));
     }
 
     void setEnableJitNullChecks(boolean value) {
@@ -472,7 +455,8 @@ final class FilterFactoryGenerator {
                 limitPosition = 0;
             }
             LOG.debug().$("JIT enabled for (sub)query [fd=").$(executionContext.getRequestFd()).I$();
-            workers = FilterFactoryGenerator.compileWorkers(predicate, input, base.getMetadata(), filter, instantiator, executionContext);
+            workers = instantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
+                    executionContext.getSharedQueryWorkerCount(), executionContext);
         } catch (SqlException | LimitOverflowException decline) {
             Throwable cleanup = Misc.freeBestEffort(null, limit);
             cleanup = Misc.freeObjListBestEffort(cleanup, workers);

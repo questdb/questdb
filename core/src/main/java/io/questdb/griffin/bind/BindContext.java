@@ -69,18 +69,18 @@ public final class BindContext implements Mutable {
     final ObjectPool<ExpressionNode> bindingExpressions;
     final CharacterStore characterStore;
     final BoundExpressionRewriter expressionRewriter;
-    public final FunctionBinder functionBinder;
+    final FunctionBinder functionBinder;
     final FunctionFactoryCache functionFactoryCache;
-    public final FunctionInstantiator functionInstantiator;
+    final FunctionInstantiator functionInstantiator;
     final TableFunctionSources functionSources;
     final OuterColumnReads outerColumnReads = new OuterColumnReads();
     final PlanNodePools planNodes;
     final PlanTables planTables;
     final PreparedFunctions preparedFunctions;
-    final ObjList<BoundExpression> tmpArguments = new ObjList<>(2);
+    final ObjList<BoundExpression> tmpArguments;
     final IntList tmpOuterColumns;
-    final IntList tmpPositions = new IntList(2);
-    final OutputSchema tmpScope = new OutputSchema();
+    final IntList tmpPositions;
+    final OutputSchema tmpScope;
     private final BindScopeStack scopes;
     /**
      * The query block being bound is a set-operation branch: the set operation binds the trailing
@@ -90,7 +90,9 @@ public final class BindContext implements Mutable {
     boolean isSetOperationBranch;
 
     /**
-     * The context of the compiler's binder; the statement's preparations are the compiler's.
+     * The context of the compiler's binder; the statement's preparations, the expression rewriter and the function
+     * instantiator are the compiler's, and the rewriter and instantiator share the argument, position and scope
+     * temporaries with this context.
      */
     public BindContext(
             SubqueryCompiler subqueryCompiler,
@@ -102,6 +104,11 @@ public final class BindContext implements Mutable {
             PlanTables planTables,
             PreparedFunctions preparedFunctions,
             TableFunctionSources functionSources,
+            BoundExpressionRewriter expressionRewriter,
+            FunctionInstantiator functionInstantiator,
+            ObjList<BoundExpression> tmpArguments,
+            IntList tmpPositions,
+            OutputSchema tmpScope,
             IntList tmpOuterColumns
     ) {
         this.scopes = scopes;
@@ -111,34 +118,21 @@ public final class BindContext implements Mutable {
         this.planTables = planTables;
         this.preparedFunctions = preparedFunctions;
         this.functionSources = functionSources;
+        this.expressionRewriter = expressionRewriter;
+        this.functionInstantiator = functionInstantiator;
+        this.tmpArguments = tmpArguments;
+        this.tmpPositions = tmpPositions;
+        this.tmpScope = tmpScope;
         this.tmpOuterColumns = tmpOuterColumns;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
-        this.expressionRewriter = new BoundExpressionRewriter(functionFactoryCache, planNodes.columns, planNodes.constants, planNodes.functions,
-                planNodes.outerColumns, planNodes.parameters, planNodes.types, tmpArguments, tmpPositions, preparedFunctions,
-                planNodes.maxRetainedExpressions);
-        this.functionInstantiator = new FunctionInstantiator(subqueryCompiler, functionParser.getFunctionResolver(), preparedFunctions, tmpScope,
-                planNodes.maxRetainedExpressions);
         this.functionBinder = new FunctionBinder(this, functionParser.getFunctionResolver(), subqueryCompiler);
     }
 
     @Override
     public void clear() {
-        clearExpressions();
+        functionBinder.clear();
         tmpScope.clear();
         isSetOperationBranch = false;
-    }
-
-    /**
-     * Closes every prepared root nothing adopted and empties the description pools and temporary lists of the three
-     * expression stages, which allocate from this context.
-     */
-    public void clearExpressions() {
-        try {
-            functionInstantiator.clear();
-        } finally {
-            functionBinder.clear();
-            expressionRewriter.clear();
-        }
     }
 
     private static void addWindowBindingColumn(OutputSchema windowBindingSchema, OutputSchema input, int index, boolean isReferenceable) {

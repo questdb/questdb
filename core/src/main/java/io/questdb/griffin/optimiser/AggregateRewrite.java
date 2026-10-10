@@ -25,8 +25,6 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.CharacterStore;
-import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
@@ -78,8 +76,6 @@ import io.questdb.std.ObjectPool;
  * see {@link ProjectionMerge#limitBelowProjection}.
  */
 final class AggregateRewrite implements OptimiserPass {
-    private final ObjList<BoundExpression> callArguments;
-    private final CharacterStore characterStore;
     private final ObjectPool<ColumnExpression> columns;
     private final OptimiserContext context;
     private final ProjectionMerge projectionMerge;
@@ -95,20 +91,16 @@ final class AggregateRewrite implements OptimiserPass {
     AggregateRewrite(
             OptimiserContext context,
             ProjectionMerge projectionMerge,
-            CharacterStore characterStore,
             ObjectPool<ColumnExpression> columns,
             ObjectPool<ProjectPlan> projects,
-            ObjList<BoundExpression> callArguments,
             IntList removedAggregates,
             IntList replacedSumIds,
             IntList sortKeyIndexes
     ) {
         this.context = context;
         this.projectionMerge = projectionMerge;
-        this.characterStore = characterStore;
         this.columns = columns;
         this.projects = projects;
-        this.callArguments = callArguments;
         this.removedAggregates = removedAggregates;
         this.replacedSumIds = replacedSumIds;
         this.sortKeyIndexes = sortKeyIndexes;
@@ -199,15 +191,6 @@ final class AggregateRewrite implements OptimiserPass {
             }
         }
         return -1;
-    }
-
-    private static boolean hasColumnName(OutputSchema output, CharSequence name) {
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            if (Chars.equalsIgnoreCase(output.getColumnName(i), name)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -347,29 +330,19 @@ final class AggregateRewrite implements OptimiserPass {
 
     private int addAggregate(GroupingPlan aggregate, FunctionExpression function, String name) {
         aggregate.getAggregates().add(function);
-        aggregate.getOutput().add(context.newColumnId(), uniqueName(aggregate.getOutput(), name), function.getDataType(), false);
+        aggregate.getOutput().add(context.newColumnId(), context.uniqueName(aggregate.getOutput(), name), function.getDataType(), false);
         return aggregate.getAggregates().size() - 1;
     }
 
     /**
-     * Binds the aggregate {@code name} over {@link #callArguments}, which it clears.
+     * Binds the aggregate {@code name} over {@link OptimiserContext#getCallArguments}, which it clears.
      */
     private FunctionExpression bindAggregate(CharSequence name, int position, OutputSchema input) throws SqlException {
-        final BoundExpression bound = context.bindCall(name, position, callArguments, input);
-        callArguments.clear();
+        final BoundExpression bound = context.bindCall(name, position, input);
         if (bound instanceof FunctionExpression function && function.isAggregate()) {
             return function;
         }
         throw new IllegalStateException("aggregate expected");
-    }
-
-    private BoundExpression bindOperation(CharSequence operator, int position, BoundExpression left, BoundExpression right, OutputSchema input) throws SqlException {
-        callArguments.clear();
-        callArguments.add(left);
-        callArguments.add(right);
-        final BoundExpression bound = context.bindCall(operator, position, callArguments, input);
-        callArguments.clear();
-        return bound;
     }
 
     private ColumnExpression inputColumn(OutputSchema input, int index, int position) {
@@ -433,10 +406,10 @@ final class AggregateRewrite implements OptimiserPass {
     ) throws SqlException {
         BoundExpression value = operation.argumentAt(isColumnOnLeft ? 1 : 0);
         if (countIndex >= 0) {
-            value = bindOperation("*", position, inputColumn(output, countIndex, position), value, output);
+            value = context.bindCall("*", position, inputColumn(output, countIndex, position), value, output);
         }
         final ColumnExpression sum = inputColumn(output, sumIndex, position);
-        return bindOperation(operation.getName(), operation.getPosition(), isColumnOnLeft ? sum : value, isColumnOnLeft ? value : sum, output);
+        return context.bindCall(operation.getName(), operation.getPosition(), isColumnOnLeft ? sum : value, isColumnOnLeft ? value : sum, output);
     }
 
     /**
@@ -470,7 +443,7 @@ final class AggregateRewrite implements OptimiserPass {
             final boolean isKept = hasNestedReference(project, sumId);
             int sumIndex = findAggregate(functions, "sum", column.getColumnId());
             if (sumIndex < 0) {
-                callArguments.add(inputColumn(input, columnIndex, column.getPosition()));
+                context.getCallArguments().add(inputColumn(input, columnIndex, column.getPosition()));
                 final FunctionExpression columnSum = bindAggregate("sum", sum.getPosition(), input);
                 if (isKept) {
                     sumIndex = addAggregate(aggregate, columnSum, "sum");
@@ -490,7 +463,7 @@ final class AggregateRewrite implements OptimiserPass {
                 countIndex = findAggregate(functions, "count", countColumnId);
                 if (countIndex < 0) {
                     if (countColumnId >= 0) {
-                        callArguments.add(inputColumn(input, columnIndex, column.getPosition()));
+                        context.getCallArguments().add(inputColumn(input, columnIndex, column.getPosition()));
                     }
                     countIndex = addAggregate(aggregate, bindAggregate("count", sum.getPosition(), input), "COUNT");
                 }
@@ -514,7 +487,7 @@ final class AggregateRewrite implements OptimiserPass {
         for (int i = 0, n = replacedSumIds.size(); i < n; i++) {
             final int index = output.getColumnIndexById(replacedSumIds.getQuick(i));
             if (!Chars.equalsIgnoreCase(output.getColumnName(index), "sum")) {
-                output.setColumnName(index, uniqueName(output, "sum"), output.getColumnQualifier(index));
+                output.setColumnName(index, context.uniqueName(output, "sum"), output.getColumnQualifier(index));
             }
         }
         return isNormalised;
@@ -595,17 +568,4 @@ final class AggregateRewrite implements OptimiserPass {
         return sort;
     }
 
-    private CharSequence uniqueName(OutputSchema output, String name) {
-        if (!hasColumnName(output, name)) {
-            return name;
-        }
-        for (int i = 1; ; i++) {
-            final CharacterStoreEntry entry = characterStore.newEntry();
-            entry.put(name).put(i);
-            final CharSequence candidate = entry.toImmutable();
-            if (!hasColumnName(output, candidate)) {
-                return candidate;
-            }
-        }
-    }
 }

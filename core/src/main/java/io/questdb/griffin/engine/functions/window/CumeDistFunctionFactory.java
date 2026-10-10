@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -45,15 +46,16 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -208,14 +210,16 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+        public void initRecordComparator(BytecodeAssembler asm,
+                                         RecordComparatorCompiler comparatorCompiler,
+                                         ListColumnFilter columnFilter,
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,
                                          IntList orderPositions,
                                          ObjList<CharSequence> orderBy,
                                          IntList orderByDirection) throws SqlException {
-            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
+            this.recordComparator = comparatorCompiler.newInstance(metadata, orderIndices);
             this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
             this.orderBy = orderBy;
         }
@@ -485,7 +489,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+        public void initRecordComparator(BytecodeAssembler asm,
+                                         RecordComparatorCompiler comparatorCompiler,
+                                         ListColumnFilter columnFilter,
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
                                          IntList orderIndices,
@@ -502,7 +508,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                         false,
                         false
                 );
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
+                this.recordComparator = comparatorCompiler.newInstance(metadata, orderIndices);
                 this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
             } catch (Throwable t) {
                 map = Misc.free(map);

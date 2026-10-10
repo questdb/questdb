@@ -44,6 +44,7 @@ import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -75,6 +76,19 @@ final class ColumnPruning implements OptimiserPass {
     private final ObjectPool<ProjectPlan> narrowingProjects;
     private final ObjList<LogicalPlan> pruneAncestors;
     private final IntHashSet requiredColumnIds;
+    private final PlanExpressionVisitor requiredReads = new PlanExpressionVisitor() {
+        @Override
+        public int visitColumnId(int columnId, int position) {
+            requiredColumnIds.add(columnId);
+            return columnId;
+        }
+
+        @Override
+        public BoundExpression visitExpression(BoundExpression expression) {
+            collectRequiredColumns(expression);
+            return expression;
+        }
+    };
     private final IntList retainedColumnIndexes;
     private final OutputSchema tmpSchema;
     private final ObjList<LogicalPlan> sharedSetOperations = new ObjList<>();
@@ -400,19 +414,8 @@ final class ColumnPruning implements OptimiserPass {
                         requiredColumnIds.add(ordered.getQuick(0).getInput().getOutput().getTimestampColumnId());
                         requiredColumnIds.add(step.getInput().getOutput().getTimestampColumnId());
                     }
-                    for (int k = 0, count = step.getMasterKeyColumnIds().size(); k < count; k++) {
-                        requiredColumnIds.add(step.getMasterKeyColumnIds().getQuick(k));
-                        requiredColumnIds.add(step.getSlaveKeyColumnIds().getQuick(k));
-                    }
-                    collectRequiredColumns(step.getOnResidual());
-                    collectRequiredColumns(step.getPostJoinFilter());
-                    if (step.getUnnest() != null) {
-                        final ObjList<BoundExpression> expressions = step.getUnnest().getExpressions();
-                        for (int k = 0, count = expressions.size(); k < count; k++) {
-                            collectRequiredColumns(expressions.getQuick(k));
-                        }
-                    }
                 }
+                join.visitReads(requiredReads);
                 plan.getOutput().clear();
                 int joinTimestampId = -1;
                 for (int i = 0, n = ordered.size(); i < n; i++) {
@@ -443,15 +446,9 @@ final class ColumnPruning implements OptimiserPass {
             case WindowJoinPlan windowJoin -> {
                 requiredColumnIds.add(windowJoin.getMaster().getOutput().getTimestampColumnId());
                 for (int i = 0, n = windowJoin.getSteps().size(); i < n; i++) {
-                    final WindowJoinStep step = windowJoin.getSteps().getQuick(i);
-                    requiredColumnIds.add(step.getSlave().getOutput().getTimestampColumnId());
-                    collectRequiredColumns(step.getFilter());
-                    collectRequiredColumns(step.getLoExpression());
-                    collectRequiredColumns(step.getHiExpression());
-                    for (int k = 0, count = step.getAggregates().size(); k < count; k++) {
-                        collectRequiredColumns(step.getAggregates().getQuick(k));
-                    }
+                    requiredColumnIds.add(windowJoin.getSteps().getQuick(i).getSlave().getOutput().getTimestampColumnId());
                 }
+                windowJoin.visitReads(requiredReads);
                 for (int i = 0, n = plan.inputCount(); i < n; i++) {
                     pruneColumns(plan.inputAt(i));
                 }
@@ -461,13 +458,9 @@ final class ColumnPruning implements OptimiserPass {
             case HorizonJoinPlan horizon -> {
                 requiredColumnIds.add(horizon.getMaster().getOutput().getTimestampColumnId());
                 for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
-                    final HorizonJoinSlave slave = horizon.getSlaves().getQuick(i);
-                    requiredColumnIds.add(slave.getInput().getOutput().getTimestampColumnId());
-                    for (int k = 0, count = slave.getMasterKeyColumnIds().size(); k < count; k++) {
-                        requiredColumnIds.add(slave.getMasterKeyColumnIds().getQuick(k));
-                        requiredColumnIds.add(slave.getSlaveKeyColumnIds().getQuick(k));
-                    }
+                    requiredColumnIds.add(horizon.getSlaves().getQuick(i).getInput().getOutput().getTimestampColumnId());
                 }
+                horizon.visitReads(requiredReads);
                 final int masterCount = horizon.getMaster().getOutput().getColumnCount();
                 for (int i = 0, n = plan.inputCount(); i < n; i++) {
                     pruneColumns(plan.inputAt(i));
@@ -531,7 +524,7 @@ final class ColumnPruning implements OptimiserPass {
                 }
                 return;
             }
-            case FilterPlan filter -> collectRequiredColumns(filter.getPredicate());
+            case FilterPlan filter -> filter.visitReads(requiredReads);
             case LatestByPlan latest -> {
                 final LogicalPlan input = latest.getInput();
                 final boolean isNativeScan = input instanceof ScanPlan
@@ -553,10 +546,7 @@ final class ColumnPruning implements OptimiserPass {
                 }
             }
             case SortPlan sort -> {
-                final IntList keys = sort.getColumnIds();
-                for (int i = 0, n = keys.size(); i < n; i++) {
-                    requiredColumnIds.add(keys.getQuick(i));
-                }
+                sort.visitReads(requiredReads);
                 if (sort.getInput() instanceof LatestByPlan || sort.getInput() instanceof FilterPlan) {
                     final LogicalPlan input = sort.getInput();
                     final OutputSchema output = input.getOutput();

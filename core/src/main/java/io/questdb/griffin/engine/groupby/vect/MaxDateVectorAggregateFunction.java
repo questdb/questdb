@@ -35,9 +35,6 @@ import io.questdb.std.Vect;
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
 
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_NANO_HOUR_INT;
-
 public class MaxDateVectorAggregateFunction extends DateFunction implements VectorAggregateFunction {
     public static final LongBinaryOperator MAX = Math::max;
     private final int columnIndex;

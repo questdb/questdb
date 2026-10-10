@@ -64,7 +64,7 @@ public final class SortPlan extends ForwardingPlan {
     }
 
     /**
-     * How the sort is implemented, or null before order planning decided it.
+     * How the sort is implemented, or null before operator planning decided it.
      */
     public Algorithm getAlgorithm() {
         return algorithm;

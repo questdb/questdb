@@ -40,9 +40,6 @@ import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_NANO_HOUR_INT;
-
 public class SumLong256VectorAggregateFunction extends Long256Function implements VectorAggregateFunction {
     private static final FiberLocal<Long256Impl> partialSums = new FiberLocal<>(Long256Impl::new);
     private final int columnIndex;

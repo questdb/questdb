@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.optimiser;
 
+import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
@@ -43,7 +44,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.optimiser.DecorrelationContext.OUTER_REF_PREFIX;
-import static io.questdb.griffin.optimiser.DecorrelationContext.appendMissingColumns;
 import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
 
 /**
@@ -55,7 +55,9 @@ final class DecorrelationDomains implements Mutable {
     final IntList domainEqualities = new IntList();
     final IntList domainOuterIds = new IntList();
     private final DecorrelationContext ctx;
+    private final ConjunctTest nonDomainConjuncts = this::keepsNonDomainConjunct;
     int domainSequence;
+    private JoinInput domainStep;
 
     /**
      * {@code decorrelatedSteps} is the optimiser's temporary step list, which the owner empties before decorrelation starts.
@@ -70,6 +72,7 @@ final class DecorrelationDomains implements Mutable {
         domainEqualities.clear();
         domainOuterIds.clear();
         domainSequence = 0;
+        domainStep = null;
     }
 
     private static void shareMasterSource(AggregatePlan domain, JoinInput source) {
@@ -89,6 +92,15 @@ final class DecorrelationDomains implements Mutable {
             domain.getSharedSourceIds().add(sourceOutput.getColumnId(i));
         }
         domain.setSharedSource(source);
+    }
+
+    private boolean keepsNonDomainConjunct(BoundExpression conjunct) throws SqlException {
+        if (!ctx.readsAnyOuter(conjunct, domainOuterIds)) {
+            return true;
+        }
+        final BoundExpression moved = domainStep.getPostJoinFilter();
+        domainStep.setPostJoinFilter(moved == null ? conjunct : ctx.context.getRewriter().combineConjunction(moved, conjunct, conjunct.getPosition()));
+        return false;
     }
 
     /**
@@ -198,7 +210,7 @@ final class DecorrelationDomains implements Mutable {
         join.getInputs().add(ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position));
         join.getOrderedInputs().addAll(join.getInputs());
         join.getOutput().copyFrom(source.getOutput());
-        appendMissingColumns(join.getOutput(), domain.getOutput());
+        join.getOutput().addMissingColumnsFrom(domain.getOutput());
         join.getOutput().setTimestampIndex(source.getOutput().getTimestampIndex());
         return join;
     }
@@ -232,32 +244,7 @@ final class DecorrelationDomains implements Mutable {
      * domain step, which joins after every input.
      */
     BoundExpression moveDomainConjuncts(BoundExpression predicate, JoinInput domainStep) throws SqlException {
-        if (predicate == null) {
-            return null;
-        }
-        if (predicate instanceof FunctionExpression call && call.isAnd()) {
-            final BoundExpression left = moveDomainConjuncts(call.argumentAt(0), domainStep);
-            final BoundExpression right = moveDomainConjuncts(call.argumentAt(1), domainStep);
-            if (left == null) {
-                return right;
-            }
-            if (right == null) {
-                return left;
-            }
-            return left == call.argumentAt(0) && right == call.argumentAt(1) ? call : ctx.context.getRewriter().replaceConjunction(call, left, right);
-        }
-        final int columnBase = ctx.tmpColumnIds.size();
-        ctx.outerColumnReads.collect(predicate, ctx.tmpColumnIds);
-        boolean isDomain = false;
-        for (int i = columnBase, n = ctx.tmpColumnIds.size(); i < n && !isDomain; i++) {
-            isDomain = domainOuterIds.contains(ctx.tmpColumnIds.getQuick(i));
-        }
-        ctx.tmpColumnIds.setPos(columnBase);
-        if (!isDomain) {
-            return predicate;
-        }
-        final BoundExpression moved = domainStep.getPostJoinFilter();
-        domainStep.setPostJoinFilter(moved == null ? predicate : ctx.context.getRewriter().combineConjunction(moved, predicate, predicate.getPosition()));
-        return null;
+        this.domainStep = domainStep;
+        return ctx.context.getRewriter().retainConjuncts(predicate, nonDomainConjuncts);
     }
 }

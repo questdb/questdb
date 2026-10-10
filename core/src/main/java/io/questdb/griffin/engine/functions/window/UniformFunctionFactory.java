@@ -29,6 +29,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -37,11 +38,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -268,7 +270,9 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void initRecordComparator(
-                SqlCodeGenerator sqlGenerator,
+                BytecodeAssembler asm,
+                RecordComparatorCompiler comparatorCompiler,
+                ListColumnFilter columnFilter,
                 RecordMetadata metadata,
                 ArrayColumnTypes chainTypes,
                 IntList orderIndices,

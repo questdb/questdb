@@ -44,7 +44,7 @@ public final class LatestByPlan extends ForwardingPlan {
     }
 
     /**
-     * How the generator finds the latest rows of a derived input, or null before order planning decided it or when
+     * How the generator finds the latest rows of a derived input, or null before operator planning decided it or when
      * the LATEST BY reads a table scan.
      */
     public Algorithm getAlgorithm() {

@@ -210,7 +210,7 @@ public final class PlanVerifier {
     /**
      * Verifies the plan access path planning produced; every scan the generator builds has an access path, and every
      * sort, LIMIT, filter, GROUP BY, LATEST BY over a derived input, join step and window join step the generator
-     * builds has the physical choice order planning records for it.
+     * builds has the physical choice operator planning records for it.
      */
     public boolean verifyAccessPaths(LogicalPlan root) {
         isAccessPathRequired = true;
@@ -350,7 +350,7 @@ public final class PlanVerifier {
             fail(ACCESS_PATH);
         }
         predicate(scan.getResidual());
-        final boolean hasChoice = OrderPlanning.hasResidualFilterChoice(scan);
+        final boolean hasChoice = OperatorPlanning.hasResidualFilterChoice(scan);
         if (scan.getResidualAlgorithm() != null && !hasChoice) {
             fail(FILTER_ALGORITHM);
         }
@@ -657,7 +657,7 @@ public final class PlanVerifier {
             final AggregatePlan.Algorithm algorithm = plain.getAlgorithm();
             final boolean isHorizon = plain.getInput() instanceof HorizonJoinPlan;
             final boolean isGroupBy = !LogicalPlans.isCount(plain)
-                    && !(LogicalPlans.skipFilters(plain.getInput()) instanceof ScanPlan scan && scan.getAccessPath() == ScanPlan.AccessPath.POSTING_DISTINCT);
+                    && LogicalPlans.postingDistinctScan(plain) == null;
             choice(!isGroupBy || algorithm != null);
             if (algorithm != null && (!isGroupBy
                     || algorithm == AggregatePlan.Algorithm.VECTORISED && (keyCount != 1 || isHorizon)
@@ -896,7 +896,7 @@ public final class PlanVerifier {
     private void latestBy(LatestByPlan latest) {
         forwards(latest, OUTPUT_TIMESTAMP);
         final LogicalPlan input = latest.getInput();
-        final boolean isScanned = (input instanceof FilterPlan filter ? filter.getInput() : input) instanceof ScanPlan;
+        final boolean isScanned = LogicalPlans.latestByScan(latest) != null;
         if (latest.getAlgorithm() != null && isScanned) {
             fail(LATEST_BY_ALGORITHM);
         }
@@ -914,8 +914,8 @@ public final class PlanVerifier {
         }
         // LATEST BY over a table reads the table's designated timestamp whether or not the scan projects it
         checkedReadIds.add(timestampId);
-        final LogicalPlan source = input instanceof FilterPlan filter ? filter.getInput() : input;
-        if (!(source instanceof ScanPlan scan) || scan.getNativeTimestampColumnId() != timestampId) {
+        final ScanPlan scan = LogicalPlans.latestByScan(latest);
+        if (scan == null || scan.getNativeTimestampColumnId() != timestampId) {
             fail(UNRESOLVED_COLUMN, timestampId);
         }
     }
@@ -1013,7 +1013,7 @@ public final class PlanVerifier {
                     fail(EXPRESSION_NULL);
                 }
                 predicate(filter.getPredicate());
-                final boolean hasChoice = !LogicalPlans.isFusedFilter(filter) && OrderPlanning.isFiltering(filter.getPredicate());
+                final boolean hasChoice = !LogicalPlans.isFusedFilter(filter) && OperatorPlanning.isFiltering(filter.getPredicate());
                 if (filter.getAlgorithm() != null && !hasChoice) {
                     fail(FILTER_ALGORITHM);
                 }

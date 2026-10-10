@@ -35,9 +35,6 @@ import io.questdb.std.Vect;
 
 import java.util.Arrays;
 
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
-import static io.questdb.griffin.codegen.SqlCodeGenerator.GKK_NANO_HOUR_INT;
-
 public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
     private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
     // We're using two double values per worker, hence +1 element in the padding.

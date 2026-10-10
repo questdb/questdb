@@ -35,7 +35,7 @@ import org.jetbrains.annotations.Nullable;
  * Derives, on demand and from the plan alone, the physical properties of the factory codegen builds for a plan node:
  * whether its cursor supports random access, page frames, time frames, shared cursors and long top-K, whether it
  * applies a LIMIT itself, follows the order advice of its scans or reads long_sequence(), and the order it emits its
- * rows in. It reads the access paths and the operator decisions order planning records on the plan. A property is
+ * rows in. It reads the access paths and the operator decisions operator planning records on the plan. A property is
  * {@link Capability#UNKNOWN} where codegen decides it from facts the plan does not carry.
  */
 public final class PhysicalProperties {
@@ -115,7 +115,8 @@ public final class PhysicalProperties {
      * of a pattern scan that filters in parallel.
      */
     public static Capability supportsLeafTimeFrameCursor(FilterPlan filter) {
-        if (!(filter.getInput() instanceof ScanPlan scan) || scan.isWalClientUpdate()) {
+        final ScanPlan scan = LogicalPlans.fusedScan(filter);
+        if (scan == null) {
             return supportsTimeFrameCursor(filter.getInput(), null);
         }
         return switch (scan.getAccessPath()) {
@@ -185,7 +186,7 @@ public final class PhysicalProperties {
         if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
             return computed(isKeyed, ScanDirection.FORWARD, capability(derive(horizon.getMaster(), null), LONG_SEQUENCE));
         }
-        if (isPostingIndexDistinct(aggregate)) {
+        if (LogicalPlans.postingDistinctScan(aggregate) != null) {
             return computed(Capability.NO, ScanDirection.FORWARD, Capability.NO);
         }
         final int input = derive(aggregate.getInput(), null);
@@ -206,10 +207,11 @@ public final class PhysicalProperties {
 
     /**
      * Whether the GROUP BY serves shared cursors: the vectorised and the keyed parallel one always do; the serial and
-     * the keyless parallel one only when order planning counts a consumer that re-reads the aggregate.
+     * the keyless parallel one only when operator planning counts a consumer that re-reads the aggregate.
      */
     private static Capability aggregateSharedCursors(AggregatePlan aggregate) {
-        if (aggregate.getInput() instanceof HorizonJoinPlan || LogicalPlans.isCount(aggregate) || isPostingIndexDistinct(aggregate)) {
+        if (aggregate.getInput() instanceof HorizonJoinPlan || LogicalPlans.isCount(aggregate)
+                || LogicalPlans.postingDistinctScan(aggregate) != null) {
             return Capability.NO;
         }
         return switch (aggregate.getAlgorithm()) {
@@ -230,7 +232,7 @@ public final class PhysicalProperties {
         if (aggregate.getInput() instanceof HorizonJoinPlan || timestampIndex < 0) {
             return timestampIndex;
         }
-        if (LogicalPlans.isCount(aggregate) || isPostingIndexDistinct(aggregate)) {
+        if (LogicalPlans.isCount(aggregate) || LogicalPlans.postingDistinctScan(aggregate) != null) {
             return -1;
         }
         if (aggregate.getAlgorithm() == null && aggregate.getGroupingExpressions().size() == 1
@@ -355,7 +357,8 @@ public final class PhysicalProperties {
 
     private static int filter(FilterPlan filter) {
         final BoundExpression predicate = filter.getPredicate();
-        if (filter.getInput() instanceof ScanPlan scan && !scan.isWalClientUpdate()) {
+        final ScanPlan scan = LogicalPlans.fusedScan(filter);
+        if (scan != null) {
             return scan(scan);
         }
         return filtered(predicate, derive(filter.getInput(), null), parallel(filter.getAlgorithm()), false, true);
@@ -393,12 +396,6 @@ public final class PhysicalProperties {
 
     private static Capability isLightLatestBy(LatestByPlan latest) {
         return latest.getAlgorithm() == null ? Capability.UNKNOWN : Capability.of(latest.getAlgorithm() != LatestByPlan.Algorithm.MATERIALIZED);
-    }
-
-    private static boolean isPostingIndexDistinct(AggregatePlan aggregate) {
-        final LogicalPlan input = aggregate.getInput();
-        return (input instanceof FilterPlan filter ? filter.getInput() : input) instanceof ScanPlan scan
-                && scan.getAccessPath() == ScanPlan.AccessPath.POSTING_DISTINCT;
     }
 
     /**
@@ -458,8 +455,7 @@ public final class PhysicalProperties {
                 }
             }
             if (filter != null) {
-                properties = filtered(filter, properties, Capability.NO, false,
-                        joinType == JoinKind.UNNEST || filter instanceof ConstantExpression constant && constant.isLiteral());
+                properties = filtered(filter, properties, Capability.NO, false, LogicalPlans.isPostJoinFilterFolded(step, filter));
             }
         }
         return isTimestampIndex ? timestampIndex : properties;
@@ -482,12 +478,11 @@ public final class PhysicalProperties {
     }
 
     private static int latestBy(LatestByPlan latest) {
-        final LogicalPlan input = latest.getInput();
-        final LogicalPlan source = input instanceof FilterPlan filter ? filter.getInput() : input;
-        if (source instanceof ScanPlan scan) {
+        final ScanPlan scan = LogicalPlans.latestByScan(latest);
+        if (scan != null) {
             return scan(scan);
         }
-        final int properties = derive(LogicalPlans.isTimestampDeclarationOnly(input) ? input.inputAt(0) : input, null);
+        final int properties = derive(LogicalPlans.latestByBase(latest), null);
         return computed(isLightLatestBy(latest), ScanDirection.FORWARD, capability(properties, LONG_SEQUENCE));
     }
 
@@ -521,7 +516,7 @@ public final class PhysicalProperties {
     }
 
     /**
-     * Whether a filter runs in parallel, as order planning records it.
+     * Whether a filter runs in parallel, as operator planning records it.
      */
     private static Capability parallel(@Nullable FilterPlan.Algorithm algorithm) {
         return algorithm == null ? Capability.UNKNOWN : Capability.of(algorithm == FilterPlan.Algorithm.PARALLEL);
@@ -732,7 +727,7 @@ public final class PhysicalProperties {
                 }
                 final int type = aggregate.getOutput().getColumnType(columnIndex);
                 final Capability isLong = Capability.of(type == ColumnType.LONG || ColumnType.isTimestamp(type));
-                yield isPostingIndexDistinct(aggregate) ? Capability.NO : isLong;
+                yield LogicalPlans.postingDistinctScan(aggregate) != null ? Capability.NO : isLong;
             }
             case ProjectPlan project -> {
                 final LogicalPlan input = project.getInput();
@@ -762,7 +757,7 @@ public final class PhysicalProperties {
                 yield and(capability(project(project, sortedLimit), RANDOM_ACCESS),
                         supportsLongTopK(input, sortedLimit, index));
             }
-            case FilterPlan filter -> filter.getInput() instanceof ScanPlan scan && !scan.isWalClientUpdate()
+            case FilterPlan filter -> LogicalPlans.isFusedFilter(filter)
                     || !LogicalPlans.isConstant(filter.getPredicate()) ? Capability.NO : supportsLongTopK(filter.getInput(), null, columnIndex);
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
@@ -778,9 +773,8 @@ public final class PhysicalProperties {
     private static Capability supportsSharedCursors(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
         return switch (plan) {
             case AggregatePlan aggregate -> aggregateSharedCursors(aggregate);
-            case FilterPlan filter ->
-                    filter.getInput() instanceof ScanPlan scan && !scan.isWalClientUpdate() ? Capability.NO
-                            : wrapped(filter.getPredicate(), supportsSharedCursors(filter.getInput(), null));
+            case FilterPlan filter -> LogicalPlans.isFusedFilter(filter) ? Capability.NO
+                    : wrapped(filter.getPredicate(), supportsSharedCursors(filter.getInput(), null));
             case ProjectPlan project -> {
                 final LogicalPlan input = project.getInput();
                 yield LogicalPlans.isComputedProjection(project)
@@ -805,9 +799,8 @@ public final class PhysicalProperties {
     private static Capability supportsTimeFrameCursor(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
         return switch (plan) {
             case ScanPlan scan -> scanTimeFrame(scan);
-            case FilterPlan filter ->
-                    filter.getInput() instanceof ScanPlan scan && !scan.isWalClientUpdate() ? scanTimeFrame(scan)
-                            : wrapped(filter.getPredicate(), supportsTimeFrameCursor(filter.getInput(), null));
+            case FilterPlan filter -> LogicalPlans.fusedScan(filter) instanceof ScanPlan scan ? scanTimeFrame(scan)
+                    : wrapped(filter.getPredicate(), supportsTimeFrameCursor(filter.getInput(), null));
             case ProjectPlan project -> {
                 final LogicalPlan input = project.getInput();
                 if (sortedLimit == null && input instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project)) {
@@ -873,18 +866,18 @@ public final class PhysicalProperties {
                 default -> sort.getOutput().getTimestampIndex();
             };
             case FilterPlan filter -> {
-                if (!(filter.getInput() instanceof ScanPlan scan) || scan.isWalClientUpdate()) {
+                final ScanPlan scan = LogicalPlans.fusedScan(filter);
+                if (scan == null) {
                     yield forwarded(timestamp(filter.getInput(), null, false), isSource);
                 }
                 yield forwarded(scanTimestampIndex(scan), isSource);
             }
             case LatestByPlan latest -> {
-                final LogicalPlan input = latest.getInput();
-                if ((input instanceof FilterPlan filter ? filter.getInput() : input) instanceof ScanPlan) {
+                if (LogicalPlans.latestByScan(latest) != null) {
                     yield forwarded(plan.getOutput().getTimestampIndex(), isSource);
                 }
-                final LogicalPlan base = LogicalPlans.isTimestampDeclarationOnly(input) ? input.inputAt(0) : input;
-                yield forwarded(chooseTimestamp(isLightLatestBy(latest), -1, timestamp(base, null, false)), isSource);
+                yield forwarded(chooseTimestamp(isLightLatestBy(latest), -1, timestamp(LogicalPlans.latestByBase(latest), null, false)),
+                        isSource);
             }
             case SetOperationPlan operation -> {
                 if (operation.getOperation() == SetOperationKind.UNION_ALL) {
