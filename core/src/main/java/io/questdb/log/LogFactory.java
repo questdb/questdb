@@ -86,10 +86,13 @@ public class LogFactory implements Closeable {
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final String EMPTY_STR = "";
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
+    // loggers that getLog() hands out while getInstance() constructs the instance; init() binds them
+    private static final ObjList<DeferredLogger> constructionLoggers = new ObjList<>();
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static LogFactory INSTANCE;
     private static boolean envEnabled = true;
     private static boolean guaranteedLogging = false;
+    private static boolean isConstructingInstance;
     private static String rootDir;
     private final Clock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -191,7 +194,21 @@ public class LogFactory implements Closeable {
     public static synchronized LogFactory getInstance() {
         LogFactory logFactory = INSTANCE;
         if (logFactory == null) {
-            logFactory = new LogFactory();
+            if (isConstructingInstance) {
+                // A second instance would bind every log writer a second time, so a class
+                // initializer that the constructor runs must ask for a logger, not for the instance.
+                throw new IllegalStateException("LogFactory instance requested while it is being constructed");
+            }
+            // The constructor initializes WorkerPool, whose static initializer calls getLog().
+            // While this flag is set, getLog() returns a deferred logger instead of re-entering here.
+            isConstructingInstance = true;
+            try {
+                logFactory = new LogFactory();
+            } finally {
+                isConstructingInstance = false;
+            }
+            logFactory.deferredLoggers.addAll(constructionLoggers);
+            constructionLoggers.clear();
             // Some log writers created in the later init() call may do some logging,
             // so we store the instance before the factory was fully initialized.
             // Any logging calls done on a non-initialized log factory and its loggers
@@ -208,7 +225,18 @@ public class LogFactory implements Closeable {
     }
 
     public static Log getLog(String key) {
-        return getInstance().create(key);
+        final LogFactory logFactory;
+        synchronized (LogFactory.class) {
+            if (isConstructingInstance) {
+                // getInstance() is constructing the instance on this thread, and the constructor
+                // initialized a class with a static logger, such as WorkerPool
+                final DeferredLogger log = new DeferredLogger(key);
+                constructionLoggers.add(log);
+                return log;
+            }
+            logFactory = getInstance();
+        }
+        return logFactory.create(key);
     }
 
     public static synchronized void haltInstance() {
@@ -458,7 +486,11 @@ public class LogFactory implements Closeable {
             for (int i = 0, n = jobs.size(); i < n; i++) {
                 loggingWorkerPool.assign(jobs.get(i));
             }
-            loggingWorkerPool.start();
+            // The logging worker reports the failures of its writers on stderr. The logger of
+            // WorkerPool writes to the queues of the global instance, which only the worker of that
+            // instance drains. critical() waits for a free slot, so that worker would block for good
+            // once such a queue fills up.
+            loggingWorkerPool.start(null);
         }
     }
 
