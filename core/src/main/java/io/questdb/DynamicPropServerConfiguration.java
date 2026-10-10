@@ -109,6 +109,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT,
             PropertyKey.CAIRO_SQL_COPIER_CHUNKED,
             PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED,
+            PropertyKey.CAIRO_TABLE_STORAGE_CACHE_TTL,
             PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES,
             PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED,
             PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES,

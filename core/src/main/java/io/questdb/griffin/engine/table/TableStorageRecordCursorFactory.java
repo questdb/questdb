@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableDiskSizeCache;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
@@ -41,17 +42,37 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Files;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Backs {@code table_storage()}: one row per user table with its partitioning, partition count,
+ * row count and on-disk size.
+ * <p>
+ * The record loads each value on first access, so a query reads only the files its projection
+ * and filter need: the table name and the WAL flag come from the table token, the partitioning
+ * from the table metadata, the counts from {@code _txn}, and the disk size from the engine's
+ * {@link TableDiskSizeCache}. {@code SELECT tableName, rowCount FROM table_storage()} never walks
+ * a table directory, and a filter on the table name walks only the directories of the tables
+ * that pass it.
+ * <p>
+ * A table dropped or renamed after the cursor listed it keeps its row, with NULL in the columns
+ * derived from its files.
+ */
 public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int DISK_SIZE = 5;
+    private static final int LOADED_DISK_SIZE = 4;
+    private static final int LOADED_METADATA = 1;
+    private static final int LOADED_TXN = 2;
+    private static final int LOADED_ALL = LOADED_METADATA | LOADED_TXN | LOADED_DISK_SIZE;
     private static final RecordMetadata METADATA;
     private static final int PARTITION_BY = 2;
     private static final int PARTITION_COUNT = 3;
@@ -61,6 +82,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private TableStorageRecordCursor cursor = new TableStorageRecordCursor();
+    private Path path;
     private TxReader txReader;
 
     public TableStorageRecordCursorFactory(CairoEngine engine) {
@@ -68,6 +90,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         this.configuration = engine.getConfiguration();
         this.engine = engine;
         this.txReader = new TxReader(configuration.getFilesFacade());
+        this.path = new Path();
     }
 
     @Override
@@ -80,13 +103,14 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         this.cursor = null;
         failure = Misc.freeBestEffort(failure, txReader);
         this.txReader = null;
+        failure = Misc.freeBestEffort(failure, path);
+        this.path = null;
         CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.circuitBreaker = executionContext.getCircuitBreaker();
-        return cursor.initialize();
+        return cursor.of(executionContext.getCircuitBreaker());
     }
 
     @Override
@@ -102,12 +126,14 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private class TableStorageRecordCursor implements NoRandomAccessRecordCursor {
         private final TableStorageRecord record = new TableStorageRecord();
         private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+        private final ObjList<TableToken> tables = new ObjList<>();
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int tableIndex = -1;
 
         @Override
         public void close() {
             tableBucket.clear();
+            tables.clear();
             // The factory nulls txReader once it is freed; a cursor closed after the
             // factory (late close on an error path) must not dereference it.
             final TxReader txReader = TableStorageRecordCursorFactory.this.txReader;
@@ -124,23 +150,10 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public boolean hasNext() {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-            ++tableIndex;
-            int n = tableBucket.size();
-
-            if (tableIndex >= n) {
-                return false;
+            if (tableIndex + 1 < tables.size()) {
+                record.of(tables.getQuick(++tableIndex));
+                return true;
             }
-
-            TableToken token;
-            do {
-                token = tableBucket.get(tableIndex);
-                if (!token.isSystem()) {
-                    record.getTableStats(token);
-                    return true;
-                }
-                tableIndex++;
-            } while (tableIndex < n);
-
             return false;
         }
 
@@ -151,7 +164,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public long size() {
-            return tableBucket.size();
+            return tables.size();
         }
 
         @Override
@@ -159,52 +172,69 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
             tableIndex = -1;
         }
 
-        private TableStorageRecordCursor initialize() {
+        private TableStorageRecordCursor of(SqlExecutionCircuitBreaker circuitBreaker) {
+            this.circuitBreaker = circuitBreaker;
             engine.getTableTokens(tableBucket, false);
+            // drop system tables up front, so that size() matches the rows hasNext() returns
+            tables.clear();
+            for (int i = 0, n = tableBucket.size(); i < n; i++) {
+                final TableToken token = tableBucket.get(i);
+                if (!token.isSystem()) {
+                    tables.add(token);
+                }
+            }
             toTop();
             return this;
         }
 
         private class TableStorageRecord implements Record {
             private long diskSize;
+            private boolean isTableGone;
+            // bit set of LOADED_* flags for the current row
+            private int loaded;
             private int partitionBy;
             private long partitionCount;
             private long rowCount;
-            private CharSequence tableName;
-            private boolean walEnabled;
+            private int timestampType;
+            private TableToken token;
 
             @Override
             public boolean getBool(int col) {
                 if (col == WAL_ENABLED) {
-                    return walEnabled;
+                    return token.isWal();
                 }
                 throw new UnsupportedOperationException();
             }
 
             @Override
             public long getLong(int col) {
-                switch (col) {
-                    case PARTITION_COUNT:
-                        return partitionCount;
-                    case ROW_COUNT:
-                        return rowCount;
-                    case DISK_SIZE:
-                        return diskSize;
-                    default:
-                        throw new UnsupportedOperationException();
-                }
+                return switch (col) {
+                    case PARTITION_COUNT -> {
+                        loadTxn();
+                        yield partitionCount;
+                    }
+                    case ROW_COUNT -> {
+                        loadTxn();
+                        yield rowCount;
+                    }
+                    case DISK_SIZE -> {
+                        loadDiskSize();
+                        yield diskSize;
+                    }
+                    default -> throw new UnsupportedOperationException();
+                };
             }
 
             @Override
             public @Nullable CharSequence getStrA(int col) {
-                switch (col) {
-                    case TABLE_NAME:
-                        return tableName;
-                    case PARTITION_BY:
-                        return PartitionBy.toString(partitionBy);
-                    default:
-                        throw new UnsupportedOperationException();
-                }
+                return switch (col) {
+                    case TABLE_NAME -> token.getTableName();
+                    case PARTITION_BY -> {
+                        loadMetadata();
+                        yield isTableGone ? null : PartitionBy.toString(partitionBy);
+                    }
+                    default -> throw new UnsupportedOperationException();
+                };
             }
 
             @Override
@@ -217,24 +247,75 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 return TableUtils.lengthOf(getStrA(col));
             }
 
-            private void getTableStats(@NotNull TableToken token) {
-                walEnabled = token.isWal();
-                tableName = token.getTableName();
-                int timestampType;
-                try (TableMetadata tm = engine.getTableMetadata(token)) {
-                    partitionBy = tm.getPartitionBy();
-                    timestampType = tm.getTimestampType();
-                }
-
-                final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token.getDirName());
-                diskSize = Files.getDirSize(path);
-
-                // TxReader
-                TableUtils.setTxReaderPath(txReader, path, timestampType, partitionBy); // modifies path
-                rowCount = txReader.unsafeLoadRowCount();
-                partitionCount = txReader.getPartitionCount();
+            // Checks whether the table was dropped or renamed after the cursor listed it.
+            private boolean isTokenStale() {
+                final TableToken current = engine.getTableTokenIfExists(token.getTableName());
+                return current == null || !current.equals(token);
             }
 
+            private void loadDiskSize() {
+                loadTxn();
+                if ((loaded & LOADED_DISK_SIZE) == 0) {
+                    loaded |= LOADED_DISK_SIZE;
+                    // uses the _txn snapshot that loadTxn() left in txReader
+                    diskSize = engine.getTableDiskSizeCache().getDiskSize(
+                            token,
+                            txReader,
+                            timestampType,
+                            partitionBy,
+                            path,
+                            circuitBreaker
+                    );
+                }
+            }
+
+            private void loadMetadata() {
+                if ((loaded & LOADED_METADATA) == 0) {
+                    loaded |= LOADED_METADATA;
+                    try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                        partitionBy = metadata.getPartitionBy();
+                        timestampType = metadata.getTimestampType();
+                    } catch (CairoException | TableReferenceOutOfDateException e) {
+                        if (!isTokenStale()) {
+                            throw e;
+                        }
+                        setTableGone();
+                    }
+                }
+            }
+
+            private void loadTxn() {
+                loadMetadata();
+                if ((loaded & LOADED_TXN) == 0) {
+                    loaded |= LOADED_TXN;
+                    try {
+                        path.of(configuration.getDbRoot()).concat(token.getDirName());
+                        TableUtils.setTxReaderPath(txReader, path, timestampType, partitionBy);
+                        TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+                        rowCount = txReader.getRowCount();
+                        partitionCount = txReader.getPartitionCount();
+                    } catch (CairoException e) {
+                        if (!isTokenStale()) {
+                            throw e;
+                        }
+                        setTableGone();
+                    }
+                }
+            }
+
+            private void of(@NotNull TableToken token) {
+                this.token = token;
+                this.loaded = 0;
+                this.isTableGone = false;
+            }
+
+            private void setTableGone() {
+                isTableGone = true;
+                partitionCount = Numbers.LONG_NULL;
+                rowCount = Numbers.LONG_NULL;
+                diskSize = Numbers.LONG_NULL;
+                loaded = LOADED_ALL;
+            }
         }
     }
 

@@ -1475,6 +1475,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getTableStorageCacheTTL() {
+        return getDelegate().getTableStorageCacheTTL();
+    }
+
+    @Override
     public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
         return getDelegate().getTelemetryConfiguration();
     }

@@ -260,6 +260,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
+    private final TableDiskSizeCache tableDiskSizeCache = new TableDiskSizeCache(this);
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
     private final TableMetadataPool tableMetadataPool;
@@ -1187,6 +1188,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         viewGraph.clear();
         dependentViewGraph.clear();
+        tableDiskSizeCache.clear();
         matViewStateStore.clear();
         matViewTimerQueue.clear();
         liveViewRegistry.clear();
@@ -2357,6 +2359,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public SqlCompilerPool getSqlCompilerPool() {
         return sqlCompilerPool;
+    }
+
+    public TableDiskSizeCache getTableDiskSizeCache() {
+        return tableDiskSizeCache;
     }
 
     public TableFlagResolver getTableFlagResolver() {

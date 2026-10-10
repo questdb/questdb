@@ -39,7 +39,9 @@ import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableDiskSizeCache;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
@@ -1701,6 +1703,55 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testTableStorageCacheTtlReload() throws Exception {
+        // The cache reads the TTL on every table_storage() call, so what the reload has to reach
+        // is the next call: a zero TTL bypasses the cache and releases the sizes it holds.
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                final CairoEngine engine = serverMain.getEngine();
+                final CairoConfiguration cairoConfig = serverMain.getConfiguration().getCairoConfiguration();
+                final TableDiskSizeCache cache = engine.getTableDiskSizeCache();
+                try (SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(AllowAllSecurityContext.INSTANCE)) {
+                    engine.execute(
+                            "CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                            executionContext
+                    );
+                    engine.execute(
+                            "INSERT INTO x SELECT timestamp_sequence('2024-01-01', 8_640_000_000L), x FROM long_sequence(30)",
+                            executionContext
+                    );
+                    Assert.assertEquals(600_000, cairoConfig.getTableStorageCacheTTL());
+                    assertTableStorageDiskSize(engine, executionContext);
+                    Assert.assertEquals(1, cache.getTableCount());
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.table.storage.cache.ttl=0\n");
+                    }
+
+                    assertReloadConfigEventually();
+
+                    Assert.assertEquals(0, cairoConfig.getTableStorageCacheTTL());
+                    assertTableStorageDiskSize(engine, executionContext);
+                    Assert.assertEquals(0, cache.getTableCount());
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("cairo.table.storage.cache.ttl=1m\n");
+                    }
+
+                    assertReloadConfigEventually();
+
+                    Assert.assertEquals(60_000, cairoConfig.getTableStorageCacheTTL());
+                    assertTableStorageDiskSize(engine, executionContext);
+                    Assert.assertEquals(1, cache.getTableCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnknownPropertyAdditionIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -1844,6 +1895,17 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
             }
         });
+    }
+
+    private static void assertTableStorageDiskSize(CairoEngine engine, SqlExecutionContext executionContext) throws SqlException {
+        try (
+                RecordCursorFactory factory = engine.select("SELECT diskSize FROM table_storage() WHERE tableName = 'x'", executionContext);
+                RecordCursor cursor = factory.getCursor(executionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            Assert.assertTrue(cursor.getRecord().getLong(0) > 0);
+            Assert.assertFalse(cursor.hasNext());
+        }
     }
 
     private static void assertWindowMapFusion(

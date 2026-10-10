@@ -646,6 +646,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
     CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED("cairo.metadata.cache.snapshot.ordered"),
     CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
+    CAIRO_TABLE_STORAGE_CACHE_TTL("cairo.table.storage.cache.ttl"),
     CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
     CAIRO_O3_MID_PARTITION_MAX_SPLITS("cairo.o3.mid.partition.max.splits"),

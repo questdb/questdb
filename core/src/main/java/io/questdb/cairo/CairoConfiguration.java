@@ -1062,6 +1062,18 @@ public interface CairoConfiguration {
 
     int getTableRegistryCompactionThreshold();
 
+    /**
+     * Maximum age, in milliseconds, of a partition size cached for the {@code table_storage()}
+     * function. The cache re-measures a partition when its directory name, row count, Parquet
+     * file size or directory modification time changes; the maximum age bounds staleness for
+     * changes that none of these reflect, such as in-place file edits by external tools. A value
+     * of 0 or less disables the cache, so that every call walks the table directories.
+     * <p>
+     * The value is reloadable: the cache reads it on every call and applies it to the sizes it
+     * cached under the previous value as well.
+     */
+    long getTableStorageCacheTTL();
+
     @NotNull
     TelemetryConfiguration getTelemetryConfiguration();
 
