@@ -1436,7 +1436,10 @@ public class SqlUtil {
 
     public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
         if (value != null) {
-            Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
+            final int end = value.length();
+            // accept the 0x prefix, which LONG256 text output carries, as the constant overload does
+            final int start = end > 2 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x' ? 2 : 0;
+            Long256FromCharSequenceDecoder.decode(value, start, end, long256Acceptor);
         } else {
             long256Acceptor.setAll(
                     Long256Impl.NULL_LONG256.getLong0(),
