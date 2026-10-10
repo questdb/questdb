@@ -65,7 +65,7 @@ number, then updates the durable frontier.
 | `nosync` | nothing | nothing | nothing |
 | `async` | `msync(MS_ASYNC)` | `msync(MS_ASYNC)` | nothing |
 | `sync` | `msync(MS_SYNC)` | `msync(MS_SYNC)` | nothing |
-| `adaptive` (any `W`) | `msync(MS_ASYNC)`, a write-back drain (`sync_file_range`, if `cairo.wal.commit.writeback.drain`), then a barrier per file | `msync(MS_ASYNC)`, drain, barrier | every private WAL byte is on the device |
+| `adaptive` (any `W`) | `msync(MS_ASYNC)`, a write-back drain (if `cairo.wal.commit.writeback.drain`: `sync_file_range(WRITE)` on every column and `_event` file, then `WRITE \| WAIT_AFTER` on each, so the files are written back in parallel), then a barrier per file | drain, `msync(MS_ASYNC)`, barrier | every private WAL byte is on the device |
 
 The barrier is `Files.barrierFsync`: `fdatasync` on Linux and Windows, `F_BARRIERFSYNC` (ordering only) on macOS,
 where the sequencer's `fdatasync` (`F_FULLFSYNC`) that follows makes everything ordered before it durable.
@@ -83,8 +83,9 @@ Then the sequencer (`TableTransactionLogV2.sync0`, the same order in V1):
 | `adaptive`, `W` = 0 | `msync(MS_SYNC)`, then `fdatasync` of the part file, then of the header; the durable frontier moves on the commit thread |
 | `adaptive`, `W` > 0 | `msync(MS_ASYNC)` of the part file and the header; the `fdatasync` is deferred to the batched flush |
 
-The part file is always made durable before the header that names its record, so a durable `maxTxn` never points
-at a record that is not on the disk.
+The flushes make the part file durable before the header that names its record. Between flushes the kernel's own
+write-back can still write the header page first, so outside `sync` and `adaptive` with `W` = 0 a power loss can
+leave a header that names a record past the durable frontier that is not on the disk.
 
 **The batched flush** (`W` > 0). `recordPendingDurable` registers the commit in `WalGroupCommitFlushQueue`. When the
 oldest pending commit is `W` old, `flushPendingDurable` runs `fdatasyncTxnLog` and `markWriterDurable`, which moves
@@ -262,9 +263,9 @@ read by nothing and not deleted.
 `RecoveryCoordinator.recover` runs once at start, before any WAL apply, job or conversion, for every WAL table
 (views skipped), in every mode and role:
 
-1. If neither generation file exists, the table is not enrolled: nothing to do. That is two existence checks per
-   WAL table, the whole cost of a start for a table without a save point: about 2 µs per table, 2.2 ms per 1,000
-   tables.
+1. If neither generation file exists, the table is not enrolled: nothing to do. That is two existence checks (four
+   `access` calls) per WAL table, the whole cost of recovery for a table without a save point: about 2 µs per table,
+   2.2 ms per 1,000 tables.
 2. If `cairo.adaptive.recovery.roll.forward.enabled` is false, refuse.
 3. Repair an interrupted `_meta` swap (the `_todo_` file), as the writer would.
 4. Delete unpublished generation files. If none is left, the table is not enrolled.
@@ -561,20 +562,22 @@ bytes.
   record only once the local durable frontier covers it, for V1 and V2 logs alike, so a power loss can never make
   the primary reuse a transaction number the object store already holds. While it waits it logs `holding uploads
   past the local durable frontier [...]` once.
-- **The uploader start flush** (`WalUploader.coverEarlierRecords`). At boot and at promotion, in `adaptive` and
-  `sync` mode, the uploader makes every table's sequencer log durable before its first upload, then moves each
-  table's durable frontier over the records the flush covered: one `syncfs` of the database root and of each linked
-  volume on Linux, which reaches every part file; elsewhere each table's own flush,
-  `TableSequencerAPI.fdatasyncTxnLog(token, 0)`, which in a V2 log first flushes every part file it still keeps
-  (walking down from the part below the open one and stopping at the first part that is gone), then the open part
-  and the header. A commit before this step moves the frontier after flushing only the open part, so the walk starts
-  at part 0. The step runs in `PrimaryRoleState.openLoops` before the uploader is installed as the WAL listener: a
-  commit notified during the flush could ship the older records of a table the flush has not reached; a commit made
-  meanwhile is shipped by the startup scan (`triggerUploadMissed`) right after the install. A dropped table's log is
-  flushed the same way, from part 0 where `syncfs` is not filesystem-wide. A data sync failure stops the engine.
-  On Linux, 1,000 tables take 37-109 ms in `adaptive` and 21-23 ms in `sync` when every table has one new commit
-  (the `syncfs` is 90-98% of it), 2-8 ms when none has. Outside Linux, flushing every kept part costs about +50%
-  over the open part and the header alone (1,000 busy tables: 10.0 s against 6.6 s, measured on Linux with that
+- **The uploader start flush** (`WalUploader.coverEarlierRecords`). At boot and at promotion, in `adaptive` and `sync`
+  mode, the uploader makes every table's sequencer log durable before its first upload, then moves each table's
+  durable frontier over the records the flush covered: one `syncfs` of the database root and of each linked volume on
+  Linux, which reaches every part file; elsewhere each table's own flush, `TableSequencerAPI.fdatasyncTxnLog(token,
+  0)`, which in a V2 log first flushes every part file it still keeps (walking down from the part below the open one
+  and stopping at the first part that is gone), then the open part and the header. A commit before this step moves the
+  frontier after flushing only the open part, so the walk starts at part 0. The step runs in
+  `PrimaryRoleState.openLoops` before the uploader is installed as the WAL listener: a commit notified during the
+  flush could ship the older records of a table the flush has not reached; a commit made meanwhile is shipped by the
+  startup scan (`triggerUploadMissed`) right after the install. A dropped table's log is flushed the same way, from
+  part 0 where `syncfs` is not filesystem-wide. A data sync failure stops the engine. On Linux, 1,000 tables take
+  37-109 ms in `adaptive` and 21-23 ms in `sync` when every table has one new commit (the `syncfs` is 90-98% of it),
+  2-8 ms when none has. The step reads each table's last transaction through `TableSequencerAPI.lastTxn`, which opens
+  the log: on the first such start after a `nosync` or `async` run that open also reads and flushes each V1 log once
+  (section 13), 3-4 s for 1,000 tables, before the first upload. Outside Linux, flushing every kept part costs about
+  +50% over the open part and the header alone (1,000 busy tables: 10.0 s against 6.6 s, measured on Linux with that
   path forced).
 - **The V1 log on a replica.** The downloader is the only writer of a replica's V1 sequencer log. A Java open leaves
   records past the published tail alone (the downloader wrote them and has not published them yet); a torn tail is
@@ -609,12 +612,20 @@ change reads as unverified, never as torn, and a released binary ignores the new
   bytes. A stored 0 reads unverified; a mismatch fails the read with `torn sequencer txnlog record [txn=...,
   ...]`. A new log's header also carries a capability marker at offset 24, which nothing reads yet.
 - **Version 1 sequencer log: the zero tail.** A V1 log has no room for a checksum. Instead, an open scans the records
-  after a hint kept in the header (offset 40: the first transaction a completed flush may not have covered) and
-  cuts the tail at the first record that cannot be whole (zero WAL id, zero timestamp, a gap in the structure
-  version): it lowers `maxTxn`, zeroes the bytes after it and flushes (`dropping torn sequencer txnlog tail
-  [...]`). An open that cuts nothing leaves the bytes past the tail alone; the first append after it zeroes and
-  flushes them if any are non-zero, so a stale record can never look valid after the next power loss. Damage to a
-  V1 record already written (bit rot, a foreign write) is not detected.
+  after a hint kept in the header (offset 40: the first transaction a completed flush may not have covered) and cuts
+  the tail at the first record that cannot be whole (zero WAL id, zero timestamp, a gap in the structure version): it
+  lowers `maxTxn`, zeroes the bytes after it and flushes (`dropping torn sequencer txnlog tail [...]`). An open that
+  cuts nothing leaves the bytes past the tail alone; the first append after it zeroes and flushes them if any are
+  non-zero, so a stale record can never look valid after the next power loss. Only `sync` and `adaptive` commits move
+  the hint. A `nosync` or `async` open scans from the hint, flushes nothing and stores the hint negated: the next
+  `nosync` or `async` open scans only the records after it, but a `sync` or `adaptive` open that finds it negative
+  scans the whole log from transaction 1, flushes it and stores a positive hint (`TableTransactionLogV1.recoverTail`).
+  So the first `sync` or `adaptive` start after a `nosync` or `async` run pays one `fdatasync` and a full read of
+  every V1 log, once per table: 3-4 s for 1,000 tables against about 50 ms at the next start, and 0.27 s for a log of
+  a million transactions read from the disk (guide, section 9). It runs at each log's first open: in QuestDB the
+  `metadata-hydration` thread opens every WAL table's log right after the start
+  (`CairoEngine.hydrateRecentWriteTracker`), unless a write gets there first. Damage to a V1 record already written
+  (bit rot, a foreign write) is not detected.
 - **WAL segment length guard.** Before applying, the writer checks that each WAL column file is long enough for
   the committed rows, from the mapping it already holds, and that the last aux entry of a var-size column is whole
   (`WAL segment column too short for committed row range [...]`, `WAL segment column has a torn aux entry [...]`).
@@ -644,7 +655,7 @@ new bytes):
 | `_txn` | body checksum and stamp at offsets 116-127; the lag checksum reset writes 4 bytes instead of 8 (a fix) |
 | `_cv` | a 16-byte trailer after each area; areas are placed with room for it |
 | sequencer V2 part files | a checksum in the 8 reserved bytes of each record; a capability marker in the header (written, not read) |
-| sequencer V1 `_txnlog` | the unsynced-from hint at header offset 40 |
+| sequencer V1 `_txnlog` | the unsynced-from hint at header offset 40 (negated after a `nosync` or `async` open) |
 | `_meta` | none: the base layout (format minor version 2). A development build's enrolment field still loads. |
 | `_convert` | none |
 
@@ -667,5 +678,6 @@ field and body checksum. The save point removal deletes the first four when it f
    and `adaptive` and swaps them every run. A mode seen in a test run says nothing about the shipped default, which
    is `nosync`.
 7. `syncfs` reports a write-back error once per file system, and only from Linux 5.8 on: an error that another
-   process's `syncfs` collected first, or any error on an older kernel, goes unseen. The save point's batched flush,
-   the exit, the recovery header flush and the Enterprise uploader start flush rely on that report alike.
+   process's `syncfs` collected first, or any error on an older kernel, goes unseen. The save point's batched flush
+   (for every file but the open partition's columns and the symbol maps, whose write-back its drain waits on and
+   checks), the exit, the recovery header flush and the Enterprise uploader start flush rely on that report alike.

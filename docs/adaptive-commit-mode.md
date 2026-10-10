@@ -86,7 +86,8 @@ The window trades the recovery point (how much acknowledged data a power loss ca
 - **Above 0 (default 50 ms): the sequencer flush is shared.** The commit still flushes its own WAL files before it
   takes a sequence number, so the sequencer can never name data that is not on the disk. The flush of the shared
   sequencer log waits until the window's oldest commit is one window old, and one flush covers every commit since.
-  The commit returns before that flush. A power loss can lose the commits acknowledged in the last window.
+  Most commits return before that flush; the commit that finds the oldest pending one a window old makes the flush
+  itself before it returns. A power loss can lose the commits acknowledged in the last window.
 
 When commits stop in the middle of a window, the last flush is made by a background job that runs on the shared
 worker pool, so the bound for that last batch is the window plus the pool's sleep time
@@ -154,8 +155,8 @@ These hold for WAL tables on an instance in `adaptive` mode. On QuestDB Enterpri
 7. **Tables from a released version need nothing.** Their files carry no save point and no checksums. They read
    as not yet enrolled and unverified, never as damaged, and the first adaptive writer enrols them.
 8. **The other modes keep their behaviour.** `nosync`, `async` and `sync` make the same file system calls on a
-   commit and an apply pass as before (section 9 lists the measured differences). Section 8.1 lists what changes in
-   them.
+   commit and a one-row apply pass as before, except that `sync` flushes the directories of a partition an apply
+   opens (section 9 lists the measured differences). Section 8.1 lists what changes in them.
 
 ## 7. What adaptive does not promise or support
 
@@ -251,12 +252,19 @@ Found while this mode was built, not yet filed:
 
 `cairo.commit.mode` can change at any restart, in any direction, any number of times.
 
-- **Into `adaptive`.** Nothing happens at the start. Each WAL table enrols at its first writer open (section 3).
+- **Into `adaptive`.** Each WAL table enrols at its first writer open (section 3).
+- **From `nosync` or `async` into `sync` or `adaptive`.** The first start in the new mode reads each WAL table's
+  version 1 sequencer log (the default) once from its first transaction and flushes it, because the records the
+  `nosync` or `async` run wrote were never flushed and a durable mode does not trust them unchecked. The first open
+  of each log pays it, once per table: in QuestDB the background table scan right after the start (or the table's
+  first write, if that comes first), in QuestDB Enterprise the uploader start, before any upload. Later starts in a
+  durable mode skip it. It costs one `fdatasync` per table and a read of the log: 3-4 s for 1,000 tables in our
+  measurement (section 9).
 - **Out of `adaptive`** (to `nosync`, `async` or `sync`). The first start in the new mode makes every enrolled table
-  durable (one `syncfs` on Linux, a flush of each table's files elsewhere), then removes its save point files and
-  logs `table left adaptive commit mode, its save point is removed [table=...]`. From then on the table behaves as
-  in the new mode, and the WAL is purged as usual. A table with a conversion to non-WAL pending is left to the
-  conversion, which removes the save point itself.
+  durable (one `syncfs` per file system on Linux, the root and each volume; a flush of each table's files elsewhere),
+  then removes its save point files and logs `table left adaptive commit mode, its save point is removed [table=...]`.
+  From then on the table behaves as in the new mode, and the WAL is purged as usual. A table with a conversion to
+  non-WAL pending is left to the conversion, which removes the save point itself.
 - **Right after a crash.** The start recovers first, in any mode: it puts each enrolled table back at its save
   point, and the WAL apply replays the rest. Only then does the switch above take effect. A crash that happened in
   `adaptive` mode is therefore repaired even when the next start runs in another mode.
@@ -269,7 +277,9 @@ Found while this mode was built, not yet filed:
 ### 8.1 What changes in `nosync`, `async` and `sync`
 
 - **Torn-file detection** runs in every mode (section 2): it costs nanoseconds per commit and no system call, and
-  about 9 µs on the first reader of each table (four more file size checks).
+  about 9 µs on the first reader of each table (four more file size checks). Each open of a version 1 sequencer log
+  reads the records added since its previous open (no system call), and a torn tail it cuts after a crash is
+  flushed, in every mode.
 - **Held-back transactions** are applied again from the WAL after a restart instead of being read from `_txn`, in
   every mode. Before, a crash at the wrong moment could lose or duplicate those rows
   ([#7804](https://github.com/questdb/questdb/issues/7804)).
@@ -303,13 +313,16 @@ Found while this mode was built, not yet filed:
   and in `adaptive` a kill or power loss after the REBASE made it certain. A table that already reads 1970 from
   this keeps that minimum.
 - **`sync` stops the server on a failed flush**, as `adaptive` does (section 11.2), and makes a few more files
-  durable: the schema file swap, and the directories of ALTER COLUMN TYPE, CONVERT PARTITION and the Parquet
-  partition switch. A version 2 sequencer log writes the record before the header that names it.
+  durable: the schema file swap, the directories of a partition an apply opens (two `fsync`), and the directories
+  of ALTER COLUMN TYPE, CONVERT PARTITION and the Parquet partition switch. A version 2 sequencer log writes the
+  record before the header that names it.
 - **A partition conversion keeps the new partition** once its `_txn` is written, even when the flush of that `_txn`
   fails, and in `sync` a writer open flushes `_txn` again before it removes old partition versions. Before, a
   restart could find the partition missing (CONVERT PARTITION) or its rows gone (the Parquet partition switch).
-- **A start** checks each WAL table for a save point, in every mode: two file checks, about 2 µs per table (2.2 ms
-  per 1,000 tables).
+- **A start** checks each WAL table for its two save point files, in every mode: four `access` calls, about 2 µs per
+  table (2.2 ms per 1,000 tables).
+- **The first `sync` start after a `nosync` or `async` run** reads and flushes each version 1 sequencer log once, as
+  the switch into `adaptive` does (section 8).
 - `nosync` and `async` otherwise behave and cost as before (section 9).
 
 ## 9. What it costs
@@ -324,7 +337,7 @@ macOS and Windows (where a save point flushes file by file) can differ widely.
 | `nosync` (default) | as before: no system call, 4.5 µs for one row | as before: 101 µs for one row, the same system calls | none | about 2 µs more per WAL table (two file checks), and about 9 µs more for the first reader of each table | as before |
 | `async` | as before: 8 µs for one row | as before | none | as `nosync` | as before |
 | `sync` | as before: 12.1 ms for one row, 38.8 ms for 100,000 rows; with a version 2 sequencer log, one more `msync` to write the record before the header that names it | as before: 11.6 ms | none | as `nosync` | about 12 ms more (four `fsync` that make the `_meta` swap durable): 32 ms to add a column, 26-28 ms to rename, drop or change a type; a few more `fsync` for ALTER COLUMN TYPE and partition conversions, which could lose data on a power loss before |
-| `adaptive`, window 0 | 6.6 ms for one row, 30.5 ms for 100,000 rows (`sync`: 12.1 and 38.8 ms) | 127 µs for one row, the same system calls as `nosync` | 19-24 ms, nearly all of it one `syncfs`; at most once a minute per table by default (about 0.03% of one core) | clean: 28 ms for 20 tables (`nosync` 9 ms), 0.24 s for 1,000 tables, of which one `syncfs` of 51 ms; after a crash: about 34 ms per table with 20 commits to replay | 25-30 ms; ALTER COLUMN TYPE 48 ms, because it takes a save point, as partition conversions, ATTACH and DETACH do |
+| `adaptive`, window 0 | 6.6 ms for one row, 30.5 ms for 100,000 rows (`sync`: 12.1 and 38.8 ms) | 127 µs for one row, the same system calls as `nosync` | 19-24 ms, nearly all of it one `syncfs`; at most once a minute per table by default (about 0.03% of one core), and once at each table's first apply after a start | clean: 28 ms for 20 tables (`nosync` 9 ms), 0.24 s for 1,000 tables, of which one `syncfs` of 51 ms; after a crash: about 34 ms per table with 20 commits to replay | 25-30 ms; ALTER COLUMN TYPE 48 ms, because it takes a save point, as partition conversions, ATTACH and DETACH do |
 | `adaptive`, window 50 ms | 5.2 ms for one row, 28.7 ms for 100,000 rows | 141 µs | as window 0 | as window 0 | as window 0 |
 
 Steady ingestion, 100-row commits from one writer: `nosync` 5.2 million rows/s, `async` 3.9 million, `sync` 5,800,
@@ -337,8 +350,9 @@ More detail:
   wait for each WAL page to be written back when it moves to the next page; the commit's own flush writes it.
 - **The save point** costs about the same whatever the table's width or partition count: the fixed flushes
   dominate. 19 ms at 4 columns and one partition, 22 ms at 1,000 partitions or at 256 columns, 24 ms after a
-  100,000-row commit. At 4 columns it makes 47 system calls, among them four `fsync`, six or seven `msync`, five
-  `sync_file_range` and one `syncfs`; 168 at 64 columns and 552 at 256. `syncfs` flushes the whole file system, so
+  100,000-row commit. At 4 columns it makes 47 system calls, among them four `fsync`, one or two `msync`, ten
+  `sync_file_range` (the write-back of each column file started, then waited on) and one `syncfs`; 168 at 64 columns
+  and 552 at 256. `syncfs` flushes the whole file system, so
   its cost also depends on other dirty data on the same file system.
 - **Start after a crash.** Each table restored costs its restore plus the replay of the WAL after its save point:
   about 34 ms per table with 20 commits to replay. A table with POSTING indexes also checks each partition's index
@@ -354,10 +368,10 @@ More detail:
 - **DETACH PARTITION**, in every mode, links the partition one more time (into its temporary name, then into
   `.detached`) and removes one more directory. In `sync` it also flushes every file of the detached copy and three
   directories. Not measured; DETACH is a rare statement.
-- **An `adaptive` start** rewrites the header of each table's current save point and makes it durable before
-  anything relies on it. On Linux that is one write per table and one `syncfs` per start: 1,000 tables took 244 ms,
-  of which the `syncfs` 51 ms. Elsewhere it is one `fsync` per table (5-8 ms each, measured on Linux with that path
-  forced).
+- **An `adaptive` start** rewrites the header of each table's current save point and makes it durable before anything
+  relies on it. On Linux that is one write per table and one `syncfs` per file system (the root and each volume) per
+  start: 1,000 tables took 244 ms, of which the `syncfs` 51 ms. Elsewhere it is one `fsync` per table (5-8 ms each,
+  measured on Linux with that path forced).
 - **A parallel COPY** in `sync`, and into a WAL table it creates in `adaptive`, flushes twice before COPY returns:
   the imported partitions and symbol files before the attach, then `_txn` and the renamed directories after it. On
   Linux that is two `syncfs` per COPY. In `sync` the import also flushes each partition directory it creates, and
@@ -367,6 +381,12 @@ More detail:
   the imported partitions, the table's root files and directories, before and after the attach (45-50 flushes for
   three partitions of four columns). COPY into an existing WAL table in `adaptive` pays for one save point instead.
   `nosync`, `async` and a non-WAL table in `adaptive`: no flush.
+- **The first `sync` or `adaptive` start after `nosync` or `async`** reads each WAL table's version 1 sequencer log
+  from its first transaction and flushes it, once per table (section 8): one `fdatasync` and a read of 28 bytes per
+  transaction in the log. Measured while other work loaded the same disk: 1,000 tables with 100 to 1,000 transactions
+  each took 3.0 s in `sync` and 4.2 s in `adaptive`, against about 50 ms at the next start; one table with a million
+  transactions 7.5 ms against 0.2 ms with its log in the page cache, 0.27 s when the log had to be read from the disk.
+  In QuestDB Enterprise the uploader start includes it, so on that start uploads begin that much later.
 - **Disk.** Because a start can fall back to the older of the two save points, the WAL, the superseded partition
   versions and the superseded column and index files wait one save point longer before they are removed: one minute
   at the defaults, but with a negative `cairo.adaptive.epoch.interval` that can be days. The WAL purge job reads the
@@ -393,7 +413,8 @@ More detail:
   show how much.
 - **Enterprise.** The uploader flushes every table's sequencer log once when it starts (boot and promotion, in
   `adaptive` and `sync`), before it listens for commits; a commit made meanwhile is uploaded once the flush is done.
-  On Linux that is one `syncfs` plus a read of each table's last transaction: for 1,000 tables 37-109 ms in
+  On Linux that is one `syncfs` plus a read of each table's last transaction (on the first such start after a
+  `nosync` or `async` run, also the one-off read and flush of each version 1 log, above): for 1,000 tables 37-109 ms in
   `adaptive` and 21-23 ms in `sync` when every table has one new commit, 2-8 ms when none has. Elsewhere each table
   flushes its log with every version 2 log part it still keeps: one more flush per kept closed part (5,000
   transactions each by default), about +50% on the start flush in the typical case (1,000 busy tables: 10.0 s
@@ -543,11 +564,11 @@ and report it.
 
 ### 11.2 The server stops after a failed flush
 
-In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs` or synchronous `msync` stops the server at
-once, because the data it was flushing may not be on the disk. So does a failed flush of a conversion to non-WAL,
-in every mode. A parallel COPY whose flush fails first drops the table it created, or empties the existing table it
-imported into, so COPY never reports an import done that is not on the disk (section 11.6 says what it can leave
-behind):
+In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs`, `sync_file_range` or synchronous `msync` stops
+the server at once, because the data it was flushing may not be on the disk. So does a failed flush of a conversion to
+non-WAL, in every mode. A parallel COPY whose flush fails first drops the table it created, or empties the existing
+table it imported into, so COPY never reports an import done that is not on the disk (section 11.6 says what it can
+leave behind):
 
 ```
 fatal durability barrier failure [operation=..., errno=..., message=...]
@@ -664,7 +685,7 @@ directory (`<table>~<id>` under the database root), and start. The copy takes wr
 | `cairo.adaptive.epoch.max.rows` | `5000000` | A save point once this many rows were applied since the last one, whatever the interval. `0` or negative: off. |
 | `cairo.adaptive.epoch.flush.on.close` | `true` | A clean writer close takes a save point over any transactions after the last one, so a clean restart restores nothing. |
 | `cairo.adaptive.epoch.column.sync.batched` | `true` | On Linux, flush a save point's column files in one batch ending in one `syncfs`. `false`: a flush per column file, then the same `syncfs`. |
-| `cairo.wal.commit.writeback.drain` | `true` | Start the write-back of a WAL segment's files before the commit's flushes. Speed only. |
+| `cairo.wal.commit.writeback.drain` | `true` | Start the write-back of every file of a WAL segment, then wait for it, before the commit's flushes, so the files are written back in parallel. Speed only. |
 | `cairo.adaptive.recovery.roll.forward.enabled` | `true` | For tests. `false` stops the start when an adaptive table needs recovery. |
 
 ## Appendix B. Files
