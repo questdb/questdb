@@ -276,7 +276,7 @@ public class Services {
                 true
         );
 
-        if (metrics.isEnabled()) {
+        if (metrics.isScrapeEnabled()) {
             final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(
                     workerPool.getWorkerCount()
             );
