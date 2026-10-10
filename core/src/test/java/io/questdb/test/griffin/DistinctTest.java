@@ -183,6 +183,17 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctInsideParensReportsClearError() throws Exception {
+        // 'distinct' wrapped in grouping parentheses (a common mistake for 'select distinct')
+        // is not valid SQL; the parser now reports an actionable error instead of the opaque
+        // "dangling literal". See #6523.
+        assertMemoryLeak(() -> {
+            execute("create table t (s symbol, ts timestamp)");
+            assertExceptionNoLeakCheck("select (distinct s) from t", 8, "'distinct' is not allowed here");
+        });
+    }
+
+    @Test
     public void testDistinctOrderByPositionLimitPush() throws Exception {
         // The trivial-group-by rewrite pushes the outer LIMIT onto the nested group by, but the
         // gate runs before ORDER BY tokens are normalized, so it resolves positions/qualifiers
