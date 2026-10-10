@@ -1695,23 +1695,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         Misc.freeObjListIfCloseable(symbolMaps);
     }
 
-    /**
-     * fsyncs the table directory, which holds the entry of the {@code wal<N>} directory this writer's
-     * constructor created. The writer's first commit names {@code wal<N>}, so the entry has to survive a power
-     * loss by the time that commit is sequenced. One barrier per writer is enough: later segments add entries
-     * to {@code wal<N>}, not to the table directory.
-     */
-    private void fsyncTableDir() {
-        final int tableDirLen = pathSize - walName.length() - 1;
-        try {
-            TableUtils.fsyncDirDurable(ff, path.trimTo(tableDirLen).$());
-        } finally {
-            // $() wrote a NUL over the separator in front of wal<N>, and every other use of `path` extends it
-            // past that point again, so restore the prefix.
-            path.trimTo(tableDirLen).concat(walName);
-        }
-    }
-
     private long getColumnStructureVersion() {
         // Sequencer metadata version is the same as column structure version of the table.
         return metadata.getMetadataVersion();
@@ -1741,7 +1724,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             long seqTxn;
             do {
-                seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
+                seqTxn = nextSeqTxn(getColumnStructureVersion(), txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
                 if (seqTxn == NO_TXN) {
                     applyMetadataChangeLog(Long.MAX_VALUE);
                 }
@@ -1904,13 +1887,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 final long fd = dirFd;
                 dirFd = -1; // clear before fsyncAndClose so the finally never double-closes (it closes even if the fsync fails)
                 ff.fsyncAndClose(fd);
-                if (CommitMode.isPowerLossDurable(commitMode)) {
-                    // The segment's own entry, in wal<N>: the first commit into the segment names it.
-                    TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).$());
-                    if (newSegmentId == 0) {
-                        fsyncTableDir();
-                    }
-                }
+                fsyncSegmentDirEntries(commitMode, newSegmentId);
             }
             lastSegmentTxn = -1;
             path.trimTo(pathSize).slash().put(newSegmentId);
