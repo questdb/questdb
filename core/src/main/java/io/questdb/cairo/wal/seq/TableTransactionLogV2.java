@@ -398,6 +398,32 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
     }
 
+    @Override
+    public void fdatasyncTxnLog(long fromTxn) {
+        // Walks down from the part below the open one. The WAL purge deletes parts from the oldest, and only parts
+        // whose records are applied and need nothing else, so the walk stops at the first part that is gone: the
+        // flush reaches the parts the log still keeps, not the table's whole history.
+        final long fromPart = Math.max(fromTxn - 1, 0) / partTransactionCount;
+        final int size = rootPath.size();
+        try {
+            for (long part = partId - 1; part >= fromPart; part--) {
+                rootPath.trimTo(size).concat(TXNLOG_PARTS_DIR).slash().put(part);
+                if (!ff.exists(rootPath.$())) {
+                    break;
+                }
+                final long fd = TableUtils.openRW(ff, rootPath.$(), LOG, CairoConfiguration.O_NONE);
+                try {
+                    ff.fdatasync(fd);
+                } finally {
+                    ff.close(fd);
+                }
+            }
+        } finally {
+            rootPath.trimTo(size);
+        }
+        fdatasyncTxnLog();
+    }
+
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
         private final Path rootPath;
         private long address;

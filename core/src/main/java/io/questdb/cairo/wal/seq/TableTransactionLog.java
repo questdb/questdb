@@ -110,9 +110,12 @@ public class TableTransactionLog implements Closeable {
      * Flushes the transaction log files to the device, parts before the header, for the adaptive group commit's
      * batched flush. The metadata change log holds structural changes only, not data commits, and is not part of
      * the per-commit deferred flush, so this method leaves it alone.
+     *
+     * @param fromTxn the first txn whose part file a log kept in parts flushes too, see
+     *                {@link TableTransactionLogFile#fdatasyncTxnLog(long)}
      */
-    public void fdatasyncTxnLog() {
-        txnLogFile.fdatasyncTxnLog();
+    public void fdatasyncTxnLog(long fromTxn) {
+        txnLogFile.fdatasyncTxnLog(fromTxn);
     }
 
     public void fullSync() {

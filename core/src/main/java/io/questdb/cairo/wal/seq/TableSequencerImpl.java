@@ -377,10 +377,18 @@ public class TableSequencerImpl implements TableSequencer {
      * released is not covered. The caller passes it to {@link SeqTxnTracker#markWriterDurable(int, long, long)}.
      */
     public long fdatasyncTxnLog() {
+        return fdatasyncTxnLog(Long.MAX_VALUE);
+    }
+
+    /**
+     * Flushes like {@link #fdatasyncTxnLog()}, and also the older part files of a V2 log that hold txns from
+     * {@code fromTxn} on; see {@link TableTransactionLogFile#fdatasyncTxnLog(long)}.
+     */
+    public long fdatasyncTxnLog(long fromTxn) {
         assert !closed;
         final long coveredSeqTxn = seqTxnTracker.getSeqTxn();
         try {
-            tableTransactionLog.fdatasyncTxnLog();
+            tableTransactionLog.fdatasyncTxnLog(fromTxn);
         } catch (Throwable th) {
             // Fence while the caller still holds the write lock: the next writer to take it would fdatasync the
             // same file, and that call can return 0 because the kernel has already reported this error.

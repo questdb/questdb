@@ -43,6 +43,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -99,6 +100,47 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
 
                     List<String> order = syncFf.getSyncOrder();
                     assertPartBeforeHeader(order, "addEntry (sync0)");
+                } finally {
+                    v2.close();
+                }
+            }
+        });
+    }
+
+    /**
+     * Verifies that the flush from a txn reaches the older part files the log keeps from that txn's part on, stops at
+     * the first part the WAL purge deleted, and flushes them before the open part and the header.
+     */
+    @Test
+    public void testFdatasyncTxnLogFromTxnFlushesTheKeptPartsBeforeTheHeader() throws Exception {
+        assertMemoryLeak(() -> {
+            final SyncOrderFilesFacade syncFf = new SyncOrderFilesFacade();
+            final CairoConfiguration cfg = syncConfig(syncFf);
+
+            try (Path path = new Path()) {
+                path.of(root).concat("v2seqparts");
+                syncFf.mkdir(path.$(), configuration.getMkDirMode());
+
+                TableTransactionLogV2 v2 = new TableTransactionLogV2(cfg, 2, DefaultWalDirectoryPolicy.INSTANCE);
+                try {
+                    v2.create(path, System.currentTimeMillis());
+                    v2.open(path);
+                    // Txns 1 to 9 fill parts 0 to 3 and open part 4.
+                    for (int i = 0; i < 9; i++) {
+                        v2.addEntry(i, i + 1, i + 2, i + 3, System.currentTimeMillis(), 0L, 0L, 0L);
+                    }
+                    // The purge deleted part 1 and kept part 0, as a backup lock does.
+                    final int len = path.size();
+                    Assert.assertTrue(syncFf.removeQuiet(path.concat(WalUtils.TXNLOG_PARTS_DIR).slash().put(1).$()));
+                    path.trimTo(len);
+
+                    final long[] fromTxns = {0, 6, 7, Long.MAX_VALUE};
+                    final String[] expected = {"[3, 2, 4, _txnlog]", "[3, 2, 4, _txnlog]", "[3, 4, _txnlog]", "[4, _txnlog]"};
+                    for (int i = 0; i < fromTxns.length; i++) {
+                        syncFf.getFdatasyncs().clear();
+                        v2.fdatasyncTxnLog(fromTxns[i]);
+                        Assert.assertEquals("from txn " + fromTxns[i], expected[i], syncFf.getFdatasyncs().toString());
+                    }
                 } finally {
                     v2.close();
                 }
@@ -198,8 +240,14 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
         private final Map<Long, String> addrToPath = new HashMap<>();
         // fd -> path (populated at open time).
         private final Map<Long, String> fdToPath = new HashMap<>();
+        // file names as they were fdatasync'd
+        private final List<String> fdatasyncs = new ArrayList<>();
         // ordered list of file paths as they were msync'd.
         private final List<String> syncOrder = new ArrayList<>();
+
+        public List<String> getFdatasyncs() {
+            return fdatasyncs;
+        }
 
         public List<String> getSyncOrder() {
             return syncOrder;
@@ -227,6 +275,15 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
         public boolean close(long fd) {
             fdToPath.remove(fd);
             return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            super.fdatasync(fd);
+            String p = fdToPath.get(fd);
+            if (p != null) {
+                fdatasyncs.add(Paths.get(p).getFileName().toString());
+            }
         }
 
         @Override
