@@ -2,6 +2,7 @@
 name: fix-pr
 description: Validate and fix QuestDB pull-request review findings through root-cause analysis, pre-edit caller and contract impact research, an independent design gate, and regression testing. Use for pasted actionable findings; preserve legitimate behavior and review the combined result before declaring completion.
 allowed-tools: bash read edit write subagent ctx_execute ctx_execute_file
+disable-model-invocation: true
 metadata:
   argument-hint: "[--max-review-rounds=N] <pasted review findings>"
 ---
