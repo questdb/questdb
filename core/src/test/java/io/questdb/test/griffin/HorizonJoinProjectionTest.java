@@ -29,25 +29,41 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
+import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
 import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolMode;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class HorizonJoinProjectionTest extends AbstractCairoTest {
     // 50 offsets, one second apart: with two right-hand tables, the most slots per master row the
@@ -502,6 +518,48 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionCreateTableAsSelectInheritsTimestamp() throws Exception {
+        // CREATE TABLE AS SELECT without a TIMESTAMP clause takes the designated timestamp of its
+        // SELECT. The projection keeps the master's timestamp in every spelling, so the new table
+        // gets it and holds one row per trade and offset. A plain SELECT passes the timestamp on
+        // only under the exact spelling, see
+        // testPlainSelectCreatesTableWithoutTimestampForOtherSpelling().
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String timestamp : List.of("t.ts", "T.TS")) {
+                    final String column = timestamp.substring(timestamp.indexOf('.') + 1);
+                    execute("CREATE TABLE markouts AS (SELECT " + timestamp
+                            + ", q.bid FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (-1s, 0s, 1s) AS h)");
+                    assertQuery("markouts").expectSize().timestamp(column).returns(column + """
+                            \tbid
+                            2026-01-01T00:00:00.000000Z\tnull
+                            2026-01-01T00:00:00.000000Z\t10.0
+                            2026-01-01T00:00:00.000000Z\t10.0
+                            2026-01-01T00:00:00.000000Z\tnull
+                            2026-01-01T00:00:00.000000Z\t10.0
+                            2026-01-01T00:00:00.000000Z\t10.0
+                            2026-01-01T00:00:02.000000Z\t10.0
+                            2026-01-01T00:00:02.000000Z\t10.0
+                            2026-01-01T00:00:02.000000Z\t14.0
+                            2026-01-01T00:00:02.000000Z\t20.0
+                            2026-01-01T00:00:02.000000Z\t20.0
+                            2026-01-01T00:00:02.000000Z\t22.0
+                            2026-01-01T00:00:02.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\tnull
+                            """);
+                    execute("DROP TABLE markouts");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testProjectionCursorRewindAndSize() throws Exception {
         assertMemoryLeak(() -> {
             createTradesAndQuotes();
@@ -560,6 +618,48 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                 sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
                 assertMatchesAsOfJoin("trades", "quotes", "ON (sym)", "t.id, q.bid");
                 assertMatchesAsOfJoin("trades", "quotes", "", "t.id, q.bid");
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionFactoryFreesArgumentsWhenConstructorFails() throws Exception {
+        // The code generator hands the metadata, the factories and the filter resources over to
+        // the parallel factory and frees none of them itself once the constructor runs, so a
+        // constructor that fails has to. Zero offsets make it fail: it sizes the master frames by
+        // the slots per master row, offsets times right-hand tables. No statement gets that far:
+        // every RANGE and LIST the code generator accepts has at least one offset.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            final RecordCursorFactory masterFactory = select("TaqTrade");
+            final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
+            slaveStates.add(new HorizonJoinSlaveState(select("TaqQuote"), 1, 1, null, masterFactory.getMetadata().getColumnCount(), null, null));
+            // The metadata and the bind variable memory of a stolen filter hold native memory.
+            final JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 1);
+            final MemoryCARW bindVarMemory = Vm.getCARWInstance(1_024, 1, MemoryTag.NATIVE_JIT);
+            bindVarMemory.putLong(42);
+            final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, bindVarMemory, null, null, null, null);
+            try {
+                //noinspection unchecked
+                new AsyncHorizonJoinProjectionRecordCursorFactory(
+                        configuration,
+                        engine,
+                        engine.getMessageBus(),
+                        metadata,
+                        masterFactory,
+                        slaveStates,
+                        new Class[1],
+                        new Class[1],
+                        new long[0],
+                        0,
+                        new int[0],
+                        new int[0],
+                        resources,
+                        () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER),
+                        1
+                ).close();
+                Assert.fail("expected the constructor to fail on zero offsets");
+            } catch (ArithmeticException ignore) {
             }
         });
     }
@@ -868,6 +968,57 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionInsertAsSelectChecksTimestampPosition() throws Exception {
+        // INSERT INTO ... SELECT without a column list copies its columns by position. When the
+        // SELECT has a designated timestamp, it has to sit at the position of the target's. The
+        // projection keeps the master's timestamp in every spelling, here in its first column, so
+        // a target that designates its second column rejects the statement, and a target that
+        // designates its first column takes one row per trade and offset. A plain SELECT under
+        // another spelling has no designated timestamp and inserts by position alone, see
+        // testPlainSelectInsertsWithOtherTimestampSpelling().
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            execute("CREATE TABLE by_trade (ts TIMESTAMP, horizon_ts TIMESTAMP, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE by_horizon (trade_ts TIMESTAMP, ts TIMESTAMP, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String timestamp : List.of("t.ts", "T.TS")) {
+                    final String select = " SELECT " + timestamp
+                            + ", h.timestamp, q.bid FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (-1s, 0s, 1s) AS h";
+                    assertExceptionNoLeakCheck(
+                            "INSERT INTO by_horizon" + select,
+                            12,
+                            "designated timestamp of existing table (1) does not match designated timestamp in select query (0)"
+                    );
+                    execute("INSERT INTO by_trade" + select);
+                    assertQuery("by_trade").expectSize().timestamp("ts").returns("""
+                            ts\thorizon_ts\tbid
+                            2026-01-01T00:00:00.000000Z\t2025-12-31T23:59:59.000000Z\tnull
+                            2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\t10.0
+                            2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:01.000000Z\t10.0
+                            2026-01-01T00:00:00.000000Z\t2025-12-31T23:59:59.000000Z\tnull
+                            2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\t10.0
+                            2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:01.000000Z\t10.0
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:01.000000Z\t10.0
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:02.000000Z\t10.0
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:03.000000Z\t14.0
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:01.000000Z\t20.0
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:02.000000Z\t20.0
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:03.000000Z\t22.0
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:01.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:02.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:03.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:01.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:02.000000Z\tnull
+                            2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:03.000000Z\tnull
+                            """);
+                    execute("TRUNCATE TABLE by_trade");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testProjectionKeepsTimestampInEverySpelling() throws Exception {
         // The master's designated timestamp stays the designated timestamp of the projection in
         // every spelling that resolves to it: with or without the table alias, in any letter case,
@@ -1010,6 +1161,64 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         ""
                 )) {
                     assertMatchesAsOfJoin("trades", "quotes", on, "t.id, q.bid, q.ts");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionKeyedLookupRestartsForwardScan() throws Exception {
+        // 400 trades 2 ms apart and 6,000 quotes 1 ms apart cycle through 10 symbols. A min gap
+        // of 8 rows and a switch factor of 1 let the window check switch the keyed lookup to
+        // forward scan mode a few trades into a batch. The offsets lie 1 s apart, far more quote
+        // rows than the key cache is worth, so the lookup restarts the forward scan at each
+        // offset. The quotes straddle an hourly partition 2,500 rows in: the trades reach it at
+        // the 2 s offset, so restarts and forward scans there span two frames, and the first
+        // partition is then converted to Parquet row groups of 100 rows. The scan mode is not
+        // observable from SQL: the rows must equal those of a lookup whose thresholds keep it in
+        // backward-only mode.
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 50);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (id LONG, ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("""
+                    INSERT INTO quotes
+                    SELECT '2026-01-01T00:59:57.500'::TIMESTAMP + x * 1_000L, ('s' || (x % 10))::SYMBOL, x::DOUBLE
+                    FROM long_sequence(6_000)
+                    """);
+            execute("""
+                    INSERT INTO trades
+                    SELECT x, '2026-01-01T00:59:57.600'::TIMESTAMP + x * 2_000L, ('s' || (x % 10))::SYMBOL
+                    FROM long_sequence(400)
+                    """);
+            final String sql = "SELECT t.id, h.offset, q.bid FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s, 2s) AS h";
+
+            // Backward-only reference: neither the relative nor the window check can pass.
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, Long.MAX_VALUE);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, Long.MAX_VALUE);
+            final StringSink expected = new StringSink();
+            sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+            try (RecordCursorFactory factory = select(sql)) {
+                assertProjectionFactory(factory, false);
+                printRows(factory, sqlExecutionContext, expected);
+            }
+
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 8);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, 1);
+            for (boolean isParquet : new boolean[]{false, true}) {
+                if (isParquet) {
+                    // The conversion skips the active partition, the second hour.
+                    execute("ALTER TABLE quotes CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+                }
+                assertQuery("SELECT isParquet FROM table_partitions('quotes')")
+                        .noRandomAccess().expectSize()
+                        .returns(isParquet ? "isParquet\ntrue\nfalse\n" : "isParquet\nfalse\nfalse\n");
+                for (boolean isParallel : MODES) {
+                    sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                    assertQuery(sql).noRandomAccess().expectSize()
+                            .withPlanContaining(projectionPlan(isParallel, 3)).returns(expected);
                 }
             }
         });
@@ -1518,6 +1727,54 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionRangeSpanOverflow() throws Exception {
+        // FROM and TO lie more than Long.MAX_VALUE timestamp units apart, so TO - FROM does not
+        // fit a long. Depending on the STEP, the wrapped difference used to yield no offsets at
+        // all, which both projection factories divide by, a negative number of them or a wrong
+        // positive one. The values of a RANGE take no underscore separators.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            execute("CREATE TABLE nanoTrades AS (SELECT ts::TIMESTAMP_NS ts, sym, price FROM TaqTrade) TIMESTAMP(ts) PARTITION BY DAY");
+            final String micros = "SELECT t.sym, h.offset, q.bid FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) RANGE FROM ";
+            final String nanos = "SELECT t.sym, h.offset, q.bid FROM nanoTrades t HORIZON JOIN TaqQuote q ON (sym) RANGE FROM ";
+            final String noOffsets = "-9000000000000000000U TO 9000000000000000000U STEP 300000000000000000U AS h";
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                // Unfiltered, with a JIT-compiled filter and with a Java filter, which the
+                // parallel factory steals from the master.
+                for (String filter : List.of("", " WHERE t.price > 15", " WHERE concat(t.sym, '') = 'A'")) {
+                    assertQuery(micros + noOffsets + filter).fails(micros.length(), "RANGE span overflow");
+                    assertQuery("EXPLAIN " + micros + noOffsets + filter).fails(micros.length() + 8, "RANGE span overflow");
+                }
+                for (String range : List.of(
+                        // The wrapped difference yields -3 offsets.
+                        "-9000000000000000000U TO 9000000000000000000U STEP 100000000000000000U AS h",
+                        // The wrapped difference yields one offset; the range has 37.
+                        "-9000000000000000000U TO 9000000000000000000U STEP 500000000000000000U AS h",
+                        // The narrowest span that overflows, one unit past Long.MAX_VALUE.
+                        "-4611686018427387904U TO 4611686018427387904U STEP 9223372036854775807U AS h",
+                        // The span fits; the STEP of one unit overflows the number of offsets.
+                        "0U TO 9223372036854775807U STEP 1U AS h"
+                )) {
+                    assertQuery(micros + range).fails(micros.length(), "RANGE span overflow");
+                }
+                // 120,000 days exceed Long.MAX_VALUE in nanoseconds.
+                assertQuery(nanos + "-60000d TO 60000d STEP 50000d AS h").fails(nanos.length(), "RANGE span overflow");
+                assertQuery("EXPLAIN " + nanos + "-60000d TO 60000d STEP 50000d AS h").fails(nanos.length() + 8, "RANGE span overflow");
+
+                // The same days fit a microsecond master.
+                assertQuery("SELECT offset / 86_400_000_000 AS days, count() AS n FROM ("
+                        + micros + "-60000d TO 60000d STEP 50000d AS h) GROUP BY days ORDER BY days")
+                        .expectSize().returns("days\tn\n-60000\t6\n-10000\t6\n40000\t6\n");
+                // So does the widest span, exactly Long.MAX_VALUE.
+                assertQuery("SELECT offset AS micros, count() AS n, count(bid) AS matches FROM ("
+                        + micros + "-4611686018427387904U TO 4611686018427387903U STEP 9223372036854775807U AS h) GROUP BY micros ORDER BY micros")
+                        .expectSize().returns("micros\tn\tmatches\n-4611686018427387904\t6\t0\n4611686018427387903\t6\t4\n");
+            }
+        });
+    }
+
+    @Test
     public void testProjectionRowsFollowMasterOrder() throws Exception {
         assertMemoryLeak(() -> {
             createTradesAndQuotes();
@@ -1725,6 +1982,25 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionTimeoutFiberHostPool() throws Exception {
+        // The thread that finds the timeout ahead of a task cancels the frame sequence. Under a
+        // fiber host pool the sequence then fails the reading thread itself; under a legacy pool
+        // only the cursor does. Each pool mode therefore has its test, where the other worker
+        // pool tests of this class pick one at random.
+        testProjectionTimeout(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testProjectionTimeoutLegacyPool() throws Exception {
+        testProjectionTimeout(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testProjectionTimeoutSerial() throws Exception {
+        testProjectionTimeout(null);
+    }
+
+    @Test
     public void testProjectionTimestampOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
@@ -1747,6 +2023,31 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "horizon timestamp overflow");
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionViewUnderSampleBy() throws Exception {
+        // A view over the projection keeps the master's designated timestamp, so a SAMPLE BY over
+        // the view buckets one row per trade and offset by the trade's timestamp.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            execute("""
+                    CREATE VIEW TaqMarkout AS (
+                        SELECT t.ts, q.bid FROM TaqTrade t
+                        HORIZON JOIN TaqQuote q ON (sym) LIST (-1s, 0s, 1s) AS h
+                    )
+                    """);
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                // The leak check of the assertion clears the engine, the view definition included.
+                assertQuery("SELECT ts, count() AS n, sum(bid) AS bids FROM TaqMarkout SAMPLE BY 1s")
+                        .noLeakCheck().noRandomAccess().timestamp("ts").returns("""
+                                ts\tn\tbids
+                                2026-01-01T00:00:00.000000Z\t6\t40.0
+                                2026-01-01T00:00:02.000000Z\t12\t96.0
+                                """);
             }
         });
     }
@@ -1932,6 +2233,11 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         );
     }
 
+    private static void assertReadsAllRows(CairoEngine engine, SqlExecutionContext context, RecordCursorFactory factory, String expected) throws Exception {
+        context.getCircuitBreaker().resetTimer();
+        new QueryAssertion(engine, factory).withContext(context).noRandomAccess().expectSize().returns(expected);
+    }
+
     // Stops part of the way into a frame, rewinds and reads every row. When a frame holds more
     // rows than a task matches, most of its rows lie in the tail that the reading thread matches:
     // with 4 offsets, frames of 250 rows and tasks of 4 rows, the stop falls in the middle of the
@@ -1954,6 +2260,66 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         TestUtils.assertEquals(sql, expected, actual);
     }
 
+    // Times one execution after another out and, after each, reads every row from the same
+    // factory again. First the clock of the breakers trips on each reading the open makes, in
+    // turn: every breaker check on the way to an open cursor fails the open once, with whatever
+    // the open holds by then. Then, for each of tripRows, the reader takes that many rows before
+    // the clock trips, and the next breaker check that reads it, on any thread, times the query
+    // out.
+    private static void assertTimeoutRecovers(
+            CairoEngine engine,
+            SqlExecutionContext context,
+            TrippingBreakerConfiguration breakerConfiguration,
+            boolean isParallel,
+            String sql,
+            String expected,
+            int... tripRows
+    ) throws Exception {
+        context.setParallelHorizonJoinEnabled(isParallel);
+        try (RecordCursorFactory factory = engine.select(sql, context)) {
+            assertProjectionFactory(factory, isParallel);
+            int openFailureCount = 0;
+            while (true) {
+                // A server starts the timer ahead of every execution.
+                context.getCircuitBreaker().resetTimer();
+                breakerConfiguration.tripOnReading(openFailureCount + 1);
+                try (RecordCursor ignored = factory.getCursor(context)) {
+                    // The open made fewer readings than that, and each of them has failed it.
+                    break;
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
+                    openFailureCount++;
+                } finally {
+                    breakerConfiguration.disarm();
+                }
+                assertReadsAllRows(engine, context, factory, expected);
+            }
+            Assert.assertTrue("expected a timeout at open: " + sql, openFailureCount > 0);
+
+            for (int tripRow : tripRows) {
+                context.getCircuitBreaker().resetTimer();
+                long rowCount = 0;
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    while (rowCount < tripRow) {
+                        Assert.assertTrue(cursor.hasNext());
+                        rowCount++;
+                    }
+                    breakerConfiguration.tripOnReading(1);
+                    while (cursor.hasNext()) {
+                        rowCount++;
+                    }
+                    // Ending without an error passes off the rows read so far as the whole result.
+                    Assert.fail("expected a timeout past row " + tripRow + ", read " + rowCount + " rows: " + sql);
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
+                } finally {
+                    breakerConfiguration.disarm();
+                }
+                assertReadsAllRows(engine, context, factory, expected);
+            }
+        }
+    }
+
     private static void createRandomTradesAndQuotes(CairoEngine engine, SqlExecutionContext context, int tradeRows, int quoteRows, int symbols) throws Exception {
         // Trades and quotes span several hourly partitions and interleave in time.
         engine.execute("CREATE TABLE trades (id LONG, ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR", context);
@@ -1966,6 +2332,25 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         engine.execute(
                 "INSERT INTO quotes SELECT '2026-01-01'::TIMESTAMP - 60_000_000L + x * (10_900_000_000L / " + quoteRows + "), "
                         + "('s' || rnd_int(0, " + symbols + ", 0))::SYMBOL, rnd_double() FROM long_sequence(" + quoteRows + ")",
+                context
+        );
+    }
+
+    // One trade a second, ids from 1, with the symbols s0, s1 and s2 taking turns. From the
+    // fourth second to 3 seconds past the last trade, every second carries a quote on the symbol
+    // whose turn it is, and the bid is that second. The first three trades therefore find no
+    // quote at an offset under 3 seconds.
+    private static void createSteppedTradesAndQuotes(CairoEngine engine, SqlExecutionContext context, int tradeCount) throws Exception {
+        engine.execute("CREATE TABLE trades (id LONG, ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", context);
+        engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
+        engine.execute(
+                "INSERT INTO trades SELECT x, '2026-01-01'::TIMESTAMP + x * 1_000_000L, ('s' || (x % 3))::SYMBOL "
+                        + "FROM long_sequence(" + tradeCount + ")",
+                context
+        );
+        engine.execute(
+                "INSERT INTO quotes SELECT '2026-01-01'::TIMESTAMP + (x + 3) * 1_000_000L, ('s' || (x % 3))::SYMBOL, (x + 3)::DOUBLE "
+                        + "FROM long_sequence(" + tradeCount + ")",
                 context
         );
     }
@@ -2048,6 +2433,102 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
+    }
+
+    // The rows of SELECT t.id, h.offset, q.bid over createSteppedTradesAndQuotes(), joined on the
+    // symbol at the offsets of listOffsets(offsetCount).
+    private static String steppedRows(int tradeCount, int offsetCount) {
+        final StringSink sink = new StringSink();
+        sink.put("id\toffset\tbid\n");
+        for (int id = 1; id <= tradeCount; id++) {
+            for (int offset = 0; offset < offsetCount; offset++) {
+                // The symbol of the trade is quoted every 3 seconds; quotes end at tradeCount + 3.
+                final int quoteSecond = id + 3 * ((Math.min(id + offset, tradeCount + 3) - id) / 3);
+                sink.put(id).put('\t').put(offset * 1_000_000L).put('\t');
+                if (quoteSecond > 3) {
+                    sink.put(quoteSecond).put(".0\n");
+                } else {
+                    sink.put("null\n");
+                }
+            }
+        }
+        return sink.toString();
+    }
+
+    // Times a row-preserving HORIZON JOIN out at several points of its execution. The cursor has
+    // to fail at each of them, leak nothing, and read every row again on the next execution of
+    // the same factory. Without a pool the serial factory runs the projection, with one the
+    // parallel factory does.
+    private static void testProjectionTimeout(@Nullable WorkerPoolMode poolMode) throws Exception {
+        // At 3 offsets a frame of the parallel factory and a batch of the serial one hold 10
+        // trades, 30 rows. At 30 offsets a frame holds one trade.
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 30);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10);
+        if (poolMode != null) {
+            // A task matches the first 4 trades of a frame of 10 and the reading thread matches
+            // the rest. The serial factory keeps the default: its master then scans the trades
+            // as one page frame and checks the breaker no more once it has returned a row.
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 12);
+        }
+        assertMemoryLeak(() -> {
+            // A breaker reads the clock on one counted check in 5 under a pool, where the reading
+            // thread makes 18 such checks as it matches the rest of a frame. The serial factory
+            // gets one in 100, more than its scan has batches: the check its cursor makes per
+            // batch could not find a timeout alone, the one it makes per matched row has to.
+            final TrippingBreakerConfiguration breakerConfiguration = new TrippingBreakerConfiguration(poolMode != null ? 5 : 100);
+            // The reduce jobs build their breakers from the configuration of the engine, so the
+            // workers read the same clock as the reading thread.
+            circuitBreakerConfiguration = breakerConfiguration;
+            try {
+                final WorkerPool pool = poolMode != null ? new TestWorkerPool(4, poolMode) : null;
+                TestUtils.execute(
+                        pool,
+                        (engine, compiler, context) -> {
+                            final int tradeCount = 600;
+                            createSteppedTradesAndQuotes(engine, context, tradeCount);
+                            final String select = "SELECT t.id, h.offset, q.bid FROM trades t HORIZON JOIN quotes q ON (sym) ";
+                            final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, breakerConfiguration);
+                            try {
+                                ((SqlExecutionContextImpl) context).with(circuitBreaker);
+                                final String fewOffsets = select + listOffsets(3);
+                                final String fewOffsetRows = steppedRows(tradeCount, 3);
+                                if (pool == null) {
+                                    // 0 rows: the open cursor times out reading its first batch.
+                                    // 315 rows: the reader is inside a batch and the master checks
+                                    // the breaker no more, so the cursor itself has to find the
+                                    // timeout as it matches the batches that follow.
+                                    assertTimeoutRecovers(engine, context, breakerConfiguration, false, fewOffsets, fewOffsetRows, 0, 315);
+                                } else {
+                                    // 0 rows: the thread that picks up the first task finds the
+                                    // timeout ahead of it and cancels the frame sequence. 315
+                                    // rows: the reading thread times out matching the rest of the
+                                    // eleventh frame. 1,771 rows: the reader is in the last frame,
+                                    // every task has finished, and nothing but the reading thread,
+                                    // matching the rest of that frame, checks the breaker any more.
+                                    assertTimeoutRecovers(engine, context, breakerConfiguration, true, fewOffsets, fewOffsetRows, 0, 315, 1_771);
+                                    // 45 rows: the reader is in the second of 600 frames, and the
+                                    // queue never holds more tasks than its capacity, so frames
+                                    // remain to dispatch. The thread that picks up one of their
+                                    // tasks finds the timeout ahead of it and cancels the frame
+                                    // sequence. The cursor then has to fail instead of ending on
+                                    // the rows of the frames reduced earlier.
+                                    Assert.assertTrue(configuration.getPageFrameReduceQueueCapacity() + 1 < tradeCount);
+                                    final String manyOffsets = select + listOffsets(30);
+                                    final String manyOffsetRows = steppedRows(tradeCount, 30);
+                                    assertTimeoutRecovers(engine, context, breakerConfiguration, true, manyOffsets, manyOffsetRows, 0, 45);
+                                }
+                            } finally {
+                                Misc.free(circuitBreaker);
+                            }
+                        },
+                        configuration,
+                        LOG
+                );
+            } finally {
+                // Scope the override to this block; tearDown() would reset it as well.
+                circuitBreakerConfiguration = null;
+            }
+        });
     }
 
     /**
@@ -2137,5 +2618,41 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                     ('2026-01-01T00:00:03Z', 'A', 14, 16),
                     ('2026-01-01T00:00:03Z', 'B', 22, 24)
                 """);
+    }
+
+    // A query timeout of one millisecond on a clock that reads zero until a test trips it and the
+    // end of time from then on, shared by every breaker built from this configuration.
+    private static class TrippingBreakerConfiguration extends DefaultSqlExecutionCircuitBreakerConfiguration {
+        private final AtomicLong readingCount = new AtomicLong();
+        private final int throttle;
+        private volatile long tripReading = Long.MAX_VALUE;
+
+        private TrippingBreakerConfiguration(int throttle) {
+            this.throttle = throttle;
+        }
+
+        @Override
+        public int getCircuitBreakerThrottle() {
+            return throttle;
+        }
+
+        @Override
+        public @NotNull MillisecondClock getClock() {
+            return () -> readingCount.incrementAndGet() < tripReading ? 0 : Long.MAX_VALUE;
+        }
+
+        @Override
+        public long getQueryTimeout() {
+            return 1;
+        }
+
+        private void disarm() {
+            tripReading = Long.MAX_VALUE;
+        }
+
+        // The clock trips on the given reading, counted from now on, and stays tripped.
+        private void tripOnReading(int reading) {
+            tripReading = readingCount.get() + reading;
+        }
     }
 }

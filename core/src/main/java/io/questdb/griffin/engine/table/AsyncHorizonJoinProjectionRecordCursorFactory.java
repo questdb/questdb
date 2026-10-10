@@ -125,7 +125,6 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             int workerCount
     ) {
         super(metadata);
-        assert masterFactory.supportsPageFrameCursor();
         // Adopt every owned argument before anything can throw: _close() frees them on failure.
         this.horizonJoinMetadata = metadata;
         this.masterFactory = masterFactory;
@@ -133,18 +132,19 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         this.resources = resources;
         this.offsetCount = offsets.length;
         this.workerCount = workerCount;
-        final int slaveCount = slaveStates.size();
-        final long slotsPerRow = (long) offsetCount * slaveCount;
-        // A task stores one long per matched (row, offset, slave), and the owner thread keeps up
-        // to a queue's worth of finished tasks. Native page frames stay within the small frame
-        // budget, the same one parallel window joins use. A task matches at most as many longs as
-        // the row id list of a full-size filter frame holds, so a Parquet row group larger than
-        // the small budget still reduces on a worker when its offsets are few.
-        final long frameRows = Math.max(1, configuration.getSqlSmallPageFrameMaxRows() / slotsPerRow);
-        this.pageFrameMaxRows = (int) frameRows;
-        this.pageFrameMinRows = (int) Math.max(1, Math.min(configuration.getSqlSmallPageFrameMinRows(), frameRows));
-        final long maxTaskRows = Math.max(1, configuration.getSqlPageFrameMaxRows() / slotsPerRow);
         try {
+            assert masterFactory.supportsPageFrameCursor();
+            final int slaveCount = slaveStates.size();
+            final long slotsPerRow = (long) offsetCount * slaveCount;
+            // A task stores one long per matched (row, offset, slave), and the owner thread keeps
+            // up to a queue's worth of finished tasks. Native page frames stay within the small
+            // frame budget, the same one parallel window joins use. A task matches at most as many
+            // longs as the row id list of a full-size filter frame holds, so a Parquet row group
+            // larger than the small budget still reduces on a worker when its offsets are few.
+            final long frameRows = Math.max(1, configuration.getSqlSmallPageFrameMaxRows() / slotsPerRow);
+            this.pageFrameMaxRows = (int) frameRows;
+            this.pageFrameMinRows = (int) Math.max(1, Math.min(configuration.getSqlSmallPageFrameMinRows(), frameRows));
+            final long maxTaskRows = Math.max(1, configuration.getSqlPageFrameMaxRows() / slotsPerRow);
             this.slaveFactories = new ObjList<>(slaveCount);
             final AsyncHorizonJoinProjectionAtom atom = new AsyncHorizonJoinProjectionAtom(
                     configuration,

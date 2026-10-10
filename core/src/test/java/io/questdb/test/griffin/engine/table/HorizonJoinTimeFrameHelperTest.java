@@ -30,6 +30,8 @@ import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -51,6 +53,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 /**
  * Drives the keyed ASOF lookup of {@link HorizonJoinTimeFrameHelper} over a mock slave and counts
  * the slave rows it reads: every row a lookup reads, backward or forward, costs exactly one read of
@@ -71,12 +75,43 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractCairoTest {
     private static final RecordSink SLAVE_KEY_SINK = new KeySink(SlaveRecord.KEY_COLUMN);
 
     @Test
-    public void testBurstThenSparseScansForwardOnlyWithWindowSwitch() throws Exception {
+    public void testAggregatingConstructorKeepsWindowSwitchOff() throws Exception {
+        // The aggregating HORIZON JOIN factories build their helpers with the constructor that
+        // takes no window switch flag. Over the fixture of
+        // testBurstThenSparseRestartsForwardScanWithWindowSwitch(), only the window check can
+        // switch, so such a helper stays in backward-only mode after every lookup and reads the
+        // rows that a helper with the window switch off reads.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{2_000_000}, row -> (int) (row % 1_000));
+            final LongList positions = new LongList();
+            final IntList keys = new IntList();
+            addBurstThenSparse(positions, keys);
+            try (Map map = newMap()) {
+                final HorizonJoinTimeFrameHelper aggregating = new HorizonJoinTimeFrameHelper(
+                        configuration.getSqlAsOfJoinLookAhead(),
+                        1,
+                        BWD_SCAN_ABSOLUTE_THRESHOLD,
+                        BWD_SCAN_MIN_GAP,
+                        BWD_SCAN_SWITCH_FACTOR
+                );
+                Assert.assertEquals(-1, firstForwardScanLookup(aggregating, cursor, map, positions, keys));
+                Assert.assertArrayEquals(
+                        lookup(newHelper(false), cursor, map, positions, keys),
+                        lookup(aggregating, cursor, map, positions, keys)
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBurstThenSparseRestartsForwardScanWithWindowSwitch() throws Exception {
         // A burst of 60 lookups 20 rows apart, then 18 lookups 100,000 rows apart, all for key 7,
         // which every 1,000th slave row holds. Each lookup scans back fewer than 1,000 rows. The
         // burst's gaps sit below the min gap, so only the window check can switch: with it, the
-        // lookup switches in the burst and then scans every row of the sparse stretch forward.
-        // Without it, as in the aggregating factories, every lookup keeps its short backward scan.
+        // lookup switches in the burst. A gap of the sparse stretch is then worth far more rows
+        // than the key cache, so the lookup restarts the forward scan at every sparse position
+        // and reads the short backward scan that it reads without the window check, as in the
+        // aggregating factories, instead of every row of the stretch.
         assertMemoryLeak(() -> {
             final SlaveCursor cursor = new SlaveCursor(new long[]{2_000_000}, row -> (int) (row % 1_000));
             final LongList positions = new LongList();
@@ -93,10 +128,232 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractCairoTest {
                 final HorizonJoinTimeFrameHelper projection = newHelper(true);
                 final long[] projectionRows = lookup(projection, cursor, map, positions, keys);
                 Assert.assertTrue(projection.isForwardScanMode());
-                // The sparse stretch reads every row between the last burst position and the last position.
-                Assert.assertEquals(
-                        positions.getLast() - positions.getQuick(burstCount - 1),
-                        sum(projectionRows, burstCount, positions.size())
+                for (int i = burstCount, n = positions.size(); i < n; i++) {
+                    Assert.assertEquals("rows of lookup " + i, aggregatingRows[i], projectionRows[i]);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testForwardScanBoundOverflowScansGapForward() throws Exception {
+        // An operator may set the switch factor to Long.MAX_VALUE to turn the relative checks off.
+        // The rare lookup at row 150,000 reads 150,001 rows, above the absolute threshold, so the
+        // lookup switches at the next position, 2,000 rows on. The key cache is then worth the
+        // factor times those rows in rows of forward scan, a product that overflows a long: no gap
+        // is worth more, so the lookup scans every gap forward and never restarts.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{300_000}, row -> row == 0 ? RARE_KEY : COMMON_KEY);
+            final LongList positions = new LongList();
+            final IntList keys = new IntList();
+            positions.add(150_000);
+            keys.add(RARE_KEY);
+            positions.add(152_000);
+            keys.add(COMMON_KEY);
+            positions.add(154_000);
+            keys.add(COMMON_KEY);
+            try (Map map = newMap()) {
+                final HorizonJoinTimeFrameHelper projection = new HorizonJoinTimeFrameHelper(
+                        configuration.getSqlAsOfJoinLookAhead(),
+                        1,
+                        BWD_SCAN_ABSOLUTE_THRESHOLD,
+                        BWD_SCAN_MIN_GAP,
+                        Long.MAX_VALUE,
+                        true
+                );
+                final long[] projectionRows = lookup(projection, cursor, map, positions, keys);
+                Assert.assertTrue(projection.isForwardScanMode());
+                Assert.assertArrayEquals(new long[]{150_001, 2_000, 2_000}, projectionRows);
+            }
+        });
+    }
+
+    @Test
+    public void testForwardScanGapCountsRowsAcrossFrames() throws Exception {
+        // The slave cycles through 30 keys over frames of 101,100, 0, 600, 300, 0, 700, 1,000, 300,
+        // 0 and 60,000 rows. 600 lookups 2 rows apart from row 100,000 on each find their key 20
+        // rows back, so the window check switches at lookup 513 and every lookup from there reads
+        // its 2-row gap forward, lookup 550 from the first frame over the empty one into the third.
+        // Row ids of different frames lie 2^44 apart, so only a count of the rows in between tells
+        // such a gap from a long one. Lookup 600 lies 1,024 rows on, past a whole frame and an
+        // empty one: the min gap allows that many rows, so the lookup scans them forward. Lookup
+        // 601 lies 1,025 rows on, in the next frame, and restarts the forward scan with its 20-row
+        // backward scan. Lookup 602 lies 1,025 rows on too, past a whole frame of 300 rows and an
+        // empty one, and restarts again: it counts every row of the frame in between.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(
+                    new long[]{101_100, 0, 600, 300, 0, 700, 1_000, 300, 0, 60_000},
+                    row -> (int) (row % 30)
+            );
+            final LongList positions = new LongList();
+            final IntList keys = new IntList();
+            addDenseRun(positions, keys, 100_000, 600);
+            addDenseRun(positions, keys, positions.getLast() + 1_024, 1);
+            addDenseRun(positions, keys, positions.getLast() + 1_025, 1);
+            addDenseRun(positions, keys, positions.getLast() + 1_025, 1);
+            try (Map map = newMap()) {
+                final HorizonJoinTimeFrameHelper projection = newHelper(true);
+                final long[] projectionRows = lookup(projection, cursor, map, positions, keys);
+                Assert.assertTrue(projection.isForwardScanMode());
+                for (int i = 0; i < 600; i++) {
+                    Assert.assertEquals("rows of lookup " + i, i < 513 ? 20 : 2, projectionRows[i]);
+                }
+                Assert.assertEquals(1_024, projectionRows[600]);
+                Assert.assertEquals(20, projectionRows[601]);
+                Assert.assertEquals(20, projectionRows[602]);
+            }
+        });
+    }
+
+    @Test
+    public void testForwardScanRestartTrustsKeptKeyCacheEntriesOnceConfirmed() throws Exception {
+        // The slave cycles through 10 keys. The first lookup asks for a key that the slave never
+        // holds and reads its 140,001 rows into the key cache, above the absolute threshold, so
+        // the next position, 1,200,000 rows on, switches. The cache is worth 8 times those rows,
+        // fewer than the gap, so the forward scan restarts there. A cache of 16 slots is full
+        // enough that the restart clears it. A cache of 2,048 slots is not, and the restart keeps
+        // its 10 entries, each with its key's last row up to the first position. Either way the
+        // two lookups at the restart position find their key's latest row and read the same
+        // rows. The first reads the row at the position and overwrites the entry of that row's
+        // key. The second asks for the key 5 rows back: a kept entry lies below the backward
+        // watermark, so the lookup scans on from there to the key's latest row, as it does over
+        // the cleared cache. The large caches run on two of the maps that the matcher can pick
+        // for a key cache: Unordered4Map, for an INT or SYMBOL key, and OrderedMap, for a key of
+        // several columns.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{1_500_000}, row -> (int) (row % 10));
+            final LongList positions = new LongList();
+            final IntList keys = new IntList();
+            positions.add(140_000);
+            keys.add(-1);
+            positions.add(1_340_000);
+            keys.add(0);
+            positions.add(1_340_000);
+            keys.add(5);
+            final SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+            final double loadFactor = configuration.getSqlFastMapLoadFactor();
+            final int maxResizes = configuration.getSqlMapMaxResizes();
+            try (
+                    Map smallMap = new Unordered4Map(ColumnType.INT, valueTypes, 8, loadFactor, maxResizes);
+                    Map largeMap = new Unordered4Map(ColumnType.INT, valueTypes, 1_024, loadFactor, maxResizes);
+                    Map largeOrderedMap = new OrderedMap(
+                            configuration.getSqlSmallMapPageSize(),
+                            new SingleColumnType(ColumnType.INT),
+                            valueTypes,
+                            1_024,
+                            loadFactor,
+                            maxResizes
+                    )
+            ) {
+                final ObjList<Map> maps = new ObjList<>();
+                maps.add(smallMap);
+                maps.add(largeMap);
+                maps.add(largeOrderedMap);
+                for (int i = 0, n = maps.size(); i < n; i++) {
+                    final Map map = maps.getQuick(i);
+                    final HorizonJoinTimeFrameHelper projection = newHelper(true);
+                    final long[] projectionRows = lookup(projection, cursor, map, positions, keys);
+                    Assert.assertTrue(projection.isForwardScanMode());
+                    Assert.assertArrayEquals(new long[]{140_001, 1, 6}, projectionRows);
+                    // The lookups after the restart put 6 keys into the cache; a kept cache still
+                    // holds the other 4 from before it.
+                    Assert.assertEquals("map " + i, map == smallMap ? 6 : 10, map.size());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testForwardScanRestartsAboveKeyCacheWorth() throws Exception {
+        // The first nine lookups of testRelativeSwitchWithoutWindowSwitch() switch both helpers at
+        // lookup 8, after the rare lookup at row 12,000 read 12,001 rows into the key cache. With
+        // the window switch, the cache is worth 8 times those rows of forward scan: lookup 9 lies
+        // 96,008 rows on and scans them forward, lookup 10 lies 96,009 rows on and restarts the
+        // forward scan with a 1-row backward scan for the common key. That scan is all the new
+        // cache holds, so the min gap bounds the next forward scan: lookup 11 reads its 1,024-row
+        // gap forward and lookup 12, 1,025 rows on, restarts again. Without the window switch, as
+        // in the aggregating factories, the lookup scans every gap forward.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{300_000}, row -> row == 0 ? RARE_KEY : COMMON_KEY);
+            final LongList positions = new LongList();
+            final IntList keys = new IntList();
+            addRareKeyRun(positions, keys, 1_500, 9);
+            for (long gap : new long[]{96_008, 96_009, 1_024, 1_025}) {
+                positions.add(positions.getLast() + gap);
+                keys.add(COMMON_KEY);
+            }
+            try (Map map = newMap()) {
+                final HorizonJoinTimeFrameHelper aggregating = newHelper(false);
+                Assert.assertEquals(8, firstForwardScanLookup(aggregating, cursor, map, positions, keys));
+                final long[] aggregatingRows = lookup(aggregating, cursor, map, positions, keys);
+                Assert.assertArrayEquals(
+                        new long[]{1_500, 96_008, 96_009, 1_024, 1_025},
+                        Arrays.copyOfRange(aggregatingRows, 8, 13)
+                );
+
+                final HorizonJoinTimeFrameHelper projection = newHelper(true);
+                Assert.assertEquals(8, firstForwardScanLookup(projection, cursor, map, positions, keys));
+                final long[] projectionRows = lookup(projection, cursor, map, positions, keys);
+                Assert.assertArrayEquals(
+                        new long[]{1_500, 96_008, 1, 1_024, 1},
+                        Arrays.copyOfRange(projectionRows, 8, 13)
+                );
+                Assert.assertArrayEquals(Arrays.copyOf(aggregatingRows, 8), Arrays.copyOf(projectionRows, 8));
+            }
+        });
+    }
+
+    @Test
+    public void testForwardScanRestartsDoNotClearGrownKeyCache() throws Exception {
+        // Rows below 90,000 hold a key each, and the slave cycles through 1,000 keys from there
+        // on. A first batch looks up a key that the slave never holds: the backward scan puts the
+        // 90,000 keys into the key cache, which grows to fit them. toTop() and a clear keep that
+        // capacity, and a clear writes every slot of it. The next batch is the burst and sparse
+        // stretch of testBurstThenSparseRestartsForwardScanWithWindowSwitch(): the burst switches,
+        // and every sparse lookup restarts the forward scan and reads the rows that it reads over
+        // a cache that never grew. Those restarts must not pay for the grown cache: all of them
+        // together clear fewer slots than one clear of it.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(
+                    new long[]{2_000_000},
+                    row -> row < 90_000 ? 1_000 + (int) row : (int) (row % 1_000)
+            );
+            final LongList positions = new LongList();
+            final IntList keys = new IntList();
+            final int burstCount = addBurstThenSparse(positions, keys);
+            final LongList burstPositions = new LongList();
+            final IntList burstKeys = new IntList();
+            final LongList sparsePositions = new LongList();
+            final IntList sparseKeys = new IntList();
+            for (int i = 0, n = positions.size(); i < n; i++) {
+                (i < burstCount ? burstPositions : sparsePositions).add(positions.getQuick(i));
+                (i < burstCount ? burstKeys : sparseKeys).add(keys.getQuick(i));
+            }
+            final long[] smallCacheRows;
+            try (Map map = newMap()) {
+                smallCacheRows = lookup(newHelper(true), cursor, map, positions, keys);
+            }
+
+            try (ClearCountingMap map = new ClearCountingMap()) {
+                final HorizonJoinTimeFrameHelper helper = newHelper(true);
+                final LongList absentKeyPositions = new LongList();
+                absentKeyPositions.add(89_999);
+                final IntList absentKeys = new IntList();
+                absentKeys.add(-1);
+                lookup(helper, cursor, map, absentKeyPositions, absentKeys);
+                final int grownCapacity = map.getKeyCapacity();
+                Assert.assertTrue("capacity " + grownCapacity, grownCapacity > 90_000);
+
+                helper.toTop();
+                map.clear();
+                lookupWithoutReset(helper, cursor, map, burstPositions, burstKeys);
+                Assert.assertTrue(helper.isForwardScanMode());
+                map.clearedSlots = 0;
+                final long[] sparseRows = lookupWithoutReset(helper, cursor, map, sparsePositions, sparseKeys);
+                Assert.assertArrayEquals(Arrays.copyOfRange(smallCacheRows, burstCount, positions.size()), sparseRows);
+                Assert.assertTrue(
+                        "slots that the restarts cleared: " + map.clearedSlots + ", capacity " + grownCapacity,
+                        map.clearedSlots < grownCapacity
                 );
             }
         });
@@ -194,6 +451,58 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOffsetSpanIsNotScannedForwardInEveryBatch() throws Exception {
+        // Three batches of a row-preserving HORIZON JOIN with two offsets 1,000,000 slave rows
+        // apart, over a slave that cycles through 30 keys in frames of 250,000 rows. The horizon
+        // timestamps of a batch walk 600 positions 2 rows apart at the small offset, then 600 at
+        // the large one, and toTop() precedes every batch, as in the projection cursors. Every
+        // lookup finds its key 20 rows back. The window check switches at lookup 513 of a batch,
+        // after lookups 0-512 cost 10,260 rows, above 8 x 1,026, and every lookup from there reads
+        // its 2-row gap forward. The first lookup at the large offset must not read the rows of
+        // the offset span, which toTop() does not bound: it restarts the forward scan with its own
+        // 20-row backward scan, and the lookups after it read their 2-row gap forward again.
+        assertMemoryLeak(() -> {
+            final long[] frameRowCounts = new long[8];
+            Arrays.fill(frameRowCounts, 250_000);
+            final SlaveCursor cursor = new SlaveCursor(frameRowCounts, row -> (int) (row % 30));
+            final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
+            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, 1, null, null));
+            @SuppressWarnings("unchecked") final Class<RecordSink>[] sinkClasses = new Class[1];
+            try (
+                    HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, sinkClasses, sinkClasses);
+                    Map map = newMap()
+            ) {
+                // The helpers of HorizonJoinMatcher are the ones that the projection cursors use.
+                final ObjList<HorizonJoinTimeFrameHelper> helpers = new ObjList<>();
+                helpers.add(newHelper(true));
+                helpers.add(matcher.getHelper(0));
+                for (int h = 0, helperCount = helpers.size(); h < helperCount; h++) {
+                    final HorizonJoinTimeFrameHelper helper = helpers.getQuick(h);
+                    helper.of(cursor);
+                    for (int batch = 0; batch < 3; batch++) {
+                        final LongList positions = new LongList();
+                        final IntList keys = new IntList();
+                        final long batchPosition = 100_000 + 1_200L * batch;
+                        addDenseRun(positions, keys, batchPosition, 600);
+                        addDenseRun(positions, keys, batchPosition + 1_000_000, 600);
+                        helper.toTop();
+                        map.clear();
+                        final long[] rows = lookupWithoutReset(helper, cursor, map, positions, keys);
+                        Assert.assertTrue(helper.isForwardScanMode());
+                        for (int i = 0, n = rows.length; i < n; i++) {
+                            Assert.assertEquals(
+                                    "rows of lookup " + i + " of batch " + batch,
+                                    i < 513 || i == 600 ? 20 : 2,
+                                    rows[i]
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRelativeSwitchWithoutWindowSwitch() throws Exception {
         // Lookups 1,500 rows apart, above the min gap, alternate between a common key and a key
         // that only row 0 holds. The relative check compares a position's backward scan cost with
@@ -220,7 +529,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractCairoTest {
     @Test
     public void testToTopEndsForwardScanMode() throws Exception {
         // The row-preserving HORIZON JOIN calls toTop() before every batch of horizon timestamps.
-        // After the burst of testBurstThenSparseScansForwardOnlyWithWindowSwitch() switches the
+        // After the burst of testBurstThenSparseRestartsForwardScanWithWindowSwitch() switches the
         // lookup, toTop() takes it back to backward-only mode, so the sparse stretch of the next
         // batch keeps its short backward scans.
         assertMemoryLeak(() -> {
@@ -303,6 +612,18 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractCairoTest {
             keys.add(7);
         }
         return burstCount;
+    }
+
+    /**
+     * Adds {@code count} lookups 2 rows apart from row {@code position} on, for a slave that
+     * cycles through 30 keys: every lookup asks for the key that the slave holds 19 rows before
+     * the lookup's position, so a backward scan for it from scratch reads 20 rows.
+     */
+    private static void addDenseRun(LongList positions, IntList keys, long position, int count) {
+        for (int i = 0; i < count; i++) {
+            positions.add(position + 2L * i);
+            keys.add((int) ((position + 2L * i - 19) % 30));
+        }
     }
 
     /**
@@ -413,16 +734,31 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractCairoTest {
         );
     }
 
-    private static long sum(long[] values, int lo, int hi) {
-        long sum = 0;
-        for (int i = lo; i < hi; i++) {
-            sum += values[i];
-        }
-        return sum;
-    }
-
     private interface KeyFunction {
         int keyAt(long row);
+    }
+
+    /**
+     * The key cache of an INT or SYMBOL join key, counting the slots that its clears write.
+     */
+    private static final class ClearCountingMap extends Unordered4Map {
+        private long clearedSlots;
+
+        private ClearCountingMap() {
+            super(
+                    ColumnType.INT,
+                    new SingleColumnType(ColumnType.LONG),
+                    configuration.getSqlSmallMapKeyCapacity(),
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes()
+            );
+        }
+
+        @Override
+        public void clear() {
+            clearedSlots += getKeyCapacity();
+            super.clear();
+        }
     }
 
     private static final class KeySink implements RecordSink {

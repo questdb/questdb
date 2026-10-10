@@ -2520,7 +2520,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.position(context.getRangeFromPosition()).put("FROM must be less than or equal to TO");
             }
 
-            final long count = ((to - from) / step) + 1;
+            // FROM and TO can lie more than Long.MAX_VALUE apart, and a span of Long.MAX_VALUE with
+            // a STEP of one unit has one offset more than a long can count. A wrapped difference
+            // or count yields no offsets, a negative number of them or a wrong positive one.
+            final long count;
+            try {
+                count = Math.addExact(Math.subtractExact(to, from) / step, 1);
+            } catch (ArithmeticException e) {
+                throw SqlException.position(context.getRangeFromPosition()).put("RANGE span overflow");
+            }
             final int maxOffsets = configuration.getSqlHorizonJoinMaxOffsets();
             if (count > maxOffsets) {
                 throw SqlException.position(context.getRangeFromPosition())

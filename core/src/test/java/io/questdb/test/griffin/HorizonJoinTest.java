@@ -2275,6 +2275,46 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinRangeSpanOverflow() throws Exception {
+        // FROM and TO lie more than Long.MAX_VALUE timestamp units apart, 1.8e19 micros on the
+        // microsecond table and 120,000 days on the nanosecond one, so TO - FROM does not fit a
+        // long. The wrapped difference used to yield a RANGE without offsets, and the aggregations
+        // ran over nothing: no rows with GROUP BY keys, a single row without them. They report
+        // the overflow instead, with and without GROUP BY keys and right-hand tables. The values
+        // of a RANGE take no underscore separators.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE nanoTrades (ts TIMESTAMP_NS, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:00.000000Z', 'AX', 100)");
+            execute("INSERT INTO nanoTrades VALUES ('2000-01-01T00:00:00.000000Z', 'AX', 100)");
+            execute("INSERT INTO prices VALUES ('2000-01-01T00:00:00.000000Z', 'AX', 10)");
+
+            final String onePrices = " HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM ";
+            final String twoPrices = " HORIZON JOIN prices AS p ON (t.sym = p.sym) HORIZON JOIN prices AS r ON (t.sym = r.sym) RANGE FROM ";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (boolean isNanos : new boolean[]{false, true}) {
+                    final String from = isNanos ? " FROM nanoTrades AS t" : " FROM trades AS t";
+                    final String range = isNanos
+                            ? "-60000d TO 60000d STEP 50000d AS h"
+                            : "-9000000000000000000U TO 9000000000000000000U STEP 300000000000000000U AS h";
+                    for (String head : new String[]{
+                            "SELECT avg(p.price)" + from + onePrices,
+                            "SELECT h.offset, avg(p.price)" + from + onePrices,
+                            "SELECT avg(p.price), avg(r.price)" + from + twoPrices,
+                            "SELECT h.offset, avg(p.price), avg(r.price)" + from + twoPrices,
+                    }) {
+                        assertQuery(head + range)
+                                .noLeakCheck()
+                                .fails(head.length(), "RANGE span overflow");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinRangeStepNotPositive() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
@@ -2798,6 +2838,31 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 3
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSubQueryRetainsKeysInMultiArgFunction() throws Exception {
+        // A column referenced outside an aggregate is an implicit key, also as one of three or
+        // more arguments of a function. The outer query does not read the function, and column
+        // pruning must not drop the key (price), or the horizon join collapses the four prices
+        // of an offset into one group.
+        assertMemoryLeak(() -> {
+            createHorizonSubQueryTables();
+
+            assertQuery(
+                    "SELECT offset / " + getSecondsDivisor() + " AS s, count() n FROM (" +
+                            "SELECT h.offset, coalesce(max(q.bid), t.price, 0.0) v " +
+                            "FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h" +
+                            ") ORDER BY s"
+            )
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tn
+                            0\t4
+                            1\t4
+                            """);
         });
     }
 

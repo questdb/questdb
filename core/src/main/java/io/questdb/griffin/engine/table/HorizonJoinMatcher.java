@@ -60,7 +60,8 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * state that is only valid for a monotonic walk. The helpers enable the window switch of
  * {@link HorizonJoinTimeFrameHelper}: many offsets put the horizon timestamps of a batch closely
  * together, and without it a keyed lookup would scan backward at every one of them. The toTop()
- * before each batch ends the forward scans that the switch starts.
+ * before each batch does not bound the forward scans that the switch starts, since one batch
+ * already spans all offsets: the helpers bound them themselves, see the helper's constructor.
  */
 public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     private final ObjList<Map> asOfJoinMaps;
