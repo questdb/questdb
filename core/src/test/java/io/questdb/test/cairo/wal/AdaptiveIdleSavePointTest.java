@@ -30,6 +30,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -42,6 +43,7 @@ import org.junit.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.stream.Stream;
 
 /**
@@ -75,6 +77,56 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
                     counter.check();
                 }
                 Assert.assertEquals("one save point per interval of writes", 6, counter.count);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testIdleLiveViewPurgesWalBelowNewestSavePoint() throws Exception {
+        // A live view takes save points of its own WAL, applied by its refresh worker. Once its base table gets no
+        // further write, the refresh worker takes the idle save point, and the view's WAL that only the older save
+        // point needed goes, with no write to the base table.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            // Below the rows, so the view materializes them.
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
+            try (LiveViewRefreshJob refreshJob = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                        + "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+                final TableToken lv = engine.verifyTableName("lv");
+                // Three base writes an interval apart: each flush writes a block of the view's WAL, and each apply of
+                // it takes a save point.
+                for (int i = 0; i < 3; i++) {
+                    tick(INTERVAL_MS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:0" + i + ":00.000000Z', " + (i + 1) + ")");
+                    drainWalQueue();
+                    runJob(refreshJob);
+                    tick(INTERVAL_MS);
+                    runJob(refreshJob);
+                    engine.releaseInactive();
+                }
+                final SeqTxnTracker tracker = tracker(lv);
+                Assert.assertNotEquals("two save points apart", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                // The older save point keeps the WAL of the newest block, above it.
+                final ObjList<String> kept = walDirs(lv);
+                Assert.assertTrue(kept.size() > 0);
+                for (int i = 0; i < 2; i++) {
+                    tick(INTERVAL_MS);
+                    drainPurgeJob();
+                    runJob(refreshJob);
+                    engine.releaseInactive();
+                }
+                final StringSink failures = new StringSink();
+                if (tracker.getPinnedEpochTxn() != tracker.getOtherPinnedEpochTxn()) {
+                    failures.put("live view idle for two intervals: its save points differ\n");
+                }
+                checkOnDisk(failures, "live view idle for two intervals", lv, kept, false);
+                Assert.assertEquals("", failures.toString());
+                execute("DROP LIVE VIEW lv");
             } finally {
                 setCurrentMicros(-1);
             }
@@ -384,6 +436,13 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
         }
     }
 
+    // Runs the live view refresh job until it reports no work, in a bounded burst.
+    private static void runJob(LiveViewRefreshJob job) {
+        //noinspection StatementWithEmptyBody
+        for (int i = 0; i < 64 && job.run(); i++) {
+        }
+    }
+
     private static void startClock() {
         setCurrentMicros(MicrosecondClockImpl.INSTANCE.getTicks());
     }
@@ -403,6 +462,16 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
             s.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("2024-01-01")).forEach(dirs::add);
         }
         Assert.assertTrue(dirs.size() > 0);
+        return dirs;
+    }
+
+    // The table's WAL directories now, by WAL id.
+    private static ObjList<String> walDirs(TableToken tt) throws Exception {
+        final ObjList<String> dirs = new ObjList<>();
+        try (Stream<Path> s = Files.list(Path.of(configuration.getDbRoot(), tt.getDirName()))) {
+            s.map(p -> p.getFileName().toString()).filter(n -> n.matches("wal\\d+"))
+                    .sorted(Comparator.comparingInt(n -> Integer.parseInt(n.substring(3)))).forEach(dirs::add);
+        }
         return dirs;
     }
 

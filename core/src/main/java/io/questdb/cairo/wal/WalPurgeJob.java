@@ -740,7 +740,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         if (intervalMs < 0
                 || idleSavePointRequests >= IDLE_SAVE_POINT_REQUESTS_PER_PASS
                 || tableToken.isView()
-                || tableToken.isLiveView()
                 || LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), engine.getLocalDurabilityPolicy()) != CommitMode.ADAPTIVE
                 || engine.isWalApplySuspended(tableToken)) {
             return;
@@ -764,7 +763,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
         tracker.requestIdleEpoch();
         idleSavePointRequests++;
-        engine.notifyWalTxnCommitted(tableToken);
+        // A live view's refresh worker owns its writer and takes the save point when it sees the request; the
+        // apply job drops a live view's notifications.
+        if (!tableToken.isLiveView()) {
+            engine.notifyWalTxnCommitted(tableToken);
+        }
     }
 
     private boolean segmentHasPendingTasks(int walId, int segmentId) {
