@@ -407,7 +407,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                           keys: [timestamp]
                                           keyFunctions: [timestamp_floor_utc('1h',timestamp)]
                                           values: [count(*)]
-                                          filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)
+                                          filter: (symbol ~ .*?.ETH [case-sensitive] [state-shared] and row_id!=100)
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x

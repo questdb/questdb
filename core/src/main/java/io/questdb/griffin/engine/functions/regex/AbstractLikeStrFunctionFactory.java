@@ -435,7 +435,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             // impl is regex
             sink.val(" ~ ");
             sink.val(matcher.pattern().toString());
-            if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) != 0) {
+            if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) == 0) {
                 sink.val(" [case-sensitive]");
             }
         }
