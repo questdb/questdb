@@ -664,12 +664,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     phaseBuildSymbolIndex();
                     movePartitions();
                     attachPartitions();
-                    flushCreatedTable();
+                    flushImportedTable();
                     updateImportStatus(CopyImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
                 } catch (Throwable t) {
                     // A failed device flush may report a write-back error of another table's files: stop the
-                    // engine, as every other adaptive flush does. The cleanup before the stop is a best effort.
-                    if (configuration.getCommitMode() == CommitMode.ADAPTIVE && CairoException.isDataSyncFailure(t)) {
+                    // engine, as every other flush in SYNC and ADAPTIVE does. The cleanup before the stop is a best
+                    // effort.
+                    if (CommitMode.isPowerLossDurable(configuration.getCommitMode()) && CairoException.isDataSyncFailure(t)) {
                         try {
                             cleanUp();
                         } catch (Throwable cleanupFailure) {
@@ -732,6 +733,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void attachPartitions() throws TextImportException {
         phasePrologue(CopyImportTask.PHASE_ATTACH_PARTITIONS);
+        flushPartitionsToAttach();
 
         // Go descending, attaching last partition is more expensive than others
         for (int i = partitions.size() - 1; i > -1; i--) {
@@ -745,6 +747,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, metadata.getTimestampType(), partitionBy);
                 writer.attachPartition(timestamp, partition.importedRows);
             } catch (CairoException e) {
+                if (e.isDataSyncFailure() && CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
+                    // A failed flush in the attach: the caller stops the engine.
+                    throw e;
+                }
                 throw TextImportException.instance(CopyImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
                         .put(partitionDirName).put("', msg=")
                         .put('[').put(e.getErrno()).put("] ").put(e.getFlyweightMessage()).put(']');
@@ -854,15 +860,41 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         LOG.info().$("temporary import directory [path='").$(workDirPath).I$();
     }
 
-    private void flushCreatedTable() {
-        // The writer of a table this import created holds a non-WAL token, so it takes no save point. On an
-        // adaptive instance the import must be durable before COPY reports it done; a failed flush drops the table.
-        // The table is never in a volume, so where syncfs is filesystem-wide one sync of the database root does.
-        if (targetTableCreated && configuration.getCommitMode() == CommitMode.ADAPTIVE && writer.getMetadata().isWalEnabled()) {
+    private void flushImportedTable() {
+        // The import writes its partitions and symbol files outside a commit, so in SYNC, and in ADAPTIVE for a WAL
+        // table this import created, they must be durable before COPY reports it done; a failed flush drops a
+        // created table and truncates an existing one. The writer of a created table holds a non-WAL token, so it
+        // takes no save point; an existing WAL table in ADAPTIVE is flushed by the writer's save point after the
+        // attach. Where syncfs is filesystem-wide one sync of the filesystem that holds the table does: a created
+        // table is never in a volume, so that sync also covers its entry in the database root and the registry.
+        if (isImportFlushed()) {
             if (ff.isSyncfsFileSystemWide()) {
-                DatabaseCheckpointAgent.syncRestoredState(ff, tmpPath.of(configuration.getDbRoot()), false);
+                DatabaseCheckpointAgent.syncRestoredState(ff, tmpPath.of(configuration.getDbRoot()).concat(tableToken), false);
             } else {
                 DurableEpochManifest.fsyncTableFiles(configuration, tableToken, metadata.getTimestampType(), partitionBy);
+            }
+        }
+    }
+
+    private void flushPartitionsToAttach() {
+        // An attach names its partition in _txn, which a power loss may bring back before the files the import wrote
+        // (in SYNC the writer flushes _txn at each attach), so the moved partitions and the merged symbol files in
+        // the table root are flushed before the first attach. The flush after the attach covers _txn and the renames.
+        if (isImportFlushed()) {
+            final Path path = tmpPath.of(configuration.getDbRoot()).concat(tableToken);
+            if (ff.isSyncfsFileSystemWide()) {
+                DatabaseCheckpointAgent.syncRestoredState(ff, path, false);
+            } else {
+                // _txn does not name these partitions yet, so DurableEpochManifest.fsyncTableFiles would miss them.
+                final int rootLen = path.size();
+                for (int i = 0, n = partitions.size(); i < n; i++) {
+                    final PartitionInfo partition = partitions.getQuick(i);
+                    if (partition.importedRows > 0) {
+                        path.trimTo(rootLen).concat(partition.name).put(configuration.getAttachPartitionSuffix());
+                        DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size());
+                    }
+                }
+                DurableEpochManifest.fsyncTableRoot(configuration, path, rootLen);
             }
         }
     }
@@ -976,6 +1008,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 symbolCapacities.set(i, symbolWriter.getSymbolCapacity());
             }
         }
+    }
+
+    private boolean isImportFlushed() {
+        final int commitMode = configuration.getCommitMode();
+        return commitMode == CommitMode.SYNC || (commitMode == CommitMode.ADAPTIVE && targetTableCreated && writer.getMetadata().isWalEnabled());
     }
 
     private boolean isOneOfMainDirectories(CharSequence p) {

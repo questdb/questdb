@@ -503,6 +503,43 @@ public final class DurableEpochManifest {
         }
     }
 
+    public static void fsyncDirectoryFiles(CairoConfiguration configuration, Path dirPath, int dirLen) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long findPtr = ff.findFirst(dirPath.trimTo(dirLen).$());
+        if (findPtr <= 0) {
+            throw CairoException.critical(ff.errno()).put("could not enumerate adaptive directory for fsync [path=").put(dirPath).put(']');
+        }
+        try {
+            int findResult;
+            do {
+                final long namePtr = ff.findName(findPtr);
+                final int type = ff.findType(findPtr);
+                if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN)) {
+                    dirPath.trimTo(dirLen).concat(namePtr);
+                    final long fd = TableUtils.openRW(ff, dirPath.$(), LOG, configuration.getWriterFileOpenOpts());
+                    if (fd == -1) {
+                        throw CairoException.critical(ff.errno()).put("could not open adaptive file for fsync [path=").put(dirPath).put(']');
+                    }
+                    try {
+                        ff.fsync(fd);
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+                findResult = ff.findNext(findPtr);
+            } while (findResult > 0);
+            if (findResult < 0) {
+                throw CairoException.critical(ff.errno()).put("could not finish enumerating adaptive directory for fsync [path=")
+                        .put(dirPath.trimTo(dirLen)).put(']');
+            }
+        } finally {
+            ff.findClose(findPtr);
+            dirPath.trimTo(dirLen);
+        }
+        // Per-file fsync does not persist a newly created file's directory entry.
+        fsyncDirectory(configuration, dirPath, dirLen);
+    }
+
     /**
      * Flushes a table's materialized state file by file: every file of every attached partition and the partition
      * directory, then every file in the table root and the root itself, then one device barrier. This is the
@@ -536,17 +573,27 @@ public final class DurableEpochManifest {
                 );
                 fsyncDirectoryFiles(configuration, path, path.size());
             }
-            fsyncDirectoryFiles(configuration, path, rootLen);
-            path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
-            final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
-            if (fd == -1) {
-                throw CairoException.critical(ff.errno()).put("could not open adaptive _txn for the device flush [path=").put(path).put(']');
-            }
-            try {
-                ff.syncfs(fd);
-            } finally {
-                ff.close(fd);
-            }
+            fsyncTableRoot(configuration, path, rootLen);
+        }
+    }
+
+    /**
+     * Flushes every file in the table root and the root itself, then issues one device barrier through {@code _txn}:
+     * the closing step of a file-by-file table flush.
+     */
+    public static void fsyncTableRoot(CairoConfiguration configuration, Path tablePath, int rootLen) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        fsyncDirectoryFiles(configuration, tablePath, rootLen);
+        tablePath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
+        final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, configuration.getWriterFileOpenOpts());
+        if (fd == -1) {
+            throw CairoException.critical(ff.errno()).put("could not open adaptive _txn for the device flush [path=").put(tablePath).put(']');
+        }
+        try {
+            ff.syncfs(fd);
+        } finally {
+            ff.close(fd);
+            tablePath.trimTo(rootLen);
         }
     }
 
@@ -588,43 +635,6 @@ public final class DurableEpochManifest {
         } finally {
             ff.close(fd);
         }
-    }
-
-    static void fsyncDirectoryFiles(CairoConfiguration configuration, Path dirPath, int dirLen) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        final long findPtr = ff.findFirst(dirPath.trimTo(dirLen).$());
-        if (findPtr <= 0) {
-            throw CairoException.critical(ff.errno()).put("could not enumerate adaptive directory for fsync [path=").put(dirPath).put(']');
-        }
-        try {
-            int findResult;
-            do {
-                final long namePtr = ff.findName(findPtr);
-                final int type = ff.findType(findPtr);
-                if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN)) {
-                    dirPath.trimTo(dirLen).concat(namePtr);
-                    final long fd = TableUtils.openRW(ff, dirPath.$(), LOG, configuration.getWriterFileOpenOpts());
-                    if (fd == -1) {
-                        throw CairoException.critical(ff.errno()).put("could not open adaptive file for fsync [path=").put(dirPath).put(']');
-                    }
-                    try {
-                        ff.fsync(fd);
-                    } finally {
-                        ff.close(fd);
-                    }
-                }
-                findResult = ff.findNext(findPtr);
-            } while (findResult > 0);
-            if (findResult < 0) {
-                throw CairoException.critical(ff.errno()).put("could not finish enumerating adaptive directory for fsync [path=")
-                        .put(dirPath.trimTo(dirLen)).put(']');
-            }
-        } finally {
-            ff.findClose(findPtr);
-            dirPath.trimTo(dirLen);
-        }
-        // Per-file fsync does not persist a newly created file's directory entry.
-        fsyncDirectory(configuration, dirPath, dirLen);
     }
 
     // Whether the header at `addr` is whole and names this generation and table (any table for a tableId of -1).
