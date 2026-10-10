@@ -31,6 +31,7 @@ import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -74,6 +75,53 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
                     counter.check();
                 }
                 Assert.assertEquals("one save point per interval of writes", 6, counter.count);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testIdleRequestsSpreadOverPurgePasses() throws Exception {
+        // Many tables go idle at once, as after a restart: each purge pass asks for a capped number of idle save
+        // points, and the tables not asked are asked at the next passes until every table has its save point.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            startClock();
+            try {
+                final int cap = WalPurgeJob.IDLE_SAVE_POINT_REQUESTS_PER_PASS;
+                final int tableCount = 2 * cap + cap / 2;
+                final ObjList<TableToken> tables = new ObjList<>();
+                for (int i = 0; i < tableCount; i++) {
+                    execute("CREATE TABLE t" + i + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    tables.add(engine.verifyTableName("t" + i));
+                }
+                // Two save points per table, an interval apart, so each table's older save point is behind.
+                for (int day = 1; day < 3; day++) {
+                    tick(INTERVAL_MS);
+                    for (int i = 0; i < tableCount; i++) {
+                        execute("INSERT INTO t" + i + " VALUES ('2024-01-0" + day + "T00:00:00.000000Z', " + day + ")");
+                    }
+                    drainWalQueue();
+                }
+                tick(INTERVAL_MS);
+                final int[] expected = {cap, cap, tableCount - 2 * cap, 0};
+                for (int pass = 0; pass < expected.length; pass++) {
+                    drainPurgeJob();
+                    int asked = 0;
+                    for (int i = 0; i < tableCount; i++) {
+                        if (tracker(tables.getQuick(i)).isIdleEpochRequested()) {
+                            asked++;
+                        }
+                    }
+                    Assert.assertEquals("requests in pass " + pass, expected[pass], asked);
+                    drainWalQueue();
+                }
+                for (int i = 0; i < tableCount; i++) {
+                    final SeqTxnTracker tracker = tracker(tables.getQuick(i));
+                    Assert.assertEquals("t" + i + " has its idle save point", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                }
             } finally {
                 setCurrentMicros(-1);
             }

@@ -332,6 +332,10 @@ public class SeqTxnTracker {
         return hardSuspended;
     }
 
+    public boolean isIdleEpochRequested() {
+        return idleEpochRequested;
+    }
+
     public boolean isInitialised() {
         return writerTxn != UNINITIALIZED_TXN;
     }

@@ -67,6 +67,10 @@ import java.io.Closeable;
 import java.util.concurrent.TimeUnit;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
+    // At most this many idle save point requests per purge pass, about four per apply worker at the default
+    // worker count: a burst (every table that went idle before a restart) spreads over passes instead of queueing
+    // ahead of the applies notified after it. A table not asked in one pass is asked in a later one.
+    public static final int IDLE_SAVE_POINT_REQUESTS_PER_PASS = 16;
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
     private final Path anchorPath = new Path();
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
@@ -89,6 +93,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final DirectUtf8StringZ walName = new DirectUtf8StringZ();
     // DurableEpochManifest.FILE_SIZE bytes for reading the save point files, allocated on first use.
     private long anchorScratch;
+    private int idleSavePointRequests;
     private long last = 0;
     private TableToken tableToken;
 
@@ -187,6 +192,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * By locking first, we ensure the sequencer returns a consistent "safe to delete" view.
      */
     private void broadSweep() {
+        idleSavePointRequests = 0;
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, broadSweepRef);
     }
 
@@ -732,6 +738,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void requestIdleSavePoint() {
         final long intervalMs = configuration.getAdaptiveEpochIntervalMs();
         if (intervalMs < 0
+                || idleSavePointRequests >= IDLE_SAVE_POINT_REQUESTS_PER_PASS
                 || tableToken.isView()
                 || tableToken.isLiveView()
                 || LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), engine.getLocalDurabilityPolicy()) != CommitMode.ADAPTIVE
@@ -756,6 +763,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             return;
         }
         tracker.requestIdleEpoch();
+        idleSavePointRequests++;
         engine.notifyWalTxnCommitted(tableToken);
     }
 
