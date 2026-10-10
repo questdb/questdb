@@ -128,6 +128,8 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.file.Paths;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -6219,6 +6221,59 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalSeedsAppliedWithTheFirstInsertKeepTheMinTimestamp() throws Exception {
+        // The two empty seed transactions REBASE WAL writes are applied in one block with the first insert when
+        // no apply pass runs in between. A transaction with no rows must not move the table's min or max
+        // timestamp, also for seeds an older version wrote with timestamps 0 that still wait in the WAL.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    // row before the REBASE (null: an empty table), first insert after it, expected min, expected max
+                    {"2022-02-24T00:00:00.000000Z", "2022-02-24T01:00:00.000000Z", "2022-02-24T00:00:00.000000Z", "2022-02-24T01:00:00.000000Z"},
+                    {"2022-02-24T00:00:00.000000Z", "2022-02-23T23:00:00.000000Z", "2022-02-23T23:00:00.000000Z", "2022-02-24T00:00:00.000000Z"},
+                    {"2022-02-24T00:00:00.000000Z", "2022-02-26T01:00:00.000000Z", "2022-02-24T00:00:00.000000Z", "2022-02-26T01:00:00.000000Z"},
+                    {null, "2022-02-24T01:00:00.000000Z", "2022-02-24T01:00:00.000000Z", "2022-02-24T01:00:00.000000Z"},
+            };
+            int n = 0;
+            for (boolean legacySeeds : new boolean[]{false, true}) {
+                for (String[] c : cases) {
+                    final String name = "t" + n++;
+                    execute("create table " + name + " (x long, ts timestamp) timestamp(ts) partition by day wal");
+                    final int rowCount = c[0] != null ? 2 : 1;
+                    if (c[0] != null) {
+                        execute("insert into " + name + " values (1, '" + c[0] + "')");
+                    }
+                    drainWalQueue();
+                    execute("alter table " + name + " suspend wal");
+                    execute("alter table " + name + " rebase wal");
+                    if (legacySeeds) {
+                        zeroRebaseSeedTimestamps(engine.verifyTableName(name));
+                    }
+                    // No apply pass between the REBASE and the insert.
+                    execute("insert into " + name + " values (2, '" + c[1] + "')");
+                    drainWalQueue();
+                    final String label = name + " legacySeeds=" + legacySeeds + " insert=" + c[1];
+                    Assert.assertFalse(label, engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(name)));
+                    assertQuery("select table_min_timestamp, table_max_timestamp from tables() where table_name = '" + name + "'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("table_min_timestamp\ttable_max_timestamp\n" + c[2] + '\t' + c[3] + '\n');
+                    assertQuery("select min(ts), max(ts), count() from " + name)
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("min\tmax\tcount\n" + c[2] + '\t' + c[3] + '\t' + rowCount + '\n');
+                    assertQuery("select count() from table_partitions('" + name + "') where minTimestamp < '2022'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n0\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWalApplySuspendForcesAllNonStructuralAlters() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
@@ -7269,6 +7324,26 @@ public class WalWriterTest extends AbstractCairoTest {
                     sb == null ? null : Chars.toString(sb),
                     sa == null ? null : Chars.toString(sa)
             );
+        }
+    }
+
+    // Rewrites the two REBASE WAL seed transactions (wal1, segment 0) with the timestamps 0 that older versions
+    // wrote, the state a REBASE left behind before an upgrade.
+    private static void zeroRebaseSeedTimestamps(TableToken token) throws IOException {
+        final File event = Paths.get(engine.getConfiguration().getDbRoot(), token.getDirName(), "wal1", "0", WalUtils.EVENT_FILE_NAME).toFile();
+        try (RandomAccessFile file = new RandomAccessFile(event, "rw")) {
+            long recordOffset = WalUtils.WALE_HEADER_SIZE;
+            for (int i = 0; i < 2; i++) {
+                // A data record: length (int), txn (long), type (byte), row lo, row hi, min and max timestamp (longs).
+                file.seek(recordOffset);
+                final int length = Integer.reverseBytes(file.readInt());
+                file.seek(recordOffset + Integer.BYTES + Long.BYTES);
+                Assert.assertEquals(WalTxnType.DATA, file.readByte());
+                Assert.assertEquals(file.readLong(), file.readLong());
+                file.writeLong(0);
+                file.writeLong(0);
+                recordOffset += length;
+            }
         }
     }
 

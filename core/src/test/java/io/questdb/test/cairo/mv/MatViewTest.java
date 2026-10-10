@@ -9883,6 +9883,35 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTxnRangeLoaderSkipsRebaseSeeds() throws Exception {
+        // REBASE WAL seeds the table with two empty transactions. They hold no rows, so they add no refresh interval.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute("alter table base suspend wal");
+            execute("alter table base rebase wal");
+            execute("insert into base values ('a', 2.0, '2024-09-10T13:00')");
+            drainWalQueue();
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+                loader.load(engine, path, baseToken, intervals, 0, 3);
+                final long ts = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
+                Assert.assertEquals(ts, loader.getMinTimestamp());
+                Assert.assertEquals(ts, loader.getMaxTimestamp());
+            }
+        });
+    }
+
+    @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(

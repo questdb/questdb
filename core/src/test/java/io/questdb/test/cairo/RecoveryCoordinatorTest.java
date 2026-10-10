@@ -1227,8 +1227,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     /**
      * The save point a REBASE WAL clone or a conversion to WAL publishes names the table's existing partitions, so it
      * is pinned from the moment it is published: an O3 commit that rewrites such a partition before the next save
-     * point must not remove the version the save point names, and a kill then restores it and replays every row. The
-     * REBASE row stops after the purge: a restore of its save point does not replay the clone's seed transactions.
+     * point must not remove the version the save point names, and a kill then restores it and replays every row,
+     * keeping the table's min timestamp. The REBASE row replays the clone's two empty seed transactions too.
      */
     @Test
     public void testRebaseAndConversionBaselinesKeepTheirPartitions() throws Exception {
@@ -1268,10 +1268,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     }
                     Assert.assertTrue(name + ": the partition version the save point names is kept",
                             Files.exists(Paths.get(engine.getConfiguration().getDbRoot(), tt.getDirName(), "2024-09-01")));
-                    if (name.equals("rebased")) {
-                        continue;
-                    }
-                    // A kill: no close-time save point.
+                    // A kill: no close-time save point. For the REBASE row, recovery replays the two empty seed
+                    // transactions in one block with the O3 row.
                     engine.releaseAllWriters();
                     engine.releaseAllReaders();
                     engine.getTxnScoreboardPool().remove(tt);
@@ -1280,6 +1278,12 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     engine.notifyWalTxnRepublisher(tt);
                     drainWalQueue();
                     Assert.assertFalse(name + ": table suspended", engine.getTableSequencerAPI().isSuspended(tt));
+                    assertQuery("SELECT table_min_timestamp, table_max_timestamp FROM tables() WHERE table_name = '" + name + "'")
+                            .noRandomAccess()
+                            .returns("""
+                                    table_min_timestamp\ttable_max_timestamp
+                                    2024-09-01T00:30:00.000000Z\t2024-09-01T03:00:00.000000Z
+                                    """);
                     assertQuery("SELECT v FROM " + name)
                             .expectSize()
                             .returns("""
