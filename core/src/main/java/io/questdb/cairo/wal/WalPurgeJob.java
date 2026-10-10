@@ -334,15 +334,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             try {
                                 final long partNo = Numbers.parseLong(walName);
                                 logic.trackSeqPart(partNo);
-                                // A part file that exists is not pending work: the V2 txnlog stores its
-                                // records there, and every V2 table has part 0, so counting existence would
-                                // keep a dropped table's txn_seq forever. Only a part something still holds
-                                // is pending. The sequencer's own signal, the .pending marker, is folded in
-                                // by discoverWalSegments via sequencerHasPendingTasks().
-                                hasPendingTasks |= walDirectoryPolicy.isSeqPartInUse(
-                                        seqDirPathTl(tableToken),
-                                        partNo
-                                );
+                                hasPendingTasks = true;
                             } catch (NumericException ne) {
                                 // Non-Part file directory, ignore.
                             }
@@ -731,15 +723,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private Path setSegmentPath(TableToken tableName, int walId, int segmentId) {
         return path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
-    }
-
-    /**
-     * The sequencer directory, on a thread-local path: the discovery loop holds {@link #path} at the parts
-     * directory while it iterates, so this lookup must not disturb it.
-     */
-    private Path seqDirPathTl(TableToken tableName) {
-        return Path.getThreadLocal(configuration.getDbRoot())
-                .concat(tableName).concat(WalUtils.SEQ_DIR);
     }
 
     private Path setSeqPartPath(TableToken tableName) {
