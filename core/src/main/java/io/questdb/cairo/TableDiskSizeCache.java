@@ -64,6 +64,10 @@ import java.util.concurrent.locks.ReentrantLock;
  * in the table root, and the directories {@code _txn} does not list (WAL segments, the sequencer,
  * detached partitions, partition versions awaiting purge).
  * <p>
+ * The cache reads the TTL on every call and applies it to every cached size, so that a
+ * configuration reload takes effect immediately, including for the sizes cached before it. A TTL
+ * of 0 bypasses the cache, which then releases the sizes it holds.
+ * <p>
  * Directory modification times have a coarse granularity on some file systems, so the cache does
  * not keep a size measured within {@link #RACY_WINDOW_MILLIS} of the directory's last
  * modification: a further change within the same clock tick would leave the modification time,
@@ -144,6 +148,10 @@ public class TableDiskSizeCache {
         path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
         final long ttl = configuration.getTableStorageCacheTTL();
         if (ttl <= 0) {
+            // a configuration reload can disable the cache after queries filled it
+            if (!tables.isEmpty()) {
+                tables.clear();
+            }
             return ff.getDirSize(path);
         }
 
@@ -215,7 +223,10 @@ public class TableDiskSizeCache {
         private long dirMtime;
         // measurement round in which _txn last listed the partition
         private long epoch;
-        private long expiresAt;
+        // random value that places the expiry of the size in [ttl/2, ttl] after its measurement
+        private long expiryJitter;
+        // time of the measurement of the cached size
+        private long measuredAt;
         private long parquetFileSize;
         private long rowCount;
         // cached size, -1 when there is none
@@ -355,7 +366,8 @@ public class TableDiskSizeCache {
                             && partition.dirMtime == dirMtime
                             && partition.rowCount == rowCount
                             && partition.parquetFileSize == parquetFileSize
-                            && now < partition.expiresAt
+                            // the current TTL applies, a configuration reload may have changed it
+                            && now - partition.measuredAt < ttl - partition.expiryJitter % (ttl / 2 + 1)
             ) {
                 return partition.size;
             }
@@ -366,8 +378,9 @@ public class TableDiskSizeCache {
                 partition.rowCount = rowCount;
                 partition.parquetFileSize = parquetFileSize;
                 partition.size = size;
+                partition.measuredAt = now;
                 // spread expiry over [ttl/2, ttl] to avoid re-walking all partitions in one call
-                partition.expiresAt = now + ttl - rnd.nextPositiveLong() % (ttl / 2 + 1);
+                partition.expiryJitter = rnd.nextPositiveLong();
             } else {
                 partition.size = -1;
             }

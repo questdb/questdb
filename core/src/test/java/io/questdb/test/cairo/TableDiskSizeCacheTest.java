@@ -617,6 +617,37 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTtlChangeAppliesToCachedSizes() throws Exception {
+        // a configuration reload changes the TTL of the sizes the cache already holds
+        final WalkRecordingFilesFacade ff = new WalkRecordingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createDailyTable("x", false);
+            final long now = System.currentTimeMillis() + 2 * TableDiskSizeCache.RACY_WINDOW_MILLIS;
+            setCurrentMicros(now * 1000L);
+            // the default TTL of 10 minutes keeps the sizes for at least 5 minutes
+            assertDiskSize("x");
+
+            // a shorter TTL expires the sizes measured under the longer one
+            setProperty(PropertyKey.CAIRO_TABLE_STORAGE_CACHE_TTL, 60_000);
+            setCurrentMicros((now + 60_000) * 1000L);
+            ff.walkedDirs.clear();
+            assertDiskSize("x");
+            for (String partition : PARTITIONS) {
+                Assert.assertEquals(partition, 1, ff.countWalks(partition));
+            }
+
+            // a longer TTL keeps the sizes measured under the shorter one
+            setProperty(PropertyKey.CAIRO_TABLE_STORAGE_CACHE_TTL, 600_000);
+            setCurrentMicros((now + 180_000) * 1000L);
+            ff.walkedDirs.clear();
+            assertDiskSize("x");
+            for (int i = 0; i < PARTITIONS.length - 1; i++) {
+                Assert.assertEquals(PARTITIONS[i], 0, ff.countWalks(PARTITIONS[i]));
+            }
+        });
+    }
+
+    @Test
     public void testZeroTtlDisablesCache() throws Exception {
         setProperty(PropertyKey.CAIRO_TABLE_STORAGE_CACHE_TTL, 0);
         final WalkRecordingFilesFacade ff = new WalkRecordingFilesFacade();
@@ -633,6 +664,37 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
                 Assert.assertEquals(1, ff.countWalks(tableDirName));
             }
             Assert.assertEquals(0, engine.getTableDiskSizeCache().getTableCount());
+        });
+    }
+
+    @Test
+    public void testZeroTtlReleasesCachedSizes() throws Exception {
+        final WalkRecordingFilesFacade ff = new WalkRecordingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createDailyTable("x", false);
+            setClockPastRacyWindow();
+            final TableDiskSizeCache cache = engine.getTableDiskSizeCache();
+            assertDiskSize("x");
+            Assert.assertEquals(PARTITIONS.length, cache.getPartitionCount(token("x")));
+
+            // a configuration reload disables the cache after queries filled it
+            setProperty(PropertyKey.CAIRO_TABLE_STORAGE_CACHE_TTL, 0);
+            ff.walkedDirs.clear();
+            assertDiskSize("x");
+            // one walk of the whole table directory
+            Assert.assertEquals(1, ff.walkedDirs.size());
+            Assert.assertEquals(1, ff.countWalks(token("x").getDirName()));
+            Assert.assertEquals(0, cache.getTableCount());
+
+            // a reload that re-enables the cache lets it fill again
+            setProperty(PropertyKey.CAIRO_TABLE_STORAGE_CACHE_TTL, 60_000);
+            assertDiskSize("x");
+            ff.walkedDirs.clear();
+            assertDiskSize("x");
+            for (int i = 0; i < PARTITIONS.length - 1; i++) {
+                Assert.assertEquals(PARTITIONS[i], 0, ff.countWalks(PARTITIONS[i]));
+            }
+            Assert.assertEquals(PARTITIONS.length, cache.getPartitionCount(token("x")));
         });
     }
 
