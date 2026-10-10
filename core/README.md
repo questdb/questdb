@@ -22,6 +22,9 @@ docker push questdb/questdb:6.0.0-linux-amd64
 
 - Java 25
 - Maven 3
+- Rust nightly and Cargo (the pinned toolchain is core/rust/qdbr/rust-toolchain.toml)
+- A host linker/C toolchain: GCC or Clang on Linux, macOS, and FreeBSD, or MSVC on Windows
+- CMake is optional; it is needed only to rebuild the committed C/C++ native libraries from source
 
 ```script
 java --version
@@ -58,14 +61,9 @@ your system:
 mvn clean test
 ```
 
-To release to Maven Central, use the following command, which activates the
-deploy profile. Ensure that your `~/.m2/settings.xml` file contains the
-appropriate username/password for server `central`, and `gnupg` is on hand to
-sign the artefacts.
-
-```bash
-mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-release
-```
+Maven Central publication requires verified native release artifacts and an
+immutable release tag. Follow the canonical [release guide](../artifacts/release/README.md)
+rather than running a generic `clean deploy` command.
 
 ### Run QuestDB
 
