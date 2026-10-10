@@ -595,7 +595,9 @@ an existing table it imports into must be empty. The steps below therefore never
 
 **After a failed flush stopped the server** (section 11.2), start it again:
 
-- A table the COPY created is gone. Run COPY again.
+- A table the COPY created is gone. If it was a non-WAL table, run COPY again. If it was a WAL table, first create it
+  with `CREATE TABLE ... WAL`, then run COPY into it: a COPY that creates a WAL table leaves it without a sequencer
+  (section 7.6).
 - An existing table is empty. If some imported partitions were not attached yet, their `<partition>.attachable`
   directories are left in the table's directory, and COPY again fails with `could not copy partition file
   [to=.../<partition>.attachable]`. Delete the `.attachable` directories the failed COPY left, then run COPY again.
@@ -610,7 +612,9 @@ an existing table it imports into must be empty. The steps below therefore never
   repair the table or the database from the backup.` (a partition whose move into place did not reach the disk).
   Run `DROP TABLE`, then `CREATE TABLE` again if the table existed before the COPY (it was empty), then run COPY
   again.
-- **A WAL table the COPY created.** No SQL step works on it, because of the missing sequencer (section 7.6), and the
+- **A WAL table the COPY created.** If the table is not there after the restart, create it with
+  `CREATE TABLE ... WAL` and run COPY into it. If it is there, no SQL step works on it, because of the missing
+  sequencer (section 7.6), and the
   last imported partition can read as one row of zero and empty values. Do not run `DROP TABLE` on it: that fails,
   hides the table from then on and keeps its name taken. Stop the server, delete the table's directory
   (`<table>~<id>` under the database root), start, create the table with `CREATE TABLE ... WAL`, and run COPY into
