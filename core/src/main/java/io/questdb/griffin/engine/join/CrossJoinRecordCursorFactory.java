@@ -122,8 +122,8 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         private boolean masterHasNext;
         private long masterSize;
         private long slavePartialSize;
-        // the slave rows of the current master row so far, which JoinKeyFilterGate needs when the slave
-        // cursor does not know its size
+        // the slave rows of the current master row so far, which JoinKeyFilterGate takes as the slave's row
+        // count once a scan finishes
         private long slaveRowsInPass;
         private long slaveSize;
 
@@ -328,7 +328,8 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             this.slaveCursor = slaveCursor;
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
-            keyFilterGate.of(slaveCursor.size());
+            // not the slave's size: a parent may still be opening its other cursors, see JoinKeyFilterGate
+            keyFilterGate.of(slaveCursor);
             this.circuitBreaker = circuitBreaker;
 
             isSlavePartialSizeCalculated = false;

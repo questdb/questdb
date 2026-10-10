@@ -135,8 +135,8 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
         private boolean isMasterHasNextPending;
         private boolean isMatch;
         private boolean masterHasNext;
-        // the slave rows that the scan of the current master row has read, which JoinKeyFilterGate needs
-        // when the slave cursor does not know its size
+        // the slave rows that the scan of the current master row has read, which JoinKeyFilterGate takes as
+        // the slave's row count once a scan finishes
         private long slaveRowsInPass;
 
         public NestedLoopLeftRecordCursor(int columnSplit, Function filter, Record nullRecord) {
@@ -226,7 +226,8 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             filter.init(this, executionContext);
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
-            keyFilterGate.of(slaveCursor.size());
+            // not the slave's size: a parent may still be opening its other cursors, see JoinKeyFilterGate
+            keyFilterGate.of(slaveCursor);
             circuitBreaker = executionContext.getCircuitBreaker();
         }
     }

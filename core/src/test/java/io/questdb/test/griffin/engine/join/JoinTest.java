@@ -8688,6 +8688,24 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeylessJoinKeyCheckPricesSampleThatRanNoSlaveScan() throws Exception {
+        // Only row 1,024 of g has a key in b, so the first sample of the check ends before any scan of c has
+        // counted its rows. The check reads the size of c instead: 1,023 dropped rows that each save joining
+        // the 3 rows of c pay for the 1,024 lookups, and the check stays on. Only row 1,024 joins c: 3 ON
+        // clause evaluations per read of the left side, 6 for the two rows of d. A check that took the size
+        // as unknown would stop, and join the remaining 1,976 rows and then all 3,000 rows with c: 14,931.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE g AS (SELECT (CASE WHEN x = 1_024 THEN 2 ELSE 1 END)::INT k, 18 x FROM long_sequence(3_000))");
+            assertJoinFilterEvaluationCount(
+                    "SELECT g.k, c.y FROM g LEFT JOIN c ON test_latched_counter() AND g.x > c.y JOIN b ON g.k = b.k RIGHT JOIN d ON g.x >= d.k JOIN b b2 ON b2.k = g.k",
+                    3,
+                    6
+            );
+        });
+    }
+
+    @Test
     public void testKeylessJoinKeyCheckStopsWhenDropsSaveLittle() throws Exception {
         // The check costs a lookup per row of g, and a dropped row saves joining it with the 3 rows of c.
         // The first 1,024 rows of g1 all have a key in b, so the check stops, and every row of g1 joins c:
@@ -8716,6 +8734,53 @@ public class JoinTest extends AbstractCairoTest {
                     2_250,
                     4_500
             );
+        });
+    }
+
+    @Test
+    public void testKeylessJoinReadsNoSlaveRowWhenCursorOpens() throws Exception {
+        // A CROSS or nested loop LEFT join must not read rows of its slave while its cursor opens: a parent
+        // may still be opening its other cursors then, such as the owner of a factory that the slave shares.
+        // Hash Join Light opens its slave before its master, and the DISTINCT of a decorrelated LATERAL
+        // subquery reads a factory that the outer query owns. DISTINCT reads every row of its input to learn
+        // its size, and the window function keeps it from becoming a GROUP BY. Check the joins with and
+        // without the key check of the INNER hash join that follows them.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            final String slave = "(SELECT DISTINCT y, count() OVER () n FROM c WHERE test_latched_counter())";
+            final String keyedTail = " JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k";
+            final String[] queries = {
+                    "SELECT a.k, c.y FROM a CROSS JOIN " + slave + " c",
+                    "SELECT a.k, c.y FROM a CROSS JOIN " + slave + " c" + keyedTail,
+                    "SELECT a.k, c.y FROM a LEFT JOIN " + slave + " c ON a.x > c.y * 4",
+                    "SELECT a.k, c.y FROM a LEFT JOIN " + slave + " c ON a.x > c.y * 4" + keyedTail
+            };
+            for (int i = 0; i < queries.length; i++) {
+                final String query = queries[i];
+                final boolean hasKeyCheck = (i & 1) == 1;
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    sink.clear();
+                    printSql("EXPLAIN " + query, isFullFat);
+                    final String plan = sink.toString();
+                    Assert.assertTrue(plan, plan.contains(i < 2 ? "Cross Join" : "Nested Loop Left Join"));
+                    Assert.assertTrue(plan, plan.contains("Distinct"));
+                    Assert.assertEquals(plan, hasKeyCheck, plan.contains("joinKeyCheck: true"));
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        compiler.setFullFatJoins(isFullFat);
+                        try (RecordCursorFactory factory = select(compiler, query, sqlExecutionContext)) {
+                            TestLatchedCounterFunctionFactory.reset(null);
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                Assert.assertEquals(query, 0, TestLatchedCounterFunctionFactory.getCount());
+                                while (cursor.hasNext()) {
+                                    // the rows do not matter
+                                }
+                            }
+                            // the slave is read once the rows are
+                            Assert.assertTrue(query, TestLatchedCounterFunctionFactory.getCount() > 0);
+                        }
+                    }
+                }
+            }
         });
     }
 

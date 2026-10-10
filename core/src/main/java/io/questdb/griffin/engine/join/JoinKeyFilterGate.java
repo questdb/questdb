@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -34,6 +35,12 @@ import org.jetbrains.annotations.Nullable;
  * filter for the rest of the execution when the rows it drops in a sample, multiplied by the slave
  * rows that each of them saves, do not reach twice the lookups. The join then runs as it would without
  * the filter.
+ * <p>
+ * The join's cursor counts the slave rows during its first full slave scan. A sample that ends before any
+ * scan has finished reads the size of the slave cursor instead, at most once per execution. The gate never
+ * reads it when the cursor opens: the parents of the join may still be opening their other cursors then,
+ * and a slave such as DISTINCT reads every row of its input to learn its size, including the rows of a
+ * factory that it shares with a cursor that is not open yet.
  */
 final class JoinKeyFilterGate {
     static final int SAMPLE_SIZE = 1024;
@@ -41,6 +48,8 @@ final class JoinKeyFilterGate {
     private int drops;
     private @Nullable JoinKeyFilter filter;
     private boolean isActive;
+    private boolean isSlaveSizeRead;
+    private @Nullable RecordCursor slaveCursor;
     // the rows of the slave that the join reads for each master row, -1 while unknown
     private long slaveRowCount;
 
@@ -64,8 +73,14 @@ final class JoinKeyFilterGate {
             drops++;
         }
         if (++checks == SAMPLE_SIZE) {
-            // A sample that dropped every master row ran no slave scan, and keeps the filter whatever the
-            // slave holds. Otherwise the cursor has counted the slave rows during a scan.
+            if (slaveRowCount < 0 && !isSlaveSizeRead) {
+                // No slave scan has finished. The cursor reads master rows only once every cursor of the
+                // query is open, and only at the top of its slave scan.
+                isSlaveSizeRead = true;
+                slaveRowCount = slaveCursor != null ? slaveCursor.size() : -1;
+            }
+            // When neither a scan nor the slave knows the slave rows, only a sample that dropped every master
+            // row keeps the filter.
             isActive = slaveRowCount < 0 ? drops == SAMPLE_SIZE : drops * slaveRowCount >= 2L * SAMPLE_SIZE;
             checks = 0;
             drops = 0;
@@ -74,16 +89,18 @@ final class JoinKeyFilterGate {
     }
 
     // Starts an execution: the sample of the previous one says nothing about the rows of this one.
-    void of(long slaveRowCount) {
+    void of(@Nullable RecordCursor slaveCursor) {
+        this.slaveCursor = slaveCursor;
         isActive = filter != null;
+        isSlaveSizeRead = false;
         checks = 0;
         drops = 0;
-        this.slaveRowCount = slaveRowCount;
+        slaveRowCount = -1;
     }
 
     void setFilter(@Nullable JoinKeyFilter filter) {
         this.filter = filter;
-        of(-1);
+        of(null);
     }
 
     void setSlaveRowCount(long slaveRowCount) {
