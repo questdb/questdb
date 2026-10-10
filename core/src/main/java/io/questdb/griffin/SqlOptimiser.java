@@ -5892,6 +5892,52 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private boolean isIntegerAggregateConstant(@Nullable ExpressionNode node, SqlExecutionContext sqlExecutionContext) {
+        if (isIntegerConstant(node)) {
+            return true;
+        }
+        if (node == null) {
+            return false;
+        }
+
+        final int type;
+        if (node.type == FUNCTION && isCastKeyword(node.token) && node.paramCount == 2
+                && node.rhs.type == CONSTANT && isEffectivelyConstantExpression(node.lhs)) {
+            // Keep the cast in the expression; its target type is already available on the AST.
+            type = ColumnType.typeOf(node.rhs.token);
+        } else if (node.type == BIND_VARIABLE) {
+            final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+            if (bindVariableService == null) {
+                return false;
+            }
+            final Function bind;
+            if (Chars.startsWith(node.token, ':')) {
+                bind = bindVariableService.getFunction(node.token);
+            } else {
+                try {
+                    final int index = Numbers.parseInt(node.token, 1, node.token.length());
+                    if (index < 1) {
+                        return false;
+                    }
+                    bind = bindVariableService.getFunction(index - 1);
+                } catch (NumericException e) {
+                    return false;
+                }
+            }
+            // Do not infer a missing bind's type or inspect its current value.
+            if (bind == null) {
+                return false;
+            }
+            type = bind.getType();
+        } else {
+            return false;
+        }
+        return switch (type) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> true;
+            default -> false;
+        };
+    }
+
     private boolean isIntegerConstant(@Nullable ExpressionNode n) {
         if (n == null || n.type != CONSTANT) {
             return false;
@@ -9413,7 +9459,8 @@ public class SqlOptimiser implements Mutable {
     // sum(x*10) into sum(x) * 10, etc.
     // sum(x+10) into sum(x) + count(x)*10
     // sum(x-10) into sum(x) - count(x)*10
-    private ExpressionNode rewriteAggregate(ExpressionNode agg, IQueryModel model) {
+    // Integer bind variables use the same rewrite as literals, including their overflow behavior.
+    private ExpressionNode rewriteAggregate(ExpressionNode agg, IQueryModel model, SqlExecutionContext sqlExecutionContext) {
         if (agg == null) {
             return null;
         }
@@ -9428,19 +9475,19 @@ public class SqlOptimiser implements Mutable {
                         && op.paramCount == 2
         ) {
             if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
-                if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {
+                if (isSimpleIntegerColumn(op.lhs, model) && isIntegerAggregateConstant(op.rhs, sqlExecutionContext)) {
                     agg.rhs = op.lhs;
                     op.lhs = agg;
                     return op;
-                } else if (isIntegerConstant(op.lhs) && isSimpleIntegerColumn(op.rhs, model)) {
+                } else if (isSimpleIntegerColumn(op.rhs, model) && isIntegerAggregateConstant(op.lhs, sqlExecutionContext)) {
                     agg.rhs = op.rhs;
                     op.rhs = agg;
                     return op;
                 }
             } else if (Chars.equals(op.token, '+') || Chars.equals(op.token, '-')) { // sum(x+10) == sum(x)+count(x)*10 , sum(x-10) == sum(x)-count(x)*10
-                if (isIntegerConstant(op.rhs)) {
+                if (isIntegerAggregateConstant(op.rhs, sqlExecutionContext)) {
                     return pushOperationOutsideAgg(agg, op, op.lhs, op.rhs, model);
-                } else if (isIntegerConstant(op.lhs)) {
+                } else if (isIntegerAggregateConstant(op.lhs, sqlExecutionContext)) {
                     return pushOperationOutsideAgg(agg, op, op.rhs, op.lhs, model);
                 }
             }
@@ -12662,7 +12709,7 @@ public class SqlOptimiser implements Mutable {
 
                         // aggregates cannot yet reference the projection, they have to reference the columns from
                         // the underlying table(s) or sub-queries
-                        ExpressionNode repl = rewriteAggregate(qc.getAst(), baseModel);
+                        ExpressionNode repl = rewriteAggregate(qc.getAst(), baseModel, sqlExecutionContext);
                         if (repl == qc.getAst()) { // no rewrite
                             // use pre-computed duplicate detection result
                             if (hasDuplicateAggregates) {
