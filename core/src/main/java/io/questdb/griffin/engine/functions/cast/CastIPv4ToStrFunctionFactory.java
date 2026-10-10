@@ -45,11 +45,17 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function ipv4Func = args.getQuick(0);
         if (ipv4Func.isConstant()) {
+            if (ipv4Func.isNullConstant()) {
+                return StrConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             Numbers.intToIPv4Sink(sink, ipv4Func.getIPv4(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (ipv4Func.isNotNull()) {
+            return new FuncNotNull(ipv4Func);
+        }
+        return new Func(ipv4Func);
     }
 
     public static class Func extends AbstractCastToStrFunction {
@@ -80,6 +86,29 @@ public class CastIPv4ToStrFunctionFactory implements FunctionFactory {
                 return sinkB;
             }
             return null;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            Numbers.intToIPv4Sink(sinkA, arg.getIPv4(rec));
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            Numbers.intToIPv4Sink(sinkB, arg.getIPv4(rec));
+            return sinkB;
         }
     }
 }

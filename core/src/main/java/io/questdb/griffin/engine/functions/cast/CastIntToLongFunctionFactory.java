@@ -52,8 +52,11 @@ public class CastIntToLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             // An INT expression carries one value - the one its four bytes hold - so ::LONG reads
-            // it at INT width and sign-extends, exactly as an implicit 64-bit read does.
-            return Numbers.intToLong(arg.getInt(rec));
+            // it at INT width and sign-extends, exactly as an implicit 64-bit read does. On a
+            // never-null argument the INT sentinel bit pattern is data and must not be remapped
+            // to the LONG sentinel.
+            final int value = arg.getInt(rec);
+            return arg.isNotNull() || value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
         }
     }
 }

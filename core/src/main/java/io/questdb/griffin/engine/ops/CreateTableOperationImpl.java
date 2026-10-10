@@ -53,7 +53,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl.*;
+import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.*;
 
 public class CreateTableOperationImpl implements CreateTableOperation {
     // augmentedColumnMetadata contains information from "cast models", the extra syntax
@@ -208,6 +208,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getIndexValueBlockSize(),
                     model.isDedupKey(),
                     hasCovering,
+                    model.isNotNull(),
                     model.getParquetEncodingConfig()
             );
         }
@@ -542,6 +543,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getSymbolCacheFlag(),
                     symbolCapacity
             );
+            columnMetadata.setNotNullFlag(model.isNotNull());
             columnMetadata.setParquetEncodingConfig(model.getParquetEncodingConfig());
             ObjList<CharSequence> coverNames = model.getCoveringColumnNames();
             if (coverNames.size() > 0) {
@@ -563,6 +565,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public boolean isDedupKey(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
+    }
+
+    @Override
+    public boolean isNotNull(int index) {
+        return index == timestampIndex || (getLowAt(index * 2 + 1) & COLUMN_FLAG_NOT_NULL) != 0;
     }
 
     @Override
@@ -627,6 +634,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.getIndexValueBlockCapacity(),
                     colMeta.isDedupKeyFlag(),
                     colMeta.isCovering(),
+                    colMeta.isNotNull(),
                     colMeta.getParquetEncodingConfig()
             );
             coveringColumnIndicesList.add(colMeta.getCoveringColumnIndices());
@@ -735,6 +743,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             boolean symbolCacheFlag;
             byte indexType;
             boolean isDedupKey;
+            boolean isNotNull;
             int indexBlockCapacity;
             int parquetEncodingConfig;
             if (augMeta != null) {
@@ -743,13 +752,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 if (columnType == ColumnType.UNDEFINED) {
                     columnType = fromType;
                 }
-                if (!isCompatibleCast(fromType, columnType)) {
+                if (!CreateTableOperationBuilderImpl.isCompatibleCast(fromType, columnType)) {
                     throw SqlException.unsupportedCast(this.colNameToCastClausePos.get(columnName), columnName, fromType, columnType);
                 }
                 symbolCapacity = augMeta.getSymbolCapacity();
                 symbolCacheFlag = augMeta.isSymbolCacheFlag();
                 indexType = augMeta.getIndexType();
                 isDedupKey = augMeta.isDedupKeyFlag();
+                isNotNull = augMeta.isNotNull();
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
                 parquetEncodingConfig = augMeta.getParquetEncodingConfig();
             } else {
@@ -763,6 +773,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 symbolCacheFlag = true;
                 indexType = IndexType.NONE;
                 isDedupKey = false;
+                isNotNull = false;
                 indexBlockCapacity = 0;
                 parquetEncodingConfig = 0;
             }
@@ -791,6 +802,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     indexBlockCapacity,
                     isDedupKey,
                     hasCovering,
+                    isNotNull,
                     parquetEncodingConfig
             );
         }
@@ -823,12 +835,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int indexBlockCapacity,
             boolean dedupFlag,
             boolean coveringFlag,
+            boolean notNullFlag,
             int parquetEncodingConfig
     ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
                 | ((indexType & 0x07) << COLUMN_FLAG_INDEX_TYPE_SHIFT)
                 | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0)
-                | (coveringFlag ? COLUMN_FLAG_COVERING : 0);
+                | (coveringFlag ? COLUMN_FLAG_COVERING : 0)
+                | (notNullFlag ? COLUMN_FLAG_NOT_NULL : 0);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
                 Numbers.encodeLowHighInts(flags, indexBlockCapacity)

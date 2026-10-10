@@ -506,6 +506,113 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testExportNotNullSentinelAsData() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE not_null_sentinel_test (
+                                i INT NOT NULL,
+                                l LONG NOT NULL,
+                                ni INT,
+                                s SYMBOL
+                            )
+                            """, sqlExecutionContext);
+                    // The NULL literal is a compile-time error on NOT NULL columns, so the
+                    // sentinel row spells each bit pattern explicitly; on NOT NULL columns
+                    // those bit patterns are data and the export must preserve them.
+                    // The nullable ni column and the s symbol column hold genuine NULLs
+                    // as controls: they must still round-trip as NULL.
+                    engine.execute("""
+                            INSERT INTO not_null_sentinel_test VALUES
+                                (-2147483648, CAST(-9223372036854775807 AS LONG) - 1, NULL, NULL),
+                                (1, 2, 3, 'sym')
+                            """, sqlExecutionContext);
+
+                    final String query = "not_null_sentinel_test";
+                    final String filename = "not_null_sentinel_test.parquet";
+                    try (TestHttpClient client = new TestHttpClient();
+                         var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        client.setKeepConnection(true);
+                        HttpClient.Request req = client.getHttpClient().newRequest("localhost", 9001);
+                        req.GET().url("/exp");
+                        req.query("query", query);
+                        req.query("fmt", "parquet");
+                        client.reqToSink(req, sink, null, null, null, null);
+
+                        // Full-row equality against the live query (which renders the
+                        // NOT NULL sentinels as data).
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, filename);
+
+                        // Pin sentinel-as-data explicitly so a symmetric failure on both
+                        // sides of the comparison above cannot hide the data loss.
+                        var actualSink = new StringSink();
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT i::string i_str, l::string l_str FROM read_parquet('" + filename + "') LIMIT 1",
+                                actualSink
+                        );
+                        TestUtils.assertEquals("""
+                                i_str\tl_str
+                                -2147483648\t-9223372036854775808
+                                """, actualSink);
+
+                        // The sentinel is data: IS NULL over the round-tripped NOT NULL
+                        // columns matches no row.
+                        actualSink.clear();
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT count() c FROM read_parquet('" + filename + "') WHERE i IS NULL",
+                                actualSink
+                        );
+                        TestUtils.assertEquals("c\n0\n", actualSink);
+
+                        actualSink.clear();
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT count() c FROM read_parquet('" + filename + "') WHERE l IS NULL",
+                                actualSink
+                        );
+                        TestUtils.assertEquals("c\n0\n", actualSink);
+
+                        // Nullable control: the genuine NULL survives as NULL.
+                        actualSink.clear();
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT count() c FROM read_parquet('" + filename + "') WHERE ni IS NULL",
+                                actualSink
+                        );
+                        TestUtils.assertEquals("c\n1\n", actualSink);
+
+                        // Symbol control: the symbol NULL survives and the symbol value
+                        // is intact (guards the symbol high-bit packing, which must not
+                        // change with the ordinary-column not-null hint).
+                        actualSink.clear();
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT count() c FROM read_parquet('" + filename + "') WHERE s IS NULL",
+                                actualSink
+                        );
+                        TestUtils.assertEquals("c\n1\n", actualSink);
+
+                        actualSink.clear();
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT count() c FROM read_parquet('" + filename + "') WHERE s = 'sym'",
+                                actualSink
+                        );
+                        TestUtils.assertEquals("c\n1\n", actualSink);
+                    }
+                });
+    }
+
+    @Test
     public void testExportParquetFuzz() throws Exception {
         getExportTester()
                 .run((HttpQueryTestBuilder.HttpClientCode) (engine, sqlExecutionContext) -> {
@@ -541,7 +648,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 1246, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 1262, params, "test_table");
                 });
     }
 
@@ -567,7 +674,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 816, params, "select x, ts from test_table");
+                    testHttpClient.assertGetParquet("/exp", 832, params, "select x, ts from test_table");
                 });
     }
 
@@ -720,19 +827,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 42_073, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 42_105, params, "test_table");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 47_889, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 47_921, params, "test_table");
                     params.put("row_group_size", "500");
-                    testHttpClient.assertGetParquet("/exp", 55_290, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 55_322, params, "test_table");
                     params.put("row_group_size", "999");
-                    testHttpClient.assertGetParquet("/exp", 49_384, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 49_416, params, "test_table");
                     params.put("row_group_size", "201");
-                    testHttpClient.assertGetParquet("/exp", 78_094, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 78_126, params, "test_table");
                     params.put("row_group_size", "2001");
-                    testHttpClient.assertGetParquet("/exp", 45_037, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 45_069, params, "test_table");
                     params.put("row_group_size", "10000");
-                    testHttpClient.assertGetParquet("/exp", 42_073, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 42_105, params, "test_table");
                     // Each round re-exports the full 10k-row table over the forced byte-level HTTP
                     // fragmentation from getExportTester(), slow on Mac/Windows. The assertGetParquet
                     // calls above already cover every row_group_size, so fewer rounds suffice.
@@ -2456,7 +2563,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 2192, tableName);
+                    testHttpClient.assertGetParquet("/exp", 2208, tableName);
                 });
     }
 

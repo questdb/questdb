@@ -4660,6 +4660,98 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointPreservesPostingCoveringAfterDropOfEarlierColumn() throws Exception {
+        // The checkpoint copy of txn_seq/_meta stores covering (INCLUDE) lists in
+        // writer-slot space, which retains deleted column slots. Dropping a column
+        // that precedes the POSTING-indexed column must not detach the covering
+        // list from the indexed column in the checkpointed metadata.
+        assertMemoryLeak(() -> {
+            String tableName = getTestTableName() + "_cov_drop_before";
+            execute(
+                    "create table " + tableName + " (" +
+                            "gone int, " +
+                            "sym symbol index type posting include (v), " +
+                            "v long, " +
+                            "ts timestamp" +
+                            ") timestamp(ts) partition by day wal"
+            );
+            execute("insert into " + tableName + " values (1, 'A', 42, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("alter table " + tableName + " drop column gone");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+            IntList expectedCovering = readLiveSequencerCovering(tableToken, "sym", "v");
+
+            execute("checkpoint create");
+            try {
+                assertCheckpointSequencerCovering(tableToken, "sym", expectedCovering);
+            } finally {
+                execute("checkpoint release");
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointPreservesPostingCoveringAfterDropOfLaterColumn() throws Exception {
+        // Dropping a column that follows the POSTING-indexed column: the deleted
+        // slot sits after the covering owner, probing the opposite skew direction.
+        assertMemoryLeak(() -> {
+            String tableName = getTestTableName() + "_cov_drop_after";
+            execute(
+                    "create table " + tableName + " (" +
+                            "sym symbol index type posting include (v), " +
+                            "v long, " +
+                            "gone int, " +
+                            "ts timestamp" +
+                            ") timestamp(ts) partition by day wal"
+            );
+            execute("insert into " + tableName + " values ('A', 42, 1, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("alter table " + tableName + " drop column gone");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+            IntList expectedCovering = readLiveSequencerCovering(tableToken, "sym", "v");
+
+            execute("checkpoint create");
+            try {
+                assertCheckpointSequencerCovering(tableToken, "sym", expectedCovering);
+            } finally {
+                execute("checkpoint release");
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointPreservesPostingCoveringWithoutDrop() throws Exception {
+        // no-drop control: with no deleted slots the covering list survives trivially
+        assertMemoryLeak(() -> {
+            String tableName = getTestTableName() + "_cov_no_drop";
+            execute(
+                    "create table " + tableName + " (" +
+                            "gone int, " +
+                            "sym symbol index type posting include (v), " +
+                            "v long, " +
+                            "ts timestamp" +
+                            ") timestamp(ts) partition by day wal"
+            );
+            execute("insert into " + tableName + " values (1, 'A', 42, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+            IntList expectedCovering = readLiveSequencerCovering(tableToken, "sym", "v");
+
+            execute("checkpoint create");
+            try {
+                assertCheckpointSequencerCovering(tableToken, "sym", expectedCovering);
+            } finally {
+                execute("checkpoint release");
+            }
+        });
+    }
+
+    @Test
     public void testWalMetadataRecovery() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
@@ -4915,6 +5007,48 @@ public class CheckpointTest extends AbstractCairoTest {
         }
         Assert.fail("Table not found in callback map: " + tableNamePrefix);
         return -1; // unreachable
+    }
+
+    private void assertCheckpointSequencerCovering(TableToken tableToken, String indexedColumn, IntList expectedCovering) {
+        try (Path seqPath = new Path(); SequencerMetadata metadata = new SequencerMetadata(configuration, true)) {
+            seqPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory())
+                    .concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR);
+            metadata.openTableSequencerMetadata(seqPath, seqPath.size(), tableToken);
+            int ownerIndex = metadata.getColumnIndexQuiet(indexedColumn);
+            Assert.assertTrue("expected indexed column in checkpoint sequencer metadata: " + indexedColumn, ownerIndex > -1);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                IntList covering = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+                if (i == ownerIndex) {
+                    Assert.assertNotNull("covering (INCLUDE) list missing in checkpoint sequencer metadata for column: " + indexedColumn, covering);
+                    Assert.assertEquals("unexpected covering list in checkpoint sequencer metadata for column: " + indexedColumn, expectedCovering, covering);
+                } else {
+                    Assert.assertTrue(
+                            "unexpected covering list in checkpoint sequencer metadata on column slot " + i,
+                            covering == null || covering.size() == 0
+                    );
+                }
+            }
+        }
+    }
+
+    private IntList readLiveSequencerCovering(TableToken tableToken, String indexedColumn, String... mustCoverColumns) {
+        try (Path seqPath = new Path(); SequencerMetadata metadata = new SequencerMetadata(configuration, true)) {
+            seqPath.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR);
+            metadata.openTableSequencerMetadata(seqPath, seqPath.size(), tableToken);
+            int ownerIndex = metadata.getColumnIndexQuiet(indexedColumn);
+            Assert.assertTrue("expected indexed column in live sequencer metadata: " + indexedColumn, ownerIndex > -1);
+            IntList covering = metadata.getColumnMetadata(ownerIndex).getCoveringColumnIndices();
+            Assert.assertNotNull("expected INCLUDE list in live sequencer metadata for column: " + indexedColumn, covering);
+            for (String covered : mustCoverColumns) {
+                int coveredIndex = metadata.getColumnIndexQuiet(covered);
+                Assert.assertTrue("expected covered column in live sequencer metadata: " + covered, coveredIndex > -1);
+                Assert.assertTrue(
+                        "expected live INCLUDE list of " + indexedColumn + " to reference writer slot of " + covered,
+                        covering.contains(coveredIndex)
+                );
+            }
+            return new IntList(covering);
+        }
     }
 
     private void assertSequencerReadColumnOrder(TableToken tableToken, int... expected) {

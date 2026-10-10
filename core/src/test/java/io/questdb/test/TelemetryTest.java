@@ -83,15 +83,15 @@ public class TelemetryTest extends AbstractCairoTest {
 
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
                 String expected = """
-                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                        id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                        enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                        version\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
-                        os\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
-                        package\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t
-                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
-                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
-                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                        id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                        enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                        version\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t\tfalse
+                        os\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t\tfalse
+                        package\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t\tfalse
+                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t\tfalse
+                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t\tfalse
+                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t\tfalse
                         """;
                 assertQuery("SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
                         .noRandomAccess()
@@ -308,7 +308,7 @@ public class TelemetryTest extends AbstractCairoTest {
             String showCreateTable = "SHOW CREATE TABLE " + TelemetryTask.TABLE_NAME;
             String start = "ddl\n" +
                     "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
-                    "\tcreated TIMESTAMP,\n" +
+                    "\tcreated TIMESTAMP NOT NULL,\n" +
                     "\tevent SHORT,\n" +
                     "\torigin SHORT\n" +
                     ") timestamp(created)";
@@ -340,7 +340,7 @@ public class TelemetryTest extends AbstractCairoTest {
             String showCreateTable = "SHOW CREATE TABLE " + TelemetryTask.TABLE_NAME;
             String start = "ddl\n" +
                     "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
-                    "\tcreated TIMESTAMP,\n" +
+                    "\tcreated TIMESTAMP NOT NULL,\n" +
                     "\tevent SHORT,\n" +
                     "\torigin SHORT\n" +
                     ") timestamp(created)";
@@ -445,7 +445,7 @@ public class TelemetryTest extends AbstractCairoTest {
             String showCreateTable = "SHOW CREATE TABLE '" + tableName + "'";
             String header = "ddl\n" +
                     "CREATE TABLE '" + tableName + "' ( \n" +
-                    "\tcreated TIMESTAMP,\n" +
+                    "\tcreated TIMESTAMP NOT NULL,\n" +
                     "\tevent SHORT,\n" +
                     "\ttableId INT,\n" +
                     "\twalId INT,\n" +

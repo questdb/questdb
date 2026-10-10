@@ -99,6 +99,59 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_syncColumnNullability(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    col_desc_ptr: *const i64,
+    col_count: jint,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.syncColumnNullability");
+        return err.into_cairo_exception().throw(env);
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+
+    let mut sync = || -> ParquetResult<()> {
+        if col_count < 0 {
+            return Err(fmt_err!(InvalidType, "negative column count {}", col_count));
+        }
+        // The descriptor is a flat array of [field_id, not_null] i64 pairs.
+        let columns: Vec<(i32, bool)> = if col_count > 0 {
+            if col_desc_ptr.is_null() {
+                return Err(fmt_err!(
+                    InvalidType,
+                    "invalid nullability payload: null pointer with non-zero count"
+                ));
+            }
+            // SAFETY: JNI caller guarantees a valid pointer to `col_count * 2`
+            // i64 elements. The memory is backed by Java and remains valid for
+            // the JNI call duration.
+            let desc = unsafe { slice::from_raw_parts(col_desc_ptr, (col_count as usize) * 2) };
+            (0..col_count as usize)
+                .map(|i| (desc[i * 2] as i32, desc[i * 2 + 1] != 0))
+                .collect()
+        } else {
+            vec![]
+        };
+        parquet_updater.sync_column_nullability(&columns);
+        Ok(())
+    };
+
+    match sync() {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context("could not sync column nullability");
+            err.add_context("error in PartitionUpdater.syncColumnNullability");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_rewriteRowGroupColumns(
     mut env: JNIEnv,
     _class: JClass,
@@ -772,12 +825,12 @@ fn build_column_infos_from_partition<'a>(
             };
 
             let mut flags = crate::parquet_metadata::types::ColumnFlags::new();
-            let repetition = if col.not_null_hint {
-                crate::parquet_metadata::types::FieldRepetition::Required
-            } else {
-                crate::parquet_metadata::types::FieldRepetition::Optional
-            };
-            flags = flags.with_repetition(repetition);
+            // NOT NULL is a QuestDB semantic preserved in QdbMeta. The
+            // physical repetition must match the schema actually emitted;
+            // forcing Required here would disagree with Optional columns.
+            flags = flags.with_repetition(crate::parquet_metadata::types::FieldRepetition::from(
+                schema_columns[i].base_type.get_field_info().repetition,
+            ));
 
             if col.data_type.tag() == qdb_core::col_type::ColumnTypeTag::Symbol {
                 flags = flags.with_local_key_is_global();

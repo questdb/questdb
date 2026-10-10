@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
@@ -59,6 +60,11 @@ public class EqVarcharStrFunctionFactory implements FunctionFactory {
     private Function createStrConstantFunc(Function constVarcharFunc, Function varStrFunc) {
         Utf8Sequence constValue = constVarcharFunc.getVarcharA(null);
         if (constValue == null) {
+            // `strCol = NULL` on a NOT NULL STRING column is always false.
+            // NegatingFunctionFactory flips the constant for IS NOT NULL.
+            if (varStrFunc.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
             return new EqStrFunctionFactory.NullCheckFunc(varStrFunc);
         }
         return new EqStrFunctionFactory.ConstCheckFunc(varStrFunc, Utf8s.toString(constValue));
@@ -67,6 +73,11 @@ public class EqVarcharStrFunctionFactory implements FunctionFactory {
     private Function createVarcharConstantFunc(Function a, Function b) {
         CharSequence constValue = a.getStrA(null);
         if (constValue == null) {
+            // `varcharCol = NULL` on a NOT NULL VARCHAR column is always false.
+            // NegatingFunctionFactory flips the constant for IS NOT NULL.
+            if (b.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
             return new EqVarcharFunctionFactory.NullCheckFunc(b);
         }
         Utf8String utf8ConstValue = new Utf8String(constValue);

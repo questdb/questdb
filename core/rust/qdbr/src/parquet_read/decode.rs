@@ -3544,6 +3544,8 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
+
                 id: None,
             };
             for row_group_index in 0..row_group_count {
@@ -3604,6 +3606,8 @@ mod tests {
                         column_top: 0,
                         format: None,
                         ascii: None,
+                        not_null: false,
+
                         id: None,
                     };
                     for row_group_index in 0..row_group_count {
@@ -3677,6 +3681,8 @@ mod tests {
                                 column_top: 0,
                                 format: None,
                                 ascii: None,
+                                not_null: false,
+
                                 id: None,
                             },
                         )
@@ -3917,6 +3923,8 @@ mod tests {
                             column_top: 0,
                             format,
                             ascii: None,
+                            not_null: false,
+
                             id: None,
                         },
                     )
@@ -5226,6 +5234,8 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
+
             id: None,
         };
 
@@ -5293,6 +5303,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
@@ -5374,6 +5386,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, n).unwrap();
@@ -5548,6 +5562,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         };
 
         let err = decode_page(&page, None, &mut bufs, col_info, 0, n)
@@ -5631,6 +5647,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
@@ -5762,6 +5780,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, row_hi).unwrap();
@@ -5845,6 +5865,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         };
 
         let err = decode_page(
@@ -5895,6 +5917,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         };
 
         let err = decode_page(&page, Some(&dict_page), &mut bufs, col_info, 0, 8)
@@ -6491,6 +6515,8 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
+
             id: None,
         };
 
@@ -6542,6 +6568,8 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
+
             id: None,
         };
 
@@ -6587,6 +6615,8 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
+
                 id: None,
             };
             decode_page(
@@ -6644,6 +6674,8 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
+
                 id: None,
             };
             decode_page_filtered::<true>(
@@ -6691,6 +6723,8 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
+
             id: None,
         };
 
@@ -6739,6 +6773,8 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
+
                 id: None,
             };
             decode_page_filtered::<true>(
@@ -6778,6 +6814,8 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            not_null: false,
+
             id: None,
         };
 
@@ -6818,6 +6856,8 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
+
                 id: None,
             };
 
@@ -6869,6 +6909,8 @@ mod tests {
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    not_null: false,
+
                     id: None,
                 };
 
@@ -6928,6 +6970,8 @@ mod tests {
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    not_null: false,
+
                     id: None,
                 };
                 decode_page(
@@ -6983,6 +7027,8 @@ mod tests {
                     column_top: 0,
                     format: None,
                     ascii: None,
+                    not_null: false,
+
                     id: None,
                 };
                 decode_page_filtered::<true>(
@@ -7048,6 +7094,8 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
+
                 id: None,
             };
 
@@ -7100,6 +7148,8 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
+
                 id: None,
             };
 
@@ -7159,6 +7209,8 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                not_null: false,
+
                 id: None,
             };
 

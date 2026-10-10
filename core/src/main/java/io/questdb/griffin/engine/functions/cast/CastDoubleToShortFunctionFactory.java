@@ -52,7 +52,7 @@ public class CastDoubleToShortFunctionFactory implements FunctionFactory {
         @Override
         public short getShort(Record rec) {
             final double value = arg.getDouble(rec);
-            return Numbers.isNull(value) || value > Short.MAX_VALUE || value < Short.MIN_VALUE ? 0 : (short) value;
+            return (!arg.isNotNull() && Numbers.isNull(value)) || value > Short.MAX_VALUE || value < Short.MIN_VALUE ? 0 : (short) value;
         }
     }
 }

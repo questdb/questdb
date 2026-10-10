@@ -72,6 +72,11 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
             if (longFn.isConstant()) {
                 return longFn.getLong(null) == Numbers.LONG_NULL ? BooleanConstant.TRUE : BooleanConstant.FALSE;
             }
+            // `long_col IS NULL` on a NOT NULL LONG column always false; NegatingFunctionFactory
+            // flips BooleanConstant.FALSE to TRUE for the IS NOT NULL path.
+            if (longFn.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
             return new EqLongNullFunction(longFn);
         }
 

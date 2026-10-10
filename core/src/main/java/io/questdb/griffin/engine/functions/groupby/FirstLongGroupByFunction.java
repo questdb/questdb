@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 public class FirstLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected final int argColumnIndex;
+    protected final boolean isArgNotNull;
     protected int valueIndex;
 
     public FirstLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.LONG);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -190,7 +192,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

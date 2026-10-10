@@ -44,6 +44,12 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
      */
     protected final Function arg;
     /**
+     * Whether the argument is known NOT NULL at plan time. Subclasses that
+     * skip rows whose value equals the type's null sentinel use this to keep
+     * those rows in the aggregate when the sentinel is real data.
+     */
+    protected final boolean isArgNotNull;
+    /**
      * The value index in the map.
      */
     protected int valueIndex;
@@ -55,6 +61,7 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
      */
     protected AbstractCountGroupByFunction(Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
     }
 
     @Override

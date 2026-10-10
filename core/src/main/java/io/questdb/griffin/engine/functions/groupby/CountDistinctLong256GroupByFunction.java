@@ -40,6 +40,10 @@ import io.questdb.std.Numbers;
 
 public class CountDistinctLong256GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    // Whether the argument is known NOT NULL at plan time. The sentinel-skip
+    // below is gated on this so that NOT NULL columns still accept the bit
+    // pattern that would otherwise read as NULL.
+    private final boolean isArgNotNull;
     private final GroupByLong256HashSet setA;
     private final GroupByLong256HashSet setB;
     private long cardinality;
@@ -47,6 +51,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
     public CountDistinctLong256GroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         setA = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         setB = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
     }
@@ -60,21 +65,39 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final Long256 l256 = arg.getLong256A(record);
-        if (isNotNull(l256)) {
+        final boolean isNull = isLong256Null(l256);
+        if (isArgNotNull && isNull) {
+            // NOT NULL admits the sentinel bit pattern as data, but the hash
+            // sets reserve that exact value as their empty marker, so its
+            // membership lives in the dedicated flag slot
+            mapValue.putLong(valueIndex, 1);
+            mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, true);
+            cardinality++;
+        } else if (!isNull) {
             mapValue.putLong(valueIndex, 1);
             setA.of(0).add(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3());
             mapValue.putLong(valueIndex + 1, setA.ptr());
+            mapValue.putBool(valueIndex + 2, false);
             cardinality++;
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Long256 l256 = arg.getLong256A(record);
-        if (isNotNull(l256)) {
+        final boolean isNull = isLong256Null(l256);
+        if (isArgNotNull && isNull) {
+            if (!mapValue.getBool(valueIndex + 2)) {
+                mapValue.putBool(valueIndex + 2, true);
+                mapValue.addLong(valueIndex, 1);
+                cardinality++;
+            }
+        } else if (!isNull) {
             final long l0 = l256.getLong0();
             final long l1 = l256.getLong1();
             final long l2 = l256.getLong2();
@@ -128,10 +151,14 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         valueIndex = columnTypes.getColumnCount();
-        // count
+        // count, including the sentinel when the flag below is set
         columnTypes.add(ColumnType.LONG);
-        // GroupByLong256HashSet pointer (count>1)
+        // GroupByLong256HashSet pointer; 0 while the group holds at most the sentinel
         columnTypes.add(ColumnType.LONG);
+        // sentinel membership flag: the hash sets reserve the type's null
+        // bit pattern as their empty marker, so a NOT NULL argument's
+        // sentinel value cannot live in the set and is tracked here instead
+        columnTypes.add(ColumnType.BOOLEAN);
     }
 
     @Override
@@ -150,29 +177,48 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
         if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
+        final boolean srcSentinel = srcValue.getBool(valueIndex + 2);
         final long srcPtr = srcValue.getLong(valueIndex + 1);
 
         final long destCount = destValue.getLong(valueIndex);
         if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcPtr);
+            destValue.putBool(valueIndex + 2, srcSentinel);
             return;
         }
+        final boolean destSentinel = destValue.getBool(valueIndex + 2);
+        final boolean sentinel = srcSentinel || destSentinel;
+        final long sentinelInc = sentinel ? 1 : 0;
         final long destPtr = destValue.getLong(valueIndex + 1);
+
+        if (srcPtr == 0) { // src holds only the sentinel
+            destValue.putLong(valueIndex, (destSentinel ? destCount - 1 : destCount) + sentinelInc);
+            destValue.putBool(valueIndex + 2, sentinel);
+            return;
+        }
+
+        if (destPtr == 0) { // dest holds at most the sentinel, adopt src's set
+            destValue.putLong(valueIndex, (srcSentinel ? srcCount - 1 : srcCount) + sentinelInc);
+            destValue.putLong(valueIndex + 1, srcPtr);
+            destValue.putBool(valueIndex + 2, sentinel);
+            return;
+        }
 
         setA.of(destPtr);
         setB.of(srcPtr);
 
         if (setA.size() > (setB.size() >>> 1)) {
             setA.merge(setB);
-            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex, setA.size() + sentinelInc);
             destValue.putLong(valueIndex + 1, setA.ptr());
         } else {
             // Set A is significantly smaller than set B, so we merge it into set B.
             setB.merge(setA);
-            destValue.putLong(valueIndex, setB.size());
+            destValue.putLong(valueIndex, setB.size() + sentinelInc);
             destValue.putLong(valueIndex + 1, setB.ptr());
         }
+        destValue.putBool(valueIndex + 2, sentinel);
     }
 
     @Override
@@ -190,18 +236,21 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
@@ -209,9 +258,9 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
         return UnaryFunction.super.supportsParallelism();
     }
 
-    private static boolean isNotNull(Long256 value) {
-        return value != null && value != Long256Impl.NULL_LONG256
-                && (value.getLong0() != Numbers.LONG_NULL || value.getLong1() != Numbers.LONG_NULL
-                || value.getLong2() != Numbers.LONG_NULL || value.getLong3() != Numbers.LONG_NULL);
+    private static boolean isLong256Null(Long256 value) {
+        return value == null || value == Long256Impl.NULL_LONG256
+                || (value.getLong0() == Numbers.LONG_NULL && value.getLong1() == Numbers.LONG_NULL
+                && value.getLong2() == Numbers.LONG_NULL && value.getLong3() == Numbers.LONG_NULL);
     }
 }

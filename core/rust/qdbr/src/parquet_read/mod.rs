@@ -197,6 +197,10 @@ pub struct ColumnMeta {
     pub id: i32,
     pub name_size: i32,
     pub name_ptr: *const u16,
+    /// NOT NULL flag extracted from the per-column QdbMeta entry. True when the
+    /// QuestDB producer declared the column NOT NULL. Defaults to false when the
+    /// file was written by an older producer or by an external tool.
+    pub not_null: bool,
     pub name_vec: AcVec<u16>,
 }
 
@@ -294,6 +298,8 @@ mod tests {
                 column_top: 0,
                 format: None, // It should error because this is missing.
                 ascii: None,
+                not_null: false,
+
                 id: None,
             },
         );
@@ -335,6 +341,8 @@ mod tests {
                 format: None, // Missing format makes the page decode fail mid-chunk.
                 ascii: None,
                 id: None,
+
+                not_null: false,
             },
         );
 
@@ -390,6 +398,8 @@ mod tests {
                 format: None, // Missing format makes the page decode fail mid-chunk.
                 ascii: None,
                 id: None,
+
+                not_null: false,
             },
         );
 

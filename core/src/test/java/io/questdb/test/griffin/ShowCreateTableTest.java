@@ -47,7 +47,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE 'network_nodes' (\s
-                    \ttimestamp TIMESTAMP,
+                    \ttimestamp TIMESTAMP NOT NULL,
                     \tnode_name SYMBOL CAPACITY 65536 CACHE INDEX CAPACITY 65536,
                     \thost_ip IPv4,
                     \tiprange_start IPv4,
@@ -86,7 +86,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL,
                             \ti INT
                             ) timestamp(ts) PARTITION BY DAY
@@ -105,7 +105,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY NONE BYPASS WAL;
                             """);
@@ -177,7 +177,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \ti INT,
                             \tsym SYMBOL,
                             \tamt DOUBLE,
-                            \ttimestamp TIMESTAMP,
+                            \ttimestamp TIMESTAMP NOT NULL,
                             \tb BOOLEAN,
                             \tc STRING,
                             \td DOUBLE,
@@ -377,7 +377,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \td DOUBLE PARQUET(default, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -394,7 +394,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(plain, gzip(0))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -411,7 +411,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \td DOUBLE PARQUET(default, uncompressed)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -428,7 +428,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL PARQUET(default, zstd)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -445,7 +445,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(delta_binary_packed)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -462,7 +462,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(delta_binary_packed, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -479,7 +479,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta VARCHAR PARQUET(bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -496,7 +496,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(plain, bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -513,7 +513,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(delta_binary_packed, zstd(3), bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
@@ -546,7 +546,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(bloom_filter),
                             \tb VARCHAR PARQUET(delta_length_byte_array, bloom_filter),
                             \tc DOUBLE
@@ -593,7 +593,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT,
                             \tb LONG
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
@@ -611,7 +611,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY YEAR;
                             """);
@@ -628,7 +628,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY YEAR BYPASS WAL;
                             """);
@@ -647,15 +647,15 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 't1' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY NONE BYPASS WAL;
                             CREATE TABLE 't2' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY NONE BYPASS WAL;
                             CREATE TABLE 't3' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY NONE BYPASS WAL;
                             """);
@@ -712,7 +712,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL;
                             """);
         });
@@ -728,7 +728,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY HOUR TTL 1 HOUR BYPASS WAL;
                             """);
         });
@@ -744,7 +744,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY HOUR TTL 1 MONTH BYPASS WAL;
                             """);
         });
@@ -760,7 +760,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY HOUR TTL 1 WEEK BYPASS WAL;
                             """);
         });
@@ -776,7 +776,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY HOUR TTL 1 YEAR BYPASS WAL;
                             """);
         });
@@ -792,7 +792,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS BYPASS WAL;
                             """);
         });
@@ -808,7 +808,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY HOUR TTL 2 WEEKS BYPASS WAL;
                             """);
         });
@@ -824,7 +824,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY HOUR TTL 2 YEARS BYPASS WAL;
                             """);
         });

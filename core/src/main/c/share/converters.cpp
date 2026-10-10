@@ -27,68 +27,60 @@
 #include "simd.h"
 
 // Used to clean up noise in the switch statement
-#define macro_dispatch_fixed_to_fixed(a, b) case pack_column_types(a, b): return convert_from_type_to_type<a, b>(src, dst, row_count)
+#define macro_dispatch_fixed_to_fixed(a, b) case pack_column_types(a, b): return convert_from_type_to_type<a, b>(src, dst, row_count, is_src_not_null)
 
-void convert_us_to_ms(int64_t *dest, const int64_t *src, const int64_t count) {
+void convert_us_to_ms(int64_t *dest, const int64_t *src, const int64_t count, const bool is_src_not_null) {
     constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
     constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::DATE>::null_value;
-    for(int64_t i = 0; i < count; i++) {
-        const bool isnull = (src[i] == srcSentinel);
-        dest[i] = (!isnull) * src[i] / 1000;
-        dest[i] += (isnull) * dstSentinel;
+    for (int64_t i = 0; i < count; i++) {
+        const bool is_null = !is_src_not_null && src[i] == srcSentinel;
+        dest[i] = is_null ? dstSentinel : src[i] / 1000;
     }
 }
 
-void convert_us_to_ns(int64_t *dest, const int64_t *src, const int64_t count) {
-  constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
-  constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
-  for (int64_t i = 0; i < count; i++) {
-    const bool isnull = (src[i] == srcSentinel);
-    dest[i] = (!isnull) * src[i] * 1000;
-    dest[i] += (isnull)*dstSentinel;
-  }
+void convert_us_to_ns(int64_t *dest, const int64_t *src, const int64_t count, const bool is_src_not_null) {
+    constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
+    constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
+    for (int64_t i = 0; i < count; i++) {
+        const bool is_null = !is_src_not_null && src[i] == srcSentinel;
+        dest[i] = is_null ? dstSentinel : static_cast<int64_t>(static_cast<uint64_t>(src[i]) * 1000ULL);
+    }
 }
 
-void convert_ms_to_us(int64_t *dest, const int64_t *src, const int64_t count) {
+void convert_ms_to_us(int64_t *dest, const int64_t *src, const int64_t count, const bool is_src_not_null) {
     constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::DATE>::null_value;
     constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
-    for(int64_t i = 0; i < count; i++) {
-        const bool isnull = (src[i] == srcSentinel);
-        dest[i] = (!isnull) * src[i] * 1000;
-        dest[i] += (isnull) * dstSentinel;
+    for (int64_t i = 0; i < count; i++) {
+        const bool is_null = !is_src_not_null && src[i] == srcSentinel;
+        dest[i] = is_null ? dstSentinel : static_cast<int64_t>(static_cast<uint64_t>(src[i]) * 1000ULL);
     }
 }
 
-void convert_ms_to_ns(int64_t *dest, const int64_t *src, const int64_t count) {
-  constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::DATE>::null_value;
-  constexpr int64_t dstSentinel =
-      EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
-  for (int64_t i = 0; i < count; i++) {
-    const bool isnull = (src[i] == srcSentinel);
-    dest[i] = (!isnull) * src[i] * 1000000;
-    dest[i] += (isnull)*dstSentinel;
-  }
+void convert_ms_to_ns(int64_t *dest, const int64_t *src, const int64_t count, const bool is_src_not_null) {
+    constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::DATE>::null_value;
+    constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
+    for (int64_t i = 0; i < count; i++) {
+        const bool is_null = !is_src_not_null && src[i] == srcSentinel;
+        dest[i] = is_null ? dstSentinel : static_cast<int64_t>(static_cast<uint64_t>(src[i]) * 1000000ULL);
+    }
 }
 
-void convert_ns_to_us(int64_t *dest, const int64_t *src, const int64_t count) {
-  constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
-  constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
-  for (int64_t i = 0; i < count; i++) {
-    const bool isnull = (src[i] == srcSentinel);
-    dest[i] = (!isnull) * src[i] / 1000;
-    dest[i] += (isnull)*dstSentinel;
-  }
+void convert_ns_to_us(int64_t *dest, const int64_t *src, const int64_t count, const bool is_src_not_null) {
+    constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
+    constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
+    for (int64_t i = 0; i < count; i++) {
+        const bool is_null = !is_src_not_null && src[i] == srcSentinel;
+        dest[i] = is_null ? dstSentinel : src[i] / 1000;
+    }
 }
 
-void convert_ns_to_ms(int64_t *dest, const int64_t *src, const int64_t count) {
-  constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
-  constexpr int64_t dstSentinel =
-      EnumTypeMap<ColumnType::DATE>::null_value;
-  for (int64_t i = 0; i < count; i++) {
-    const bool isnull = (src[i] == srcSentinel);
-    dest[i] = (!isnull) * src[i] / 1000000;
-    dest[i] += (isnull)*dstSentinel;
-  }
+void convert_ns_to_ms(int64_t *dest, const int64_t *src, const int64_t count, const bool is_src_not_null) {
+    constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
+    constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::DATE>::null_value;
+    for (int64_t i = 0; i < count; i++) {
+        const bool is_null = !is_src_not_null && src[i] == srcSentinel;
+        dest[i] = is_null ? dstSentinel : src[i] / 1000000;
+    }
 }
 
 // extern "C"
@@ -103,7 +95,8 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     jlong srcType,
     jlong dstMem,
     jlong dstType,
-    jlong rowCount
+    jlong rowCount,
+    jboolean srcNotNull
 ) {
     const auto srcColumnType = static_cast<ColumnType>(srcType);
     const auto dstColumnType = static_cast<ColumnType>(dstType);
@@ -111,6 +104,7 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     auto src = reinterpret_cast<void*>(srcMem);
     auto dst = reinterpret_cast<void*>(dstMem);
     auto row_count = static_cast<size_t>(rowCount);
+    const bool is_src_not_null = srcNotNull == JNI_TRUE;
 
     switch (pack_column_types(srcColumnType, dstColumnType)) {
         // BOOL
@@ -235,27 +229,27 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
             break;
         case pack_column_types(ColumnType::TIMESTAMP_MICRO, ColumnType::DATE):
           convert_us_to_ms(reinterpret_cast<int64_t *>(dstMem),
-                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+                           reinterpret_cast<int64_t *>(srcMem), rowCount, is_src_not_null);
           break;
         case pack_column_types(ColumnType::DATE, ColumnType::TIMESTAMP_MICRO):
           convert_ms_to_us(reinterpret_cast<int64_t *>(dstMem),
-                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+                           reinterpret_cast<int64_t *>(srcMem), rowCount, is_src_not_null);
           break;
         case pack_column_types(ColumnType::TIMESTAMP_MICRO, ColumnType::TIMESTAMP_NANO):
           convert_us_to_ns(reinterpret_cast<int64_t *>(dstMem),
-                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+                           reinterpret_cast<int64_t *>(srcMem), rowCount, is_src_not_null);
           break;
         case pack_column_types(ColumnType::TIMESTAMP_NANO, ColumnType::TIMESTAMP_MICRO):
           convert_ns_to_us(reinterpret_cast<int64_t *>(dstMem),
-                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+                           reinterpret_cast<int64_t *>(srcMem), rowCount, is_src_not_null);
           break;
         case pack_column_types(ColumnType::DATE, ColumnType::TIMESTAMP_NANO):
           convert_ms_to_ns(reinterpret_cast<int64_t *>(dstMem),
-                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+                           reinterpret_cast<int64_t *>(srcMem), rowCount, is_src_not_null);
           break;
         case pack_column_types(ColumnType::TIMESTAMP_NANO, ColumnType::DATE):
           convert_ns_to_ms(reinterpret_cast<int64_t *>(dstMem),
-                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+                           reinterpret_cast<int64_t *>(srcMem), rowCount, is_src_not_null);
           break;
         default:
             return static_cast<jlong>(ConversionError::UNSUPPORTED_CAST);

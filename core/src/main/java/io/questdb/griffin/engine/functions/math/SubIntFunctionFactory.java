@@ -83,10 +83,11 @@ public class SubIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             int l = left.getInt(rec);
             int r = right.getInt(rec);
-            if (l != Numbers.INT_NULL && r != Numbers.INT_NULL) {
-                return l - r;
+            if ((!left.isNotNull() && l == Numbers.INT_NULL)
+                    || (!right.isNotNull() && r == Numbers.INT_NULL)) {
+                return Numbers.INT_NULL;
             }
-            return Numbers.INT_NULL;
+            return l - r;
         }
 
         @Override

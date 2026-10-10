@@ -42,11 +42,13 @@ import org.jetbrains.annotations.NotNull;
 
 public class BitAndIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public BitAndIntGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.INT);
     }
 
@@ -65,6 +67,10 @@ public class BitAndIntGroupByFunction extends IntFunction implements GroupByFunc
             long rowCount,
             long baseRowId
     ) {
+        // computeFirst() never runs on this path, so a group's first row is the one the map
+        // flagged as a new batch entry. For a NOT NULL argument INT_NULL is a legal value rather
+        // than an empty slot, so only that flag may reset the accumulator; the sentinel test is
+        // left in place for the nullable argument, whose empty slot still reads as INT_NULL.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         // Fast path: arg is a direct int column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.
@@ -74,10 +80,11 @@ public class BitAndIntGroupByFunction extends IntFunction implements GroupByFunc
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? current & value : value);
+                    final boolean isFreshSlot = Map.isNewBatchEntry(encoded) || (!isArgNotNull && current == Numbers.INT_NULL);
+                    Unsafe.putInt(addr, isFreshSlot ? value : current & value);
                 }
             }
         } else {
@@ -85,10 +92,11 @@ public class BitAndIntGroupByFunction extends IntFunction implements GroupByFunc
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
-                if (value != Numbers.INT_NULL) {
+                if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? current & value : value);
+                    final boolean isFreshSlot = Map.isNewBatchEntry(encoded) || (!isArgNotNull && current == Numbers.INT_NULL);
+                    Unsafe.putInt(addr, isFreshSlot ? value : current & value);
                 }
             }
         }
@@ -97,13 +105,11 @@ public class BitAndIntGroupByFunction extends IntFunction implements GroupByFunc
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull) {
+            mapValue.putInt(valueIndex, mapValue.getInt(valueIndex) & value);
+        } else if (value != Numbers.INT_NULL) {
             final int current = mapValue.getInt(valueIndex);
-            if (current != Numbers.INT_NULL) {
-                mapValue.putInt(valueIndex, current & value);
-            } else {
-                mapValue.putInt(valueIndex, value);
-            }
+            mapValue.putInt(valueIndex, current != Numbers.INT_NULL ? current & value : value);
         }
     }
 
@@ -151,9 +157,9 @@ public class BitAndIntGroupByFunction extends IntFunction implements GroupByFunc
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final int srcVal = srcValue.getInt(valueIndex);
-        if (srcVal != Numbers.INT_NULL) {
+        if (isArgNotNull || srcVal != Numbers.INT_NULL) {
             final int destVal = destValue.getInt(valueIndex);
-            if (destVal != Numbers.INT_NULL) {
+            if (isArgNotNull || destVal != Numbers.INT_NULL) {
                 destValue.putInt(valueIndex, destVal & srcVal);
             } else {
                 destValue.putInt(valueIndex, srcVal);

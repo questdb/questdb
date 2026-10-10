@@ -43,31 +43,48 @@ public class CountDistinctIntGroupByFunction extends AbstractCountDistinctIntGro
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull && value == Numbers.INT_NULL) {
+            // NOT NULL admits the sentinel bit pattern as data, but the hash
+            // sets reserve that exact value as their empty marker, so its
+            // membership lives in the dedicated flag slot
+            mapValue.putLong(valueIndex, 1);
+            mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, true);
+            cardinality++;
+        } else if (value != Numbers.INT_NULL) {
             mapValue.putLong(valueIndex, 1);
             mapValue.putLong(valueIndex + 1, value);
+            mapValue.putBool(valueIndex + 2, false);
             cardinality++;
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull && value == Numbers.INT_NULL) {
+            if (!mapValue.getBool(valueIndex + 2)) {
+                mapValue.putBool(valueIndex + 2, true);
+                mapValue.addLong(valueIndex, 1);
+                cardinality++;
+            }
+        } else if (value != Numbers.INT_NULL) {
             final long cnt = mapValue.getLong(valueIndex);
-            if (cnt == 0) {
-                mapValue.putLong(valueIndex, 1);
+            final long stored = mapValue.getBool(valueIndex + 2) ? cnt - 1 : cnt;
+            if (stored == 0) {
+                mapValue.putLong(valueIndex, cnt + 1);
                 mapValue.putLong(valueIndex + 1, value);
                 cardinality++;
-            } else if (cnt == 1) { // inlined value
+            } else if (stored == 1) { // inlined value
                 final int valueB = (int) mapValue.getLong(valueIndex + 1);
                 if (value != valueB) {
                     setA.of(0).add(value);
                     setA.add(valueB);
-                    mapValue.putLong(valueIndex, 2);
+                    mapValue.putLong(valueIndex, cnt + 1);
                     mapValue.putLong(valueIndex + 1, setA.ptr());
                     cardinality++;
                 }

@@ -1174,6 +1174,11 @@ public class QwpTudCache implements QuietCloseable {
         }
 
         @Override
+        public boolean isNotNull(int columnIndex) {
+            return columnIndex == getTimestampIndex();
+        }
+
+        @Override
         public boolean isWalEnabled() {
             return true; // QWP v1 uses WAL
         }

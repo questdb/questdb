@@ -41,7 +41,7 @@ import java.util.TimeZone;
  * <p>
  * This benchmark creates a table similar to the cpu table used in time-series monitoring:
  * CREATE TABLE cpu (
- * timestamp TIMESTAMP,
+ * timestamp TIMESTAMP NOT NULL,
  * hostname SYMBOL,
  * usage_user DOUBLE
  * ) TIMESTAMP(timestamp) PARTITION BY DAY;
@@ -234,7 +234,7 @@ public class PGSymbolInBenchmark {
             stmt.execute("DROP TABLE IF EXISTS cpu");
             stmt.execute(
                     "CREATE TABLE cpu (" +
-                            "timestamp TIMESTAMP, " +
+                            "timestamp TIMESTAMP NOT NULL, " +
                             "hostname SYMBOL, " +
                             "usage_user DOUBLE" +
                             ") TIMESTAMP(timestamp) PARTITION BY DAY"

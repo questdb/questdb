@@ -28,6 +28,22 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public interface CastFunction extends UnaryFunction {
+    default boolean isNullValue(int value) {
+        return !getArg().isNotNull() && value == io.questdb.std.Numbers.INT_NULL;
+    }
+
+    default boolean isNullValue(long value) {
+        return !getArg().isNotNull() && value == io.questdb.std.Numbers.LONG_NULL;
+    }
+
+    default boolean isNullValue(float value) {
+        return !getArg().isNotNull() && io.questdb.std.Numbers.isNull(value);
+    }
+
+    default boolean isNullValue(double value) {
+        return !getArg().isNotNull() && io.questdb.std.Numbers.isNull(value);
+    }
+
     @Override
     default int getComplexity() {
         return Function.addComplexity(COMPLEXITY_CAST, getArg().getComplexity());

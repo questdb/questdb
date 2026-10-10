@@ -67,6 +67,12 @@ public final class PGUtils {
     private static final int MAX_UUID_TEXT_LEN = 36;
     private static final int NULL_LITERAL_TEXT_LEN = 4; // "NULL", as ArrayTypeDriver.arrayToPgWire() writes it
     private static final int PG_NUMERIC_FIXED_BIN_SIZE = Integer.BYTES + 4 * Short.BYTES;
+    private static final String SENTINEL_MAGNITUDE_128 = "170141183460469231731687303715884105728";
+    private static final String SENTINEL_MAGNITUDE_16 = "32768";
+    private static final String SENTINEL_MAGNITUDE_256 = "57896044618658097711785492504343953926634992332820282019728792003956564819968";
+    private static final String SENTINEL_MAGNITUDE_32 = "2147483648";
+    private static final String SENTINEL_MAGNITUDE_64 = "9223372036854775808";
+    private static final String SENTINEL_MAGNITUDE_8 = "128";
 
     private PGUtils() {
     }
@@ -101,6 +107,7 @@ public final class PGUtils {
             int resumePoint
     ) throws PGMessageProcessingException {
         final short typeTag = ColumnType.tagOf(columnType);
+        final boolean isColumnNotNull = pipelineEntry != null && pipelineEntry.isColumnNotNull(columnIndex);
         switch (typeTag) {
             case ColumnType.NULL:
                 return Integer.BYTES;
@@ -111,71 +118,63 @@ public final class PGUtils {
                 return Integer.BYTES + Short.BYTES;
             case ColumnType.CHAR:
                 final char charValue = record.getChar(columnIndex);
-                return charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
+                return !isColumnNotNull && charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
             case ColumnType.IPv4:
                 final int ipValue = record.getIPv4(columnIndex);
-                return ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
+                return isColumnNotNull || ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
             case ColumnType.INT:
                 final int value = record.getInt(columnIndex);
-                return value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
+                return isColumnNotNull || value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
             case ColumnType.LONG:
                 final long longValue = record.getLong(columnIndex);
-                return longValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+                return isColumnNotNull || longValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
             case ColumnType.DATE:
                 final long dateValue = record.getDate(columnIndex);
-                return dateValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+                return isColumnNotNull || dateValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
             case ColumnType.TIMESTAMP:
                 final long tsValue = record.getTimestamp(columnIndex);
-                return tsValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+                return isColumnNotNull || tsValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
             case ColumnType.FLOAT:
                 final float floatValue = record.getFloat(columnIndex);
-                return Float.isNaN(floatValue) ? Integer.BYTES : Integer.BYTES + Float.BYTES;
+                return !isColumnNotNull && Numbers.isNull(floatValue) ? Integer.BYTES : Integer.BYTES + Float.BYTES;
             case ColumnType.DOUBLE:
                 final double doubleValue = record.getDouble(columnIndex);
-                return Double.isNaN(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
-            case ColumnType.DECIMAL8:
-                final byte decimal8 = record.getDecimal8(columnIndex);
-                return decimal8 == Decimals.DECIMAL8_NULL
-                        ? Integer.BYTES
-                        : calculateDecimalBinSize(decimal8, ColumnType.getDecimalScale(columnType));
-            case ColumnType.DECIMAL16:
-                final short decimal16 = record.getDecimal16(columnIndex);
-                return decimal16 == Decimals.DECIMAL16_NULL
-                        ? Integer.BYTES
-                        : calculateDecimalBinSize(decimal16, ColumnType.getDecimalScale(columnType));
-            case ColumnType.DECIMAL32:
-                final int decimal32 = record.getDecimal32(columnIndex);
-                return decimal32 == Decimals.DECIMAL32_NULL
-                        ? Integer.BYTES
-                        : calculateDecimalBinSize(decimal32, ColumnType.getDecimalScale(columnType));
-            case ColumnType.DECIMAL64:
-                final long decimal64 = record.getDecimal64(columnIndex);
-                return decimal64 == Decimals.DECIMAL64_NULL
-                        ? Integer.BYTES
-                        : calculateDecimalBinSize(decimal64, ColumnType.getDecimalScale(columnType));
-            case ColumnType.DECIMAL128:
-                final Decimal128 decimal128 = sqlExecutionContext.getDecimal128();
-                record.getDecimal128(columnIndex, decimal128);
-                return calculateDecimalBinSize(
-                        decimal128,
-                        ColumnType.getDecimalPrecision(columnType),
-                        ColumnType.getDecimalScale(columnType)
-                );
-            case ColumnType.DECIMAL256:
-                final Decimal256 decimal256 = sqlExecutionContext.getDecimal256();
-                record.getDecimal256(columnIndex, decimal256);
-                return calculateDecimalBinSize(
-                        decimal256,
-                        ColumnType.getDecimalPrecision(columnType),
-                        ColumnType.getDecimalScale(columnType)
-                );
+                return !isColumnNotNull && Numbers.isNull(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
+            case ColumnType.DECIMAL8: {
+                final byte decimal = record.getDecimal8(columnIndex);
+                return decimalBinSize(decimal == Decimals.DECIMAL8_NULL, isColumnNotNull, columnType, decimal);
+            }
+            case ColumnType.DECIMAL16: {
+                final short decimal = record.getDecimal16(columnIndex);
+                return decimalBinSize(decimal == Decimals.DECIMAL16_NULL, isColumnNotNull, columnType, decimal);
+            }
+            case ColumnType.DECIMAL32: {
+                final int decimal = record.getDecimal32(columnIndex);
+                return decimalBinSize(decimal == Decimals.DECIMAL32_NULL, isColumnNotNull, columnType, decimal);
+            }
+            case ColumnType.DECIMAL64: {
+                final long decimal = record.getDecimal64(columnIndex);
+                return decimalBinSize(decimal == Decimals.DECIMAL64_NULL, isColumnNotNull, columnType, decimal);
+            }
+            case ColumnType.DECIMAL128: {
+                final Decimal128 decimal = sqlExecutionContext.getDecimal128();
+                record.getDecimal128(columnIndex, decimal);
+                return decimalBinSize(decimal.isNull(), isColumnNotNull, columnType, decimal);
+            }
+            case ColumnType.DECIMAL256: {
+                final Decimal256 decimal = sqlExecutionContext.getDecimal256();
+                record.getDecimal256(columnIndex, decimal);
+                return decimalBinSize(decimal.isNull(), isColumnNotNull, columnType, decimal);
+            }
             case ColumnType.UUID:
                 final long lo = record.getLong128Lo(columnIndex);
                 final long hi = record.getLong128Hi(columnIndex);
-                return Uuid.isNull(lo, hi) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 2;
+                return isColumnNotNull || !Uuid.isNull(lo, hi) ? Integer.BYTES + Long.BYTES * 2 : Integer.BYTES;
             case ColumnType.LONG256:
                 final Long256 long256Value = record.getLong256A(columnIndex);
-                return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
+                return !isColumnNotNull && Long256Impl.isNull(long256Value)
+                        ? Integer.BYTES
+                        : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
             case ColumnType.GEOBYTE:
                 return geoHashBytes(record.getGeoByte(columnIndex), geohashSize);
             case ColumnType.GEOSHORT:
@@ -678,6 +677,87 @@ public final class PGUtils {
                 + Integer.BYTES // "has nulls" flag
                 + Integer.BYTES // component type
                 + array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
+    }
+
+    private static int decimalBinSize(boolean sentinel, boolean notNull, int type, long value) {
+        if (sentinel) {
+            return notNull ? decimalSentinelBinSize(type) : Integer.BYTES;
+        }
+        return calculateDecimalBinSize(value, ColumnType.getDecimalScale(type));
+    }
+
+    private static int decimalBinSize(boolean sentinel, boolean notNull, int type, Decimal128 value) {
+        if (sentinel) {
+            return notNull ? decimalSentinelBinSize(type) : Integer.BYTES;
+        }
+        return calculateDecimalBinSize(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
+    }
+
+    private static int decimalBinSize(boolean sentinel, boolean notNull, int type, Decimal256 value) {
+        if (sentinel) {
+            return notNull ? decimalSentinelBinSize(type) : Integer.BYTES;
+        }
+        return calculateDecimalBinSize(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
+    }
+
+    public static int decimalSentinelBinSize(int type) {
+        final String magnitude = getDecimalSentinelMagnitude(type);
+        final int scale = ColumnType.getDecimalScale(type);
+        final int wholeDigits = magnitude.length() - scale;
+        final int highestWeight = Math.floorDiv(wholeDigits - 1, 4);
+        final int lowestWeight = scale == 0 ? 0 : -((scale + 3) / 4);
+        return PG_NUMERIC_FIXED_BIN_SIZE + (highestWeight - lowestWeight + 1) * Short.BYTES;
+    }
+
+    static boolean isDecimalSentinel(Decimal64 value, int type) {
+        final long rawValue = value.getValue();
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> rawValue == Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> rawValue == Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> rawValue == Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> rawValue == Decimals.DECIMAL64_NULL;
+            default -> false;
+        };
+    }
+
+    public static void outColBinDecimalSentinel(PGResponseSink utf8Sink, int type) {
+        final String magnitude = getDecimalSentinelMagnitude(type);
+        final int scale = ColumnType.getDecimalScale(type);
+        final int wholeDigits = magnitude.length() - scale;
+        final int highestWeight = Math.floorDiv(wholeDigits - 1, 4);
+        final int lowestWeight = scale == 0 ? 0 : -((scale + 3) / 4);
+        final int digitCount = highestWeight - lowestWeight + 1;
+
+        utf8Sink.putNetworkInt(4 * Short.BYTES + digitCount * Short.BYTES);
+        utf8Sink.putNetworkShort((short) digitCount);
+        utf8Sink.putNetworkShort((short) highestWeight);
+        utf8Sink.putNetworkShort(NUMERIC_NEG);
+        utf8Sink.putNetworkShort((short) scale);
+
+        for (int weight = highestWeight; weight >= lowestWeight; weight--) {
+            final int start = wholeDigits - 4 * (weight + 1);
+            int digit = 0;
+            for (int i = 0; i < 4; i++) {
+                final int charIndex = start + i;
+                digit *= 10;
+                if (charIndex >= 0 && charIndex < magnitude.length()) {
+                    digit += magnitude.charAt(charIndex) - '0';
+                }
+            }
+            utf8Sink.putNetworkShort((short) digit);
+        }
+    }
+
+    private static String getDecimalSentinelMagnitude(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> SENTINEL_MAGNITUDE_8;
+            case ColumnType.DECIMAL16 -> SENTINEL_MAGNITUDE_16;
+            case ColumnType.DECIMAL32 -> SENTINEL_MAGNITUDE_32;
+            case ColumnType.DECIMAL64 -> SENTINEL_MAGNITUDE_64;
+            case ColumnType.DECIMAL128 -> SENTINEL_MAGNITUDE_128;
+            case ColumnType.DECIMAL256 -> SENTINEL_MAGNITUDE_256;
+            default -> throw new IllegalArgumentException("not a decimal type: " + type);
+        };
     }
 
     private static int calculateDecimalBinSize(long value, int scale) {

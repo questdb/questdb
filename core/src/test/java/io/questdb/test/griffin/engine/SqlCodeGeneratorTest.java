@@ -8624,8 +8624,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // today's behaviour rather than endorsing it.
             assertQuery("SHOW COLUMNS FROM tab")
                     .noLeakCheck().noRandomAccess()
-                    .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                            "f\tSYMBOL\ttrue\t256\tfalse\t128\t2\tfalse\tfalse\tBITMAP\t\n");
+                    .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull\n" +
+                            "f\tSYMBOL\ttrue\t256\tfalse\t128\t2\tfalse\tfalse\tBITMAP\t\tfalse\n");
 
             // And that the indexed column reads back, including through a lookup the index
             // actually serves - which is the point of the issue, so pin the scan too.
@@ -8664,8 +8664,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             // A union over high-cardinality symbols therefore lands on the default 128 capacity.
             assertQuery("SHOW COLUMNS FROM tu")
                     .noLeakCheck().noRandomAccess()
-                    .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                            "s\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\n");
+                    .returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull\n" +
+                            "s\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\tfalse\n");
         });
     }
 
@@ -9235,10 +9235,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .noRandomAccess()
                             .returns("""
-                                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                                    f0\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                                    штиблет\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                                    f2\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                                    f0\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                                    штиблет\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                                    f2\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                                     """);
                 }
         );

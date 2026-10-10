@@ -52,7 +52,7 @@ public class CastIntToShortFunctionFactory implements FunctionFactory {
         @Override
         public short getShort(Record rec) {
             final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? (short) value : 0;
+            return arg.isNotNull() || value != Numbers.INT_NULL ? (short) value : 0;
         }
     }
 }

@@ -3026,14 +3026,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableForKafka() throws SqlException {
         assertCreateTable(
                 "create atomic table quickstart-events4 (" +
-                        "flag BOOLEAN, " +
-                        "id8 SHORT, " +
-                        "id16 SHORT, " +
-                        "id32 INT, " +
-                        "id64 LONG, " +
-                        "idFloat FLOAT, " +
-                        "idDouble DOUBLE, " +
-                        "idBytes STRING, " +
+                        "flag BOOLEAN NOT NULL, " +
+                        "id8 SHORT NOT NULL, " +
+                        "id16 SHORT NOT NULL, " +
+                        "id32 INT NOT NULL, " +
+                        "id64 LONG NOT NULL, " +
+                        "idFloat FLOAT NOT NULL, " +
+                        "idDouble DOUBLE NOT NULL, " +
+                        "idBytes STRING NOT NULL, " +
                         "msg STRING)",
                 """
                         CREATE TABLE "quickstart-events4" (

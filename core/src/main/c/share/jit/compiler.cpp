@@ -371,21 +371,24 @@ struct Function
 
         uint32_t type_size = (options >> 1) & 7; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B
         uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size, 2 - mixed size, 3 - wide lane
-        bool null_check = (options >> 6) & 1;    // 1 - with null check
+        // Nullability no longer arrives as the filter-wide options bit 6 on x86: every MEM /
+        // VAR / IMM instruction carries its own flag (NULLABLE_TYPE_FLAG) and the emitters
+        // resolve checks per operand at compile time. Bit 6 stays in the options for the
+        // aarch64 backend, which still consumes the filter-wide flag.
         int unroll_factor = 1;
         if ((exec_hint == single_size || exec_hint == wide_lane) && features.has_avx2())
         {
             auto step = exec_hint == wide_lane ? 4 : 256 / ((1 << type_size) * 8);
             c.func()->frame().set_avx_enabled();
-            avx2_loop(istream, size, step, null_check, exec_hint == wide_lane, unroll_factor);
+            avx2_loop(istream, size, step, exec_hint == wide_lane, unroll_factor);
         }
         else
         {
-            scalar_loop(istream, size, null_check, unroll_factor);
+            scalar_loop(istream, size, unroll_factor);
         }
     };
 
-    void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1)
+    void scalar_tail(const instruction_t *istream, size_t size, const x86::Gp &stop, int unroll_factor = 1)
     {
         Label l_loop = c.new_label();
         Label l_exit = c.new_label();
@@ -409,7 +412,7 @@ struct Function
             // Clear value cache at the start of each row iteration
             value_cache.clear();
             // Pass the label array and caches to emit_code
-            questdb::x86::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
+            questdb::x86::emit_code(c, arena, istream, size, values, data_ptr, varsize_aux_ptr, vars_ptr,
                                     input_index, labels, addr_cache, const_cache, value_cache);
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
@@ -439,7 +442,7 @@ struct Function
         c.bind(l_exit);
     }
 
-    void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1)
+    void scalar_loop(const instruction_t *istream, size_t size, int unroll_factor = 1)
     {
         // Preload column addresses and constants before the loop
         preload_columns_and_constants(istream, size);
@@ -449,17 +452,17 @@ struct Function
             x86::Gp stop = c.new_gp64("stop");
             c.mov(stop, rows_size);
             c.sub(stop, unroll_factor - 1);
-            scalar_tail(istream, size, null_check, stop, unroll_factor);
-            scalar_tail(istream, size, null_check, rows_size, 1);
+            scalar_tail(istream, size, stop, unroll_factor);
+            scalar_tail(istream, size, rows_size, 1);
         }
         else
         {
-            scalar_tail(istream, size, null_check, rows_size, 1);
+            scalar_tail(istream, size, rows_size, 1);
         }
         c.ret(output_index);
     }
 
-    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, bool wide_lane, int unroll_factor = 1)
+    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool wide_lane, int unroll_factor = 1)
     {
         using namespace asmjit::x86;
 
@@ -507,7 +510,7 @@ struct Function
             // one names the wrong rows. The scalar loops clear ColumnValueCache per row for the
             // same reason.
             value_cache_ymm.clear();
-            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+            questdb::avx2::emit_code(c, arena, istream, size, values, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm, value_cache_ymm);
 
             if (values.is_empty())
@@ -560,7 +563,7 @@ struct Function
         c.jl(l_loop); // index < stop
         c.bind(l_exit);
 
-        scalar_tail(istream, size, null_check, rows_size);
+        scalar_tail(istream, size, rows_size);
         c.ret(output_index);
     }
 
@@ -649,21 +652,24 @@ struct CountOnlyFunction
 
         uint32_t type_size = (options >> 1) & 7; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B
         uint32_t exec_hint = (options >> 4) & 3; // 0 - scalar, 1 - single size, 2 - mixed size, 3 - wide lane
-        bool null_check = (options >> 6) & 1;    // 1 - with null check
+        // Nullability no longer arrives as the filter-wide options bit 6 on x86: every MEM /
+        // VAR / IMM instruction carries its own flag (NULLABLE_TYPE_FLAG) and the emitters
+        // resolve checks per operand at compile time. Bit 6 stays in the options for the
+        // aarch64 backend, which still consumes the filter-wide flag.
         int unroll_factor = 1;
         if ((exec_hint == single_size || exec_hint == wide_lane) && features.has_avx2())
         {
             auto step = exec_hint == wide_lane ? 4 : 256 / ((1 << type_size) * 8);
             c.func()->frame().set_avx_enabled();
-            avx2_loop(istream, size, step, null_check, exec_hint == wide_lane, unroll_factor);
+            avx2_loop(istream, size, step, exec_hint == wide_lane, unroll_factor);
         }
         else
         {
-            scalar_loop(istream, size, null_check, unroll_factor);
+            scalar_loop(istream, size, unroll_factor);
         }
     };
 
-    void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1)
+    void scalar_tail(const instruction_t *istream, size_t size, const x86::Gp &stop, int unroll_factor = 1)
     {
         Label l_loop = c.new_label();
         Label l_exit = c.new_label();
@@ -687,7 +693,7 @@ struct CountOnlyFunction
             // Clear value cache at the start of each row iteration
             value_cache.clear();
             // Pass the label array and caches to emit_code
-            questdb::x86::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
+            questdb::x86::emit_code(c, arena, istream, size, values, data_ptr, varsize_aux_ptr, vars_ptr,
                                     input_index, labels, addr_cache, const_cache, value_cache);
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
@@ -716,7 +722,7 @@ struct CountOnlyFunction
         c.bind(l_exit);
     }
 
-    void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1)
+    void scalar_loop(const instruction_t *istream, size_t size, int unroll_factor = 1)
     {
         // Preload column addresses and constants before the loop
         preload_columns_and_constants(istream, size);
@@ -726,17 +732,17 @@ struct CountOnlyFunction
             x86::Gp stop = c.new_gp64("stop");
             c.mov(stop, rows_size);
             c.sub(stop, unroll_factor - 1);
-            scalar_tail(istream, size, null_check, stop, unroll_factor);
-            scalar_tail(istream, size, null_check, rows_size, 1);
+            scalar_tail(istream, size, stop, unroll_factor);
+            scalar_tail(istream, size, rows_size, 1);
         }
         else
         {
-            scalar_tail(istream, size, null_check, rows_size, 1);
+            scalar_tail(istream, size, rows_size, 1);
         }
         c.ret(output_index);
     }
 
-    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, bool wide_lane, int unroll_factor = 1)
+    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool wide_lane, int unroll_factor = 1)
     {
         using namespace asmjit::x86;
 
@@ -780,7 +786,7 @@ struct CountOnlyFunction
             // one names the wrong rows. The scalar loops clear ColumnValueCache per row for the
             // same reason.
             value_cache_ymm.clear();
-            questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
+            questdb::avx2::emit_code(c, arena, istream, size, values, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
                                      addr_cache, const_cache_ymm, value_cache_ymm);
 
             if (values.is_empty())
@@ -849,7 +855,7 @@ struct CountOnlyFunction
 
         c.bind(l_tail);
 
-        scalar_tail(istream, size, null_check, rows_size);
+        scalar_tail(istream, size, rows_size);
         c.ret(output_index);
     }
 
