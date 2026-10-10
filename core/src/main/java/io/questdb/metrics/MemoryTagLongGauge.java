@@ -38,10 +38,12 @@ public class MemoryTagLongGauge implements LongGauge {
     private static final String MEMORY_TAG_PREFIX = "memory_tag_";
 
     private final int memoryTag;
+    private final String snapshotName;
 
     public MemoryTagLongGauge(int memoryTag) {
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         this.memoryTag = memoryTag;
+        this.snapshotName = MEMORY_TAG_PREFIX + MemoryTag.nameOf(memoryTag);
     }
 
     @Override
@@ -80,6 +82,11 @@ public class MemoryTagLongGauge implements LongGauge {
     @Override
     public void setValue(long value) {
         // do nothing as this gauge is RO view of memory tag stats
+    }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        visitor.visitLong(snapshotName, MetricType.LONG_GAUGE, getValue());
     }
 
     private void appendMetricName(CharSink<?> sink) {
