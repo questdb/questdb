@@ -30,6 +30,7 @@ import org.jetbrains.annotations.NotNull;
 
 public interface SecurityContextFactory {
     byte HTTP = 0;
+    byte HTTP_MIN = 3;
     byte ILP = 2;
     byte PGWIRE = 1;
 

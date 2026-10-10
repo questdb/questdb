@@ -167,6 +167,10 @@ public abstract class AbstractReadOnlySecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeHealthCheck() {
+    }
+
+    @Override
     public void authorizeHttp() {
     }
 
@@ -202,6 +206,10 @@ public abstract class AbstractReadOnlySecurityContext extends AbstractPrincipalA
     @Override
     public void authorizeMatViewRefresh(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeMetrics() {
     }
 
     @Override
