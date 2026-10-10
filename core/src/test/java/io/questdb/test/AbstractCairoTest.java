@@ -781,6 +781,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
     }
 
+    protected static boolean containsSymbolNullValue(CharSequence tableName, CharSequence columnName) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getSymbolMapReader(reader.getMetadata().getColumnIndex(columnName)).containsNullValue();
+        }
+    }
+
     protected static MatViewRefreshJob createMatViewRefreshJob() {
         return createMatViewRefreshJob(engine);
     }
@@ -1021,6 +1027,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 walApplyJob.run();
             }
         }
+    }
+
+    protected static void unsetSymbolNullFlag(CharSequence tableName, CharSequence columnName) {
+        try (TableWriter writer = getWriter(tableName)) {
+            writer.getSymbolMapWriter(writer.getMetadata().getColumnIndex(columnName)).updateNullFlag(false);
+        }
+        engine.releaseAllReaders();
+        Assert.assertFalse(containsSymbolNullValue(tableName, columnName));
     }
 
     /**

@@ -271,6 +271,8 @@ public final class Vect {
 
     public static native long minLong(long pLong, long count);
 
+    public static native long minMaxCountInt(long pInt, long count, long pMinMax);
+
     public static native int minShort(long pLong, long count);
 
     public static native void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr);

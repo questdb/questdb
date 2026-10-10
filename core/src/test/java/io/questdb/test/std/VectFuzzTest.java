@@ -110,12 +110,18 @@ public class VectFuzzTest {
                                 Assert.assertEquals("int min, count: 0", Numbers.INT_NULL, Vect.minInt(ptr, 0));
                                 Assert.assertEquals("int max, count: 0", Numbers.INT_NULL, Vect.maxInt(ptr, 0));
                                 Assert.assertEquals("int count, count: 0", 0, Vect.countInt(ptr, 0));
+                                Assert.assertEquals("int min max count, count: 0", 0, Vect.minMaxCountInt(ptr, 0, countPtr));
+                                Assert.assertEquals("int min max count min, count: 0", Numbers.INT_NULL, Unsafe.getInt(countPtr));
+                                Assert.assertEquals("int min max count max, count: 0", Numbers.INT_NULL, Unsafe.getInt(countPtr + Integer.BYTES));
                             } else {
                                 Assert.assertEquals("int sum, count: " + count, 0, Vect.sumInt(ptr, count));
                                 Assert.assertEquals("int sum acc, count: " + count, 0, Vect.sumIntAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("int min, count: " + count, 0, Vect.minInt(ptr, count));
                                 Assert.assertEquals("int max, count: " + count, 0, Vect.maxInt(ptr, count));
                                 Assert.assertEquals("int count, count: " + count, count, Vect.countInt(ptr, count));
+                                Assert.assertEquals("int min max count, count: " + count, count, Vect.minMaxCountInt(ptr, count, countPtr));
+                                Assert.assertEquals("int min max count min, count: " + count, 0, Unsafe.getInt(countPtr));
+                                Assert.assertEquals("int min max count max, count: " + count, 0, Unsafe.getInt(countPtr + Integer.BYTES));
                             }
                         }
                     },
@@ -841,6 +847,48 @@ public class VectFuzzTest {
                 Assert.fail();
             } catch (IllegalArgumentException e) {
                 TestUtils.assertContains(e.getMessage(), "Count of indexes to merge should at least be 2.");
+            }
+        });
+    }
+
+    @Test
+    public void testMinMaxCountInt() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long minMax = Unsafe.malloc(2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final int[] counts = new int[302];
+                for (int i = 0; i < 300; i++) {
+                    counts[i] = i + 1;
+                }
+                counts[300] = 10_007;
+                counts[301] = 1_048_577;
+                for (int count : counts) {
+                    for (int nullPeriod : new int[]{0, 1, 7}) {
+                        final long size = (long) count * Integer.BYTES;
+                        final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            int expectedMin = Numbers.INT_NULL;
+                            int expectedMax = Numbers.INT_NULL;
+                            long expectedCount = 0;
+                            for (int i = 0; i < count; i++) {
+                                final int v = nullPeriod != 0 && i % nullPeriod == 0 ? Numbers.INT_NULL : rnd.nextInt();
+                                Unsafe.putInt(ptr + (long) i * Integer.BYTES, v);
+                                if (v != Numbers.INT_NULL) {
+                                    expectedMin = expectedCount++ == 0 ? v : Math.min(expectedMin, v);
+                                }
+                                expectedMax = Math.max(expectedMax, v);
+                            }
+                            final String name = "count: " + count + ", nullPeriod: " + nullPeriod;
+                            Assert.assertEquals(name, expectedCount, Vect.minMaxCountInt(ptr, count, minMax));
+                            Assert.assertEquals(name, expectedMin, Unsafe.getInt(minMax));
+                            Assert.assertEquals(name, expectedMax, Unsafe.getInt(minMax + Integer.BYTES));
+                        } finally {
+                            Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(minMax, 2L * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }

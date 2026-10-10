@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -41,6 +42,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateTableOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
+import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -70,6 +72,30 @@ public class CreateTableTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
+    }
+
+    @Test
+    public void testCreateTableWithSymbolSectionBeyondOnePage() throws Exception {
+        assertMemoryLeak(() -> {
+            final int symbolCount = (int) (Files.PAGE_SIZE / Long.BYTES);
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                final String table = walMode.equals("WAL") ? "wide_wal" : "wide_bypass";
+                final StringBuilder ddl = new StringBuilder("CREATE TABLE ").append(table).append(" (ts TIMESTAMP");
+                for (int i = 0; i < symbolCount; i++) {
+                    ddl.append(", s").append(i).append(" SYMBOL");
+                }
+                execute(ddl.append(") TIMESTAMP(ts) PARTITION BY DAY ").append(walMode).toString());
+                try (
+                        Path path = new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName(table)).concat(TableUtils.TXN_FILE_NAME);
+                        TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY)
+                ) {
+                    assertTrue(configuration.getFilesFacade().length(path.$())
+                            >= TableUtils.TX_BASE_HEADER_SIZE + TableUtils.calculateTxRecordSize(symbolCount * Long.BYTES, 0));
+                    assertTrue(txReader.unsafeLoadAll());
+                    assertEquals(symbolCount, txReader.getSymbolColumnCount());
+                }
+            }
+        });
     }
 
     @Test

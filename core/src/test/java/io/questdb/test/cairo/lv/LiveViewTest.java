@@ -1807,23 +1807,9 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
     @Test
     public void testRefreshWithSymbolFilterUnderJitEnabled() throws Exception {
-        // CompiledFilterIRSerializer.serializeSymbolConstant has a live-view-specific gate: for an
-        // ordinary compile it resolves the symbol constant against the base table's dictionary and
-        // bakes the resulting int key into the filter as an immediate, but for a live view compile it
-        // must not, because the keys in a raw WAL segment live in the segment's own space (clean
-        // dictionary keys, then the per-txn diff band - see WalSegmentPageFrameCursor.WalSymbolTable),
-        // not the base's. It forces the deferred bind-variable path instead.
-        //
-        // Be precise about what these two tests pin. No live view test varied the JIT mode at all, so
-        // a symbol-filtered view's refresh was only ever exercised under whatever the default happened
-        // to be; these drive it under both and require the same rows out of each. They do NOT cover
-        // the gate itself, and nothing currently can: every refresh path in LiveViewRefreshJob applies
-        // the Java residual filter Function (filterFactory.getFilter()) and never the native compiled
-        // filter, so the JIT-compiled predicate does not execute during an incremental refresh.
-        // Removing the gate leaves the whole live view suite green. Keep it - it is what would make
-        // the compiled filter safe for the refresh path to use - but it is defensive rather than
-        // load-bearing, and no test can honestly claim to protect it until the refresh path actually
-        // runs the compiled filter.
+        // Together with the JIT-disabled twin this requires the same refreshed rows under both JIT
+        // modes. Every refresh path in LiveViewRefreshJob applies the Java residual filter, never the
+        // compiled one, so neither test exercises the JIT symbol bind variables.
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED));
         assertSymbolEqualityFilterRefreshes();
     }

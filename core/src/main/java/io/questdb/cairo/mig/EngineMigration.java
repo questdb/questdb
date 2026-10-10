@@ -84,6 +84,7 @@ public class EngineMigration {
                     .$("open [fd=").$(upgradeFd)
                     .$(", path=").$(path)
                     .I$();
+            int recordedMigrationVersion = 0;
             if (existed) {
                 int currentTableVersion = ff.readNonNegativeInt(upgradeFd, 0);
 
@@ -116,11 +117,12 @@ public class EngineMigration {
                     ff.fsyncAndClose(upgradeFd);
                     return;
                 }
+                recordedMigrationVersion = currentMigrationVersion;
             }
 
             try {
                 LOG.info().$("upgrading database [version=").$(latestMigrationVersion).I$();
-                upgradeTables(context, latestTableVersion, latestMigrationVersion);
+                upgradeTables(context, latestTableVersion, latestMigrationVersion, recordedMigrationVersion);
                 TableUtils.writeIntOrFail(
                         ff,
                         upgradeFd,
@@ -154,7 +156,12 @@ public class EngineMigration {
         return MIGRATIONS.get(version);
     }
 
-    private static void upgradeTables(MigrationContext context, int latestTableVersion, int latestMigrationVersion) {
+    private static void upgradeTables(
+            MigrationContext context,
+            int latestTableVersion,
+            int latestMigrationVersion,
+            int recordedMigrationVersion
+    ) {
         final FilesFacade ff = context.getFf();
         final CharSequence root = context.getConfiguration().getDbRoot();
         long mem = context.getTempMemory(8);
@@ -174,10 +181,14 @@ public class EngineMigration {
                         final long fdMeta = openFileRWOrFail(ff, path.$(), context.getConfiguration().getWriterFileOpenOpts());
                         try {
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
-                            if (currentTableVersion < latestMigrationVersion) {
+                            // _upgrade.d records the compatible migrations every table at the table version has received
+                            final int firstVersion = currentTableVersion < latestTableVersion
+                                    ? currentTableVersion + 1
+                                    : Math.max(currentTableVersion, recordedMigrationVersion) + 1;
+                            if (firstVersion <= latestMigrationVersion) {
                                 LOG.info()
                                         .$("upgrading [path=").$(copyPath.$())
-                                        .$(", fromVersion=").$(currentTableVersion)
+                                        .$(", fromVersion=").$(firstVersion - 1)
                                         .$(", toVersion=").$(latestMigrationVersion)
                                         .I$();
 
@@ -194,7 +205,7 @@ public class EngineMigration {
                                 path.trimTo(tablePlen);
                                 context.of(path, copyPath, fdMeta);
 
-                                for (int ver = currentTableVersion + 1; ver <= latestMigrationVersion; ver++) {
+                                for (int ver = firstVersion; ver <= latestMigrationVersion; ver++) {
                                     final MigrationAction migration = getMigrationToVersion(ver);
                                     if (migration != null) {
                                         try {
@@ -268,5 +279,6 @@ public class EngineMigration {
         MIGRATIONS.put(425, Mig614::migrate);
         MIGRATIONS.put(426, Mig620::migrate);
         MIGRATIONS.put(429, Mig941::migrate);
+        MIGRATIONS.put(430, Mig1002::migrate);
     }
 }

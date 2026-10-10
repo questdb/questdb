@@ -573,6 +573,10 @@ struct ValueCacheYmm {
         count = 0;
     }
 
+    size_t size() const {
+        return count;
+    }
+
     // A column index and a bind variable index share a numbering, so is_var keeps the two apart.
     bool find(int32_t idx, data_type_t type, bool is_var, asmjit::x86::Vec &out_reg) const {
         for (size_t i = 0; i < count; ++i) {

@@ -118,6 +118,20 @@ namespace questdb::x86 {
         return {Mem(vars_ptr, 16 * idx, type_size), type, data_kind_t::kMemory};
     }
 
+    jit_value_t
+    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr, const ColumnValueCache &var_cache) {
+        Gp cached_gp;
+        Vec cached_xmm;
+        if (type == data_type_t::f32 || type == data_type_t::f64 || type == data_type_t::i128) {
+            if (var_cache.findXmm(idx, type, cached_xmm)) {
+                return {cached_xmm, type, data_kind_t::kMemory};
+            }
+        } else if (var_cache.find(idx, type, cached_gp)) {
+            return {cached_gp, type, data_kind_t::kMemory};
+        }
+        return read_vars_mem(c, type, idx, vars_ptr);
+    }
+
     // Reads length of variable size column with header stored in data vector (string, binary).
     jit_value_t read_mem_varsize(Compiler &c,
                                  uint32_t header_size,
@@ -344,6 +358,44 @@ namespace questdb::x86 {
             }
             default:
                 __builtin_unreachable();
+        }
+    }
+
+    void preload_vars(Compiler &c,
+                      const instruction_t *istream,
+                      size_t size,
+                      const Gp &vars_ptr,
+                      ColumnValueCache &cache) {
+        for (size_t i = 0; i < size && cache.size() < ColumnValueCache::MAX_VALUES; ++i) {
+            auto &instr = istream[i];
+            if (instr.opcode != opcodes::Var) {
+                continue;
+            }
+            auto type = static_cast<data_type_t>(instr.options);
+            auto idx = static_cast<int32_t>(instr.ipayload.lo);
+            switch (type) {
+                case data_type_t::i8:
+                case data_type_t::i16:
+                case data_type_t::i32:
+                case data_type_t::i64: {
+                    Gp dummy;
+                    if (!cache.find(idx, type, dummy)) {
+                        cache.add(idx, type, mem2reg(c, read_vars_mem(c, type, idx, vars_ptr)).gp());
+                    }
+                    break;
+                }
+                case data_type_t::i128:
+                case data_type_t::f32:
+                case data_type_t::f64: {
+                    Vec dummy;
+                    if (!cache.findXmm(idx, type, dummy)) {
+                        cache.addXmm(idx, type, mem2reg(c, read_vars_mem(c, type, idx, vars_ptr)).vec());
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
         }
     }
 
@@ -1138,6 +1190,7 @@ namespace questdb::x86 {
               LabelArray &labels,
               const ColumnAddressCache &addr_cache,
               const ConstantCache &const_cache,
+              const ColumnValueCache &var_cache,
               ColumnValueCache &value_cache) {
 
         // Snapshot of value_cache.size() taken at BEGIN_SC. Restored at
@@ -1170,7 +1223,7 @@ namespace questdb::x86 {
                 case opcodes::Var: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr));
+                    values.append(arena, read_vars_mem(c, type, idx, vars_ptr, var_cache));
                 }
                     break;
                 case opcodes::Mem: {

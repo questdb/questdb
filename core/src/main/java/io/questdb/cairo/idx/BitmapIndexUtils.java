@@ -49,6 +49,7 @@ public final class BitmapIndexUtils {
     public static final int KEY_FILE_RESERVED = 64;
     public static final int KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT = 17;
     public static final int KEY_RESERVED_OFFSET_KEY_COUNT = 21;
+    public static final int KEY_RESERVED_OFFSET_MAX_VALUE = 37;
     public static final int KEY_RESERVED_OFFSET_SEQUENCE = 1;
     public static final int KEY_RESERVED_OFFSET_SEQUENCE_CHECK = 29;
     public static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;

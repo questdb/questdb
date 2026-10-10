@@ -25,6 +25,7 @@
 package io.questdb.test.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongHashSet;
@@ -231,6 +232,28 @@ public class DirectLongHashSetTest {
     }
 
     @Test
+    public void testLazyOpenAndReuseWithAllLongValues() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT, 32, false)) {
+                Assert.assertEquals(0, set.capacity());
+                for (int execution = 0; execution < 3; execution++) {
+                    set.reopen();
+                    Assert.assertEquals(16, set.capacity());
+                    for (long value : new long[]{0, Long.MIN_VALUE, Long.MAX_VALUE, -1, 1}) {
+                        Assert.assertTrue(set.add(value));
+                        Assert.assertFalse(set.add(value));
+                    }
+                    for (int i = 2; i < 1000; i++) {
+                        Assert.assertTrue(set.add(i));
+                    }
+                    set.close();
+                    Assert.assertEquals(0, set.size());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMixedPositiveAndNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectLongHashSet set = new DirectLongHashSet(16)) {
@@ -302,6 +325,32 @@ public class DirectLongHashSetTest {
                 Assert.assertEquals(32, set.capacity());
                 set.add(16);
                 Assert.assertEquals(64, set.capacity());
+            }
+        });
+    }
+
+    @Test
+    public void testResizeLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT, 1, true)) {
+                final int capacity = set.capacity();
+                long value = 1;
+                while (set.capacity() == capacity) {
+                    Assert.assertTrue(set.add(value++));
+                }
+                Assert.assertEquals(2 * capacity, set.capacity());
+                try {
+                    for (; ; ) {
+                        Assert.assertTrue(set.add(value++));
+                    }
+                } catch (LimitOverflowException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "limit of 1 resizes exceeded in long set");
+                }
+                Assert.assertEquals(2 * capacity, set.capacity());
+                Assert.assertEquals(value - 1, set.size());
+                for (long v = 1; v < value; v++) {
+                    Assert.assertTrue(set.contains(v));
+                }
             }
         });
     }
