@@ -437,6 +437,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
+    // A writer of a WAL table at the database root publishes its committed txn to the table's tracker when it is
+    // released; a staging writer under the COPY work directory has a _txn of its own and does not.
+    private boolean publishesCommittedTxn;
     private PurgingOperator purgingOperator;
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -566,6 +569,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // holds one until the next restart, and every write through it bypasses the WAL, so a rewind to an
             // anchor would lose those writes. The table enrols at the first open with its WAL token.
             final boolean privateRootWriter = !Chars.equals(root, configuration.getDbRoot());
+            this.publishesCommittedTxn = !privateRootWriter && tableToken.isWal();
             this.adaptiveEnrollmentPending = !privateRootWriter
                     && tableToken.isWal()
                     && metadata.isWalEnabled()
@@ -1695,6 +1699,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void close() {
+        if (publishesCommittedTxn) {
+            // Publish the committed txn for the idle save point request (WalPurgeJob): a commit that moved it
+            // without a WAL transaction is then seen there as well.
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+            if (tracker != null) {
+                tracker.setCommittedTxn(txWriter.getTxn());
+            }
+        }
         if (lifecycleManager.close() && isOpen()) {
             doClose(true);
         }
@@ -7620,7 +7632,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // destroy() may have already closed everything
         boolean tx = inTransaction();
         // A graceful close of a healthy adaptive WAL writer folds the committed tail into a final epoch, so a
-        // clean restart lands on the committed frontier with nothing to replay. It runs before the teardown
+        // clean restart lands on the committed frontier with nothing to replay. The tail includes a commit made
+        // without a WAL transaction (a storage policy change through the writer), seen as a txn the newest save
+        // point does not hold: no replay can redo it, so a restart would undo it. It runs before the teardown
         // below, while txWriter, columnVersionWriter and the sequencer are open (CairoEngine.close frees the
         // writer pool before the sequencer and the scoreboard). A distressed or rolled-back writer, the drop
         // path included, publishes no epoch over state that may be torn or about to be deleted. A negative
@@ -7642,7 +7656,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                 if (tracker.isDurableEpochOwed()
-                        || (configuration.getAdaptiveEpochIntervalMs() >= 0 && getSeqTxn() > tracker.getDurableEpochSeqTxn())) {
+                        || (configuration.getAdaptiveEpochIntervalMs() >= 0
+                        && (getSeqTxn() > tracker.getDurableEpochSeqTxn() || getTxn() != tracker.getPinnedEpochTxn()))) {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 }
             } catch (Throwable e) {

@@ -48,6 +48,10 @@ public class SeqTxnTracker {
     private final FiberWalWaitQueue fiberWaiters = new FiberWalWaitQueue();
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
+    // The table's committed _txn txn, published by the table writer each time it is released; -1 until then.
+    // A commit that moves the txn without a WAL transaction (a partition removed or converted by the writer
+    // itself) leaves it above the newest save point's pin, which WalPurgeJob reads for the idle save point.
+    private volatile long committedTxn = -1;
     // The seqTxn of the table's newest durable save point. 0 means none yet, which keeps all WAL of a fresh
     // adaptive table; it advances as save points publish. WalPurgeJob reads it as the purge floor under
     // adaptive, and in any mode while the table holds a save point pin.
@@ -59,10 +63,17 @@ public class SeqTxnTracker {
     // apply batch or clean close takes one regardless of the cadence. Cleared when a save point publishes.
     // Written only by the thread that holds the table writer; RESUME WAL reads it before it takes the writer.
     private volatile boolean durableEpochOwed;
+    // Set by WalPurgeJob when the table's older save point is behind its current state and no save point has
+    // been taken for one interval; the next apply run that applies nothing takes one more save point.
+    private volatile boolean idleEpochRequested;
+    // Wall-clock ms of WalPurgeJob's last idle save point request that no save point has followed yet, 0 if none.
+    // It asks again only one interval later, so a request that keeps failing, or finds the writer held, is tried
+    // once per interval, not at every purge pass. A published save point clears it.
+    private volatile long idleEpochRequestTs;
     // Wall-clock ms of the table's last save point, for the adaptive cadence gate; 0 means none yet, so the
-    // first apply batch under adaptive is eligible. Only the apply worker that holds the table writer reads
-    // and writes it, so it needs no CAS.
-    private long lastEpochTs = 0;
+    // first apply batch under adaptive is eligible. Only the apply worker that holds the table writer writes it,
+    // so it needs no CAS; WalPurgeJob reads it for the idle save point request.
+    private volatile long lastEpochTs = 0;
     // Rows applied to this table since its last save point, for the adaptive backlog gate.
     // ApplyWal2TableJob.advance() resets it when a save point publishes. Same single-thread access as lastEpochTs.
     private long rowsSinceEpoch = 0;
@@ -163,6 +174,22 @@ public class SeqTxnTracker {
         this.metrics = configuration.getMetrics();
     }
 
+    /**
+     * Returns whether WalPurgeJob asked for an idle save point since the last call, and clears the request. Apply
+     * worker only.
+     */
+    public boolean consumeIdleEpochRequest() {
+        if (idleEpochRequested) {
+            idleEpochRequested = false;
+            return true;
+        }
+        return false;
+    }
+
+    public long getCommittedTxn() {
+        return committedTxn;
+    }
+
     public long getDedupSignalCoveredSeqTxn() {
         return dedupSignalCoveredSeqTxn;
     }
@@ -222,6 +249,13 @@ public class SeqTxnTracker {
      */
     public void bumpRecoveryIncarnation() {
         recoveryIncarnation++;
+    }
+
+    /**
+     * Wall-clock ms at which the WAL purge job last asked for an idle save point; 0 once a save point publishes.
+     */
+    public long getIdleEpochRequestTs() {
+        return idleEpochRequestTs;
     }
 
     /**
@@ -307,6 +341,10 @@ public class SeqTxnTracker {
 
     public boolean isHardSuspended() {
         return hardSuspended;
+    }
+
+    public boolean isIdleEpochRequested() {
+        return idleEpochRequested;
     }
 
     public boolean isInitialised() {
@@ -399,6 +437,13 @@ public class SeqTxnTracker {
             }
         }
         return result;
+    }
+
+    /**
+     * Records the table's committed _txn txn. Table writer only, when it is released.
+     */
+    public void setCommittedTxn(long committedTxn) {
+        this.committedTxn = committedTxn;
     }
 
     public void setHardSuspended(boolean hardSuspended) {
@@ -687,10 +732,21 @@ public class SeqTxnTracker {
     }
 
     /**
-     * Record the wall-clock ms of the last durable epoch (adaptive cadence gate).
+     * Asks the apply job for one more save point at the table's current state; see {@link #consumeIdleEpochRequest}.
+     * WalPurgeJob only, with the wall-clock ms of the request.
+     */
+    public void requestIdleEpoch(long nowMs) {
+        idleEpochRequestTs = nowMs;
+        idleEpochRequested = true;
+    }
+
+    /**
+     * Record the wall-clock ms of the last durable epoch (adaptive cadence gate). A save point ends the idle
+     * request back-off.
      */
     public void setLastEpochTs(long lastEpochTs) {
         this.lastEpochTs = lastEpochTs;
+        this.idleEpochRequestTs = 0;
     }
 
     /**
