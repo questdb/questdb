@@ -329,11 +329,7 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
             if (this == o) {
                 return true;
             }
-            if (!(o instanceof TwoTableRows)) {
-                return false;
-            }
-            final TwoTableRows other = (TwoTableRows) o;
-            return t1.equals(other.t1) && t2.equals(other.t2);
+            return o instanceof TwoTableRows other && t1.equals(other.t1) && t2.equals(other.t2);
         }
 
         @Override

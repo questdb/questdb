@@ -54,14 +54,8 @@ public final class ChecksumTrailer {
      */
     public static final int MISMATCH = 2;
 
-    /**
-     * On-disk size of the trailer: 8-byte magic + 8-byte checksum.
-     */
-    public static final int TRAILER_SIZE = TableUtils.CV_CHECKSUM_TRAILER_SIZE;
-
     private ChecksumTrailer() {
     }
-
 
     /**
      * Classifies a trailer read from disk. {@code storedMagic} / {@code storedChecksum} are the raw

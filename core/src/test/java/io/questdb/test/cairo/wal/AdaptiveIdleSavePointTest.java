@@ -166,7 +166,7 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
             try (LiveViewRefreshJob refreshJob = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
-                        + "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+                        + "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
                 final TableToken lv = engine.verifyTableName("lv");
                 // Three base writes an interval apart: each flush writes a block of the view's WAL, and each apply of
                 // it takes a save point.
@@ -681,7 +681,7 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
             try (LiveViewRefreshJob refreshJob = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
-                        + "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+                        + "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
                 final TableToken lv = engine.verifyTableName("lv");
                 for (int i = 0; i < 3; i++) {
                     tick(INTERVAL_MS);

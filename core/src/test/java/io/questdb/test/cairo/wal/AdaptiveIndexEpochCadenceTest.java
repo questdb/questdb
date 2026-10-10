@@ -108,7 +108,6 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
 
             final StringBuilder passLog = new StringBuilder();
             int passesWithPurge = 0;
-            int savePoints = 0;
             for (int pass = 0; pass < PASSES; pass++) {
                 execute(passSql(pass));
                 final long epochsBefore = TestUtils.getMetricValue(engine, EPOCH_METRIC);
@@ -120,14 +119,10 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
                 if (purges > 0) {
                     passesWithPurge++;
                 }
-                savePoints += (int) epochs;
                 if (epochs != 0) {
                     Assert.fail("inline save point at pass " + pass + ':' + passLog);
                 }
             }
-            System.out.println("AdaptiveIndexEpochCadence index=" + indexKind + " dedup=" + dedup
-                    + " pattern=" + pattern
-                    + " passes=" + PASSES + " passesWithPurge=" + passesWithPurge + " savePoints=" + savePoints);
             if (indexKind.startsWith("POSTING") && pattern == WritePattern.O3_NATIVE) {
                 Assert.assertTrue("late rows queued no posting purge:" + passLog, passesWithPurge > 0);
             }

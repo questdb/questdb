@@ -561,7 +561,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             ff.reset();
             // 1000 rows (16 bytes/row) cross the 4096-byte page in one commit, which extends the mapping
             // of both the WAL segment and the applied table partition column files.
-            execute("insert into x select timestamp_sequence('2024-01-01T00:01:00.000000Z', 1000000L), x from long_sequence(1000)");
+            execute("insert into x select timestamp_sequence('2024-01-01T00:01:00.000000Z', 1_000_000L), x from long_sequence(1000)");
             drainWalQueue();
             Assert.assertEquals("SYNC must issue 0 fdatasync (S2 reverted)", 0, ff.fdatasyncCount);
             Assert.assertTrue("SYNC must still msync(MS_SYNC) on the WAL commit", ff.msyncSync > 0);
@@ -703,14 +703,15 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     /**
      * The sync calls a 1-row WAL commit makes on each WAL segment file (the column files and the two
      * {@code _event} files), per commit mode and group window. ADAPTIVE drains writeback at every window,
-     * W=0 included: each file gets {@code msync(MS_ASYNC)}, {@code sync_file_range} and its own barrier, and
-     * never a blocking {@code msync(MS_SYNC)}. NOSYNC, ASYNC and SYNC run neither the drain nor a barrier.
-     * The filesystem probe is pinned on, so the drain runs on every platform.
+     * W=0 included: each file gets {@code msync(MS_ASYNC)}, two {@code sync_file_range} calls (start the
+     * writeback, then wait for it) and its own barrier, and never a blocking {@code msync(MS_SYNC)}. NOSYNC,
+     * ASYNC and SYNC run neither the drain nor a barrier. The filesystem probe is pinned on, so the drain runs
+     * on every platform.
      */
     @Test
     public void testWalCommitSegmentFileSyncsPerMode() throws Exception {
         final String perFile = "_event: %1$s; _event.i: %1$s; ts.d: %1$s; v.d: %1$s";
-        final String drained = String.format(perFile, "barrierFsync=1 msyncAsync=1 syncFileRange=1");
+        final String drained = String.format(perFile, "barrierFsync=1 msyncAsync=1 syncFileRange=2");
         // commit mode, group window in microseconds, the sync calls of one commit on the segment files.
         final String[][] cases = {
                 {"adaptive", "50000", drained},
@@ -938,6 +939,47 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
+     * Both writeback drains, the ADAPTIVE WAL commit's (at window 0 and above) and the save point's batched
+     * column flush, start the writeback of every file ({@code sync_file_range(WRITE)}) before they wait on any
+     * ({@code WRITE | WAIT_AFTER}), so the writebacks overlap, and wait on every file they started.
+     */
+    @Test
+    public void testWritebackDrainStartsEveryFileBeforeWaiting() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        final WritebackDrainFacade ff = new WritebackDrainFacade() {
+            @Override
+            public boolean isSyncfsFileSystemWide() {
+                // Pinned, so the save point takes its batched flush on every platform.
+                return true;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final List<String> failures = new ArrayList<>();
+            int t = 0;
+            for (long window : new long[]{0, 50_000}) {
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, window);
+                Assert.assertEquals(window, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+                final String name = "x" + t++;
+                execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG, s SYMBOL, txt VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                try (WalWriter writer = getWalWriter(name)) {
+                    appendRow(writer, 0);
+                    ff.syncFileRangeCalls.clear();
+                    writer.commit();
+                    checkWritebackDrain("WAL commit, window=" + window + "us", ff.syncFileRangeCalls, failures);
+                }
+                drainWalQueue();
+                try (TableWriter writer = getWriter(name)) {
+                    ff.syncFileRangeCalls.clear();
+                    writer.fsyncMaterializedState();
+                    checkWritebackDrain("save point, window=" + window + "us", ff.syncFileRangeCalls, failures);
+                }
+            }
+            Assert.assertTrue("drains that do not start every writeback before waiting:\n" + String.join("\n", failures), failures.isEmpty());
+        });
+    }
+
+    /**
      * A writeback error on any WAL segment file fails the ADAPTIVE commit and keeps the durable frontier
      * where it was, at window 0 and above, with the writeback drain on and off. Linux reports a writeback
      * error once per open file, to the first call that waits on that file's writeback, and the facade does
@@ -1027,6 +1069,37 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         row.append();
     }
 
+    // One drain's sync_file_range calls, as (fd, flags) pairs: every start before the first wait, every
+    // waited file started once, every started file waited on.
+    private static void checkWritebackDrain(String site, LongList calls, List<String> failures) {
+        if (calls.size() == 0) {
+            failures.add(site + ": no sync_file_range call");
+            return;
+        }
+        final List<Long> started = new ArrayList<>();
+        boolean waiting = false;
+        for (int i = 0, n = calls.size(); i < n; i += 2) {
+            final long fd = calls.getQuick(i);
+            final long flags = calls.getQuick(i + 1);
+            if (flags == Files.SYNC_FILE_RANGE_WRITE) {
+                if (waiting) {
+                    failures.add(site + ": fd " + fd + " started after the first wait");
+                }
+                started.add(fd);
+            } else if (flags == (Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER)) {
+                waiting = true;
+                if (!started.remove(fd)) {
+                    failures.add(site + ": fd " + fd + " waited on without a start");
+                }
+            } else {
+                failures.add(site + ": fd " + fd + " unexpected flags " + flags);
+            }
+        }
+        if (!started.isEmpty()) {
+            failures.add(site + ": started, never waited on " + started);
+        }
+    }
+
     /**
      * Returns true if the given path is a WAL segment column data file (.d file or fixed-size
      * column file in a wal/ segment directory), not an event or sequencer file.
@@ -1076,9 +1149,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * A FilesFacade that counts every {@code msync} and {@code fdatasync} call on table partition
-     * column files: not in {@code wal<N>/} segment dirs, not in {@code txn_seq/}, and not control or
-     * metadata files.
+     * A FilesFacade that counts every {@code msync}, {@code fdatasync} and {@code sync_file_range} call on
+     * table partition column files: not in {@code wal<N>/} segment dirs, not in {@code txn_seq/}, and not
+     * control or metadata files.
      *
      * <p>It tracks fd -> path on open and addr -> fd on mmap, then resolves msync(addr) and
      * fdatasync(fd) to a path and classifies it. WAL segment and sequencer syncs are ignored, so a test
@@ -1089,7 +1162,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         private final Map<Long, String> fdToPath = new HashMap<>();
         // mmap address -> fd (populated on mmap, removed on munmap)
         private final Map<Long, Long> addrToFd = new HashMap<>();
-        // paths of table-partition column files that were synced (msync or fdatasync)
+        // paths of table-partition column files that were synced (msync, fdatasync or sync_file_range)
         private final List<String> tableColumnSyncPaths = new ArrayList<>();
         // total sync count on table partition column files
         private long tableColumnSyncCount = 0;
@@ -1186,6 +1259,16 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             long fd = super.openRW(name, opts);
             trackFd(fd, name);
             return fd;
+        }
+
+        @Override
+        public int syncFileRange(long fd, long offset, long nbytes, int flags) {
+            String p = fdToPath.get(fd);
+            if (p != null && isTablePartitionColumnFile(p)) {
+                tableColumnSyncCount++;
+                tableColumnSyncPaths.add("syncFileRange(" + flags + "):" + p);
+            }
+            return super.syncFileRange(fd, offset, nbytes, flags);
         }
 
         private void trackFd(long fd, LPSZ name) {
@@ -1448,6 +1531,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     static class WritebackDrainFacade extends TestFilesFacadeImpl {
         private static final Pattern SEGMENT_FILE = Pattern.compile(".*[/\\\\]wal[0-9]+[/\\\\][0-9]+[/\\\\]([^/\\\\]+)");
         final Map<String, Map<String, int[]>> segmentSyncs = new TreeMap<>();
+        // fd and flags of every sync_file_range call, in call order
+        final LongList syncFileRangeCalls = new LongList();
         private final Map<Long, String> addrToFile = new HashMap<>();
         private final Map<Long, String> fdToFile = new HashMap<>();
         boolean drain = true;
@@ -1527,8 +1612,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         @Override
         public int syncFileRange(long fd, long offset, long nbytes, int flags) {
             syncFileRangeCount++;
+            syncFileRangeCalls.add(fd, flags);
             countSegmentSync(fdToFile.get(fd), "syncFileRange");
-            if (takeWritebackError(fdToFile.get(fd), "sync_file_range")) {
+            if ((flags & Files.SYNC_FILE_RANGE_WAIT_AFTER) != 0 && takeWritebackError(fdToFile.get(fd), "sync_file_range")) {
                 return -1;
             }
             return super.syncFileRange(fd, offset, nbytes, flags);

@@ -743,7 +743,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         }
 
         private String insertSql(String fromTs, String rows, String vBase) {
-            return "insert into " + table + " select timestamp_sequence('" + fromTs + "', 1000000L), " + vBase + " + x,"
+            return "insert into " + table + " select timestamp_sequence('" + fromTs + "', 1_000_000L), " + vBase + " + x,"
                     + " 'k' || (x % 7), 'r' || (" + vBase + " + x) from long_sequence(" + rows + ")";
         }
 

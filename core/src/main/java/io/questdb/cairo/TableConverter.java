@@ -199,8 +199,7 @@ public class TableConverter {
                                             token,
                                             path,
                                             convertedTimestampType,
-                                            convertedPartitionBy,
-                                            configuration.getMicrosecondClock().getTicks() / 1000L
+                                            convertedPartitionBy
                                     );
                                     RecoveryCoordinator.pinPublishedBaseline(engine, token, baselineTxn);
                                 }

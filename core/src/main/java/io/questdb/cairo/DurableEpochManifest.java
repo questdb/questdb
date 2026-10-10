@@ -184,8 +184,7 @@ public final class DurableEpochManifest {
             CairoConfiguration configuration,
             TableToken tableToken,
             int timestampType,
-            int partitionBy,
-            long nowMs
+            int partitionBy
     ) {
         publishBaseline(configuration, tableToken, null, timestampType, partitionBy);
     }
@@ -204,8 +203,7 @@ public final class DurableEpochManifest {
             TableToken tableToken,
             Path tableDirPath,
             int timestampType,
-            int partitionBy,
-            long nowMs
+            int partitionBy
     ) {
         return publishBaseline(configuration, tableToken, tableDirPath, timestampType, partitionBy);
     }

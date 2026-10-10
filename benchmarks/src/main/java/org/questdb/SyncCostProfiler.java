@@ -217,8 +217,6 @@ public class SyncCostProfiler {
         );
     }
 
-    // ---- Counting FilesFacade ----
-
     /**
      * Wraps FilesFacadeImpl.INSTANCE and counts msync/fsync/fdatasync calls + msync bytes.
      * Single-writer thread, so plain longs are fine (no atomics needed).
@@ -281,8 +279,6 @@ public class SyncCostProfiler {
             super.fsyncAndClose(fd);
         }
     }
-
-    // ---- helpers ----
 
     private static String modeName(int mode) {
         if (mode == CommitMode.NOSYNC) return "NOSYNC";

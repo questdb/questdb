@@ -332,7 +332,7 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                 Assert.assertEquals(1, fatalCalls.get());
                 Assert.assertTrue(tracker.getLocalDurableSeqTxn() < tracker.getSeqTxn());
                 try {
-                    execute("insert into x values (60000000, 1)");
+                    execute("insert into x values (60_000_000, 1)");
                     Assert.fail("a poisoned engine must not take a commit");
                 } catch (CairoError expected) {
                     TestUtils.assertContains(expected.getMessage(), "engine is poisoned");

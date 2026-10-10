@@ -178,7 +178,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     // True when a timestamp in ms is set (not 0) and less than one interval before now. A backward clock step
     // counts as elapsed.
-    private static boolean withinInterval(long ts, long nowMs, long intervalMs) {
+    private static boolean isWithinInterval(long ts, long nowMs, long intervalMs) {
         return ts > 0 && nowMs >= ts && nowMs - ts < intervalMs;
     }
 
@@ -779,8 +779,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             return;
         }
         final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000L;
-        if (withinInterval(tracker.getLastEpochTs(), nowMs, intervalMs)
-                || withinInterval(tracker.getIdleEpochRequestTs(), nowMs, intervalMs)) {
+        if (isWithinInterval(tracker.getLastEpochTs(), nowMs, intervalMs)
+                || isWithinInterval(tracker.getIdleEpochRequestTs(), nowMs, intervalMs)) {
             return;
         }
         tracker.requestIdleEpoch(nowMs);

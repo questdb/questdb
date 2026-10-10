@@ -133,14 +133,6 @@ public interface MapWriter extends SymbolCountProvider {
     }
 
     /**
-     * Stage 1 of the batched flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushKick()}.
-     * The default does nothing, and the default {@link #syncFlushFinishIfExtended()} then flushes with
-     * {@code sync(false)}.
-     */
-    default void syncFlushKick() {
-    }
-
-    /**
      * Stage 2 of the batched flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushDrain()}.
      * The default does nothing.
      */
@@ -153,6 +145,14 @@ public interface MapWriter extends SymbolCountProvider {
      */
     default void syncFlushFinishIfExtended() {
         sync(false);
+    }
+
+    /**
+     * Stage 1 of the batched flush (Linux only); see {@link io.questdb.cairo.vm.api.MemoryMA#syncFlushKick()}.
+     * The default does nothing, and the default {@link #syncFlushFinishIfExtended()} then flushes with
+     * {@code sync(false)}.
+     */
+    default void syncFlushKick() {
     }
 
     void truncate();

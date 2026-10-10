@@ -675,8 +675,7 @@ public class CrashIngestWriter {
     }
 
 
-    // ---------------------------------------------------------------------
-    // WORKLOAD PROFILES (-Dschema.profile)
+    // Workload profiles (-Dschema.profile).
     //
     // Columns 0..3 (id, v, s, ts) are FIXED in every profile so the identity
     // oracle in CrashVerifier is untouched. Profiles vary (a) which index the
@@ -691,7 +690,6 @@ public class CrashIngestWriter {
     //   array    + arr double[]            ArrayCrashConsistencyTest
     //   wide     + 12 mixed-type columns   BatchedFlushDurabilityCrashTest
     //   o3       out-of-order timestamps   AdaptiveO3CrashSweep, AdaptiveO3LazyGap
-    // ---------------------------------------------------------------------
     static final String PROFILE = System.getProperty("schema.profile", "bitmap");
 
     /**

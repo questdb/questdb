@@ -41,8 +41,8 @@ public class AdaptiveMetricsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values (0, 1)");
-            execute("insert into x values (1000000, 2)");
-            execute("insert into x values (2000000, 3)");
+            execute("insert into x values (1_000_000, 2)");
+            execute("insert into x values (2_000_000, 3)");
             drainWalQueue();
 
             SeqTxnTracker tracker = engine.getTableSequencerAPI()
@@ -65,7 +65,7 @@ public class AdaptiveMetricsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values (0, 1)");
-            execute("insert into x values (1000000, 2)");
+            execute("insert into x values (1_000_000, 2)");
             drainWalQueue();
 
             final SeqTxnTracker tracker = engine.getTableSequencerAPI()

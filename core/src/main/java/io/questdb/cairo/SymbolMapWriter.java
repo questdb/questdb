@@ -530,14 +530,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     @Override
-    public void syncFlushKick() {
-        // Order-free (no device flush, no durability ordering yet).
-        charMem.syncFlushKick();
-        offsetMem.syncFlushKick();
-        indexWriter.syncFlushKick();
-    }
-
-    @Override
     public void syncFlushDrain() {
         // Order-free (see syncFlushKick).
         charMem.syncFlushDrain();
@@ -553,6 +545,14 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         charMem.syncFlushFinishIfExtended();
         offsetMem.syncFlushFinishIfExtended();
         indexWriter.syncFlushFinishIfExtended();
+    }
+
+    @Override
+    public void syncFlushKick() {
+        // Order-free (no device flush, no durability ordering yet).
+        charMem.syncFlushKick();
+        offsetMem.syncFlushKick();
+        indexWriter.syncFlushKick();
     }
 
     @Override

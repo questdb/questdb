@@ -81,22 +81,12 @@ public interface MemoryMA extends MemoryM, MemoryA {
     void sync(boolean async);
 
     /**
-     * Stage 1 of the batched flush (Linux only): pushes this memory's dirty mapped pages into the page cache
-     * with {@code msync(MS_ASYNC)} over the written range, so {@link #syncFlushDrain()} can write them back.
-     * Issues no device flush and must not advance a {@code lastSynced*} watermark: only
-     * {@link #syncFlushFinishIfExtended()}, which runs once the data is durable, may do that.
-     * <p>
-     * The default does nothing; {@link #syncFlushFinishIfExtended()} then falls back to {@code sync(false)}.
-     */
-    default void syncFlushKick() {
-    }
-
-    /**
-     * Stage 2 of the batched flush (Linux only): writes the pages {@link #syncFlushKick()} dirtied back to the
-     * device's write cache with {@code sync_file_range(WRITE | WAIT_AFTER)} and waits for the writeback.
-     * Issues no device flush: the caller's later {@code syncfs} makes the content durable. Must not advance a
-     * {@code lastSynced*} watermark, as in {@link #syncFlushKick()}. A writeback error is thrown as a
-     * data-sync failure: Linux reports it once per open file, so a later {@code fdatasync} would not see it.
+     * Stage 2 of the batched flush (Linux only): waits, with {@code sync_file_range(WRITE | WAIT_AFTER)}, for
+     * the writeback {@link #syncFlushKick()} started, and writes back what it left. Issues no device flush: the
+     * caller's later {@code syncfs} or per-file {@code fdatasync} makes the content durable. Must not advance a
+     * {@code lastSynced*} watermark, as in {@link #syncFlushKick()}. A writeback error is thrown as a data-sync
+     * failure: Linux reports it once per open file, and this wait consumes it, so a later {@code fdatasync}
+     * would not see it.
      * <p>
      * The default does nothing (see {@link #syncFlushKick()}).
      */
@@ -115,6 +105,19 @@ public interface MemoryMA extends MemoryM, MemoryA {
      */
     default void syncFlushFinishIfExtended() {
         sync(false);
+    }
+
+    /**
+     * Stage 1 of the batched flush (Linux only): starts writeback of this memory's written range with
+     * {@code sync_file_range(WRITE)} and returns without waiting, so the caller can start every file of the
+     * batch before {@link #syncFlushDrain()} waits on any, and the writebacks overlap. Pages dirtied through the
+     * mapping need no {@code msync} first: Linux tracks them as dirty. A speed aid only: it issues no device
+     * flush and must not advance a {@code lastSynced*} watermark; only {@link #syncFlushFinishIfExtended()},
+     * which runs once the data is durable, may do that.
+     * <p>
+     * The default does nothing; {@link #syncFlushFinishIfExtended()} then falls back to {@code sync(false)}.
+     */
+    default void syncFlushKick() {
     }
 
     default void toTop() {

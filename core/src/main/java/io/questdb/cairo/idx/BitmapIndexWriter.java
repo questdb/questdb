@@ -487,16 +487,7 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     /**
-     * Batched flush, stage 1 (Linux): pushes both index files' dirty pages to the page cache. Kicks flush
-     * nothing to the device, so the value and key order does not matter here.
-     */
-    public void syncFlushKick() {
-        valueMem.syncFlushKick();
-        keyMem.syncFlushKick();
-    }
-
-    /**
-     * Batched flush, stage 2 (Linux): writes both index files' pages back to the device cache (WAIT_AFTER).
+     * Batched flush, stage 2 (Linux): waits for both index files' writeback to reach the device cache.
      * Order does not matter, as for kicks.
      */
     public void syncFlushDrain() {
@@ -512,6 +503,15 @@ public class BitmapIndexWriter implements IndexWriter {
     public void syncFlushFinishIfExtended() {
         valueMem.syncFlushFinishIfExtended();
         keyMem.syncFlushFinishIfExtended();
+    }
+
+    /**
+     * Batched flush, stage 1 (Linux): starts writeback of both index files without waiting. Kicks flush
+     * nothing to the device, so the value and key order does not matter here.
+     */
+    public void syncFlushKick() {
+        valueMem.syncFlushKick();
+        keyMem.syncFlushKick();
     }
 
     public void truncate() {

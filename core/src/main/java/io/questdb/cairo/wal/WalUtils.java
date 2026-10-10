@@ -247,8 +247,7 @@ public class WalUtils {
                     newToken,
                     dstDir.trimTo(dstLen),
                     timestampType,
-                    partitionBy,
-                    configuration.getMicrosecondClock().getTicks() / 1000L
+                    partitionBy
             );
             dstDir.trimTo(dstLen);
         }

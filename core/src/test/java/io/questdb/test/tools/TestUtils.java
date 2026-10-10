@@ -1641,8 +1641,7 @@ public final class TestUtils {
                         configuration,
                         token,
                         timestampType,
-                        structure.getPartitionBy(),
-                        configuration.getMicrosecondClock().getTicks() / 1000L
+                        structure.getPartitionBy()
                 );
             }
         }

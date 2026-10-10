@@ -64,8 +64,8 @@ public final class CommitMode {
 
     /**
      * Returns {@code true} iff the mode flushes the table's applied files on every commit: partition columns,
-     * {@code _txn}, {@code _cv} and index files. SYNC blocks until they are durable, ASYNC schedules writeback,
-     * NOSYNC never flushes.
+     * {@code _txn}, {@code _cv} and index files. SYNC blocks until they are durable, ASYNC issues
+     * {@code msync(MS_ASYNC)} and leaves writeback to the kernel, NOSYNC never flushes.
      * <p>
      * ADAPTIVE returns {@code false}: its WAL is durable, and the durable epoch
      * ({@code TableWriter.fsyncMaterializedState()}, which flushes in every mode) plus the recovery replay of

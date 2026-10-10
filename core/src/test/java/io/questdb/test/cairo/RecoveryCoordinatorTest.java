@@ -2489,7 +2489,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     /**
      * Finding C2 (invariant pin) — locks the {@code TxReader.unsafeLoadAll} SLOT-SELECTION property that
-     * {@code RecoveryCoordinator.epochIsAheadOfLiveTxn}'s C2 assert relies on: {@code unsafeLoadAll} returns
+     * {@code RecoveryCoordinator.isEpochAheadOfLiveTxn}'s C2 assert relies on: {@code unsafeLoadAll} returns
      * the VERSION-SELECTED (latest) A/B slot when it is intact, and ONLY its IMMEDIATE predecessor
      * (version - 1) when the latest is torn — never an older slot. So {@code unsafeReadVersion() -
      * getVersion()} is exactly 0 on a clean load and exactly 1 on the torn-latest fallback. The recovery guard

@@ -80,7 +80,7 @@ public class RecoveryCoordinator {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
-    // Whether the last false answer of epochCopiesValid was a definite content mismatch, not a read failure.
+    // Whether the last false answer of areEpochCopiesValid was a definite content mismatch, not a read failure.
     private boolean contentMismatch;
     // Whether a selected save point header was rewritten without its own sync; recover() flushes them all at its end.
     private boolean isHeaderFlushPending;
@@ -121,7 +121,7 @@ public class RecoveryCoordinator {
                     repairInterruptedMetaSwap(token, src, dst);
                     // A table converting to non-WAL keeps its save point: the conversion replays its WAL
                     // from it first.
-                    if (recoverTable(token, src, dst, dir) && !adaptiveInstance && !isConversionToNonWalPending(token, dir)) {
+                    if (recoverTable(token, src, dir) && !adaptiveInstance && !isConversionToNonWalPending(token, dir)) {
                         exits.add(token);
                     }
                 } catch (CairoException | CairoError e) {
@@ -236,7 +236,7 @@ public class RecoveryCoordinator {
     }
 
     /**
-     * Removes a generation that failed a content check of {@link #epochCopiesValid} on a definite mismatch, once
+     * Removes a generation that failed a content check of {@link #areEpochCopiesValid} on a definite mismatch, once
      * the older generation is restored and has passed them. The same bytes fail the same way at every start, so
      * the file can never be selected; left in place, it stays listed ahead of the live cut until the next save
      * point overwrites it, and the lineage guard refuses a start that a kill leaves inside the replay. A failed
@@ -513,7 +513,7 @@ public class RecoveryCoordinator {
      * Restores the table's save point. Returns {@code false} when the table turns out to have none: only a save
      * point a crash interrupted before it was published, or one of a superseded lineage, which are removed.
      */
-    private boolean recoverTable(TableToken token, Path src, Path dst, Path dir) {
+    private boolean recoverTable(TableToken token, Path src, Path dir) {
         // A generation whose header was never written is a save point a crash interrupted before it was published.
         tablePath(dir, token);
         DurableEpochManifest.removeUnpublished(configuration, dir, dir.size(), token.getTableId());
@@ -539,7 +539,7 @@ public class RecoveryCoordinator {
                 continue;
             }
             // The lineage guard reads the live _txn, so it runs before any section is written over it.
-            if (epochIsAheadOfLiveTxn(token, src, candidate)) {
+            if (isEpochAheadOfLiveTxn(token, src, candidate)) {
                 // A fallback below leaves this generation listed first and the live _txn rewound to an older
                 // one. A live _txn equal to another valid generation's is that rewind: go on to it. A generation
                 // of this lineage is within its sequencer; one beyond it is discarded after the loop.
@@ -555,7 +555,7 @@ public class RecoveryCoordinator {
             restored |= DurableEpochManifest.restoreLiveFiles(configuration, token, src, rootLen, candidate.generation);
             // The content checks read files, so they run on the live files once they equal the sections.
             // A generation that fails them is a write-side bug; the other generation is restored over it.
-            if (epochCopiesValid(token, src, candidate)) {
+            if (areEpochCopiesValid(token, src, candidate)) {
                 selected = candidate;
                 break;
             }
@@ -568,7 +568,7 @@ public class RecoveryCoordinator {
         // that loads cleanly below it means a backup, checkpoint or PITR restore rewound the table under a save
         // point it left behind. Rolling forward to it would resurrect the discarded lineage, and the live state
         // below it may come from writes the storage lost, so the start fails closed. A torn live _txn, the
-        // post-crash state recovery repairs, does not trip the guard (see epochIsAheadOfLiveTxn).
+        // post-crash state recovery repairs, does not trip the guard (see isEpochAheadOfLiveTxn).
         if (ahead != null) {
             final long epochSeqTxn = ahead.epochSeqTxn;
             // Classify before refusing. A save point is taken at a cut already in the durable sequencer log, so
@@ -733,7 +733,7 @@ public class RecoveryCoordinator {
      * (table id, cut, symbol count, versions) also sets {@link #contentMismatch}, and recovery removes this
      * generation once the other one is restored.
      */
-    private boolean epochCopiesValid(TableToken token, Path scratch, DurableEpochManifest.Candidate candidate) {
+    private boolean areEpochCopiesValid(TableToken token, Path scratch, DurableEpochManifest.Candidate candidate) {
         contentMismatch = false;
         final long markerEpochSeqTxn = candidate.epochSeqTxn;
         final int epochGeneration = candidate.generation;
@@ -868,7 +868,7 @@ public class RecoveryCoordinator {
      * {@code seqTxn} is no evidence of a restore. The caller compares the save point with the sequencer frontier:
      * one beyond it belongs to a re-seeded lineage and is discarded, anything else fails the start closed.
      */
-    private boolean epochIsAheadOfLiveTxn(TableToken token, Path scratch, DurableEpochManifest.Candidate candidate) {
+    private boolean isEpochAheadOfLiveTxn(TableToken token, Path scratch, DurableEpochManifest.Candidate candidate) {
         final long epochSeqTxn = candidate.epochSeqTxn;
         TxReader liveTxn = null;
         try {

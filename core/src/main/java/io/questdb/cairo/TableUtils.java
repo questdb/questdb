@@ -2751,27 +2751,11 @@ public final class TableUtils {
     }
 
     /**
-     * The publish-by-rename counterpart of {@link #fsyncDirDurable}: renames {@code src} to {@code dst} so
-     * that the new name is durable when this returns.
-     * <p>
-     * Each publish site pairs its rename with a {@link #fsyncDirDurable} of the parent, which makes the new
-     * name durable on POSIX but is skipped on a restricted (Windows) file system. On Windows this asks for
-     * the move itself to be durable, so a power loss cannot keep the fsynced contents and the durable
-     * pointer naming them while losing the name. Elsewhere this is {@link FilesFacade#rename(LPSZ, LPSZ)}
-     * and the parent fsync does the work.
-     * <p>
-     * Fail-stop, matching {@link #renameOrFail}.
-     */
-    public static void renameDurableOrFail(FilesFacade ff, LPSZ src, LPSZ dst) {
-        if (ff.renameDurable(src, dst) != Files.FILES_RENAME_OK) {
-            throw CairoException.critical(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
-        }
-    }
-
-    /**
-     * {@link #renameDurableOrFail} under a commit mode that asks for durability, a plain rename under
-     * {@link CommitMode#NOSYNC}. Use at publish sites whose companion directory fsync is itself
-     * mode-conditional, so NOSYNC keeps costing nothing.
+     * {@link FilesFacade#renameDurable(LPSZ, LPSZ)} under a commit mode that asks for durability, a plain rename
+     * under {@link CommitMode#NOSYNC}. Each publish site pairs its rename with a {@link #fsyncDirDurable} of the
+     * parent, which makes the new name durable on POSIX but is skipped on a restricted (Windows) file system; there
+     * the durable rename makes the move itself durable. Use at publish sites whose companion directory fsync is
+     * itself mode-conditional, so NOSYNC keeps costing nothing.
      */
     public static int renamePublish(FilesFacade ff, LPSZ src, LPSZ dst, int commitMode) {
         return commitMode == CommitMode.NOSYNC ? ff.rename(src, dst) : ff.renameDurable(src, dst);

@@ -389,39 +389,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void syncFlushKick() {
-        if (pageAddress == 0) {
-            return; // closed/unmapped (e.g. a parquet-converted column): nothing to flush, ff is null
-        }
-        // Batched flush, stage 1: msync(MS_ASYNC) the dirty range into the page cache, so the following
-        // sync_file_range sees it. The range selection matches sync(); no fdatasync. This never moves
-        // lastSyncedAppendOffset or lastSyncedSize: the watermarks advance only in stage 3, once the data is
-        // durable.
-        if (appendOnly) {
-            final long ao = getAppendOffset();
-            if (ao > 0) {
-                ff.msync(pageAddress, ao, true);
-            }
-        } else {
-            ff.msync(pageAddress, size, true);
-        }
-    }
-
-    @Override
     public void syncFlushDrain() {
         if (pageAddress == 0) {
             return; // closed/unmapped (e.g. a parquet-converted column): nothing to drain, fd is -1
         }
-        // Batched flush, stage 2: sync_file_range(WRITE | WAIT_AFTER) writes the dirty range back to the device
-        // cache and waits; no device flush, no watermark change. The mapping starts at file offset 0, so the
-        // range is [0, appendOffset) for append-only memory and [0, size) otherwise. WAIT_AFTER is required:
-        // without it the writeback may not reach the device before the _cv device flush.
-        final long dirtyLen;
-        if (appendOnly) {
-            dirtyLen = getAppendOffset();
-        } else {
-            dirtyLen = size;
-        }
+        // Batched flush, stage 2: sync_file_range(WRITE | WAIT_AFTER) waits for the writeback stage 1 started
+        // and writes back anything it left; no device flush, no watermark change. Waiting here is what reports
+        // a writeback error: the wait consumes it for this open file, so a later fdatasync would not see it.
+        final long dirtyLen = syncFlushLen();
         if (dirtyLen > 0 && ff.syncFileRange(fd, 0, dirtyLen, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER) != 0) {
             throw CairoException.dataSyncFailure(ff.errno(), "sync_file_range").put("could not sync_file_range [fd=").put(fd).put(']');
         }
@@ -438,6 +413,20 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             if (appendOnly) {
                 lastSyncedAppendOffset = getAppendOffset();
             }
+        }
+    }
+
+    @Override
+    public void syncFlushKick() {
+        if (pageAddress == 0) {
+            return; // closed/unmapped (e.g. a parquet-converted column): nothing to flush, fd is -1
+        }
+        // Batched flush, stage 1: sync_file_range(WRITE) starts writeback of the written range and returns, so
+        // the writeback of every file in the batch runs at once before stage 2 waits. Pages dirtied through the
+        // mapping need no msync first: Linux tracks them as dirty. No device flush, no watermark change.
+        final long dirtyLen = syncFlushLen();
+        if (dirtyLen > 0 && ff.syncFileRange(fd, 0, dirtyLen, Files.SYNC_FILE_RANGE_WRITE) != 0) {
+            throw CairoException.dataSyncFailure(ff.errno(), "sync_file_range").put("could not sync_file_range [fd=").put(fd).put(']');
         }
     }
 
@@ -573,6 +562,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         close();
         this.ff = ff;
         fd = TableUtils.openFileRWOrFail(ff, name, opts);
+    }
+
+    // The range the batched flush writes back. The mapping starts at file offset 0, so it is
+    // [0, appendOffset) for append-only memory and [0, size) otherwise, the range sync() selects.
+    private long syncFlushLen() {
+        return appendOnly ? getAppendOffset() : size;
     }
 
     protected void map(FilesFacade ff, @Nullable Utf8Sequence name, long size, int memoryTag) {

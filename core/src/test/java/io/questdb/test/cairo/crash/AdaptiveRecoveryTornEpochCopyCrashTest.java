@@ -1182,7 +1182,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                     if (!isCalledFrom("readHeader")) {
                         suffix = null;
                     }
-                } else if (Utf8s.endsWithAscii(name, armed) && isCalledFrom("epochCopiesValid")) {
+                } else if (Utf8s.endsWithAscii(name, armed) && isCalledFrom("areEpochCopiesValid")) {
                     fired = true;
                     return -1;
                 }

@@ -2245,7 +2245,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             execute("create table " + tableName + " (x long, ts timestamp) timestamp(ts) partition by DAY WAL");
 
             // Commit 5 rows; WAL writer flushes them to wal1/0/x.d (8 bytes each = 40 bytes)
-            execute("insert into " + tableName + " select x, timestamp_sequence('2022-02-24', 1000000L) from long_sequence(5)");
+            execute("insert into " + tableName + " select x, timestamp_sequence('2022-02-24', 1_000_000L) from long_sequence(5)");
 
             // Release the WAL writer so the segment file can be truncated safely.
             engine.releaseInactive();
@@ -2292,7 +2292,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             execute("create table " + tableName + " (v varchar, ts timestamp) timestamp(ts) partition by DAY WAL");
 
             // Commit 5 rows; each aux entry is 16 bytes, so aux file = 80 bytes minimum.
-            execute("insert into " + tableName + " select 'hello' || x, timestamp_sequence('2022-02-24', 1000000L) from long_sequence(5)");
+            execute("insert into " + tableName + " select 'hello' || x, timestamp_sequence('2022-02-24', 1_000_000L) from long_sequence(5)");
 
             engine.releaseInactive();
 
@@ -2338,7 +2338,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             // Use longer values (>9 bytes), so they are not fully inlined and appear in .d.
             execute("insert into " + tableName +
-                    " select rpad('x', 20, 'x') || x, timestamp_sequence('2022-02-24', 1000000L) from long_sequence(5)");
+                    " select rpad('x', 20, 'x') || x, timestamp_sequence('2022-02-24', 1_000_000L) from long_sequence(5)");
 
             engine.releaseInactive();
 

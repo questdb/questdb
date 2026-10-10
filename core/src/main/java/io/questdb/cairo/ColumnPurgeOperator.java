@@ -159,7 +159,7 @@ public class ColumnPurgeOperator implements Closeable {
      * when no reader does, notably at startup, where there are no readers but the save point is what the
      * next recovery restores.
      */
-    private boolean checkEpochHoldsVersion(long columnVersion, ColumnPurgeTask task) {
+    private boolean isVersionHeldByEpoch(long columnVersion, ColumnPurgeTask task) {
         return task.getTableToken().isWal()
                 && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
                 .isRangeAvailableToEpoch(columnVersion + 1, task.getUpdateTxn());
@@ -169,7 +169,7 @@ public class ColumnPurgeOperator implements Closeable {
         long updateTxn = task.getUpdateTxn();
         try {
             return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn)
-                    || checkEpochHoldsVersion(columnVersion, task);
+                    || isVersionHeldByEpoch(columnVersion, task);
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
@@ -410,7 +410,7 @@ public class ColumnPurgeOperator implements Closeable {
                         // recovery restoring a _txn/_cv whose column files are gone, and the writer reopen would
                         // fail ("SymbolMap does not exist") and suspend the table.
                         if (engine.getCheckpointStatus().isInProgress()
-                                || checkEpochHoldsVersion(columnVersion, task)
+                                || isVersionHeldByEpoch(columnVersion, task)
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;

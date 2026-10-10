@@ -68,12 +68,10 @@ public final class Files {
     public static final int POSIX_MADV_SEQUENTIAL;
     public static final char SEPARATOR;
     // sync_file_range(2) flags (Linux). Values are part of the stable kernel ABI.
-    // WAIT_BEFORE: wait for already-in-flight writeback over the range to finish before starting.
-    public static final int SYNC_FILE_RANGE_WAIT_BEFORE = 1;
-    // WRITE: initiate writeback of dirty pages in the range to the device (does not flush the device cache).
-    public static final int SYNC_FILE_RANGE_WRITE = 2;
-    // WAIT_AFTER: wait for the writeback initiated above to reach the device cache before returning.
+    // WAIT_AFTER: wait for the range's writeback, including any already in flight, to reach the device cache.
     public static final int SYNC_FILE_RANGE_WAIT_AFTER = 4;
+    // WRITE: start writeback of the range's dirty pages to the device and return (no device cache flush).
+    public static final int SYNC_FILE_RANGE_WRITE = 2;
     // https://github.com/torvalds/linux/blob/e2f48c48090dea172c0c571101041de64634dae5/include/uapi/linux/magic.h#L18
     public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
@@ -243,9 +241,8 @@ public final class Files {
      * {@code SYNC_FILE_RANGE_*} flags. Durability needs a following device flush ({@link #fdatasync(long)},
      * {@link #fsync(long)} or {@link #syncfs(long)}).
      * <p>
-     * It acts only on pages the kernel tracks as dirty: mmap-dirtied pages must first reach the page cache
-     * through {@link #msync(long, long, boolean)}, or be written with {@code write()}. A no-op returning 0
-     * off Linux.
+     * Pages dirtied through a shared mapping count: Linux tracks them as dirty from the write fault, so no
+     * {@code msync} is needed first ({@code msync(MS_ASYNC)} is a no-op there). A no-op returning 0 off Linux.
      */
     public static int syncFileRange(long fd, long offset, long nbytes, int flags) {
         return syncFileRange0(toOsFd(fd), offset, nbytes, flags);
@@ -255,10 +252,9 @@ public final class Files {
      * Linux syncfs(2): writes back all dirty data of the filesystem containing {@code fd}, journals every
      * pending metadata change on it (including the ext4 unwritten-to-written extent conversions that make
      * just-written column extents durable), and issues one device cache flush, in place of one
-     * {@link #fdatasync(long)} per file in a batched flush. Like {@link #syncFileRange}, it writes back only
-     * pages the kernel tracks as dirty, so mmap-dirtied pages must first go through
-     * {@link #msync(long, long, boolean)}. Off Linux it flushes {@code fd} only ({@code F_FULLFSYNC} on
-     * macOS).
+     * {@link #fdatasync(long)} per file in a batched flush. As with {@link #syncFileRange}, that includes pages
+     * dirtied through a shared mapping, without an {@code msync} first. Off Linux it flushes {@code fd} only
+     * ({@code F_FULLFSYNC} on macOS).
      */
     public static int syncfs(long fd) {
         return syncfs0(toOsFd(fd));

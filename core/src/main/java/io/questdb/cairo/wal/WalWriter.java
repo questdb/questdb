@@ -166,10 +166,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long pendingDurableSeqTxn = -1L;
     // Wall-clock micros of the oldest pending commit. The flush fires once now - pendingSinceMicros >= W.
     private long pendingSinceMicros = -1L;
-    // The oldest pending seqTxn of the current batch, registered on the SeqTxnTracker as this writer's pin
-    // (registerWriterPending); -1 when nothing is pending. Writers of one table flush independently, so the
-    // shared frontier advances only to the lowest pin across writers, not to this writer's flushed seqTxn.
-    private long pendingLoSeqTxn = -1L;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
     private long lastMatViewPeriodHi = WAL_DEFAULT_LAST_PERIOD_HI;
@@ -307,7 +303,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
             if (syncedMode == CommitMode.ADAPTIVE) {
-                if (deferDeviceFlush()) {
+                if (isDeviceFlushDeferred()) {
                     recordPendingDurable(seqTxn);
                 } else {
                     checkDistressed();
@@ -640,7 +636,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             final long seqTxn = getSequencerTxn();
             // W>0: the private events are already durable. Record the deferred sequencer flush as pending, so
             // the next commit or the background flusher runs it within W even if commits stop.
-            if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
@@ -841,7 +837,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 final long seqTxn = getSequencerTxn();
                 // W>0: carry the remaining shared-sequencer barrier in the batched flush, which
                 // cleanupBeforeClose runs when this writer closes after the seeds.
-                if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+                if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
                     recordPendingDurable(seqTxn);
                 }
             }
@@ -868,7 +864,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
             // W>0: private events are durable; record the remaining shared-sequencer barrier pending.
-            if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
@@ -1020,7 +1016,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         final int commitMode = walCommitMode();
         if (commitMode == CommitMode.ADAPTIVE) {
             events.sync(commitMode);
-            if (deferDeviceFlush()) {
+            if (isDeviceFlushDeferred()) {
                 // Under W>0 sync() is MS_ASYNC. The private event and index files still have to be on the device
                 // before any writer can flush the shared sequencer.
                 events.barrierFsync();
@@ -1049,7 +1045,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // W>0: start a pending batch for this txn, as commit0 does. The callers, apply(AlterOperation) and
             // apply(UpdateOperation), have already flushed earlier pending data commits. Without the batch, the
             // frontier of a table that goes idle after a SQL txn would never pass it.
-            if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
                 recordPendingDurable(seqTxn);
             }
             return seqTxn;
@@ -1259,7 +1255,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 syncIfRequired(commitMode);
                 final long seqTxn = getSequencerTxn();
                 if (commitMode == CommitMode.ADAPTIVE) {
-                    if (deferDeviceFlush()) {
+                    if (isDeviceFlushDeferred()) {
                         // Test hook: the txn is sequenced and the sequencer pinned it with the assignment, so a peer's
                         // markWriterDurable here cannot advance the frontier over it.
                         if (commitInterceptor != null) {
@@ -1627,7 +1623,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             txReader = Misc.free(txReader);
 
             // All native resources are now released; surface the first close-time fault (if any) to the caller.
-            throwFirstCloseError(closeError);
+            CairoException.rethrowCleanupFailure(closeError);
         }
     }
 
@@ -1652,7 +1648,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
         }
-        throwFirstCloseError(closeError);
+        CairoException.rethrowCleanupFailure(closeError);
     }
 
     private void freeColumns(boolean truncate) {
@@ -1674,19 +1670,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     }
                 }
             }
-            throwFirstCloseError(closeError);
-        }
-    }
-
-    private static void throwFirstCloseError(Throwable closeError) {
-        if (closeError != null) {
-            if (closeError instanceof Error) {
-                throw (Error) closeError;
-            }
-            if (closeError instanceof RuntimeException) {
-                throw (RuntimeException) closeError;
-            }
-            throw new RuntimeException(closeError);
+            CairoException.rethrowCleanupFailure(closeError);
         }
     }
 
@@ -2173,7 +2157,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
         final int commitMode = walCommitMode();
         events.sync(commitMode);
-        if (isCommittingData && commitMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+        if (isCommittingData && commitMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
             // The commit's own pre-sequencing barrier (syncIfRequired) ran on the old segment before the sequencer
             // answered NO_TXN, and the commit sequences this copy as soon as the change log is applied. Under W>0
             // sync() above is only MS_ASYNC: without this barrier the batched sequencer flush would acknowledge the
@@ -2356,11 +2340,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     /**
      * Whether the structural null backfill msyncs with MS_ASYNC: under ASYNC, and under ADAPTIVE with a group
-     * window, where the msync only pushes the pages and the barrierFsync that follows orders them.
+     * window, where the msync flushes nothing and the barrierFsync that follows writes the pages back and orders
+     * them.
      */
-    private boolean adaptiveMsyncAsync(int commitMode) {
+    private boolean isAdaptiveMsyncAsync(int commitMode) {
         return commitMode == CommitMode.ASYNC
-                || (commitMode == CommitMode.ADAPTIVE && deferDeviceFlush());
+                || (commitMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred());
     }
 
     private void setColumnNull(int columnType, int columnIndex, long rowCount, int commitMode) {
@@ -2407,13 +2392,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             try {
                 columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(auxMemAddr, auxMemSize, adaptiveMsyncAsync(commitMode));
+                    ff.msync(auxMemAddr, auxMemSize, isAdaptiveMsyncAsync(commitMode));
                 }
             } finally {
                 ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
             }
-            // As in syncAdaptiveEventsBeforeSequencing, the msync pushes the bytes and barrierFsync orders them
-            // ahead of the sequencer record; msync(MS_SYNC) alone would depend on the kernel treating it as a
+            // As in syncAdaptiveEventsBeforeSequencing, barrierFsync writes the bytes back and orders them ahead
+            // of the sequencer record; msync(MS_SYNC) alone would depend on the kernel treating it as a
             // range fsync. This structural path never runs syncIfRequired0's per-column loop, so the backfill
             // takes its own barrier.
             if (commitMode == CommitMode.ADAPTIVE) {
@@ -2431,7 +2416,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             try {
                 columnTypeDriver.setDataVectorEntriesToNull(dataMemAddr, rowCount);
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(dataMemAddr, varColSize, adaptiveMsyncAsync(commitMode));
+                    ff.msync(dataMemAddr, varColSize, isAdaptiveMsyncAsync(commitMode));
                 }
             } finally {
                 ff.munmap(dataMemAddr, varColSize, MEM_TAG);
@@ -2518,17 +2503,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     column.sync(async);
                 }
             }
-            // Advisory writeback drain. Each fdatasync below writes back and forces the journal, serially; one
-            // sync_file_range(WRITE|WAIT_AFTER) pass first lets the device write every file back concurrently. It
-            // journals no metadata, so it never replaces a barrier, and on ext4 one file's fdatasync does not journal
+            // Advisory writeback drain. Each fdatasync below writes back and forces the journal, serially; starting
+            // every file's writeback first (sync_file_range WRITE) and only then waiting on each lets the device
+            // write them back at once, which leaves the fdatasyncs little more than the journal force. It journals
+            // no metadata, so it never replaces a barrier, and on ext4 one file's fdatasync does not journal
             // another's inode: every file still gets its own fdatasync below, which journals the extent conversions
             // of this segment's preallocated mmap appends. Being advisory, it is safe to skip where it does nothing,
-            // such as on ZFS. ADAPTIVE syncs the event mappings at the ASYNC grade (MS_ASYNC, no barrier), so
-            // hoisting that sync above the column barriers keeps the data, events, sequencer order below.
-            final int eventsSyncMode = adaptive ? CommitMode.ASYNC : commitMode;
-            final boolean drain = adaptive && isWritebackDrainEnabled;
-            if (drain) {
-                events.sync(eventsSyncMode); // MS_ASYNC only: makes the event mappings' pages known-dirty
+            // such as on ZFS. The waits stay before every barrier, so the data, events, sequencer order is unchanged.
+            if (adaptive && isWritebackDrainEnabled) {
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    final MemoryMA column = columns.getQuick(i);
+                    if (column != null) {
+                        column.syncFlushKick();
+                    }
+                }
+                events.syncFlushKick();
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     final MemoryMA column = columns.getQuick(i);
                     if (column != null) {
@@ -2543,7 +2532,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // system, so on the commit path it would also force out the lazily applied table state that ADAPTIVE
             // leaves to the epoch, at the window's cadence instead of the epoch's. Batching these barriers across
             // commits needs a coordinated cross-writer flush, not a wider one.
-            if (commitMode == CommitMode.ADAPTIVE) {
+            if (adaptive) {
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     MemoryMA column = columns.getQuick(i);
                     if (column != null && !(column instanceof NullMemory) && column.getFd() != -1) {
@@ -2553,9 +2542,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     }
                 }
             }
-            if (!drain) {
-                events.sync(eventsSyncMode);
-            }
+            // ADAPTIVE syncs the event mappings at the ASYNC grade (MS_ASYNC) and takes the barrier itself below.
+            events.sync(adaptive ? CommitMode.ASYNC : commitMode);
             if (adaptive) {
                 events.barrierFsync();
             }
@@ -2567,7 +2555,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * before sequencing; only the shared sequencer flush is deferred to {@link #flushPendingDurable()}.
      * Callers invoke it only on adaptive paths.
      */
-    private boolean deferDeviceFlush() {
+    private boolean isDeviceFlushDeferred() {
         return configuration.getAdaptiveCommitGroupWindowUs() > 0;
     }
 
@@ -2584,7 +2572,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (pendingDurableSeqTxn < 0) {
             // First commit of a new batch: start the batch's age clock.
             pendingSinceMicros = configuration.getMicrosecondClock().getTicks();
-            pendingLoSeqTxn = seqTxn;
             // The sequencer already pinned this txn under its write lock (TableSequencerImpl.nextTxn), so this
             // is normally a no-op. It matters when this writer's own flush was in progress at the time: the
             // txn was sequenced after that flush's fdatasync and reused the previous batch's pin, which the
@@ -2660,7 +2647,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             seqTxnTracker.markWriterDurable(walId, orphanSweepMark, coveredSeqTxn);
             pendingDurableSeqTxn = -1L;
             pendingSinceMicros = -1L;
-            pendingLoSeqTxn = -1L;
             sequencer.getWalGroupCommitFlushQueue().unregister(this);
         } catch (CairoException e) {
             if (e.isDataSyncFailure()) {
@@ -2670,7 +2656,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // successful peer flush of the sequencer log may reap it.
                 pendingDurableSeqTxn = -1L;
                 pendingSinceMicros = -1L;
-                pendingLoSeqTxn = -1L;
                 seqTxnTracker.orphanWriterPending(walId);
                 sequencer.getWalGroupCommitFlushQueue().unregister(this);
                 sequencer.handleDataSyncFailure(e);
@@ -2719,7 +2704,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private synchronized void dropPendingDurable() {
         pendingDurableSeqTxn = -1L;
         pendingSinceMicros = -1L;
-        pendingLoSeqTxn = -1L;
         // Orphan this writer's pin rather than remove it. This teardown did not flush the batch, so its
         // sequencer records may be only in the page cache, and removing the pin would let the frontier pass
         // them. Nothing calls markWriterDurable(walId) for a torn-down writer, so a pin left as it is would
@@ -2746,7 +2730,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         distressed = true;
         pendingDurableSeqTxn = -1L;
         pendingSinceMicros = -1L;
-        pendingLoSeqTxn = -1L;
         // Orphan the pin, as dropPendingDurable does: the batch is not flushed, so the frontier must stay
         // behind it until a writer's fdatasync of the sequencer log covers it.
         seqTxnTracker.orphanWriterPending(walId);

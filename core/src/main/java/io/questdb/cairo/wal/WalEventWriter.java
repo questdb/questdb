@@ -524,8 +524,8 @@ class WalEventWriter implements Closeable {
      */
     void sync(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            // With a group window the mappings are pushed with MS_ASYNC, and the caller fdatasyncs these
-            // private files before sequencing; only the shared sequencer flush is batched. ADAPTIVE with no
+            // With a group window the mappings get only MS_ASYNC, which flushes nothing, and the caller fdatasyncs
+            // these private files before sequencing; only the shared sequencer flush is batched. ADAPTIVE with no
             // window takes MS_SYNC plus the barrier below. ASYNC and SYNC keep their own grade.
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
@@ -561,12 +561,20 @@ class WalEventWriter implements Closeable {
     }
 
     /**
-     * Advisory writeback drain: push the page-cache-dirty ranges to the device and WAIT. No device flush,
-     * no metadata journalled -- the caller's per-file {@code fdatasync} is still the barrier.
+     * Advisory writeback drain, the wait: waits for the writeback {@link #syncFlushKick()} started. No device
+     * flush, no metadata journalled: the caller's per-file {@code fdatasync} is still the barrier.
      */
     void syncFlushDrain() {
         eventMem.syncFlushDrain();
         eventIndexMem.syncFlushDrain();
+    }
+
+    /**
+     * Advisory writeback drain, the start: starts writeback of both files and returns without waiting.
+     */
+    void syncFlushKick() {
+        eventMem.syncFlushKick();
+        eventIndexMem.syncFlushKick();
     }
 
     /**

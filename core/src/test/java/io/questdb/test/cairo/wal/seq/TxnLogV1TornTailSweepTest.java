@@ -146,6 +146,57 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstDurableOpenAfterNosyncFlushesTheLogOnce() throws Exception {
+        // The one-off cost of a switch into SYNC or ADAPTIVE that the guide documents: after a NOSYNC or ASYNC
+        // run the first durable open scans the whole log and flushes it once; the durable opens after it flush
+        // nothing, and NOSYNC and ASYNC opens never flush.
+        assertMemoryLeak(() -> {
+            final int[] flushes = {0};
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public void fdatasync(long fd) {
+                    flushes[0]++;
+                    super.fdatasync(fd);
+                }
+            };
+            final SweepConfiguration configuration = new SweepConfiguration(root, ff);
+            final String seqDir = root + "/switch/" + WalUtils.SEQ_DIR;
+            Files.createDirectories(Paths.get(seqDir));
+            final StringBuilder actual = new StringBuilder();
+            try (Path path = new Path().of(seqDir)) {
+                configuration.commitMode = CommitMode.NOSYNC;
+                int txns = 0;
+                try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                    log.create(path, TS_BASE);
+                    while (txns < 100) {
+                        txns++;
+                        log.addEntry(0, 100 + txns, 0, txns - 1, TS_BASE + txns * 1_000L, 0, 0, 0);
+                    }
+                }
+                // A NOSYNC restart, two durable restarts, a NOSYNC run with commits, an ASYNC restart, two
+                // ADAPTIVE restarts.
+                final int[] modes = {CommitMode.NOSYNC, CommitMode.SYNC, CommitMode.SYNC, CommitMode.NOSYNC, CommitMode.ASYNC, CommitMode.ADAPTIVE, CommitMode.ADAPTIVE};
+                for (int i = 0; i < modes.length; i++) {
+                    configuration.commitMode = modes[i];
+                    flushes[0] = 0;
+                    try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                        log.open(path);
+                        Assert.assertEquals(txns, log.lastTxn());
+                        if (i == 3) {
+                            for (int t = 0; t < 10; t++) {
+                                txns++;
+                                log.addEntry(0, 100 + txns, 0, txns - 1, TS_BASE + txns * 1_000L, 0, 0, 0);
+                            }
+                        }
+                    }
+                    actual.append(CommitMode.toString(modes[i])).append('=').append(flushes[0]).append(' ');
+                }
+            }
+            Assert.assertEquals("nosync=0 sync=1 sync=0 nosync=0 async=0 adaptive=1 adaptive=0 ", actual.toString());
+        });
+    }
+
+    @Test
     public void testPowerLossInTheTailKeepsExactlyTheIntactPrefix() throws Exception {
         assertMemoryLeak(() -> {
             final Sweep sweep = new Sweep(root);
@@ -156,7 +207,6 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 }
             }
             final String report = sweep.report();
-            System.out.println(report);
             Assert.assertEquals(report, 0, sweep.failures);
         });
     }

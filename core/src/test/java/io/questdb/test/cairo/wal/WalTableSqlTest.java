@@ -2173,7 +2173,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " as (" +
                     "select x, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " timestamp_sequence('2022-02-24', 1_000_000L) ts " +
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );

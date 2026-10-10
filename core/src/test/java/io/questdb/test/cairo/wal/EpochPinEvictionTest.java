@@ -323,17 +323,17 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1000000L) ts from long_sequence(600)");
+            execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1_000_000L) ts from long_sequence(600)");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("x");
             final String epochRows = snapshot();
             evictIdleScoreboard(tt);
 
-            execute("insert into x select cast(9000 + x as int) i, timestamp_sequence('2024-02-01T05:00', 1000000L) ts from long_sequence(50)");
+            execute("insert into x select cast(9000 + x as int) i, timestamp_sequence('2024-02-01T05:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();
-            execute("insert into x select cast(8000 + x as int) i, timestamp_sequence('2024-02-01T07:00', 1000000L) ts from long_sequence(50)");
+            execute("insert into x select cast(8000 + x as int) i, timestamp_sequence('2024-02-01T07:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();
-            execute("insert into x select cast(7000 + x as int) i, timestamp_sequence('2024-02-02T00:00', 1000000L) ts from long_sequence(5)");
+            execute("insert into x select cast(7000 + x as int) i, timestamp_sequence('2024-02-02T00:00', 1_000_000L) ts from long_sequence(5)");
             drainWalQueue();
             assertPartitionDirExists(tt, "2024-02-01");
             final String liveRows = snapshot();
@@ -355,17 +355,17 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1000000L) ts from long_sequence(600)");
+            execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1_000_000L) ts from long_sequence(600)");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("x");
             final String epochRows = snapshot();
             dropEpochPinFromScoreboard(tt);
 
-            execute("insert into x select cast(9000 + x as int) i, timestamp_sequence('2024-02-01T05:00', 1000000L) ts from long_sequence(50)");
+            execute("insert into x select cast(9000 + x as int) i, timestamp_sequence('2024-02-01T05:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();
             final long versionBeforeSquash = liveNameTxn(tt, FEB_1);
             // Splits the day again, and the squash that follows folds the split back into the day.
-            execute("insert into x select cast(8000 + x as int) i, timestamp_sequence('2024-02-01T07:00', 1000000L) ts from long_sequence(50)");
+            execute("insert into x select cast(8000 + x as int) i, timestamp_sequence('2024-02-01T07:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();
             Assert.assertNotEquals(
                     "the squash must copy into a new version of the day, not append into the existing one",

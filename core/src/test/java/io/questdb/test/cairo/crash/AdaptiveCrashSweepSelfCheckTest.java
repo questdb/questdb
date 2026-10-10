@@ -372,7 +372,7 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
                     } else {
                         final long first = (long) i * rowsPerCommit;
                         execute("insert into " + table + " select timestamp_sequence(" + (FIRST_TS + first * 1_000_000L)
-                                + ", 1000000), x - 1 + " + first + " from long_sequence(" + rowsPerCommit + ")");
+                                + ", 1_000_000), x - 1 + " + first + " from long_sequence(" + rowsPerCommit + ")");
                     }
                     if (i == commits - 1) {
                         // Every WAL commit has returned durably at this point (W=0 in the commit, W>0 when the
