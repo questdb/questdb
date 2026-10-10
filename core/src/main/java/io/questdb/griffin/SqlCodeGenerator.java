@@ -4235,6 +4235,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // look for timestamp_floor to check for an alias
             CharSequence alias = timestamp.token;
             final CharSequence currTimestamp = curr.getTimestamp().token;
+            // Set when a column other than a timestamp_floor key carries the raw
+            // timestamp name, e.g. first(ts) AS ts. Such a column is not the bucket
+            // clock, so the original-token fallback below must not pick it (#7838).
+            boolean timestampTokenShadowed = false;
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn col = model.getBottomUpColumns().getQuick(i);
                 final ExpressionNode ast = col.getAst();
@@ -4243,6 +4247,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(ts, currTimestamp)) {
                         alias = col.getAlias();
                     }
+                } else if (col.getAlias() != null && Chars.equalsIgnoreCase(col.getAlias(), timestamp.token)) {
+                    timestampTokenShadowed = true;
                 }
             }
 
@@ -4258,8 +4264,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             // When the same timestamp column appears multiple times (e.g. SELECT k, k),
             // the alias may land on a renamed duplicate. Prefer the original token if
-            // it yields an earlier TIMESTAMP-typed index.
-            if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
+            // it yields an earlier TIMESTAMP-typed index and still names a
+            // timestamp_floor key rather than, say, a TIMESTAMP-typed aggregate.
+            if (!timestampTokenShadowed && !Chars.equalsIgnoreCase(alias, timestamp.token)) {
                 int origIndex = SqlUtil.getColumnIndexQuiet(baseMeta, timestamp.token);
                 if (origIndex >= 0
                         && ColumnType.isTimestamp(baseMeta.getColumnType(origIndex))

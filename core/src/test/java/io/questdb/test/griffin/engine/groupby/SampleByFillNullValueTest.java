@@ -1304,6 +1304,55 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullFirstTimestampAliasedToDesignatedTimestampName() throws Exception {
+        // first(ts) AS ts gives a TIMESTAMP-typed aggregate the designated timestamp's
+        // name. generateFill must still use the timestamp_floor key as the bucket
+        // clock; picking the aggregate made the fill keyed by bucket and returned a
+        // bucket x bucket cartesian product (#7838).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T03:00:00.000000Z')");
+            assertQuery("SELECT first(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            \tnull
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullFirstTimestampAliasedToDesignatedTimestampNameOffGrid() throws Exception {
+        // Same shape as the test above, with a first row that is off the bucket grid
+        // (01:15). With the aggregate wrongly driving the bucket clock the cursor
+        // asserted "next bucket must be a confirmed gap" under -ea and emitted fill
+        // rows without bound without it (#7838).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(2.0, '2024-01-01T01:15:00.000000Z')," +
+                    "(3.0, '2024-01-01T03:00:00.000000Z')");
+            assertQuery("SELECT first(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testFillNullKeyedWithNullKey() throws Exception {
         assertMemoryLeak(() -> {
             // NULL symbol key forms its own group in the cartesian product.
