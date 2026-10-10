@@ -98,6 +98,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
+    private boolean isMetadataProbe;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -445,6 +446,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isMetadataProbe() {
+        return isMetadataProbe;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -645,6 +651,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setMetadataProbe(boolean value) {
+        this.isMetadataProbe = value;
+    }
+
+    @Override
     public void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
         this.queryRegistryOwnerId = queryRegistryOwnerId;
     }
@@ -832,6 +843,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // but a reused per-connection context must never inherit a stale live-view flag.
         // setLiveViewCompile also clears the mirrored windowContext flag.
         setLiveViewCompile(false);
+        isMetadataProbe = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
         this.memoryTracker = null;

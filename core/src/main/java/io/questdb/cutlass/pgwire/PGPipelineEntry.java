@@ -1712,14 +1712,34 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     for (int attempt = 1; ; attempt++) {
                         final InsertOperation insertOp = tai.getInsert();
                         InsertMethod m;
+                        boolean isRetryable = true;
                         try {
                             m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                            // The method borrows the writer an earlier statement of the transaction
+                            // parked, if there is one, and with it the rows that statement appended.
+                            final TableWriterAPI borrowed = m.getWriter();
+                            final boolean isParked = pendingWriters.get(borrowed.getTableToken()) == borrowed;
+                            final long parkedRowCount = isParked ? borrowed.getUncommittedRowCount() : 0;
                             try {
                                 sqlAffectedRowCount = m.execute(sqlExecutionContext);
                                 TableWriterAPI writer = m.popWriter();
                                 pendingWriters.put(writer.getTableToken(), writer);
                             } catch (Throwable th) {
                                 TableWriterAPI w = m.popWriter();
+                                if (isParked && th instanceof TableReferenceOutOfDateException) {
+                                    if (w.getUncommittedRowCount() == parkedRowCount) {
+                                        // A stale plan fails before it appends, as when a view it reads
+                                        // was redefined, so the parked rows are intact. The writer stays
+                                        // parked for the recompiled plan to append to. Releasing it would
+                                        // roll those rows back, and the transaction would commit without
+                                        // them, while every statement in it reported success.
+                                        throw th;
+                                    }
+                                    // The failed plan rolled the parked rows back, and a retry cannot
+                                    // bring them back, so the transaction has to fail rather than commit
+                                    // without them.
+                                    isRetryable = false;
+                                }
                                 if (w != null) {
                                     pendingWriters.remove(w.getTableToken());
                                 }
@@ -1729,7 +1749,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             tai = Misc.free(tai);
-                            if (attempt == maxRecompileAttempts) {
+                            if (!isRetryable || attempt == maxRecompileAttempts) {
                                 throw e;
                             }
                             compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);

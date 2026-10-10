@@ -29,6 +29,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -68,9 +69,15 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.test.tools.TestUtils.assertEventually;
@@ -446,6 +453,67 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                     params.put("query", "SELECT * FROM default_format_test");
                     testHttpClient.assertGet("/exp", expectedCsv, params, null, null);
+                });
+    }
+
+    @Test
+    public void testExpExplainRecompilesAfterTableAlteredBeforeCursorOpen() throws Exception {
+        // The older trigger of the same recompile: a table the explained query reads gains a
+        // column after /exp compiled the statement and before it opened the cursor.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE explain_altered_t (ts TIMESTAMP, symbol SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    assertExpExplainRecompilesAfterConcurrentDdl(
+                            engine,
+                            sqlExecutionContext,
+                            "EXPLAIN SELECT symbol, sum(price) AS total FROM explain_altered_t",
+                            "ALTER TABLE explain_altered_t ADD COLUMN extra INT",
+                            """
+                                    "QUERY PLAN"\r
+                                    "GroupBy vectorized: true workers: 1"\r
+                                    "  keys: [symbol]"\r
+                                    "  values: [sum(price)]"\r
+                                    "    PageFrame"\r
+                                    "        Row forward scan"\r
+                                    "        Frame forward scan on: explain_altered_t"\r
+                                    """
+                    );
+                });
+    }
+
+    @Test
+    public void testExpExplainRecompilesAfterViewRedefinedBeforeCursorOpen() throws Exception {
+        // EXPLAIN opens the cursor of the plan it prints, so a view redefined after /exp compiled
+        // the statement and before it opened the cursor makes that plan stale. /exp has to
+        // recompile the EXPLAIN, as it recompiles a SELECT, and answer with the new plan.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE explain_redefined_t (ts TIMESTAMP, symbol SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    engine.execute(
+                            "CREATE VIEW explain_redefined_v AS (SELECT ts, symbol, price FROM explain_redefined_t)",
+                            sqlExecutionContext
+                    );
+                    assertExpExplainRecompilesAfterConcurrentDdl(
+                            engine,
+                            sqlExecutionContext,
+                            "EXPLAIN SELECT * FROM explain_redefined_v",
+                            "ALTER VIEW explain_redefined_v AS (SELECT symbol, sum(price) AS total FROM explain_redefined_t)",
+                            """
+                                    "QUERY PLAN"\r
+                                    "GroupBy vectorized: true workers: 1"\r
+                                    "  keys: [symbol]"\r
+                                    "  values: [sum(price)]"\r
+                                    "    PageFrame"\r
+                                    "        Row forward scan"\r
+                                    "        Frame forward scan on: explain_redefined_t"\r
+                                    """
+                    );
                 });
     }
 
@@ -2206,6 +2274,47 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFrameRecreatedViewAfterCache() throws Exception {
+        // A cached plan exports through getPageFrameCursor() rather than getCursor(), so the
+        // stale-view check has to run there too. Without it the cached plan outlives a DROP VIEW
+        // and CREATE VIEW, and goes on exporting the old body's rows.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE recreated_t (ts TIMESTAMP, symbol SYMBOL) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    engine.execute("""
+                            INSERT INTO recreated_t VALUES
+                                ('2024-01-01T00:00:00.000000Z', 'AAPL'),
+                                ('2024-01-01T00:00:01.000000Z', 'MSFT')""", sqlExecutionContext);
+                    engine.execute("CREATE VIEW recreated_v AS (SELECT ts, symbol FROM recreated_t)", sqlExecutionContext);
+
+                    final String query = "SELECT * FROM recreated_v";
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        httpClient.setKeepConnection(true);
+                        // The second request is served from the connection's select cache.
+                        for (int i = 0; i < 2; i++) {
+                            exportParquet(httpClient, sink, query);
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recreated_before_" + i + ".parquet");
+                        }
+
+                        engine.execute("DROP VIEW recreated_v", sqlExecutionContext);
+                        engine.execute(
+                                "CREATE VIEW recreated_v AS (SELECT ts, symbol FROM recreated_t WHERE symbol = 'AAPL')",
+                                sqlExecutionContext
+                        );
+
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recreated_after.parquet");
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameVarcharAndArrayColumns() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -2492,6 +2601,61 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 });
     }
 
+    private static void assertExpExplainRecompilesAfterConcurrentDdl(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String explainSql,
+            String concurrentDdl,
+            String expectedCsv
+    ) throws Exception {
+        final CountDownLatch compiled = new CountDownLatch(1);
+        final CountDownLatch altered = new CountDownLatch(1);
+        final AtomicLong requestThreadId = new AtomicLong(-1);
+        final AtomicInteger requestCompileCount = new AtomicInteger();
+        engine.getSqlCompilerPool().setPoolListener((_, thread, _, event, _, _) -> {
+            if (event != PoolListener.EV_RETURN) {
+                return;
+            }
+            if (requestThreadId.compareAndSet(-1, thread)) {
+                // /exp hands its compiler back once it has compiled the statement and before it
+                // opens the cursor. Hold the request there until the concurrent DDL commits.
+                requestCompileCount.incrementAndGet();
+                compiled.countDown();
+                try {
+                    Assert.assertTrue("concurrent DDL did not finish", altered.await(30, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            } else if (requestThreadId.get() == thread) {
+                requestCompileCount.incrementAndGet();
+            }
+        });
+        try (
+                TestHttpClient httpClient = new TestHttpClient();
+                ExecutorService executor = Executors.newSingleThreadExecutor()
+        ) {
+            final Future<String> response = executor.submit(() -> {
+                HttpClient.Request req = httpClient.getHttpClient().newRequest("localhost", 9001);
+                req.GET().url("/exp").query("query", explainSql);
+                return httpClient.reqToSink(req, httpClient.getSink(), null, null, null, null);
+            });
+            try {
+                Assert.assertTrue("/exp did not compile the statement", compiled.await(30, TimeUnit.SECONDS));
+                engine.execute(concurrentDdl, sqlExecutionContext);
+            } finally {
+                altered.countDown();
+            }
+            final String statusCode = response.get(30, TimeUnit.SECONDS);
+            Assert.assertEquals("unexpected /exp response: " + httpClient.getSink(), "200", statusCode);
+            TestUtils.assertEquals(expectedCsv, httpClient.getSink());
+            // one compile ahead of the DDL and one recompile after it
+            Assert.assertEquals(2, requestCompileCount.get());
+        } finally {
+            engine.getSqlCompilerPool().setPoolListener(null);
+        }
+    }
+
     private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         return new Thread(() -> {
             try {
@@ -2706,6 +2870,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
         TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private void exportParquet(TestHttpClient httpClient, DirectUtf8Sink sink, String query) {
+        HttpClient.Request req = httpClient.getHttpClient().newRequest("localhost", 9001);
+        req.GET().url("/exp");
+        req.query("query", query);
+        req.query("fmt", "parquet");
+        sink.clear();
+        httpClient.reqToSink(req, sink, null, null, null, null);
     }
 
     private HttpQueryTestBuilder getExportTester() {

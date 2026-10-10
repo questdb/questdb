@@ -253,7 +253,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             CompiledQuery cc;
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                                 cc = compiler.compile(state.sqlText, sqlExecutionContext);
-                                if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
+                                if (cc.getType() != CompiledQuery.SELECT && cc.getType() != CompiledQuery.EXPLAIN && isExpRequest) {
                                     // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
                                     cc.closeAllButSelect();
                                     Misc.free(cc.getOperation());

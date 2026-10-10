@@ -29,10 +29,13 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 
@@ -297,6 +300,54 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseDanglingBraceAroundWhen() {
+        // the inner 'when' flushes the brace, and the ')' after it used to flush the 'case'
+        assertFail(
+                "1 + case when (v when 1) then (1) else (2) end",
+                4,
+                "unbalanced 'case'"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingBraceBeforeWhen() {
+        assertFail(
+                "case (when v > 1 then 1 else 2 end)",
+                0,
+                "unbalanced 'case'"
+        );
+        assertFail(
+                "1 + case (when v > 1 then 1 else 2 end)",
+                4,
+                "unbalanced 'case'"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingBraceInNestedCase() {
+        // the error points at the innermost 'case', the one the brace is written in
+        assertFail(
+                "1 + case when x then (case (when a then b end)) end",
+                22,
+                "unbalanced 'case'"
+        );
+    }
+
+    @Test
+    public void testCaseDanglingBracketAroundKeyword() {
+        assertFail("1 + case when a[when 1] then 1 else 2 end", 4, "unbalanced 'case'");
+        assertFail("1 + case when x then a[1, 2, 3, end]", 4, "unbalanced 'case'");
+        assertFail("1 + case when x then ARRAY[1, when 2] else 2 end", 4, "unbalanced 'case'");
+        assertFail("1 + case when x then ARRAY[1, 2, 3, end]", 4, "unbalanced 'case'");
+    }
+
+    @Test
+    public void testCaseDanglingCastAroundKeyword() {
+        assertFail("1 + case cast(when v > 1 then 1 else 2 end as int)", 4, "unbalanced 'case'");
+        assertFail("1 + case when cast(v when 1 as int) then 1 end", 4, "unbalanced 'case'");
+    }
+
+    @Test
     public void testCaseDanglingDotAfterEnd() {
         assertFail(
                 "case x when 1 then 'a' when 2 then 'b' end.foo",
@@ -312,6 +363,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 46,
                 "'.' is unexpected here"
         );
+    }
+
+    @Test
+    public void testCaseDanglingFunctionCallAroundKeyword() {
+        assertFail("1 + case when f(when 1, 2) then 1 else 2 end", 4, "unbalanced 'case'");
+        assertFail("1 + case when f(a, b, c, end) then 1 end", 4, "unbalanced 'case'");
+        assertFail("1 + case when x then f(1, 2, 3 then 4) end", 4, "unbalanced 'case'");
     }
 
     @Test
@@ -369,6 +427,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseDanglingWildcard() {
+        // the wildcard replaces the 'case', so the error points at the keyword left without one
+        assertFail("case.* when 1 then 2 end", 7, "unbalanced 'case'");
+        assertFail("case.*(a, b, c, end)", 16, "unbalanced 'case'");
+    }
+
+    @Test
     public void testCaseInArithmetic() throws SqlException {
         x(" w1 1 + 10 = 'th1' w2 3 * 1 > 'th2' 0 case 5 * 1 +",
                 "case" +
@@ -415,10 +480,45 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseMissingArgInBraceQuery() throws Exception {
+        // The listener of this class shows nothing when a CASE is emitted with more operands
+        // than it was given; the tree a statement builds does. The CASE took a null operand,
+        // then an operand of the expression around it, then one of the CASE around it, and
+        // each statement failed with a NullPointerException at a different place.
+        assertQuery("select case when () then 1 else 2 end from long_sequence(1)")
+                .fails(20, "missing arguments");
+        assertQuery("select (x) + case when x > 1 then () else 2 end from long_sequence(1)")
+                .fails(37, "missing arguments");
+        assertQuery("select case when 1 x > 1 then case when (x = 1) then 'a' else () end when x > 2 then 'b' end from long_sequence(1)")
+                .fails(65, "missing arguments");
+    }
+
+    @Test
     public void testCaseMissingElseArg() {
         assertFail(
                 "case when a > b then 1 else end",
                 28,
+                "missing arguments"
+        );
+    }
+
+    @Test
+    public void testCaseMissingElseArgInBrace() {
+        // An empty brace delivers no value, the same as no brace at all.
+        assertFail(
+                "case when a > b then 1 else () end",
+                31,
+                "missing arguments"
+        );
+        assertFail(
+                "case when a > b then 1 else (()) end",
+                33,
+                "missing arguments"
+        );
+        // The inner CASE fails at its own END.
+        assertFail(
+                "case when a then case when b then 1 else () end else 2 end",
+                44,
                 "missing arguments"
         );
     }
@@ -442,6 +542,21 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseMissingThenArgInBrace() {
+        assertFail(
+                "case when a > b then () else 2 end",
+                24,
+                "missing arguments"
+        );
+        // With no ELSE, END is the keyword that finds the value missing.
+        assertFail(
+                "f(case when a then () end, 2)",
+                22,
+                "missing arguments"
+        );
+    }
+
+    @Test
     public void testCaseMissingWhen() {
         assertFail(
                 "case then x end",
@@ -455,6 +570,31 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "case when then 1 else 2 end",
                 10,
+                "missing arguments"
+        );
+    }
+
+    @Test
+    public void testCaseMissingWhenArgInBrace() {
+        assertFail(
+                "case when () then 1 else 2 end",
+                13,
+                "missing arguments"
+        );
+        assertFail(
+                "case a when () then 1 end",
+                15,
+                "missing arguments"
+        );
+        assertFail(
+                "case when a > b then 1 when () then 2 end",
+                31,
+                "missing arguments"
+        );
+        // A brace that holds only a dot delivers no value either.
+        assertFail(
+                "1 + case when (.) then 1 end",
+                18,
                 "missing arguments"
         );
     }
@@ -524,6 +664,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 11,
                 "dangling expression"
         );
+    }
+
+    @Test
+    public void testCaseWithDotDereference() throws SqlException {
+        x(" a b . b c . 1 + b c . - case",
+                "case when (a).b then (b).c + 1 else -(b).c end");
     }
 
     @Test
@@ -949,6 +1095,26 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testDotDereference() throws SqlException {
         x("a.b n .", "(a.b).n");
+    }
+
+    @Test
+    public void testDotDereferenceDanglingOperator() {
+        // The member access used to count one operand more than it delivered, so an operator
+        // with an operand missing passed the operand check after it.
+        assertFail("(a).b +", 6, "too few arguments for '+' [found=1,expected=2]");
+        assertFail("a = (b).c and", 10, "too few arguments for 'and' [found=1,expected=2]");
+        // Inside a CASE the operator took the operand of the WHEN before it.
+        assertFail("case when a then (b).c + else 1 end", 23, "too few arguments for '+' [found=1,expected=2]");
+    }
+
+    @Test
+    public void testDotDereferenceEmptyBrace() throws Exception {
+        // The access had no value to read: the statement built a `.` with a null operand and
+        // failed with a NullPointerException.
+        assertQuery("select ().x from long_sequence(1)")
+                .fails(10, "too few arguments for '.' [found=1,expected=2]");
+        assertFail("().b", 3, "too few arguments for '.' [found=1,expected=2]");
+        assertFail("case when a then ().b else 1 end", 20, "too few arguments for '.' [found=1,expected=2]");
     }
 
     @Test
@@ -1565,6 +1731,64 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testSimpleLiteralExit() throws Exception {
         x("a", "a lit");
+    }
+
+    @Test
+    public void testStackOverflowLeavesNoStateForNextStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            // Every level nests a sub-query inside an EXTRACT call, so the overflow unwinds through
+            // levels that each left an open 'extract(' on the operator stack. The FROM check of the
+            // next statement scans that stack and would read the stale tokens.
+            final int depth = 10_000;
+            final StringSink sql = new StringSink();
+            sql.put("SELECT ");
+            for (int i = 0; i < depth; i++) {
+                sql.put("extract(year FROM (SELECT ");
+            }
+            sql.put("now()");
+            for (int i = 0; i < depth; i++) {
+                sql.put("))");
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // The compile runs on a thread with a small stack of its own, so the nested
+                // sub-queries exhaust it whatever stack size the JVM gives the test thread. The
+                // statements after it run on the test thread, on the same compiler.
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final Thread thread = new Thread(
+                        null,
+                        () -> {
+                            try {
+                                compiler.compile(sql, sqlExecutionContext);
+                            } catch (Throwable th) {
+                                failure.set(th);
+                            }
+                        },
+                        "overflow",
+                        256 * 1024
+                );
+                thread.start();
+                thread.join();
+                if (!(failure.get() instanceof StackOverflowError)) {
+                    throw new AssertionError("expected StackOverflowError", failure.get());
+                }
+                assertQuery("SELECT x FROM long_sequence(3)")
+                        .withCompiler(compiler)
+                        .expectSize()
+                        .returns("""
+                                x
+                                1
+                                2
+                                3
+                                """);
+                assertQuery("SELECT x FROM long_sequence(3) WHERE x > (SELECT min(x) FROM long_sequence(3))")
+                        .withCompiler(compiler)
+                        .returns("""
+                                x
+                                2
+                                3
+                                """);
+            }
+        });
     }
 
     @Test

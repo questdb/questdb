@@ -116,6 +116,13 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
+    public boolean isBackgroundJob() {
+        // The statement was a principal's, but this re-execution is not: it runs under the root
+        // context, once on every node that applies the WAL.
+        return true;
+    }
+
+    @Override
     public boolean isUninterruptible() {
         return true;
     }

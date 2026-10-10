@@ -815,6 +815,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         OperationFuture fut = null;
         boolean isAsyncWait = false;
         try {
+            // closeOnDone hands the update operation over. execute() closes it when the statement
+            // completes or fails, a cancelled query and an OOM included, and the future closes
+            // the one it holds.
             fut = cq.execute(sqlExecutionContext, state.getEventSubSequence(), true);
             int waitResult = fut.await(getAsyncWriterStartTimeout(state));
             if (waitResult != OperationFuture.QUERY_COMPLETE) {
@@ -826,12 +829,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             final long updatedCount = fut.getAffectedRowsCount();
             metrics.jsonQueryMetrics().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
-        } catch (CairoException e) {
-            // close e.g., when the query has been canceled, or we got an OOM
-            if (e.isInterruption() || e.isOutOfMemory()) {
-                Misc.free(cq.getUpdateOperation());
-            }
-            throw e;
         } finally {
             if (!isAsyncWait && fut != null) {
                 fut.close();

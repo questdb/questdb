@@ -52,6 +52,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class CreateViewOperationImpl implements CreateViewOperation {
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final boolean isAudited;
     private final String sqlText;
     private final ViewDefinition viewDefinition = new ViewDefinition();
     private CreateTableOperationImpl createTableOperation;
@@ -59,10 +60,12 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     public CreateViewOperationImpl(
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
-            @NotNull @Transient LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+            @NotNull @Transient LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            boolean isAudited
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
+        this.isAudited = isAudited;
 
         viewDefinition.getDependencies().putAll(dependencies);
         dependencies.clear();
@@ -181,7 +184,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
         viewDefinition.init(
                 viewToken,
                 Chars.toString(createTableOperation.getSelectText()),
-                0L
+                0L,
+                isAudited
         );
     }
 

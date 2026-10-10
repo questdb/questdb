@@ -208,6 +208,12 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
             ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getViewSql());
             sink.putAscii('\n');
             sink.putAscii(')');
+            if (viewDefinition.isAudited()) {
+                // Emitted before putAdditional(), so the statement reads
+                // `... ) WITH AUDIT <whatever Enterprise appends>;`. WITH AUDIT is an Enterprise
+                // clause, so this ordering has to match the grammar that parses it back.
+                sink.putAscii(" WITH AUDIT");
+            }
             putAdditional();
             sink.putAscii(';');
         }
