@@ -52,7 +52,6 @@ import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
@@ -60,8 +59,6 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -380,14 +377,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case FilterPlan filter -> {
                 final Function predicate;
                 try {
-                    if (residual instanceof ConstantExpression constant) {
-                        predicate = BooleanConstant.of(constant.getLongValue() != 0);
-                    } else if (residual instanceof ColumnExpression column) {
-                        final int index = input.getOutput().getColumnIndexById(column.getColumnId());
-                        predicate = FunctionResolver.createColumn(column.getPosition(), index, base.getMetadata());
-                    } else {
-                        predicate = frame.functionInstantiator.instantiate(residual, input.getOutput(), base.getMetadata(), executionContext);
-                    }
+                    predicate = frame.functionInstantiator.instantiate(residual, input.getOutput(), base.getMetadata(), executionContext);
                 } catch (Throwable th) {
                     Misc.free(base, th);
                     throw th;
@@ -563,12 +553,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             leaf = generate(frame, input, executionContext);
             try {
-                final Function function;
-                if (predicate instanceof ColumnExpression column) {
-                    function = FunctionResolver.createColumn(column.getPosition(), input.getOutput().getColumnIndexById(column.getColumnId()), leaf.getMetadata());
-                } else {
-                    function = frame.functionInstantiator.instantiate(predicate, input.getOutput(), leaf.getMetadata(), executionContext);
-                }
+                final Function function = frame.functionInstantiator.instantiate(predicate, input.getOutput(), leaf.getMetadata(), executionContext);
                 target.of(predicate, input.getOutput(), function, filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL
                         && (!hasUpdateScan(input) || executionContext.isWalApplication()));
                 if (input instanceof FunctionSourcePlan source) {

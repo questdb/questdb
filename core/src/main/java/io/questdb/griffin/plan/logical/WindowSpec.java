@@ -164,9 +164,6 @@ public final class WindowSpec implements Mutable {
     }
 
     /**
-     * True when the window ORDER BY is a prefix of the query order.
-     */
-    /**
      * True when the input of the window delivers the rows in this window's ORDER BY, so the window need not order
      * them; operator planning decides it.
      */
@@ -174,6 +171,9 @@ public final class WindowSpec implements Mutable {
         return isOrderDelivered;
     }
 
+    /**
+     * True when the window ORDER BY is a prefix of the query order.
+     */
     public boolean isQueryOrderPrefix(SortKeys queryOrder) {
         final int count = orderByColumnIds.size();
         if (count == 0 || count > queryOrder.size()) {

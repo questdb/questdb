@@ -240,9 +240,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * Lays out a chain of LIMITs again, bottom-up, after the input beneath the chain changed.
-     */
-    /**
      * The value of a constant predicate: 1 for true, 0 for false, -1 when the predicate is not a constant. Binding
      * folds every constant predicate to a literal, which {@code PlanVerifier} checks.
      */
@@ -250,6 +247,9 @@ public final class LogicalPlans {
         return predicate instanceof ConstantExpression constant ? constant.getLongValue() != 0 ? 1 : 0 : -1;
     }
 
+    /**
+     * Lays out a chain of LIMITs again, bottom-up, after the input beneath the chain changed.
+     */
     public static void deriveLimits(LogicalPlan plan) {
         if (plan instanceof LimitPlan limit) {
             deriveLimits(limit.getInput());
@@ -346,9 +346,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when the expression reads a column of an enclosing LATERAL's outer input.
-     */
-    /**
      * True when the plan, under any filters, is a join that declares its designated timestamp explicitly.
      */
     public static boolean hasExplicitJoinTimestamp(LogicalPlan plan) {
@@ -373,6 +370,9 @@ public final class LogicalPlans {
                 && hasNativeFilterInput(join.getOrderedInputs().getQuick(0).getInput());
     }
 
+    /**
+     * True when the expression reads a column of an enclosing LATERAL's outer input.
+     */
     public static boolean hasOuterColumn(BoundExpression expression) {
         return !expression.walk(OUTER_COLUMN_READS);
     }
@@ -391,14 +391,14 @@ public final class LogicalPlans {
         return false;
     }
 
+    /**
+     * Whether every column the expression reads, outer columns aside, has one {@link #columnSource} in the input.
+     */
     public static boolean hasSingleColumnSource(BoundExpression expression, LogicalPlan input) {
         final LogicalPlan source = firstColumnSource(expression, input);
         return source == null || readsOnlySource(expression, input, source);
     }
 
-    /**
-     * Whether every column the expression reads, outer columns aside, has one {@link #columnSource} in the input.
-     */
     /**
      * True when the plan is a bounded sort under projections that compute nothing order-dependent, so a LIMIT
      * over the plan bounds the sort itself.
@@ -471,9 +471,6 @@ public final class LogicalPlans {
         return false;
     }
 
-    /**
-     * An integer literal spelled in SQL, not folded from an expression.
-     */
     /**
      * True when the predicate is a constant, whose value the generator reads once.
      */
@@ -553,6 +550,9 @@ public final class LogicalPlans {
         return true;
     }
 
+    /**
+     * An integer literal spelled in SQL, not folded from an expression.
+     */
     public static boolean isIntegerLiteral(BoundExpression expression) {
         return expression instanceof ConstantExpression constant && constant.isLiteral() && constant.getSource() == null
                 && (constant.getDataType() == ColumnType.INT || constant.getDataType() == ColumnType.LONG);
@@ -625,10 +625,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * Evaluating the expression twice may give two values: it reads a function or a sub-query whose value is not
-     * stable within one execution.
-     */
-    /**
      * True when the plan is a projection that only declares a designated timestamp over its unchanged input.
      */
     public static boolean isTimestampDeclarationOnly(LogicalPlan plan) {
@@ -676,18 +672,14 @@ public final class LogicalPlans {
         return Chars.equalsIgnoreCase(call.getName(), "max") || Chars.equalsIgnoreCase(call.getName(), "last");
     }
 
+    /**
+     * Evaluating the expression twice may give two values: it reads a function or a sub-query whose value is not
+     * stable within one execution.
+     */
     public static boolean isVolatile(BoundExpression expression) {
         return !expression.walk(VOLATILE_NODES);
     }
 
-    /**
-     * The arithmetic {@code c * k}, {@code c + k} or {@code c - k}, either operand order, that an aggregate
-     * reading tables without a sub-query sums, where {@code c} is a BYTE, SHORT, INT or LONG input column and
-     * {@code k} an integer literal; otherwise null. {@link AggregateRewrite} normalises such a sum.
-     */
-    /**
-     * The index of the join input whose output holds the column.
-     */
     /**
      * True when a computing projection over the window join keeps the master's designated timestamp: the columns it
      * reads, in the order the SELECT list names them, list the master timestamp at its position among the master's
@@ -742,6 +734,9 @@ public final class LogicalPlans {
         return windowCount == window.getFunctionColumnIds().size();
     }
 
+    /**
+     * The index of the join input whose output holds the column.
+     */
     public static int joinColumnSource(JoinPlan join, int columnId) {
         for (int i = 0, n = join.getInputs().size(); i < n; i++) {
             if (join.getInputs().getQuick(i).getSourceOutput().getColumnIndexById(columnId) >= 0) {
@@ -751,15 +746,6 @@ public final class LogicalPlans {
         throw new IllegalStateException("join column is outside its inputs");
     }
 
-    /**
-     * True when the expression reads a column of its input.
-     */
-    /**
-     * Whether a LIMIT may evaluate to a negative count: one that is not a constant has no sign until execution.
-     */
-    /**
-     * The LONG value a LIMIT bound function returns for the constant.
-     */
     /**
      * The ordered position of the last step of the join that can null-extend its master rows, or -1.
      */
@@ -789,6 +775,9 @@ public final class LogicalPlans {
         return scanThroughFilter(latest.getInput());
     }
 
+    /**
+     * The LONG value a LIMIT bound function returns for the constant.
+     */
     public static long limitValue(ConstantExpression constant) {
         return switch (ColumnType.tagOf(constant.getDataType())) {
             case ColumnType.NULL -> Numbers.LONG_NULL;
@@ -797,6 +786,9 @@ public final class LogicalPlans {
         };
     }
 
+    /**
+     * Whether a LIMIT may evaluate to a negative count: one that is not a constant has no sign until execution.
+     */
     public static boolean mayBeNegativeLimit(BoundExpression lo) {
         if (!(lo instanceof ConstantExpression constant)) {
             return true;
@@ -805,6 +797,11 @@ public final class LogicalPlans {
         return limit != Numbers.LONG_NULL && limit < 0;
     }
 
+    /**
+     * The arithmetic {@code c * k}, {@code c + k} or {@code c - k}, either operand order, that an aggregate
+     * reading tables without a sub-query sums, where {@code c} is a BYTE, SHORT, INT or LONG input column and
+     * {@code k} an integer literal; otherwise null. {@link AggregateRewrite} normalises such a sum.
+     */
     public static FunctionExpression normalisableSumOperation(GroupingPlan aggregate, FunctionExpression sum) {
         if (!aggregate.hasDirectTableInput() || !Chars.equalsIgnoreCase(sum.getName(), "sum") || sum.getArgumentCount() != 1
                 || !(sum.argumentAt(0) instanceof FunctionExpression operation) || operation.getArgumentCount() != 2) {
@@ -829,16 +826,16 @@ public final class LogicalPlans {
     }
 
     /**
-     * The projection a parallel top-K over the sort's input builds over itself: the one projection the generator
-     * builds for the input, unless the projection's input is another; null otherwise.
-     */
-    /**
      * The join's steps in the order the join runs them, or in binding order before the order is decided.
      */
     public static ObjList<JoinInput> orderedSteps(JoinPlan join) {
         return join.getOrderedInputs().size() > 0 ? join.getOrderedInputs() : join.getInputs();
     }
 
+    /**
+     * The projection a parallel top-K over the sort's input builds over itself: the one projection the generator
+     * builds for the input, unless the projection's input is another; null otherwise.
+     */
     public static ProjectPlan parallelTopKProjection(SortPlan sort) {
         final LogicalPlan base = generatedPlan(sort.getInput());
         if (!isPeelableProjection(base)) {
@@ -908,6 +905,9 @@ public final class LogicalPlans {
         return -1;
     }
 
+    /**
+     * True when the expression reads a column of its input.
+     */
     public static boolean readsColumn(BoundExpression expression) {
         return expression != null && !expression.walk(COLUMN_READS);
     }
@@ -1017,10 +1017,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * The type an UPDATE stores a value of type {@code type} as in a column of type {@code targetType}: the target
-     * type for a built-in widening cast other than text to TIMESTAMP, the value's own type otherwise.
-     */
-    /**
      * Skips column projections that keep every input column at its position and type: only the names differ.
      */
     public static LogicalPlan skipRenames(LogicalPlan plan) {
@@ -1067,6 +1063,10 @@ public final class LogicalPlans {
         return stolenFilter(projection != null ? projection.getInput() : slave);
     }
 
+    /**
+     * The type an UPDATE stores a value of type {@code type} as in a column of type {@code targetType}: the target
+     * type for a built-in widening cast other than text to TIMESTAMP, the value's own type otherwise.
+     */
     public static int updateColumnType(int type, int targetType) {
         return targetType < 0 || !ColumnType.isBuiltInWideningCast(type, targetType)
                 || targetType == ColumnType.TIMESTAMP && (type == ColumnType.STRING || type == ColumnType.VARCHAR) ? type : targetType;

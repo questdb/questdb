@@ -289,13 +289,13 @@ public final class PhysicalProperties {
         };
     }
 
+    /**
+     * A factory that computes its rows, the way aggregates and LATEST BY do: no page frames, LIMIT or order advice.
+     */
     private static int computed(Capability isRandomAccess, ScanDirection direction, Capability isLongSequence) {
         return properties(isRandomAccess, Capability.NO, Capability.NO, Capability.NO, direction, isLongSequence);
     }
 
-    /**
-     * A factory that computes its rows, the way aggregates and LATEST BY do: no page frames, LIMIT or order advice.
-     */
     /**
      * A covering index scan, whose backup index scan, when a key may be NULL, emits rows in {@code backupDirection}.
      */
@@ -592,15 +592,15 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The factory codegen builds for the access path the scan records, under the residual filter it records.
-     */
-    /**
      * Only the interpolating SAMPLE BY factory supports random access.
      */
     private static Capability sampleByRandomAccess(SampleByPlan sample) {
         return sample.getAlgorithm() == null ? Capability.UNKNOWN : Capability.of(sample.getAlgorithm() == SampleByPlan.Algorithm.INTERPOLATE);
     }
 
+    /**
+     * The factory codegen builds for the access path the scan records, under the residual filter it records.
+     */
     private static int scan(ScanPlan scan) {
         final ScanPlan.AccessPath accessPath = scan.getAccessPath();
         if (accessPath == null) {

@@ -257,10 +257,6 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     /**
-     * Whether the value is spelled from literals, bind variables, operators, casts and runtime-constant
-     * functions only. A constant folded from a call counts as that call.
-     */
-    /**
      * Whether the conjunct reads only plain projected columns and projected timestamp offsets: dateadd with constant
      * unit and INT stride over the input's designated timestamp. A conjunct over an offset compares it with constants
      * only, so interval extraction below can invert the offset.
@@ -271,6 +267,10 @@ final class FilterPushdown implements OptimiserPass {
                 && (leaves != OFFSET_LEAVES || !hasInputTimestamp(project));
     }
 
+    /**
+     * Whether the value is spelled from literals, bind variables, operators, casts and runtime-constant
+     * functions only. A constant folded from a call counts as that call.
+     */
     private static boolean isConstantSpelling(BoundExpression expression) {
         if (expression instanceof ConstantExpression constant) {
             return constant.getSource() == null || isConstantSpelling(constant.getSource());

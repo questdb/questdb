@@ -123,11 +123,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     // with the first cursor.
     private SampleByFillRecord valueFillRecord;
 
-    /**
-     * Appends the fixed-width value header (LAST_KNOWN_TS_SLOT, PREV_ROWID_SLOT
-     * - two LONGs) the cursor expects on every key entry. External map builders
-     * must call this so slot indices stay authoritative.
-     */
     // Fixed-size scalars and wide types that MapValue can put/get directly.
     // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
@@ -144,6 +139,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         };
     }
 
+    /**
+     * Appends the fixed-width value header (LAST_KNOWN_TS_SLOT, PREV_ROWID_SLOT
+     * - two LONGs) the cursor expects on every key entry. External map builders
+     * must call this so slot indices stay authoritative.
+     */
     public static void populateMapValueTypes(ArrayColumnTypes mapValueTypes) {
         mapValueTypes.add(ColumnType.LONG);
         mapValueTypes.add(ColumnType.LONG);

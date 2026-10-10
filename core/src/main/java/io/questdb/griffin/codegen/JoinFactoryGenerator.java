@@ -1934,9 +1934,6 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Consumes both factories on entry. Parses tolerance after timestamp and key validation.
-     */
-    /**
      * Builds the ASOF join step that steals the filter of its slave: the join reads the time frames under the filter,
      * through the columns of the selection the generator builds the slave from, if any. Consumes the master, including
      * on failure.
@@ -1988,6 +1985,9 @@ final class JoinFactoryGenerator {
         return factory;
     }
 
+    /**
+     * Consumes both factories on entry.
+     */
     RecordCursorFactory generateTemporal(
             GenerationFrame frame,
             JoinInput step,

@@ -245,10 +245,6 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     /**
-     * Checks whether all sort columns can be encoded into a byte-comparable
-     * key. Every column type that ORDER BY accepts is encodable.
-     */
-    /**
      * Whether a sort key column of the type tag encodes into an encoded sort key.
      */
     public static boolean isEncodable(int columnType) {
@@ -258,6 +254,10 @@ public class SortKeyEncoder implements QuietCloseable {
         };
     }
 
+    /**
+     * Checks whether all sort columns can be encoded into a byte-comparable
+     * key. Every column type that ORDER BY accepts is encodable.
+     */
     public static boolean isSupported(RecordMetadata metadata, IntList sortColumnFilter) {
         for (int i = 0, n = sortColumnFilter.size(); i < n; i++) {
             int encoded = sortColumnFilter.getQuick(i);
