@@ -71,6 +71,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
                     .put(" [nDims=").put(nDims).put(']');
         }
         if (nDims == 0) {
+            Misc.freeObjList(args);
             return NullConstant.NULL;
         }
         if (args.size() == 1) {

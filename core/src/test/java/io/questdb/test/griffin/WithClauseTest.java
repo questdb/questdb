@@ -32,6 +32,98 @@ import org.junit.Test;
 public class WithClauseTest extends AbstractCairoTest {
 
     @Test
+    public void testCteReadTwiceWithFromLessUnionBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (x SYMBOL)");
+            execute("INSERT INTO y VALUES ('t')");
+            assertQuery("""
+                    WITH a AS (SELECT 'a'::SYMBOL x),
+                         c AS (SELECT x FROM a UNION ALL SELECT 'b'::SYMBOL x)
+                    SELECT * FROM c UNION ALL SELECT * FROM c""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            a
+                            b
+                            a
+                            b
+                            """);
+            assertQuery("""
+                    WITH a AS (SELECT 'a'::SYMBOL x),
+                         c AS (SELECT x FROM a UNION ALL SELECT x FROM y)
+                    SELECT * FROM c UNION ALL SELECT * FROM c""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            a
+                            t
+                            a
+                            t
+                            """);
+            assertQuery("""
+                    WITH a AS (SELECT 'a'::SYMBOL x),
+                         c AS (SELECT 'b'::SYMBOL x UNION ALL SELECT x FROM a)
+                    SELECT * FROM c UNION ALL SELECT * FROM c""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            b
+                            a
+                            b
+                            a
+                            """);
+            assertQuery("SELECT * FROM (SELECT x FROM (SELECT 1 x) UNION ALL SELECT 2 x)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testCteShadowsView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE)");
+            execute("INSERT INTO trades VALUES ('AAPL', 100.5), ('MSFT', 300.75)");
+            execute("CREATE TABLE allowed (symbol SYMBOL)");
+            execute("INSERT INTO allowed VALUES ('AAPL')");
+            execute("CREATE VIEW v_cap AS (SELECT symbol, price FROM trades WHERE symbol IN (SELECT symbol FROM allowed))");
+            drainWalAndViewQueues();
+            assertQuery("""
+                    WITH v_cap AS (SELECT 'X'::SYMBOL symbol, 1.0 price)
+                    SELECT * FROM v_cap""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            symbol\tprice
+                            X\t1.0
+                            """);
+            assertQuery("""
+                    WITH v_cap AS (SELECT 'X'::SYMBOL symbol, 1.0 price)
+                    SELECT * FROM trades t JOIN v_cap c ON t.symbol = c.symbol""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("symbol\tprice\tsymbol1\tprice1\n");
+            assertQuery("SELECT * FROM v_cap")
+                    .noLeakCheck()
+                    .returns("""
+                            symbol\tprice
+                            AAPL\t100.5
+                            """);
+        });
+    }
+
+    @Test
     public void testWithAliasOverridingTable1() throws Exception {
         assertMemoryLeak(() -> assertQuery("WITH balance as ( SELECT * FROM balance WHERE address = 1 ) " +
                 "SELECT * FROM balance ")

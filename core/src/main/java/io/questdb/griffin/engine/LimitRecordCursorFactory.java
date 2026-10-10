@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -97,19 +98,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        final Function leftFunc = cursor.leftFunction;
-        if (leftFunc != null && !leftFunc.isStableWithinExecution()) {
-            return false;
-        }
-        final Function rightFunc = cursor.rightFunction;
-        if (rightFunc != null && !rightFunc.isStableWithinExecution()) {
-            return false;
-        }
-        return base.isStableWithinExecution();
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
@@ -175,7 +163,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor.leftFunction);
+        failure = Misc.freeBestEffort(failure, cursor.rightFunction);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class LimitRecordCursor implements RecordCursor {

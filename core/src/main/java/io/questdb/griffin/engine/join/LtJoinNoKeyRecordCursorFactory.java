@@ -51,15 +51,20 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
             long toleranceInterval
     ) {
         super(metadata, null, masterFactory, slaveFactory);
-        this.cursor = new LtJoinNoKeyJoinRecordCursor(
-                columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                masterFactory.getMetadata().getTimestampType(),
-                slaveFactory.getMetadata().getTimestampType(),
-                toleranceInterval
-        );
+        try {
+            this.cursor = new LtJoinNoKeyJoinRecordCursor(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    slaveFactory.getMetadata().getTimestampIndex(),
+                    masterFactory.getMetadata().getTimestampType(),
+                    slaveFactory.getMetadata().getTimestampType(),
+                    toleranceInterval
+            );
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

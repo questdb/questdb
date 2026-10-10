@@ -140,7 +140,7 @@ public class BooleanSubQueryPredicateTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOnWithinWhereSubQueryPredicate() throws Exception {
-        // exercises the extractWithin path, which runs ahead of intrinsic extraction
+        // exercises the ScanFactoryGenerator.collectWithin path, which runs ahead of intrinsic extraction
         setProperty(PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, "true");
         try {
             assertMemoryLeak(() -> {

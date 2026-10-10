@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.activity;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -41,6 +42,11 @@ import io.questdb.std.ObjList;
 public class CancelQueryFunctionFactory implements FunctionFactory {
     private static final String NAME = "cancel_query";
     private static final String SIGNATURE = NAME + "(L)";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {

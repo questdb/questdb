@@ -31,21 +31,48 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
 
-public class TimestampCeilFunctionFactory implements FunctionFactory {
+public class TimestampCeilFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
+    }
+
     @Override
     public String getSignature() {
         return "timestamp_ceil(sN)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return 1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        return TimestampCeilFunction.invert(io, TimestampCeilFunction.fixedSize(ColumnType.getTimestampDriver(call.getDataType()), arguments.constant(call.argumentAt(0)).getChar(null)));
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final char c = args.getQuick(0).getChar(null);
+        return switch (c) {
+            case 'd', 'M', 'y', 'w', 'h', 'm', 's', 'T', 'U', 'n' -> true;
+            default -> throw invalidUnit(c, argPositions.getQuick(0));
+        };
     }
 
     @Override
@@ -65,11 +92,15 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             case 'U':
             case 'n':
                 return new TimestampCeilFunction(args.getQuick(1), c, ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(args.getQuick(1).getType()), ColumnType.TIMESTAMP_MICRO));
-            case 0:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(c).put('\'');
+                throw invalidUnit(c, argPositions.getQuick(0));
         }
+    }
+
+    private static SqlException invalidUnit(char unit, int position) {
+        return unit == 0
+                ? SqlException.position(position).put("invalid unit 'null'")
+                : SqlException.position(position).put("invalid unit '").put(unit).put('\'');
     }
 
     static class TimestampCeilFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
@@ -85,7 +116,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             this.symbol = symbol;
             // Only fixed-size, epoch-aligned units have boundaries at integer
             // multiples of the bucket size, which the arithmetic inverse needs.
-            this.fixedSize = CommonUtils.isFixedAlignedUnit(symbol) ? ceil.ceil(0) : 0;
+            this.fixedSize = fixedSize(timestampDriver, symbol);
         }
 
         @Override
@@ -106,6 +137,27 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
         @Override
         public int invertTimestampInterval(Interval io) {
+            return invert(io, fixedSize);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("timestamp_ceil('").val(symbol).val("',").val(arg).val(')');
+        }
+
+        private static boolean mulOverflows(long a, long b) {
+            if (a == 0) {
+                return false;
+            }
+            final long r = a * b;
+            return r / b != a;
+        }
+
+        static long fixedSize(TimestampDriver timestampDriver, char symbol) {
+            return CommonUtils.isFixedAlignedUnit(symbol) ? timestampDriver.getTimestampCeilMethod(symbol).ceil(0) : 0;
+        }
+
+        static int invert(Interval io, long fixedSize) {
             if (fixedSize <= 0) {
                 return NONE;
             }
@@ -136,19 +188,6 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             hi = prod - 1;
             io.of(lo, hi);
             return EXACT;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("timestamp_ceil('").val(symbol).val("',").val(arg).val(')');
-        }
-
-        private static boolean mulOverflows(long a, long b) {
-            if (a == 0) {
-                return false;
-            }
-            final long r = a * b;
-            return r / b != a;
         }
     }
 }

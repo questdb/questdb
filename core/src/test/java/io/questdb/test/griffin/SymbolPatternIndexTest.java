@@ -60,7 +60,6 @@ import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.HeapRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
@@ -103,6 +102,208 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         super.tearDown();
     }
 
+    @Test
+    public void testInvalidPatternLimitCompilationReleasesInputs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
+                    44,
+                    "invalid type: DOUBLE"
+            );
+        });
+    }
+
+    @Test
+    public void testNonThreadSafeCoveredResidualLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING INCLUDE (txt), txt STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('aa', 'x', 0),
+                        ('ab', 'y', 1),
+                        ('ba', 'x', 2),
+                        ('ab', 'x', 3),
+                        ('aa', null, 4),
+                        (null, 'x', 5)
+                    """);
+            assertQuery("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt = 'x' LIMIT 1")
+                    .withPlan("""
+                            Async Filter workers: 1
+                              limit: 1
+                              filter: sym like a% [state-shared] and txt='x'
+                                AdaptiveSymbolPattern policy: matching rows <= 2%, bounded probes route: one child per open
+                                    SymbolPatternIndex
+                                      on: sym
+                                        Table-order scan
+                                        Frame forward scan on: t
+                                    CoveringIndex on: sym with: txt
+                                      filter: sym matches pattern
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
+                    .returns("""
+                            sym	txt
+                            aa	x
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonThreadSafeResidualIlikePattern() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym ILIKE 'A%' AND txt = 'x'", """
+                AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                  indexRouteFilter: sym ilike a% [state-shared] and txt='x'
+                    SymbolPatternIndex
+                      on: sym
+                        Table-order scan
+                        Frame forward scan on: t
+                    Async Filter workers: 1
+                      filter: sym ilike a% [state-shared] and txt='x'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                ab	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualLikePattern() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt = 'x'", """
+                AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                  indexRouteFilter: sym like a% [state-shared] and txt='x'
+                    SymbolPatternIndex
+                      on: sym
+                        Table-order scan
+                        Frame forward scan on: t
+                    Async Filter workers: 1
+                      filter: sym like a% [state-shared] and txt='x'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                ab	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualLikePatternLimit() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt = 'x' LIMIT 1", """
+                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                    AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                      indexRouteFilter: sym like a% [state-shared] and txt='x'
+                        SymbolPatternIndex
+                          on: sym
+                            Table-order scan
+                            Frame forward scan on: t
+                        Async Filter workers: 1
+                          limit: 1
+                          filter: sym like a% [state-shared] and txt='x'
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualLikePatternTimestampOrderLimit() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt = 'x' ORDER BY ts LIMIT 1", """
+                SelectedRecord
+                    Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                        AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                          indexRouteFilter: sym like a% [state-shared] and txt='x'
+                            SymbolPatternIndex
+                              on: sym
+                                Table-order scan
+                                Frame forward scan on: t
+                            Async Filter workers: 1
+                              limit: 1
+                              filter: sym like a% [state-shared] and txt='x'
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualNegatedPattern() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym NOT LIKE 'a%' AND txt = 'x'", """
+                AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                  indexRouteFilter: not(sym like a% [state-shared]) and txt='x'
+                    SymbolPatternIndex
+                      on: sym
+                        Table-order scan
+                        Frame forward scan on: t
+                    Async Filter workers: 1
+                      filter: not(sym like a% [state-shared]) and txt='x'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                """, """
+                sym	txt
+                ba	x
+                	x
+                """);
+    }
+
+    @Test
+    public void testNonThreadSafeResidualRegexPattern() throws Exception {
+        assertNonThreadSafeResidual("SELECT sym, txt FROM t WHERE sym ~ '^a' AND txt = 'x'", """
+                AdaptiveSymbolPattern policy: matching rows <= 5%, bounded probes route: one child per open
+                  indexRouteFilter: sym ~ ^a and txt='x'
+                    SymbolPatternIndex
+                      on: sym
+                        Table-order scan
+                        Frame forward scan on: t
+                    Async Filter workers: 1
+                      filter: sym ~ ^a and txt='x'
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: t
+                """, """
+                sym	txt
+                aa	x
+                ab	x
+                """);
+    }
+
+    /**
+     * Stands in for the real LIKE/regex providers in
+     * {@link #testPreparedFilterAssertsPrepareRanBeforeGetBool()}: the only thing that test needs from a
+     * provider is that it satisfies the {@link SymbolKeySetProvider} cast the prepared filter performs.
+     */
+    private void assertNonThreadSafeResidual(String query, String expectedPlan, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, txt STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('aa', 'x', 0),
+                        ('ab', 'y', 1),
+                        ('ba', 'x', 2),
+                        ('ab', 'x', 3),
+                        ('aa', null, 4),
+                        (null, 'x', 5)
+                    """);
+            assertQuery(query).withPlan(expectedPlan).returns(expected);
+            assertQuery(query.replace("SELECT", "SELECT /*+ no_symbol_pattern_index(t) */"))
+                    .withPlanNotContaining("AdaptiveSymbolPattern")
+                    .returns(expected);
+        });
+    }
+
     /**
      * Compiles {@code predicate} (e.g. {@code "sym like 'A%'"}) as a standalone
      * boolean function bound to table {@code t}'s reader, then returns the matched
@@ -134,14 +335,12 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             FunctionParser functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
 
             // Parse the expression AST
-            ExpressionNode node;
             QueryModel qm = QueryModel.FACTORY.newInstance();
+            final Function f;
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                node = compiler.testParseExpression(predicate, qm);
+                // Compile to a Function; may throw if predicate is malformed
+                f = functionParser.parseFunction(compiler.testParseExpression(predicate, qm), meta, sqlExecutionContext);
             }
-
-            // Compile to a Function; may throw if predicate is malformed
-            Function f = functionParser.parseFunction(node, meta, sqlExecutionContext);
 
             Assert.assertTrue(
                     predicate + " did not compile to a SymbolKeySetProvider: " + f.getClass().getName(),
@@ -851,16 +1050,16 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             bindVariableService.setStr("pattern", "A%");
             final String query = "SELECT sym, v FROM t WHERE sym LIKE :pattern ORDER BY v";
             try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
-                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printCompliant(factory));
 
                 execute("INSERT INTO t VALUES ('AC', 3, 2)");
-                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printCompliant(factory));
 
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printCompliant(factory));
 
                 bindVariableService.setStr("pattern", "");
-                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printCompliant(factory));
             }
         });
     }
@@ -874,13 +1073,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             final String query = "SELECT sym, sum(price) total FROM t WHERE sym LIKE :pattern ORDER BY sym";
             final String oracle = "SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sym, sum(price) total FROM t WHERE sym LIKE :pattern ORDER BY sym";
             try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 execute("INSERT INTO t VALUES ('AC', 3.0, 2)");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", "");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
             }
         });
     }
@@ -894,13 +1093,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             final String query = "SELECT sym, price FROM t WHERE sym LIKE :pattern ORDER BY price";
             final String oracle = "SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sym, price FROM t WHERE sym LIKE :pattern ORDER BY price";
             try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 execute("INSERT INTO t VALUES ('AC', 3.0, 2)");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", "");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
             }
         });
     }
@@ -914,13 +1113,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             final String query = "SELECT sym, v FROM t WHERE sym NOT LIKE :pattern ORDER BY v";
             final String oracle = "SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym NOT LIKE :pattern ORDER BY v";
             try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 execute("INSERT INTO t VALUES ('AC', 3, 2)");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", "");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
             }
         });
     }
@@ -959,7 +1158,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     TestUtils.assertEquals(
                             "re-bind " + i + " to " + pattern,
                             select(oracle),
-                            printFactory(factory)
+                            printCompliant(factory)
                     );
                 }
             }
@@ -995,7 +1194,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 final long freshOpens;
                 try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
                     HeapRowCursorFactory.testRowCursorsOpened.set(0);
-                    TestUtils.assertEquals(expectedNarrow, printFactory(factory));
+                    TestUtils.assertEquals(expectedNarrow, printCompliant(factory));
                     freshOpens = HeapRowCursorFactory.testRowCursorsOpened.get();
                 }
                 Assert.assertTrue("the index route opened no row cursor at all", freshOpens > 0);
@@ -1005,7 +1204,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 bindVariableService.setStr("pattern", "a%");
                 try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
                     HeapRowCursorFactory.testRowCursorsOpened.set(0);
-                    TestUtils.assertEquals(expectedWide, printFactory(factory));
+                    TestUtils.assertEquals(expectedWide, printCompliant(factory));
                     final long wideOpens = HeapRowCursorFactory.testRowCursorsOpened.get();
                     // Guards the guard: without this the whole test decays to vacuous. If 'a%' ever
                     // resolved to one key, or the route fell back to the scan delegate, the reuse
@@ -1020,7 +1219,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     );
                     bindVariableService.setStr("pattern", "z%");
                     HeapRowCursorFactory.testRowCursorsOpened.set(0);
-                    TestUtils.assertEquals(expectedNarrow, printFactory(factory));
+                    TestUtils.assertEquals(expectedNarrow, printCompliant(factory));
                     Assert.assertEquals(freshOpens, HeapRowCursorFactory.testRowCursorsOpened.get());
                 }
             } finally {
@@ -1028,19 +1227,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 HeapRowCursorFactory.testRowCursorsOpened.set(0);
             }
         });
-    }
-
-    @Test
-    public void testHintConstantWiring() {
-        // A plain string-equality check on the constant is tautological: it would still pass if
-        // SqlHints never consulted the constant. Assert the real wiring instead -- that a model
-        // carrying the hint is detected by hasNoSymbolPatternIndexHint(), and a model without it is not.
-        final QueryModel withHint = QueryModel.FACTORY.newInstance();
-        withHint.addHint(io.questdb.griffin.SqlHints.NO_SYMBOL_PATTERN_INDEX_HINT, "");
-        Assert.assertTrue(io.questdb.griffin.SqlHints.hasNoSymbolPatternIndexHint(withHint));
-
-        final QueryModel withoutHint = QueryModel.FACTORY.newInstance();
-        Assert.assertFalse(io.questdb.griffin.SqlHints.hasNoSymbolPatternIndexHint(withoutHint));
     }
 
     @Test
@@ -2018,26 +2204,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInvalidPatternLimitCompilationClosesPartitionFactory() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-
-            final int[] partitionFactoryCloseCount = new int[1];
-            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
-            try {
-                assertExceptionNoLeakCheck(
-                        "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
-                        44,
-                        "invalid type: DOUBLE"
-                );
-            } finally {
-                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
-            }
-            Assert.assertEquals(1, partitionFactoryCloseCount[0]);
-        });
-    }
-
-    @Test
     public void testNegativeLimitPatternUsesBackwardLimitedFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2600,7 +2766,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 final int initialCapacity = effectiveKeys.capacity();
 
                 SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 Assert.assertEquals("a set exactly at the cap must remain available to the index delegate", 16, effectiveKeys.size());
                 Assert.assertEquals(initialCapacity, effectiveKeys.capacity());
                 Assert.assertTrue("the equal-cap set must use the index route",
@@ -2610,7 +2776,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 bindVariableService.setStr("pattern", "%");
                 for (int open = 0; open < 2; open++) {
                     SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-                    TestUtils.assertEquals(select(oracle), printFactory(factory));
+                    TestUtils.assertEquals(select(oracle), printCompliant(factory));
                     Assert.assertEquals("an over-cap positive set must not be copied on open " + open,
                             0, effectiveKeys.size());
                     Assert.assertEquals("an over-cap positive set must not grow retained capacity on open " + open,
@@ -2621,7 +2787,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 }
 
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 Assert.assertEquals("a NULL pattern must leave no effective keys", 0, effectiveKeys.size());
                 Assert.assertEquals(initialCapacity, effectiveKeys.capacity());
             }
@@ -2649,7 +2815,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 final IntList effectiveKeys = getAdaptiveEffectiveKeys(factory);
                 final int initialCapacity = effectiveKeys.capacity();
 
-                io.questdb.test.tools.TestUtils.assertEquals(expected, printFactory(factory));
+                io.questdb.test.tools.TestUtils.assertEquals(expected, printCompliant(factory));
                 Assert.assertEquals(
                         "an over-budget complement must not grow the retained effective-key list",
                         initialCapacity,
@@ -2782,7 +2948,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 // Insert a new matching symbol AFTER the factory was compiled
                 execute("insert into t values ('AC', 999, 100_000_000::timestamp)");
                 // Execute the cached plan now — must see the new 'AC' row
-                String actual = printFactory(factory);
+                String actual = printCompliant(factory);
                 String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v from t where sym like 'A%' order by v");
                 io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             }
@@ -2824,7 +2990,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = engine.select("select price, sym from t where sym like 'A%' order by price", sqlExecutionContext)) {
                 // Insert a new matching symbol AFTER the covering factory was compiled.
                 execute("insert into t values ('AC', 999.0, 100_000_000::timestamp)");
-                String actual = printFactory(factory);
+                String actual = printCompliant(factory);
                 String expected = select("select /*+ no_symbol_pattern_index(t) no_covering(t) */ price, sym from t where sym like 'A%' order by price");
                 io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             }
@@ -3060,27 +3226,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     .returns("ts\tcount\n" +
                             "2024-01-01T00:00:00.000000Z\t2\n" +
                             "2024-01-02T00:00:00.000000Z\t2\n");
-        });
-    }
-
-    // LIKE residuals own mutable matcher state and require one filter clone per worker.
-    @Test
-    public void testNonThreadSafeResidualPreservesParallelFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (sym SYMBOL INDEX, txt STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO t VALUES
-                        ('aa', 'xxaZbyy', 0),
-                        ('ab', 'nomatch', 1),
-                        ('ba', 'xxaZbyy', 2),
-                        ('aa', null, 3),
-                        (null, 'xxaZbyy', 4)
-                    """);
-
-            assertQuery("SELECT sym, txt FROM t WHERE sym LIKE 'a%' AND txt LIKE '%a_b%'")
-                    .withPlanContaining("Async Filter workers: 1")
-                    .withPlanNotContaining("AdaptiveSymbolPattern")
-                    .returns("sym\ttxt\naa\txxaZbyy\n");
         });
     }
 
@@ -3362,11 +3507,10 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader("t")) {
                 final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
                 final QueryModel model = QueryModel.FACTORY.newInstance();
-                final ExpressionNode expression;
+                final Function residual;
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    expression = compiler.testParseExpression("txt LIKE '%a_b%'", model);
+                    residual = parser.parseFunction(compiler.testParseExpression("txt LIKE '%a_b%'", model), reader.getMetadata(), sqlExecutionContext);
                 }
-                final Function residual = parser.parseFunction(expression, reader.getMetadata(), sqlExecutionContext);
                 try {
                     Assert.assertEquals("ConstLikeStrFunction", residual.getClass().getSimpleName());
                     Assert.assertFalse(residual.isThreadSafe());
@@ -3534,33 +3678,26 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
 
     // Inject failure before the scan factory and prepared filter transfer ownership.
     @Test
-    public void testSelfFilteringConstructionFreesDelegatesExactlyOnceOnThrow() throws Exception {
+    public void testSelfFilteringConstructionReleasesDelegatesOnThrow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(100)");
             engine.releaseAllWriters();
 
-            final int[] partitionFactoryCloseCount = new int[1];
-            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
-            try {
-                final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 4) {
-                    @Override
-                    public boolean isParallelFilterEnabled() {
-                        throw new RuntimeException("test self-filtering construction failure");
-                    }
-                };
-                ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
-                try (ctx) {
-                    try (RecordCursorFactory ignored = engine.select("SELECT v FROM t WHERE sym LIKE 'a%' AND v > 0", ctx)) {
-                        Assert.fail("expected isolated self-filtering construction failure");
-                    } catch (RuntimeException e) {
-                        TestUtils.assertContains(e.getMessage(), "test self-filtering construction failure");
-                    }
+            final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 4) {
+                @Override
+                public boolean isParallelFilterEnabled() {
+                    throw new RuntimeException("test self-filtering construction failure");
                 }
-            } finally {
-                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
+            };
+            ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
+            try (ctx) {
+                try (RecordCursorFactory ignored = engine.select("SELECT v FROM t WHERE sym LIKE 'a%' AND v > 0", ctx)) {
+                    Assert.fail("expected isolated self-filtering construction failure");
+                } catch (RuntimeException e) {
+                    TestUtils.assertContains(e.getMessage(), "test self-filtering construction failure");
+                }
             }
-            Assert.assertEquals(1, partitionFactoryCloseCount[0]);
         });
     }
 
@@ -3952,7 +4089,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             final String expected = select(oracle);
             for (int open = 0; open < 2; open++) {
                 SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-                TestUtils.assertEquals(expected, printFactory(factory));
+                TestUtils.assertEquals(expected, printCompliant(factory));
                 Assert.assertEquals("an over-cap set must not be copied for " + predicate + " on open " + open,
                         0, effectiveKeys.size());
                 Assert.assertEquals("an over-cap set must not grow retained capacity for " + predicate + " on open " + open,
@@ -3971,7 +4108,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     private void assertRouteFlip(RecordCursorFactory factory, String oracle, boolean isIndexBranchExpected) throws SqlException {
         AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
         SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-        TestUtils.assertEquals(select(oracle), printFactory(factory));
+        TestUtils.assertEquals(select(oracle), printCompliant(factory));
         if (isIndexBranchExpected) {
             Assert.assertTrue(
                     "expected the index branch",
@@ -4236,7 +4373,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
      * Executes a pre-compiled {@link RecordCursorFactory} and returns its output as a string
      * (header + rows), using a private sink so it does not clobber the shared static test sink.
      */
-    private String printFactory(RecordCursorFactory factory) throws SqlException {
+    private String printCompliant(RecordCursorFactory factory) throws SqlException {
         StringSink localSink = new StringSink();
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             println(factory.getMetadata(), cursor, localSink);
@@ -4244,11 +4381,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         return localSink.toString();
     }
 
-    /**
-     * Stands in for the real LIKE/regex providers in
-     * {@link #testPreparedFilterAssertsPrepareRanBeforeGetBool()}: the only thing that test needs from a
-     * provider is that it satisfies the {@link SymbolKeySetProvider} cast the prepared filter performs.
-     */
     private static class AlwaysMatchingKeySetProvider extends BooleanFunction implements SymbolKeySetProvider {
         private final IntList matchedSymbolKeys = new IntList();
 
@@ -4288,4 +4420,5 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             throw new RuntimeException(CLOSE_FAILURE_MESSAGE);
         }
     }
+
 }

@@ -37,6 +37,11 @@ public final class VarcharToNanoTimestampVCFunctionFactory extends ToTimestampVC
     private final static String NAME = "to_timestamp_ns";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public String getSignature() {
         return "to_timestamp_ns(Øs)";
     }

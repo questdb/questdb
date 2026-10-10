@@ -767,6 +767,94 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByWithinOutsideIndexedScan() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE pos (
+                              id INT,
+                              s SYMBOL INDEX,
+                              p SYMBOL INDEX TYPE POSTING,
+                              g GEOHASH(4c),
+                              ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO pos VALUES
+                      (1, 'a', 'a', #dr5r, '2021-09-02T00:00:00.000000Z'),
+                      (2, 'b', 'b', #dr5x, '2021-09-02T00:00:01.000000Z'),
+                      (3, 'a', 'a', #u33d, '2021-09-02T00:00:02.000000Z')""");
+
+            // The indexed scan applies the prefixes to the latest row of each key.
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("""
+                            id
+                            2
+                            """);
+            // Every other LATEST BY factory filters the rows before picking the latest row of each key.
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) AND id > 0 LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: (g in [\"011001011100101\"] and 0<id)")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) AND s = 'a' LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            """);
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) AND s IN ('a', 'b') LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+            assertQuery("SELECT /*+ no_index */ id FROM pos WHERE g within(#dr5) LATEST ON ts PARTITION BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) LATEST ON ts PARTITION BY s, s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+            assertQuery("SELECT id FROM pos WHERE g within(#dr5) LATEST ON ts PARTITION BY p")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("filter: g in [\"011001011100101\"]")
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+        });
+        engine.getSqlCompilerPool().releaseAll();
+    }
+
+    @Test
     public void testLatestByConstantFalseWhere() throws Exception {
         // A LATEST ON whose WHERE the optimiser folds to a compile-time constant-false
         // predicate (a col<col / col>col / ts>ts self-comparison, or an AND of them)
@@ -823,7 +911,7 @@ public class LatestByTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setBoolean("b0", false);
             // a boolean bind variable is a runtime constant; it does not fold, so it takes
-            // the generateLatestByTableQuery path (which already clears latestBy on a
+            // the ScanFactoryGenerator.generateLatestBy path (which already clears latestBy on a
             // constant-false runtime filter). It must agree with the folded literal form.
             assertQuery("SELECT * FROM t WHERE :b0 LATEST ON ts PARTITION BY c3")
                     .noLeakCheck()
@@ -865,7 +953,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByIndexedSymbolFilterNotDropped() throws Exception {
         // A WHERE predicate over an INDEXED SYMBOL combined with LATEST ON ... PARTITION BY
-        // a non-symbol key used to be silently dropped. WhereClauseParser extracted the
+        // a non-symbol key used to be silently dropped. SymbolKeyExtractor extracted the
         // indexed-symbol predicate into a key-column intrinsic (expecting an index scan to
         // serve it), but the LatestByAllFiltered path - chosen because the partition key is
         // not a symbol - ignores that intrinsic and applies only the residual filter, which
@@ -2183,6 +2271,703 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnHorizonAndWindowJoinsAppliesToMasterBeforeJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts " + timestampType.getTypeName() + ", sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts " + timestampType.getTypeName() + ", sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('2000-01-01T00:00:01Z', 'A', 1),
+                    ('2000-01-01T00:00:03Z', 'A', 2),
+                    ('2000-01-01T00:00:02Z', 'B', 3),
+                    ('2000-01-01T00:00:04Z', 'B', 4)
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                    ('2000-01-01T00:00:00.5Z', 'A', 100),
+                    ('2000-01-01T00:00:02.5Z', 'A', 200),
+                    ('2000-01-01T00:00:01.5Z', 'B', 300),
+                    ('2000-01-01T00:00:03.5Z', 'B', 400)
+                    """);
+            final String horizon = "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) RANGE FROM 0s TO 0s STEP 1s AS h ";
+            assertQuery("SELECT t.sym, t.qty, p.price " + horizon + "LATEST ON ts PARTITION BY sym")
+                    .expectSize()
+                    .returns("""
+                            sym	qty	price
+                            A	2.0	200.0
+                            B	4.0	400.0
+                            """);
+            assertQuery("SELECT t.sym, t.qty, p.price " + horizon + "WHERE t.qty < 4 LATEST ON ts PARTITION BY sym")
+                    .expectSize()
+                    .returns("""
+                            sym	qty	price
+                            B	3.0	300.0
+                            A	2.0	200.0
+                            """);
+            assertQuery("SELECT t.sym, t.qty, p.price " + horizon + "WHERE t.sym = 'A' LATEST ON ts PARTITION BY sym")
+                    .expectSize()
+                    .withPlanContaining("""
+                                LatestByValueFiltered
+                                    Row backward scan
+                                      symbolFilter: sym=0
+                                    Frame backward scan on: trades
+                            """)
+                    .returns("""
+                            sym	qty	price
+                            A	2.0	200.0
+                            """);
+            assertQuery("SELECT t.sym, avg(p.price) " + horizon + "WHERE p.price > 0 LATEST ON ts PARTITION BY sym")
+                    .fails(129, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+            final String window = "FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING ";
+            assertQuery("SELECT t.sym, t.qty, sum(p.price) " + window + "EXCLUDE PREVAILING LATEST ON ts PARTITION BY sym")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sym	qty	sum
+                            A	2.0	200.0
+                            B	4.0	400.0
+                            """);
+            assertQuery("SELECT t.sym, t.qty, sum(p.price) " + window + "LATEST ON ts PARTITION BY sym")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            sym	qty	sum
+                            A	2.0	300.0
+                            B	4.0	700.0
+                            """);
+            assertQuery("SELECT t.sym, t.qty, sum(p.price) " + window + "EXCLUDE PREVAILING WHERE t.qty < 4 LATEST ON ts PARTITION BY sym")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("""
+                                LatestByDeferredListValuesFiltered
+                                  filter: qty<4
+                                    Frame backward scan on: trades
+                            """)
+                    .returns("""
+                            sym	qty	sum
+                            B	3.0	300.0
+                            A	2.0	200.0
+                            """);
+            assertQuery("SELECT t.sym, t.qty, sum(p.price) " + window + "EXCLUDE PREVAILING WHERE p.price > 0 LATEST ON ts PARTITION BY sym")
+                    .fails(169, "Invalid column: p.price");
+            assertQuery("SELECT t.sym, t.qty, sum(p.price) FROM trades t JOIN trades t2 ON t.sym = t2.sym "
+                    + "WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING "
+                    + "EXCLUDE PREVAILING LATEST ON ts PARTITION BY sym")
+                    .noRandomAccess()
+                    .returns("""
+                            sym	qty	sum
+                            A	2.0	200.0
+                            A	2.0	200.0
+                            B	4.0	400.0
+                            B	4.0	400.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestOnJoinAppliesToLeadingTableBeforeJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestJoinTables();
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: pb.k=pa.x
+                                    LatestByDeferredListValuesFiltered
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.y = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x >= pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	10
+                            2	20
+                            2	50
+                            4	10
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa CROSS JOIN pb LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id	v
+                            2	10
+                            2	20
+                            2	50
+                            4	10
+                            4	20
+                            4	50
+                            """);
+            assertQuery("SELECT pa.id, pc.w FROM pa ASOF JOIN pc ON pa.x = pc.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Fast
+                                  condition: pc.k=pa.x
+                                    LatestByDeferredListValuesFiltered
+                                        Frame backward scan on: pa
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: pc
+                            """)
+                    .returns("""
+                            id	w
+                            2	700
+                            4	200
+                            """);
+            assertQuery("SELECT pa.id, pc.w FROM pa ASOF JOIN pc LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id	w
+                            2	700
+                            4	200
+                            """);
+            assertQuery("SELECT pa.id, pc.w FROM pa LT JOIN pc ON pa.x = pc.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id	w
+                            2	700
+                            4	200
+                            """);
+            assertQuery("SELECT pa.id, pb.v, pc.w FROM pa JOIN pb ON pa.x = pb.k JOIN pc ON pc.k = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v	w
+                            4	20	200
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k LATEST ON ts PARTITION BY s, s2")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            1	10
+                            3	20
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k LATEST ON ts PARTITION BY s2")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            3	20
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pa.x, pa.y, pa.s, pa.s2, pb.k, pb.v FROM pa JOIN pb ON pa.x = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	x	y	s	s2	k	v
+                            4	2	2	b	q	2	20
+                            """);
+            assertQuery("SELECT pa.s, count() FROM pa JOIN pb ON pa.x = pb.k LATEST ON ts PARTITION BY s")
+                    .expectSize()
+                    .returns("""
+                            s	count
+                            b	1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestOnJoinColumnsResolveAgainstLeadingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestJoinTables();
+            assertQuery("SELECT pa.id, pb.v FROM pb JOIN pa ON pa.x = pb.k LATEST ON ts PARTITION BY s")
+                    .fails(60, "Invalid column: ts");
+            assertQuery("SELECT pa.id, pc.w FROM pc JOIN pa ON pa.x = pc.k LATEST ON ts PARTITION BY s")
+                    .fails(76, "Invalid column: s");
+        });
+    }
+
+    @Test
+    public void testLatestOnJoinImpliedKeyEqualityFiltersAfterLatest() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestJoinTables();
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k AND pa.y = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: pb.k=pa.y
+                                    Filter filter: x=y
+                                        LatestByDeferredListValuesFiltered
+                                            Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM (SELECT * FROM pa LATEST ON ts PARTITION BY s) pa JOIN pb ON pa.x = pb.k AND pa.y = pb.k")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.y = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa, pb WHERE pa.x = pb.k AND pa.y = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k AND pa.y = pb.k WHERE pa.id > 1 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k AND pa.y = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	null
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: pb.k=pa.x and pb.k=pa.y
+                                    LatestByDeferredListValuesFiltered
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            4	20
+                            null	10
+                            null	50
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa FULL JOIN pb ON pa.x = pb.k AND pa.y = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	null
+                            4	20
+                            null	10
+                            null	50
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.y = pb.k AND pa.x = pa.y LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            1	10
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.y = pb.k WHERE pa.x = pa.y LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: pb.k=pa.y
+                                    LatestByDeferredListValuesFiltered
+                                      filter: x=y
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            1	10
+                            4	20
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestOnJoinOnConditions() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestJoinTables();
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k AND pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: pb.k=pa.x
+                                    LatestByDeferredListValuesFiltered
+                                      filter: id<4
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            3	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k AND pb.v = 10 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("id\tv\n");
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k AND pa.id + pb.v < 14 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("id\tv\n");
+            assertQuery("SELECT pa.id, pb.v, pc.w FROM pa JOIN pb ON pa.x = pb.k JOIN pc ON pc.k = pb.k AND pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v	w
+                            3	20	200
+                            """);
+            assertQuery("SELECT pa.id, pb.v, pc.w FROM pa JOIN pb ON pa.x = pb.k AND pa.id < 4 RIGHT JOIN pc ON pc.k = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v	w
+                            3	20	200
+                            null	null	700
+                            null	null	100
+                            """);
+            assertQuery("SELECT pa.id, pb.v, pc.w FROM pa RIGHT JOIN pb ON pa.x = pb.k JOIN pc ON pc.k = pb.k AND pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("id\tv\tw\n");
+            assertQuery("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k AND pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	null
+                            4	null
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            null	50
+                            null	20
+                            null	10
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestOnJoinOverSubQueries() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestJoinTables();
+            assertQuery("SELECT id, v FROM (SELECT pa.id, pa.s, pa.ts, pb.v FROM pa JOIN pb ON pa.x = pb.k) LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id	v
+                            1	10
+                            4	20
+                            """);
+            assertQuery("SELECT id, v FROM (SELECT pa.id, pa.s, pa.ts, pb.v FROM pa JOIN pb ON pa.x = pb.k) WHERE v = 10 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id	v
+                            1	10
+                            """);
+            assertQuery("SELECT t.id, pb.v FROM (SELECT * FROM pa WHERE id > 0) t JOIN pb ON t.x = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT t.id, pb.v FROM (SELECT * FROM pa ORDER BY ts) t JOIN pb ON t.x = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestOnJoinWhereConditions() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestJoinTables();
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: pb.k=pa.x
+                                    LatestByDeferredListValuesFiltered
+                                      filter: id<4
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            3	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pb.v = 10 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: pb.k=pa.x
+                                    LatestByDeferredListValuesFiltered
+                                        Frame backward scan on: pa
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: v=10
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns("id\tv\n");
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pb.v < 50 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.id + pb.v < 14 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("id\tv\n");
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.id < 4 AND pb.v = 10 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("id\tv\n");
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.id < 4 OR pb.v = 20 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE 1 = 1 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.s IN ('a', 'b') AND pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: pb.k=pa.x
+                                    LatestByDeferredListValuesFiltered
+                                      filter: id<4
+                                      includedSymbols: ['a','b']
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            3	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.s = 'a' LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: pb.k=pa.x
+                                    LatestByValueFiltered
+                                        Row backward scan
+                                          symbolFilter: s=0
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("id\tv\n");
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.s = 'b' AND pb.v > 0 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.s IN (SELECT s FROM pa WHERE id = 1) LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("id\tv\n");
+            assertQuery("SELECT pa.id, pb.v FROM pa JOIN pb ON pa.x = pb.k WHERE pa.ts > '2024-01-01T00:20:00Z' LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlanContaining("""
+                                    LatestByDeferredListValuesFiltered
+                                        Interval backward scan on: pa
+                            """)
+                    .returns("""
+                            id	v
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa CROSS JOIN pb WHERE pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id	v
+                            3	10
+                            3	20
+                            3	50
+                            2	10
+                            2	20
+                            2	50
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa CROSS JOIN pb WHERE pb.v = 10 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	10
+                            4	10
+                            """);
+            assertQuery("SELECT pa.id, pc.w FROM pa ASOF JOIN pc ON pa.x = pc.k WHERE pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id	w
+                            3	null
+                            2	700
+                            """);
+            assertQuery("SELECT pa.id, pc.w FROM pa ASOF JOIN pc ON pa.x = pc.k WHERE pc.w = 100 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("id\tw\n");
+        });
+    }
+
+    @Test
+    public void testLatestOnOuterJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            createLatestJoinTables();
+            assertQuery("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	null
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k WHERE pa.s IN ('a', 'b') LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: pb.k=pa.x
+                                    LatestByDeferredListValuesFiltered
+                                      includedSymbols: ['a','b']
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            2	null
+                            4	20
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k WHERE pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            3	20
+                            2	null
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k WHERE pb.v = 10 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("id\tv\n");
+            assertQuery("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k WHERE pb.v IS NULL LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	null
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: pb.k=pa.x
+                                    LatestByDeferredListValuesFiltered
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            4	20
+                            null	50
+                            null	10
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k WHERE pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("id\tv\n");
+            assertQuery("SELECT pa.id, pb.v FROM pa FULL JOIN pb ON pa.x = pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Full Outer Join Light
+                                  condition: pb.k=pa.x
+                                    LatestByDeferredListValuesFiltered
+                                        Frame backward scan on: pa
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id	v
+                            2	null
+                            4	20
+                            null	50
+                            null	10
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa FULL JOIN pb ON pa.x = pb.k WHERE pa.id < 4 LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	null
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x >= pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	10
+                            4	10
+                            2	20
+                            4	20
+                            2	50
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa FULL JOIN pb ON pa.x >= pb.k LATEST ON ts PARTITION BY s")
+                    .noRandomAccess()
+                    .returns("""
+                            id	v
+                            2	10
+                            2	20
+                            2	50
+                            4	10
+                            4	20
+                            """);
+        });
+    }
+
+    @Test
     public void testLatestOnVarchar() throws Exception {
         String suffix = getTimestampSuffix(timestampType.getTypeName());
         assertQuery("t " +
@@ -2393,6 +3178,26 @@ public class LatestByTest extends AbstractCairoTest {
                     .timestamp("timestamp")
                     .returns(expected);
         });
+    }
+
+    private void createLatestJoinTables() throws SqlException {
+        execute("CREATE TABLE pa (id INT, x INT, y INT, s SYMBOL, s2 SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE pb (k INT, v INT)");
+        execute("CREATE TABLE pc (k INT, w INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO pa VALUES
+                (1, 1, 1, 'a', 'p', '2024-01-01T00:00:00Z'),
+                (2, 7, 8, 'a', 'q', '2024-01-01T01:00:00Z'),
+                (3, 2, 2, 'b', 'p', '2024-01-01T00:30:00Z'),
+                (4, 2, 2, 'b', 'q', '2024-01-01T02:00:00Z')
+                """);
+        execute("INSERT INTO pb VALUES (1, 10), (2, 20), (5, 50)");
+        execute("""
+                INSERT INTO pc VALUES
+                (1, 100, '2023-12-31T00:00:00Z'),
+                (2, 200, '2024-01-01T01:30:00Z'),
+                (7, 700, '2024-01-01T00:10:00Z')
+                """);
     }
 
     private String selectDistinctSym() throws SqlException {

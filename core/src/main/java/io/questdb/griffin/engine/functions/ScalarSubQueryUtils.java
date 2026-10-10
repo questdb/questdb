@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -179,5 +180,61 @@ public final class ScalarSubQueryUtils {
             assertNoMoreRows(cursor, position);
             return timestamp;
         }
+    }
+
+    /**
+     * Opens the scalar sub-query cursor and reads its single value as a timestamp of {@code timestampType},
+     * converting the column the way a constant of the column's type converts to that timestamp type. The row-count
+     * contract matches {@link #readTimestamp(RecordCursorFactory, SqlExecutionContext, int)}.
+     *
+     * @param factory          the scalar sub-query cursor factory with exactly one column
+     * @param executionContext the execution context used to open the cursor
+     * @param position         the parse position of the sub-query, used for the error marker
+     * @param timestampType    the timestamp type of the returned value
+     * @return the converted value, or {@link Numbers#LONG_NULL} for a zero-row or null result
+     * @throws SqlException if the sub-query yields more than one row
+     */
+    public static long readTimestamp(
+            RecordCursorFactory factory,
+            SqlExecutionContext executionContext,
+            int position,
+            int timestampType
+    ) throws SqlException {
+        final int columnType = factory.getMetadata().getColumnType(0);
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+            if (!cursor.hasNext()) {
+                return Numbers.LONG_NULL;
+            }
+            final long timestamp = readTimestampValue(cursor.getRecord(), columnType, driver);
+            assertNoMoreRows(cursor, position);
+            return timestamp;
+        }
+    }
+
+    /**
+     * Builds the error for a comparison operand whose type no scalar sub-query comparison supports.
+     *
+     * @param position the parse position of the operand
+     * @param type     the {@link ColumnType} of the operand
+     * @return the error to throw
+     */
+    public static SqlException unsupportedOperand(int position, int type) {
+        return SqlException.$(position, "cannot compare ").put(ColumnType.nameOf(type)).put(" with a scalar sub-query");
+    }
+
+    private static long readTimestampValue(Record record, int columnType, TimestampDriver driver) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.TIMESTAMP -> driver.from(record.getTimestamp(0), columnType);
+            case ColumnType.DATE -> driver.fromDate(record.getDate(0));
+            case ColumnType.STRING -> driver.implicitCast(record.getStrA(0));
+            case ColumnType.SYMBOL -> driver.implicitCast(record.getSymA(0), ColumnType.SYMBOL);
+            case ColumnType.VARCHAR -> driver.implicitCastVarchar(record.getVarcharA(0));
+            case ColumnType.FLOAT -> {
+                final float value = record.getFloat(0);
+                yield Float.isNaN(value) ? Numbers.LONG_NULL : (long) value;
+            }
+            default -> readLongValue(record, ColumnType.tagOf(columnType));
+        };
     }
 }

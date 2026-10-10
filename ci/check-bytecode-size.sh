@@ -17,7 +17,7 @@ EXCLUSIONS=(
     "io.questdb.PropertyKey.static {}"
     "io.questdb.std.Decimal256.static {}"
     "io.questdb.griffin.engine.groupby.hyperloglog.BiasCorrectionData.static {}"
-    "io.questdb.griffin.SqlCodeGenerator.static {}"
+    "io.questdb.griffin.SetOperationCasts.static {}"
     "io.questdb.std.fastdouble.FastDoubleMath.static {}"
     "io.questdb.PropServerConfiguration.PropServerConfiguration"
 )

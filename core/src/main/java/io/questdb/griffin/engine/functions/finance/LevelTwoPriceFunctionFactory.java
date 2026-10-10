@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /**
@@ -61,6 +62,9 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
         final Function target = args.getQuick(0);
         if (target.isNullConstant()) {
+            for (int i = 1, n = args.size(); i < n; i++) {
+                args.setQuick(i, Misc.free(args.getQuick(i)));
+            }
             return target;
         }
 

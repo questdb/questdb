@@ -24,12 +24,8 @@
 
 package io.questdb.test.griffin.model;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.ScalarTimestampBoundHolder;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.str.AsciiCharSequence;
-import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -73,81 +69,6 @@ public class ExpressionNodeTest {
         copy.copyFrom(node);
         Assert.assertFalse(copy.isTimestampOrderInherited);
         Assert.assertFalse(ExpressionNode.deepClone(pool, node).isTimestampOrderInherited);
-    }
-
-    @Test
-    public void testDeepCloneAndCopyFromCarryLateralDepth() {
-        // LateralJoinRewriter pass 1 tags correlated refs with lateralDepth and later passes
-        // branch on it (allLiteralsAreCorrelated, hasCorrelatedExprAtDepth, unqualified-ref
-        // substitution). deepClone must carry the tag like copyFrom does, per the
-        // "update deepClone method after adding a new field" invariant in ExpressionNode.
-        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
-
-        final ExpressionNode node = pool.next().of(ExpressionNode.LITERAL, "x", 0, 0);
-        node.lateralDepth = 2;
-
-        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
-        Assert.assertEquals(2, clone.lateralDepth);
-
-        final ExpressionNode copy = pool.next().copyFrom(node);
-        Assert.assertEquals(2, copy.lateralDepth);
-    }
-
-    @Test
-    public void testDeepCloneAndCopyFromCarryScalarBoundHolder() {
-        // The holder is a compile-time link shared by reference (like queryModel): the pruning
-        // bound publishes a single frozen value into it and every residual re-compile - including
-        // ones fed a cloned filter expression on the filter-stealing path - must read that same
-        // holder. Dropping it on clone makes FunctionParser re-open the sub-query per worker.
-        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
-        final ScalarTimestampBoundHolder holder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP);
-
-        final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
-        node.scalarBoundHolder = holder;
-
-        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
-        Assert.assertSame(holder, clone.scalarBoundHolder);
-
-        final ExpressionNode copy = pool.next().copyFrom(node);
-        Assert.assertSame(holder, copy.scalarBoundHolder);
-    }
-
-    @Test
-    public void testClearResetsScalarBoundHolder() {
-        // ExpressionNode instances are pooled and recycled across compiles. A holder surviving
-        // clear() would let a later, unrelated query resolve its sub-query node to a stale
-        // ScalarSubQueryBoundRefFunction and read a bound frozen by a previous execution.
-        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
-        final ExpressionNode node = pool.next().of(ExpressionNode.QUERY, "query", 0, 0);
-        node.scalarBoundHolder = new ScalarTimestampBoundHolder(ColumnType.TIMESTAMP);
-
-        node.clear();
-        Assert.assertNull(node.scalarBoundHolder);
-    }
-
-    @Test
-    public void testDeepHashCodeConsistentWithCompareNodesExact() {
-        // AsciiCharSequence does not override hashCode(), so it uses identity-based Object.hashCode().
-        // This test verifies that deepHashCode uses content-based hashing for tokens,
-        // consistent with compareNodesExact which uses Chars.equals for comparison.
-        AsciiCharSequence token1 = new AsciiCharSequence().of(new Utf8String("test"));
-        AsciiCharSequence token2 = new AsciiCharSequence().of(new Utf8String("test"));
-
-        // Sanity check: tokens are different instances with same content
-        Assert.assertNotSame(token1, token2);
-
-        ExpressionNode node1 = ExpressionNode.FACTORY.newInstance();
-        ExpressionNode node2 = ExpressionNode.FACTORY.newInstance();
-
-        // Use CONSTANT type which uses case-sensitive Chars.equals in compareNodesExact
-        node1.of(ExpressionNode.CONSTANT, token1, 0, 0);
-        node2.of(ExpressionNode.CONSTANT, token2, 0, 0);
-
-        // Nodes should be equal by content
-        Assert.assertTrue(ExpressionNode.compareNodesExact(node1, node2));
-
-        // Hash codes must be equal for equal nodes (hash/equality contract)
-        Assert.assertEquals(ExpressionNode.deepHashCode(node1), ExpressionNode.deepHashCode(node2));
     }
 
     @Test

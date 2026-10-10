@@ -35,7 +35,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Ownership of the cursor factories {@code SqlOptimiser#parseFunctionAndEnumerateColumns} instantiates for
+ * Ownership of the cursor factories {@code TableFunctionSources#bind} instantiates for
  * FROM/JOIN table functions, on the compile paths that reject a statement AFTER {@code optimise()} returned
  * and BEFORE code generation has taken those factories over.
  * <p>

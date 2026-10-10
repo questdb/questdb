@@ -20,7 +20,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -326,8 +325,7 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
 
     // The same function one position over, and the position that defeated a guard keyed on where the
     // function stands: a cursor function may also be written as a projected *column*, and
-    // SqlOptimiser then rewrites it into a cross join against the model that carries it
-    // (rewriteSelect0 -> isCursor(qc.getAst().token) -> addCursorFunctionAsCrossJoin). At the top
+    // SqlBinder then binds it as a cross join against the source that carries it. At the top
     // level that synthesised join is caught by generateUpdate's containsJoin() backstop, but nested
     // one sub-query down it lands inside the sub-query's own model, which containsJoin() does not
     // walk. Keying on the instantiated function's type instead makes the position irrelevant: the
@@ -354,9 +352,8 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     }
 
     // The same position reached without a call syntax: a bare literal whose name happens to be a
-    // cursor function is turned into that function by the optimiser all the same, because
-    // replaceIfCursor and rewriteSelect0 both test isCursor(token) and neither looks at the node
-    // type. pg_class enumerates the tables this process knows about - node-local state, not
+    // cursor function is turned into that function by SqlBinder all the same, because it
+    // tests the token and does not look at the node type. pg_class enumerates the tables this process knows about - node-local state, not
     // something sequencing keeps aligned - so it is the same divergence with a different spelling.
     // WAL-only: the non-WAL answer is a count of whatever tables the fixture happens to hold, which
     // pins nothing.
@@ -423,7 +420,7 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     }
 
     // The second way the compiler materialises a cursor: SHOW builds its factory inline in
-    // SqlOptimiser#parseFunctionAndEnumerateColumns and hands it to the model, so it never reaches a
+    // TableFunctionSources#bindShow and hands it to the plan, so it never reaches a
     // function factory and the type check has to be told about it there. SHOW TABLES is backed by
     // the very AllTablesCursorFactory that all_tables() returns, reached by other syntax, so this is
     // the same node-local listing as testUpdateWithCatalogueCursorFunctionSourcesAreRejected with a
@@ -624,7 +621,7 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
 
     // The SET clause would be a second way into the model, and it writes the foreign value straight
     // into the target, so it would be the more dangerous half -- except that it is not a way in at
-    // all. SqlParser#parseUpdateClause parses a SET value with expr(lexer, (IQueryModel) null, ...),
+    // all. SqlParser#parseUpdateClause parses a SET value with expr(lexer, (QueryModel) null, ...),
     // and a null model makes ExpressionTreeBuilder#onNode reject any sub-query outright, whether or
     // not the target is a WAL table. Pinned here so that the guard's silence about SET clauses reads
     // as "nothing can get through" rather than "nobody checked": lift this parser restriction and
@@ -1041,8 +1038,7 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
 
     // The same invariant where it is load-bearing: in a shipped server assertions are off, so
     // position() hands back the carrier's one reused instance and every throw on that carrier shares
-    // the tableName sink. Nothing in a -ea test run can observe that, which is why this loads its own
-    // copy of SqlException with assertions disabled for it and drives the real flyweight.
+    // the tableName sink. A -ea test run allocates per throw, so this forces the production reuse.
     //
     // Two constructions are pinned, and each one is what the corresponding assertion fails without.
     // tableDoesNotExist clears the sink immediately before writing it, so a second throw cannot
@@ -1051,22 +1047,22 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     // exception that names no table cannot hand back the name the previous one left behind - which
     // matters because that name is the sole input to ApplyWal2TableJob's suspend-or-retry decision.
     @Test
-    public void testTableNameCannotOutliveTheExceptionWithAssertionsDisabled() throws Exception {
-        final Class<?> sqlException = TestUtils.loadSqlExceptionWithAssertionsDisabled();
-        final Method tableDoesNotExist = sqlException.getMethod("tableDoesNotExist", int.class, CharSequence.class);
-        final Method walRecoverable = sqlException.getMethod("walRecoverable", int.class);
-        final Method getTableName = sqlException.getMethod("getTableName");
+    public void testTableNameCannotOutliveTheReusedFlyweight() {
+        SqlException.setFlyweightReusedForTesting(true);
+        try {
+            final SqlException first = SqlException.tableDoesNotExist(0, "bounds");
+            TestUtils.assertEquals("bounds", first.getTableName());
 
-        final Object first = tableDoesNotExist.invoke(null, 0, "bounds");
-        TestUtils.assertEquals("bounds", (CharSequence) getTableName.invoke(first));
+            final SqlException second = SqlException.tableDoesNotExist(0, "t");
+            Assert.assertSame("the carrier must reuse one flyweight, or this proves nothing", first, second);
+            TestUtils.assertEquals("t", second.getTableName());
 
-        final Object second = tableDoesNotExist.invoke(null, 0, "t");
-        Assert.assertSame("the copy must reuse one flyweight per carrier, or this proves nothing", first, second);
-        TestUtils.assertEquals("t", (CharSequence) getTableName.invoke(second));
-
-        final Object third = walRecoverable.invoke(null, 0);
-        Assert.assertSame("the copy must reuse one flyweight per carrier, or this proves nothing", first, third);
-        Assert.assertEquals(0, ((CharSequence) getTableName.invoke(third)).length());
+            final SqlException third = SqlException.walRecoverable(0);
+            Assert.assertSame("the carrier must reuse one flyweight, or this proves nothing", first, third);
+            Assert.assertEquals(0, third.getTableName().length());
+        } finally {
+            SqlException.setFlyweightReusedForTesting(false);
+        }
     }
 
     // Guard for the recovery the fix must not break: when the target is renamed after the apply job

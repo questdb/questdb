@@ -134,7 +134,12 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         this.liveViewToken = liveViewToken;
         this.base = base;
         this.timestampColumnIndex = base.getMetadata().getTimestampIndex();
-        this.inMemRoutable = isInMemRoutable(base);
+        try {
+            this.inMemRoutable = isInMemRoutable(base);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
     }
 
     @Override
@@ -148,8 +153,8 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         // order straight through, and every routing mode serves its two bands in that
         // same order (see LiveViewRecordCursor) - so whatever advice the base scan
         // followed, this wrapper still honours. The default (false) claims the wrapper ignored
-        // the advice, which costs a redundant sort on a parent model that reads
-        // the flag: generateOrderBy's own scan-direction check only rescues the
+        // the advice, which costs a redundant sort on a parent that reads the
+        // flag: SortFactoryGenerator's own scan-direction check only rescues the
         // single-column designated-timestamp case, so an LV read ordered by
         // anything else the base already satisfied sorted for nothing.
         return base.followedOrderByAdvice();

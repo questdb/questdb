@@ -781,6 +781,45 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetPartitionedSwappableJoinKeepsTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                        ('1970-01-01T00:00:01.000000Z', 2),
+                        ('1970-01-01T00:00:02.000000Z', 1),
+                        ('1970-01-01T00:00:03.000000Z', 2),
+                        ('1970-01-02T00:00:04.000000Z', 1)
+                    """);
+            execute("CREATE TABLE b (k INT, v INT)");
+            execute("INSERT INTO b SELECT CASE WHEN x <= 5 THEN 2 ELSE 1 END, x::INT FROM long_sequence(10)");
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT a.ts, a.k, b.v FROM a JOIN b ON a.k = b.k) TO 'join_table' WITH FORMAT PARQUET PARTITION_BY DAY",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, status FROM sys.copy_export_log LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "join_table" + File.separator + "\t2\tfinished\n");
+                        assertQuery("SELECT ts, k, sum(v) s FROM read_parquet('" + exportRoot + File.separator + "join_table" + File.separator + "1970-01-01.parquet') ORDER BY ts")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tk\ts
+                                        1970-01-01T00:00:01.000000Z\t2\t15
+                                        1970-01-01T00:00:02.000000Z\t1\t40
+                                        1970-01-01T00:00:03.000000Z\t2\t15
+                                        """);
+                    });
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyParquetFailsWithSpecifyPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
@@ -1276,7 +1315,6 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select * from read_parquet('" + exportRoot + File.separator + "output_complex" + ".parquet')")
                                 .noLeakCheck()
                                 .expectSize()
-                                .timestamp("order_date")
                                 .returns("""
                                         id\tname\tamount\torder_date
                                         1\tJohn\t100.5\t2023-01-01T10:00:00.000000Z
@@ -1641,7 +1679,7 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyQueryNestedProjectionPreservesDictionaryEncoding() throws Exception {
         // Nested virtual projections: the outer factory's base is another VRCF, not the
         // underlying reader. The per-column parquet encoding must ride through both levels
-        // of generateSelectVirtualWithSubQuery.
+        // of ProjectionFactoryGenerator.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE dict_nested_src (

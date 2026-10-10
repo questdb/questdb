@@ -31,13 +31,11 @@ public class DistinctSymbolTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctOverPostingIndexRejectPathDoesNotLeakIntervalBound() throws Exception {
-        // The DISTINCT-over-posting-index optimisation re-parses the WHERE clause into its own
-        // IntrinsicModel, then abandons it when the clause leaves a residual filter. Abandoning it
-        // without clearIntervalFilters() orphans whatever the parse compiled into the runtime
-        // interval builder -- IntrinsicModel.clear() calls runtimeIntervalBuilder.clear(), which
-        // drops the references without closing them. The two sibling bail-outs in the LATEST ON
-        // path already call it. alloc_ts() makes the orphan observable: it is a runtime-constant
-        // timestamp bound holding a tracked 1 KiB native buffer.
+        // The DISTINCT-over-posting-index optimisation (ScanFactoryGenerator.generatePostingDistinct)
+        // extracts intervals from the WHERE clause, then abandons them when the clause leaves a
+        // residual filter. Abandoning them without clearing the IntervalExtractor orphans whatever
+        // the extraction compiled into the runtime interval builder. alloc_ts() makes the orphan
+        // observable: it is a runtime-constant timestamp bound holding a tracked 1 KiB native buffer.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (sym SYMBOL INDEX TYPE POSTING, value INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""

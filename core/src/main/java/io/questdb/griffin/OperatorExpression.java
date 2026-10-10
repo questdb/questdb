@@ -127,10 +127,10 @@ public final class OperatorExpression {
     final boolean associative;
     final boolean commutative;
     final boolean leftAssociative;
-    final OperatorExpression.Operator operator;
-    final int precedence;
+    public final OperatorExpression.Operator operator;
+    public final int precedence;
     final boolean symbol;
-    final int type;
+    public final int type;
 
     private OperatorExpression(OperatorExpression.Operator operator, int precedence, boolean leftAssociative, int type, boolean symbol) {
         this(operator, precedence, leftAssociative, type, symbol, false, false);

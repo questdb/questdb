@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -36,13 +37,18 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
+import org.jetbrains.annotations.Nullable;
 
 public final class EqUuidStrFunctionFactory implements FunctionFactory {
+    private static final FiberLocal<Uuid> CONSTANT_UUID = new FiberLocal<>(Uuid::new);
+
     @Override
     public String getSignature() {
         return "=(ZS)";
@@ -51,6 +57,12 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
     @Override
     public boolean isBoolean() {
         return true;
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        final Function strFunc = args.getQuick(1);
+        return !strFunc.isConstant() || constantUuid(strFunc) != null;
     }
 
     @Override
@@ -64,23 +76,12 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
         Function uuidFunc = args.getQuick(0);
         Function strFunc = args.getQuick(1);
         if (strFunc.isConstant()) {
-            CharSequence uuidStr = strFunc.getStrA(null);
-            long lo;
-            long hi;
-            if (uuidStr == null) {
-                lo = Numbers.LONG_NULL;
-                hi = Numbers.LONG_NULL;
-            } else {
-                try {
-                    Uuid.checkDashesAndLength(uuidStr);
-                    lo = Uuid.parseLo(uuidStr);
-                    hi = Uuid.parseHi(uuidStr);
-                } catch (NumericException e) {
-                    // ok, so the constant string is not a UUID format -> it cannot be equal to any UUID
-                    return BooleanConstant.FALSE;
-                }
+            final Uuid uuid = constantUuid(strFunc);
+            if (uuid == null) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
+                return BooleanConstant.FALSE;
             }
-            return new ConstStrFunc(lo, hi, uuidFunc);
+            return new ConstStrFunc(uuid.getLo(), uuid.getHi(), uuidFunc);
         } else if (strFunc.isRuntimeConstant()) {
             return new RuntimeConstStrFunc(strFunc, uuidFunc);
         } else if (uuidFunc.isConstant()) {
@@ -92,6 +93,25 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             return new ConstUuidFunc(lo, hi, strFunc);
         }
         return new Func(strFunc, uuidFunc);
+    }
+
+    /**
+     * The UUID a constant text spells, NULL for NULL text, in this fiber's holder; null when the text spells no UUID,
+     * which makes the comparison FALSE.
+     */
+    private static @Nullable Uuid constantUuid(Function strFunc) {
+        final CharSequence uuidStr = strFunc.getStrA(null);
+        final Uuid uuid = CONSTANT_UUID.get();
+        if (uuidStr == null) {
+            uuid.ofNull();
+            return uuid;
+        }
+        try {
+            uuid.of(uuidStr);
+            return uuid;
+        } catch (NumericException e) {
+            return null;
+        }
     }
 
     /**

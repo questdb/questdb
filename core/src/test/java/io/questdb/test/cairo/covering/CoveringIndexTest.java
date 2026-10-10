@@ -10740,7 +10740,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Optimizer rewrites DISTINCT → GROUP BY + count(*), but we intercept in
-            // generateSelectGroupBy and replace the entire chain with PostingIndex distinct
+            // AggregateFactoryGenerator and replace the entire chain with PostingIndex distinct
             assertQuery("SELECT DISTINCT sym FROM t_distinct_plan")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -12412,7 +12412,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testInListWithDuplicateBindVarKeys() throws Exception {
-        // Literal IN-list duplicates are deduped upstream by the WhereClauseParser
+        // Literal IN-list duplicates are deduped upstream by SymbolKeyExtractor
         // (see testInListWithDuplicateKeys), so only bind-variable / runtime-constant
         // duplicates reach the multi-key covering build loops. Without a contains()
         // guard there, openPartitionCursors opens one posting cursor per slot and the
@@ -16683,14 +16683,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
-            // The CTE introduces a SelectedRecord layer above the WHERE-driven
+            // The renaming CTE keeps a SelectedRecord layer above the WHERE-driven
             // CoveringIndex factory; the constant aggregate (avg(-1)) keeps the
             // group-by on the Async (parallel) keyed path rather than the
             // vectorised one. The key has to be non-NULL: a NULL-capable key gives
             // the factory a backup plan, and a factory carrying one withdraws the
             // page-frame cursor the Async path -- and so this regression -- needs.
-            String q = "WITH cte0 AS (SELECT * FROM t_bug9) "
-                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym = 'a' "
+            String q = "WITH cte0 AS (SELECT sym, k AS kk, v, ts FROM t_bug9) "
+                    + "SELECT t0.kk AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym = 'a' "
                     + "ORDER BY e0";
             assertQuery(q)
                     .noLeakCheck()
@@ -16702,9 +16702,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                   values: [avg(-1)]
                                   filter: null
                                     SelectedRecord
-                                        SelectedRecord
-                                            CoveringIndex on: sym with: k
-                                              filter: sym='a'
+                                        CoveringIndex on: sym with: k
+                                          filter: sym='a'
                             """);
             assertQuery(q)
                     .expectSize()
@@ -16717,8 +16716,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // The same query on the NULL key, to pin what the backup costs: the
             // covering factory reports no page-frame cursor, so the group-by falls to
             // the serial keyed path. The rows are the same either way.
-            String qNull = "WITH cte0 AS (SELECT * FROM t_bug9) "
-                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
+            String qNull = "WITH cte0 AS (SELECT sym, k AS kk, v, ts FROM t_bug9) "
+                    + "SELECT t0.kk AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
                     + "ORDER BY e0";
             assertQuery(qNull)
                     .noLeakCheck()
@@ -16729,9 +16728,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                   keys: [e0]
                                   values: [avg(-1)]
                                     SelectedRecord
-                                        SelectedRecord
-                                            CoveringIndex backup: true on: sym with: k
-                                              filter: sym=null
+                                        CoveringIndex backup: true on: sym with: k
+                                          filter: sym=null
                             """);
             assertQuery(qNull)
                     .expectSize()

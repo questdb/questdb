@@ -42,9 +42,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -74,7 +74,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             int columnSplit,
             RecordValueSink slaveValueSink,
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
-            JoinContext joinContext,
+            Plannable joinContext,
             ColumnFilter masterTableKeyColumns,
             long toleranceInterval,
             int slaveValueTimestampIndex
@@ -115,10 +115,10 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             // If a map allocation or the cursor constructor throws before the cursor takes ownership,
             // close() cannot reach the maps, so free them here.
             if (!isCursorOwningMaps) {
-                Misc.free(joinKeyMapA);
-                Misc.free(joinKeyMapB);
+                Misc.free(joinKeyMapA, th);
+                Misc.free(joinKeyMapB, th);
             }
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }

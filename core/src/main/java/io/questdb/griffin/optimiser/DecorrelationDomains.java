@@ -1,0 +1,228 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.optimiser;
+
+import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
+import io.questdb.griffin.CharacterStoreEntry;
+import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.plan.logical.AggregatePlan;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
+import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+
+import static io.questdb.griffin.optimiser.DecorrelationContext.OUTER_REF_PREFIX;
+
+/**
+ * Builds decorrelation domains: the distinct values of outer columns, read from a copy of the master input or
+ * prefix and shared with the master where the generator can re-read it.
+ */
+final class DecorrelationDomains implements Mutable {
+    final ObjList<JoinInput> decorrelatedSteps;
+    final IntList domainOuterIds = new IntList();
+    private final DecorrelationContext ctx;
+    private final ConjunctTest nonDomainConjuncts = this::keepsNonDomainConjunct;
+    int domainSequence;
+    private JoinInput domainStep;
+
+    /**
+     * {@code decorrelatedSteps} is the optimiser's temporary step list, which the owner empties before decorrelation starts.
+     */
+    DecorrelationDomains(DecorrelationContext ctx, ObjList<JoinInput> decorrelatedSteps) {
+        this.ctx = ctx;
+        this.decorrelatedSteps = decorrelatedSteps;
+    }
+
+    @Override
+    public void clear() {
+        domainOuterIds.clear();
+        domainSequence = 0;
+        domainStep = null;
+    }
+
+    private static void shareMasterSource(AggregatePlan domain, JoinInput source) {
+        final OutputSchema sourceOutput = source.getSourceOutput();
+        final OutputSchema output = domain.getInput().getOutput();
+        if (source.getUnnest() != null || sourceOutput.getColumnCount() != output.getColumnCount()) {
+            return;
+        }
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            if (sourceOutput.getColumnType(i) != output.getColumnType(i)
+                    || !Chars.equalsIgnoreCase(sourceOutput.getColumnName(i), output.getColumnName(i))) {
+                domain.getSharedInputIds().clear();
+                domain.getSharedSourceIds().clear();
+                return;
+            }
+            domain.getSharedInputIds().add(output.getColumnId(i));
+            domain.getSharedSourceIds().add(sourceOutput.getColumnId(i));
+        }
+        domain.setSharedSource(source);
+    }
+
+    private boolean keepsNonDomainConjunct(BoundExpression conjunct) throws SqlException {
+        if (!ctx.readsAnyOuter(conjunct, domainOuterIds)) {
+            return true;
+        }
+        final BoundExpression moved = domainStep.getPostJoinFilter();
+        domainStep.setPostJoinFilter(moved == null ? conjunct : ctx.context.getRewriter().combineConjunction(moved, conjunct, conjunct.getPosition()));
+        return false;
+    }
+
+    /**
+     * The master prefix of the first {@code inputCount} inputs as a join of the original inputs, for copying.
+     */
+    private JoinPlan prefix(int inputCount, int position) {
+        final JoinPlan prefix = ctx.planNodes.joins.next().of(position);
+        for (int i = 0; i < inputCount; i++) {
+            prefix.getInputs().add(ctx.master.getInputs().getQuick(i));
+        }
+        for (int i = 0, n = ctx.master.getOrderedInputs().size(); i < n; i++) {
+            final JoinInput input = ctx.master.getOrderedInputs().getQuick(i);
+            if (ctx.master.getInputs().indexOf(input) < inputCount) {
+                prefix.getOrderedInputs().add(input);
+            }
+        }
+        final OutputSchema output = prefix.getOutput();
+        for (int i = 0; i < inputCount; i++) {
+            final JoinInput input = ctx.master.getInputs().getQuick(i);
+            final OutputSchema source = input.getSourceOutput();
+            for (int c = 0, n = source.getColumnCount(); c < n; c++) {
+                output.add(source.getColumnId(c), source.getColumnName(c), source.getColumnType(c), source.getMetadata(c),
+                        source.isVisible(c), input.getBindingAlias());
+            }
+        }
+        output.setTimestampIndex(output.getColumnIndexById(ctx.master.getOutput().getTimestampColumnId()));
+        return prefix;
+    }
+
+    /**
+     * A domain: the distinct values of the outer columns {@link #domainOuterIds} holds, read from a copy of
+     * the master input that defines them, or of the master prefix when they come from several inputs or from a
+     * decorrelated step, or when a step of the prefix can NULL-extend them. The prefix then reaches the last such
+     * step. Maps each outer column to its domain column.
+     */
+    AggregatePlan buildDomain(int position) {
+        int firstInput = Integer.MAX_VALUE;
+        int lastInput = -1;
+        for (int i = 0, n = domainOuterIds.size(); i < n; i++) {
+            final int input = ctx.masterInput(domainOuterIds.getQuick(i));
+            firstInput = Math.min(firstInput, input);
+            lastInput = Math.max(lastInput, input);
+        }
+        int prefixCount = lastInput + 1;
+        boolean isNulled = false;
+        for (int i = 0, n = domainOuterIds.size(); i < n; i++) {
+            final int input = ctx.masterInput(domainOuterIds.getQuick(i));
+            for (int step = input; step < ctx.masterLimit; step++) {
+                if (LogicalPlans.isNullingStep(ctx.master, ctx.master.getInputs().getQuick(step), ctx.master.getInputs().getQuick(input))) {
+                    isNulled = true;
+                    prefixCount = Math.max(prefixCount, step + 1);
+                }
+            }
+        }
+        final JoinInput last = ctx.master.getInputs().getQuick(lastInput);
+        final boolean isPrefix = isNulled || firstInput != lastInput || last.getInput() == null || decorrelatedSteps.indexOf(last) > -1;
+        final LogicalPlan original = isPrefix ? prefix(prefixCount, position) : last.getInput();
+        final LogicalPlan source = ctx.copier.copy(original);
+        final AggregatePlan domain = ctx.planNodes.aggregates.next().of(source, position);
+        domain.setExplicitGrouping(true);
+        for (int i = 0, n = domainOuterIds.size(); i < n; i++) {
+            final int outerId = domainOuterIds.getQuick(i);
+            final int index = original.getOutput().getColumnIndexById(ctx.masterColumn(outerId));
+            final int sourceId = source.getOutput().getColumnId(index);
+            final int type = source.getOutput().getColumnType(index);
+            domain.getGroupingExpressions().add(ctx.planNodes.columns.next().of(sourceId, type, position));
+            final int columnId = ctx.context.newColumnId();
+            domain.getOutput().add(columnId, ctx.outerRefName(outerId), type, false);
+            ctx.addMapping(outerId, columnId);
+        }
+        if (!isPrefix) {
+            shareMasterSource(domain, last);
+        }
+        return domain;
+    }
+
+    JoinPlan crossDomain(LogicalPlan source, AggregatePlan domain, int position) {
+        final JoinPlan join = ctx.planNodes.joins.next().of(position);
+        join.addInput(ctx.planNodes.joinInputs.next().of(source, JoinKind.CROSS, null, position));
+        join.addInput(ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position));
+        join.getOutput().copyFrom(source.getOutput());
+        join.getOutput().addMissingColumnsFrom(domain.getOutput());
+        join.getOutput().setTimestampIndex(source.getOutput().getTimestampIndex());
+        return join;
+    }
+
+    /**
+     * Crosses a set-operation branch with a domain of the outer columns the other branch maps and this one
+     * does not.
+     */
+    LogicalPlan crossMissing(LogicalPlan branch, int otherLo, int otherHi, int ownLo, int ownHi, int position) {
+        domainOuterIds.clear();
+        for (int i = otherLo; i < otherHi; i++) {
+            final int outerId = ctx.mappedOuterIds.getQuick(i);
+            if (ctx.mappedColumn(outerId, ownLo, ownHi) < 0 && !domainOuterIds.contains(outerId)) {
+                domainOuterIds.add(outerId);
+            }
+        }
+        return domainOuterIds.size() == 0 ? branch : crossDomain(branch, buildDomain(position), position);
+    }
+
+    CharSequence domainAlias() {
+        final CharacterStoreEntry alias = ctx.characterStore.newEntry();
+        alias.put(OUTER_REF_PREFIX).put(ctx.outerRefSequence);
+        if (domainSequence++ > 0) {
+            alias.put('_').put(domainSequence - 1);
+        }
+        return alias.toImmutable();
+    }
+
+    /**
+     * Joins the domain to the join as a CROSS step at {@code orderedIndex} of the execution order, last when the
+     * index is the step count, and returns the step.
+     */
+    JoinInput insertDomainStep(JoinPlan join, AggregatePlan domain, int orderedIndex, int position) {
+        final JoinInput step = ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position);
+        join.getInputs().add(step);
+        join.getOrderedInputs().insert(orderedIndex, 1, step);
+        join.addMissingInputColumns();
+        return step;
+    }
+
+    /**
+     * Returns the conjuncts of the predicate that read none of {@link #domainOuterIds}, moving the others to the
+     * domain step, which joins after every input.
+     */
+    BoundExpression moveDomainConjuncts(BoundExpression predicate, JoinInput domainStep) throws SqlException {
+        this.domainStep = domainStep;
+        return ctx.context.getRewriter().retainConjuncts(predicate, nonDomainConjuncts);
+    }
+}

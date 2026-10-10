@@ -37,7 +37,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -50,6 +52,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -331,6 +334,44 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             .expectSize()
                             .withPlanContaining("Async Filter workers: 4")
                             .returns("count\n999\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
+    public void testCharAsStringInParallelFilter() throws Exception {
+        // A CHAR column converts to text through its own buffers, so each worker reads it through its own clone.
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    engine.execute("CREATE TABLE x (ts TIMESTAMP, c CHAR) timestamp(ts) PARTITION BY DAY;", sqlExecutionContext);
+                    engine.execute(
+                            "INSERT INTO x SELECT x::timestamp, CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END::char FROM long_sequence("
+                                    + (1000 * PAGE_FRAME_MAX_ROWS) + ")",
+                            sqlExecutionContext
+                    );
+                    sqlExecutionContext.getBindVariableService().clear();
+                    sqlExecutionContext.getBindVariableService().setStr(0, "a");
+                    assertQuery("SELECT count(*) FROM x WHERE c::string = $1")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Async Filter workers: 4")
+                            .returns("count\n50000\n");
+                    assertQuery("SELECT count(*) FROM x WHERE concat(c, 'z') = 'az'")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Async Filter workers: 4")
+                            .returns("count\n50000\n");
                 },
                 configuration,
                 LOG
@@ -888,6 +929,16 @@ public class ParallelFilterTest extends AbstractCairoTest {
         Assume.assumeTrue(JitUtil.isJitSupported());
 
         testStrBindVariable("SYMBOL", SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testSymbolPatternNonThreadSafeResidualBroad() throws Exception {
+        testSymbolPatternNonThreadSafeResidual("c%", 51, false);
+    }
+
+    @Test
+    public void testSymbolPatternNonThreadSafeResidualSelective() throws Exception {
+        testSymbolPatternNonThreadSafeResidual("a%", 1, true);
     }
 
     @Test
@@ -1509,4 +1560,65 @@ public class ParallelFilterTest extends AbstractCairoTest {
             return super.getState();
         }
     }
+
+    private void testSymbolPatternNonThreadSafeResidual(String pattern, int remainder, boolean isIndexRouteExpected) throws Exception {
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE x (s SYMBOL INDEX, txt STRING, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    engine.execute("""
+                            INSERT INTO x SELECT
+                                CASE WHEN x % 100 = 1 THEN 'aa' ELSE 'c' || (x % 7) END,
+                                CASE WHEN x % 50 = 1 THEN 'x' ELSE 'y' END,
+                                x,
+                                timestamp_sequence(0, 60_000_000)
+                            FROM long_sequence(10_000)
+                            """, sqlExecutionContext);
+                    final String filter = "FROM x WHERE s LIKE '" + pattern + "' AND txt = 'x'";
+                    final StringSink expected = new StringSink();
+                    expected.put("v\n");
+                    for (int i = 0; i < 100; i++) {
+                        expected.put(remainder + 100 * i).put('\n');
+                    }
+                    SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = true;
+                    try {
+                        AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                        assertQuery("SELECT v " + filter)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .withPlanContaining("AdaptiveSymbolPattern", "Async Filter workers: 4")
+                                .returns(expected);
+                        Assert.assertEquals(isIndexRouteExpected, AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get() == 0);
+                    } finally {
+                        SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = false;
+                    }
+                    expected.clear();
+                    expected.put("v\n");
+                    for (int i = 0; i < 5; i++) {
+                        expected.put(remainder + 100 * i).put('\n');
+                    }
+                    assertQuery("SELECT v " + filter + " LIMIT 5")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .withPlanContaining("AdaptiveSymbolPattern", "limit: 5")
+                            .returns(expected);
+                    assertQuery("SELECT count(), sum(v) " + filter)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tsum\n100\t" + (100 * remainder + 495_000) + "\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
 }

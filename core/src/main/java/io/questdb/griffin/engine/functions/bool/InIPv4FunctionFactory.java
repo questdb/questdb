@@ -48,6 +48,11 @@ import io.questdb.std.Transient;
 public final class InIPv4FunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "in(Xv)";
     }

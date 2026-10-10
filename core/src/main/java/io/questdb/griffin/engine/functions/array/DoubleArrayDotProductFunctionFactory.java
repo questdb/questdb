@@ -45,6 +45,11 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "dot_product";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[]D[])";
     }

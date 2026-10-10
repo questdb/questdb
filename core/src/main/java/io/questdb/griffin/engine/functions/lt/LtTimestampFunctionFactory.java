@@ -41,12 +41,22 @@ import io.questdb.std.ObjList;
 public class LtTimestampFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "<(NN)";
     }
 
     @Override
     public boolean isBoolean() {
+        return true;
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
         return true;
     }
 

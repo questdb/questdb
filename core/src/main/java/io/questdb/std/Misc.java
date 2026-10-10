@@ -76,6 +76,23 @@ public final class Misc {
         return null;
     }
 
+    /**
+     * Clears the object on a failure path and adds any clear failure to {@code primary} as a
+     * suppressed exception. This is the {@link Mutable} counterpart of
+     * {@link #free(Closeable, Throwable)}.
+     */
+    public static <T extends Mutable> void clear(@Nullable T object, @NotNull Throwable primary) {
+        if (object != null) {
+            try {
+                object.clear();
+            } catch (Throwable th) {
+                if (th != primary) {
+                    primary.addSuppressed(th);
+                }
+            }
+        }
+    }
+
     public static <T extends Mutable> void clear(T[] list) {
         if (list != null) {
             for (T t : list) {
@@ -301,6 +318,22 @@ public final class Misc {
     public static <T> void freeObjListIfCloseable(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
+        }
+    }
+
+    /**
+     * Closes every closeable list entry and adds close failures to {@code primary} as suppressed
+     * exceptions. The method nulls each slot before its close attempt.
+     */
+    public static <T> void freeObjListIfCloseable(@Nullable ObjList<T> list, @NotNull Throwable primary) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                final T object = list.getQuick(i);
+                list.setQuick(i, null);
+                if (object instanceof Closeable closeable) {
+                    free(closeable, primary);
+                }
+            }
         }
     }
 

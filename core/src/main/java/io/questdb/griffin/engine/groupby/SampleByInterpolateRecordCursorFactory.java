@@ -49,7 +49,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
-import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -97,7 +96,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             @NotNull TimestampSampler timestampSampler,
-            @Transient @NotNull IQueryModel model,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
@@ -114,7 +112,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     ) throws SqlException {
         super(metadata);
         try {
-            final int columnCount = model.getBottomUpColumns().size();
             this.base = base;
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
@@ -134,10 +131,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 }
             }
 
-            this.groupByScalarFunctions = new ObjList<>(columnCount);
-            this.groupByTwoPointFunctions = new ObjList<>(columnCount);
-            this.storeYFunctions = new ObjList<>(columnCount);
-            this.interpolatorFunctions = new ObjList<>(columnCount);
+            this.groupByScalarFunctions = new ObjList<>(groupByFunctions.size());
+            this.groupByTwoPointFunctions = new ObjList<>(groupByFunctions.size());
+            this.storeYFunctions = new ObjList<>(groupByFunctions.size());
+            this.interpolatorFunctions = new ObjList<>(groupByFunctions.size());
             this.groupByFunctionCount = groupByFunctions.size();
             for (int i = 0; i < groupByFunctionCount; i++) {
                 GroupByFunction function = groupByFunctions.getQuick(i);

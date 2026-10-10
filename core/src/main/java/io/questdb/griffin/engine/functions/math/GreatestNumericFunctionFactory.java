@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -67,6 +68,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class GreatestNumericFunctionFactory implements FunctionFactory {
     private static final FiberLocal<IntHashSet> tlSet = new FiberLocal<>(IntHashSet::new);
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.numericExtreme(argTypes);
+    }
 
     @Override
     public String getSignature() {

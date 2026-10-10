@@ -24,11 +24,15 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -262,6 +266,65 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinSharedColumnMixedStringKeyEncodings() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String keyType : new String[]{"SYMBOL", "STRING"}) {
+                execute("DROP TABLE IF EXISTS m");
+                execute("DROP TABLE IF EXISTS s");
+                execute("CREATE TABLE m (s1 " + keyType + ", v VARCHAR)");
+                execute("INSERT INTO m VALUES ('a', 'a'), ('b', 'b'), ('c', 'x')");
+                execute("CREATE TABLE s (s1 " + keyType + ", v VARCHAR)");
+                execute("INSERT INTO s VALUES ('a', 'a'), ('b', 'b'), ('c', 'c')");
+                final ObjList<String> onClauses = new ObjList<>();
+                AsOfJoinTest.collectOnClausePermutations(new String[]{"s.s1 = m.s1", "s.v = m.v", "s.s1 = m.v"}, 0, onClauses);
+                for (int i = 0, n = onClauses.size(); i < n; i++) {
+                    final String on = onClauses.getQuick(i);
+                    assertLightAndFullFatJoin(
+                            "SELECT m.s1, m.v, s.s1 ss1, s.v sv FROM m JOIN s ON " + on + " ORDER BY m.s1, s.s1",
+                            """
+                                    s1\tv\tss1\tsv
+                                    a\ta\ta\ta
+                                    b\tb\tb\tb
+                                    """,
+                            null
+                    );
+                    assertLightAndFullFatJoin(
+                            "SELECT m.s1, m.v, s.s1 ss1, s.v sv FROM m LEFT JOIN s ON " + on + " ORDER BY m.s1, s.s1",
+                            """
+                                    s1\tv\tss1\tsv
+                                    a\ta\ta\ta
+                                    b\tb\tb\tb
+                                    c\tx\t\t
+                                    """,
+                            null
+                    );
+                    assertLightAndFullFatJoin(
+                            "SELECT m.s1, m.v, s.s1 ss1, s.v sv FROM m RIGHT JOIN s ON " + on + " ORDER BY m.s1, s.s1",
+                            """
+                                    s1\tv\tss1\tsv
+                                    \t\tc\tc
+                                    a\ta\ta\ta
+                                    b\tb\tb\tb
+                                    """,
+                            null
+                    );
+                    assertLightAndFullFatJoin(
+                            "SELECT m.s1, m.v, s.s1 ss1, s.v sv FROM m FULL JOIN s ON " + on + " ORDER BY m.s1, s.s1",
+                            """
+                                    s1\tv\tss1\tsv
+                                    \t\tc\tc
+                                    a\ta\ta\ta
+                                    b\tb\tb\tb
+                                    c\tx\t\t
+                                    """,
+                            null
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHashJoinSymbolAndDecimalKeys() throws Exception {
         assertMemoryLeak(() -> {
             assertHashJoinSymbolAndDecimalKey("dec8", "DECIMAL(2,1)", "1.2", "2.3", "3.4");
@@ -291,7 +354,6 @@ public class HashJoinTest extends AbstractCairoTest {
             createOrdersAndFills("STRING");
             assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlanContaining("Hash Join Light", "symbolKeyJoin: true")
                     .returns("""
@@ -398,7 +460,6 @@ public class HashJoinTest extends AbstractCairoTest {
             createOrdersAndFills("VARCHAR");
             assertQuery("SELECT o.ts, o.sym, f.qty FROM orders o JOIN fills f ON o.sym = f.sym AND o.venue = f.venue")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlanContaining("Hash Join Light", "symbolKeyJoin: true")
                     .returns("""
@@ -406,6 +467,66 @@ public class HashJoinTest extends AbstractCairoTest {
                             2024-01-01T00:00:01.000000Z\tAAPL\t10
                             2024-01-01T00:00:02.000000Z\tMSFT\t20
                             """);
+        });
+    }
+
+    @Test
+    public void testHashJoinSymbolKeysSharedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (a SYMBOL, c SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('X', 'Y', '2024-01-01T00:00:01Z'),
+                        ('Y', 'X', '2024-01-01T00:00:02Z'),
+                        ('X', 'X', '2024-01-01T00:00:03Z')
+                    """);
+            execute("CREATE TABLE m (mx SYMBOL, my SYMBOL, mz SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('X', 'X', 'X', '2024-01-01T00:00:03Z'),
+                        ('X', 'X', 'X', '2024-01-01T00:00:04Z'),
+                        ('Y', 'Y', 'Y', '2024-01-01T00:00:05Z')
+                    """);
+            final String innerExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    """;
+            final String masterOuterExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:05.000000Z\t\t\t
+                    """;
+            final String slaveOuterExpected = """
+                    ts\tsts\ta\tc
+                    \t2024-01-01T00:00:01.000000Z\tX\tY
+                    \t2024-01-01T00:00:02.000000Z\tY\tX
+                    2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    """;
+            final String fullExpected = """
+                    ts\tsts\ta\tc
+                    \t2024-01-01T00:00:01.000000Z\tX\tY
+                    \t2024-01-01T00:00:02.000000Z\tY\tX
+                    2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:05.000000Z\t\t\t
+                    """;
+            final ObjList<String> onClauses = new ObjList<>();
+            AsOfJoinTest.collectOnClausePermutations(new String[]{"s.c = m.mx", "s.a = m.mz", "s.a = m.mx"}, 0, onClauses);
+            AsOfJoinTest.collectOnClausePermutations(new String[]{"s.a = m.mx", "s.c = m.mz", "s.c = m.mx", "s.a = m.my"}, 0, onClauses);
+            final String select = "SELECT m.ts, s.ts sts, s.a, s.c FROM ";
+            final String orderBy = " ORDER BY m.ts, s.ts";
+            for (int i = 0, n = onClauses.size(); i < n; i++) {
+                final String on = " ON " + onClauses.getQuick(i);
+                assertLightAndFullFatJoin(select + "m JOIN s" + on + orderBy, innerExpected, "ts");
+                assertLightAndFullFatJoin(select + "s JOIN m" + on + orderBy, innerExpected, "ts");
+                assertLightAndFullFatJoin(select + "m LEFT JOIN s" + on + orderBy, masterOuterExpected, "ts");
+                assertLightAndFullFatJoin(select + "s LEFT JOIN m" + on + orderBy, slaveOuterExpected, "ts");
+                assertLightAndFullFatJoin(select + "m RIGHT JOIN s" + on + orderBy, slaveOuterExpected, "ts");
+                assertLightAndFullFatJoin(select + "m FULL JOIN s" + on + orderBy, fullExpected, "ts");
+            }
         });
     }
 
@@ -514,6 +635,97 @@ public class HashJoinTest extends AbstractCairoTest {
                             B	2	B	20
                             C	3		null
                             """);
+        });
+    }
+
+    @Test
+    public void testHashJoinTimestampAndTimestampNsNullKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (id INT, x TIMESTAMP)");
+            execute("INSERT INTO ta VALUES (1, NULL), (2, '2024-01-01T00:00:00.000000Z')");
+            execute("CREATE TABLE tb (k TIMESTAMP_NS, v INT)");
+            execute("INSERT INTO tb VALUES (NULL, 10), ('2024-01-01T00:00:00.000000000Z', 20), ('1970-01-01T00:00:00.000000000Z', 30)");
+            execute("CREATE TABLE ma (id INT, x TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO ma VALUES (1, NULL, '2024-01-02T00:00:00.000000Z'), (2, '2024-01-01T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z')");
+            execute("CREATE TABLE mb (k TIMESTAMP_NS, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO mb VALUES
+                        (NULL, 10, '2024-01-01T00:00:00.000000Z'),
+                        ('2024-01-01T00:00:00.000000000Z', 20, '2024-01-01T00:00:00.000000Z'),
+                        ('1970-01-01T00:00:00.000000000Z', 30, '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE pa (id INT, x TIMESTAMP, y TIMESTAMP)");
+            execute("""
+                    INSERT INTO pa VALUES
+                        (1, NULL, '1970-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                        (3, '2024-01-01T00:00:00.000000Z', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE pb (k TIMESTAMP_NS, v INT)");
+            execute("INSERT INTO pb VALUES ('1970-01-01T00:00:00.000000000Z', 10), ('2024-01-01T00:00:00.000000000Z', 20)");
+
+            final String matched = """
+                    id\tv
+                    1\t10
+                    2\t20
+                    """;
+            final String rightOuter = """
+                    id\tv
+                    null\t30
+                    1\t10
+                    2\t20
+                    """;
+            for (int copierType = 0; copierType <= RecordSinkFactory.SINK_TYPE_LOOPING; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT ta.id, tb.v, ta.x = tb.k eq FROM ta CROSS JOIN tb ORDER BY ta.id, tb.v")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tv\teq
+                                1\t10\ttrue
+                                1\t20\tfalse
+                                1\t30\tfalse
+                                2\t10\tfalse
+                                2\t20\ttrue
+                                2\t30\tfalse
+                                """);
+                assertLightAndFullFatJoin("SELECT ta.id, tb.v FROM ta JOIN tb ON ta.x = tb.k ORDER BY ta.id", matched, null);
+                assertLightAndFullFatJoin("SELECT ta.id, tb.v FROM tb JOIN ta ON ta.x = tb.k ORDER BY ta.id", matched, null);
+                assertLightAndFullFatJoin("SELECT ta.id, tb.v FROM ta LEFT JOIN tb ON ta.x = tb.k ORDER BY ta.id", matched, null);
+                assertLightAndFullFatJoin("SELECT ta.id, tb.v FROM ta RIGHT JOIN tb ON ta.x = tb.k ORDER BY ta.id, tb.v", rightOuter, null);
+                assertLightAndFullFatJoin("SELECT ta.id, tb.v FROM ta FULL JOIN tb ON ta.x = tb.k ORDER BY ta.id, tb.v", rightOuter, null);
+                assertLightAndFullFatJoin("SELECT ta.id, tb.v FROM ta CROSS JOIN tb WHERE ta.x = tb.k ORDER BY ta.id", matched, null);
+                assertLightAndFullFatJoin("SELECT ma.id, mb.v FROM ma ASOF JOIN mb ON (ma.x = mb.k) ORDER BY ma.id", matched, null);
+                assertLightAndFullFatJoin("SELECT ma.id, mb.v FROM ma LT JOIN mb ON (ma.x = mb.k) ORDER BY ma.id", matched, null);
+                assertQuery("SELECT x FROM ta UNION SELECT k FROM tb ORDER BY x")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .returns("""
+                                x
+                                
+                                1970-01-01T00:00:00.000000000Z
+                                2024-01-01T00:00:00.000000000Z
+                                """);
+                assertQuery("SELECT x FROM ta INTERSECT SELECT k FROM tb ORDER BY x")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .returns("""
+                                x
+                                
+                                2024-01-01T00:00:00.000000000Z
+                                """);
+                assertLightAndFullFatJoin(
+                        "SELECT pa.id, pb.v FROM pa FULL JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pa.id, pb.v",
+                        """
+                                id\tv
+                                null\t10
+                                1\tnull
+                                2\t20
+                                3\tnull
+                                """,
+                        null
+                );
+            }
         });
     }
 
@@ -787,14 +999,13 @@ public class HashJoinTest extends AbstractCairoTest {
     @Test
     public void testHashSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
         // A self-join compares a.sym = b.sym as raw symbol keys and does not set its bits, but
-        // processJoinContext() sets the bits for a.side = b.side_str on both sides. The projection puts
+        // JoinBinder.bindJoinConditions() sets the bits for a.side = b.side_str on both sides. The projection puts
         // b.side_str at slave column 1, so the stray bit makes the master sink write a.sym (master
         // column 1) as a string while the slave sink writes b.sym as an int.
         assertMemoryLeak(() -> {
             createBook();
             assertQuery("SELECT a.ts, a.sym, b.qty FROM book a JOIN book b ON a.sym = b.sym AND a.side = b.side_str")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlanContaining("Hash Join Light")
                     .returns("""
@@ -813,7 +1024,6 @@ public class HashJoinTest extends AbstractCairoTest {
             createBook();
             assertQuery("SELECT a.ts, b.qty, b.sym FROM book a JOIN book b ON a.sym = b.sym AND a.side_str = b.side")
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .withPlanContaining("Hash Join Light")
                     .returns("""
@@ -822,6 +1032,21 @@ public class HashJoinTest extends AbstractCairoTest {
                             2024-01-01T00:00:02.000000Z\t2\tMSFT
                             """);
         });
+    }
+
+    private void assertLightAndFullFatJoin(String query, String expected, String timestamp) throws Exception {
+        assertQuery(query).noLeakCheck().timestamp(timestamp).sizeMayVary().returns(expected);
+        final boolean isFullFatSizeKnown;
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(true);
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                isFullFatSizeKnown = cursor.size() != -1;
+            }
+        }
+        assertQuery(query).noLeakCheck().fullFatJoins().timestamp(timestamp).expectSize(isFullFatSizeKnown).returns(expected);
     }
 
     private void assertHashJoinSymbolAndDecimalKey(String tableSuffix, String decimalType, String id1, String id2, String id3) throws Exception {

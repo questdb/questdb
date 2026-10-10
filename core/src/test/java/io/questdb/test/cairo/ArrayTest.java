@@ -568,6 +568,21 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAccessOrderedByDesignatedTimestamp() throws Exception {
+        assertQuery("SELECT arr[1], arr[2] x FROM tango ORDER BY timestamp DESC")
+                .ddl(
+                        "CREATE TABLE tango (arr DOUBLE[], timestamp TIMESTAMP) TIMESTAMP(timestamp)",
+                        "INSERT INTO tango VALUES (ARRAY[1.0, 2.0], '2025-01-01'), (ARRAY[3.0, 4.0], '2025-01-02')"
+                )
+                .expectSize()
+                .returns("""
+                        []	x
+                        3.0	4.0
+                        1.0	2.0
+                        """);
+    }
+
+    @Test
     public void testAccessOutOfBounds() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
@@ -1495,29 +1510,29 @@ public class ArrayTest extends AbstractCairoTest {
             assertSqlWithTypes("""
                             i\tarray_sum
                             [null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
                             """,
                     "select rnd_double_array(1,1) i, array_sum(i) from long_sequence(10);\n");
             assertSqlWithTypes("""
                             i\tarray_cum_sum
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             """,
                     "select rnd_double_array(1,1) i, array_cum_sum(i) from long_sequence(10);\n");
         });

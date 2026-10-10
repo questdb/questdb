@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -35,6 +36,19 @@ import io.questdb.std.Transient;
 public interface FunctionFactory {
     default int getExecutionRequirements() {
         return SqlExecutionRequirements.NONE;
+    }
+
+    /**
+     * The type of the function {@link #newInstance} returns for arguments of the given resolved types, known without
+     * building it. It must hold for every argument of these types, constant or not; {@link ColumnType#UNDEFINED}
+     * means only the built function knows its type, e.g. when the type depends on an argument's value. A factory
+     * that {@link #isBoolean() returns booleans} declares BOOLEAN.
+     *
+     * @param argTypes resolved argument types, after implicit casts, in call order
+     * @return the result type, or {@link ColumnType#UNDEFINED} when it is not known statically
+     */
+    default int getResultType(@Transient IntList argTypes) {
+        return isBoolean() ? ColumnType.BOOLEAN : ColumnType.UNDEFINED;
     }
 
     /**
@@ -93,6 +107,31 @@ public interface FunctionFactory {
     }
 
     /**
+     * Vets the arguments of a call that has non-constant arguments, so that its construction can wait for code
+     * generation: raises the errors {@link #newInstance} raises for these arguments, in its order, and answers
+     * whether {@link #newInstance} then builds a non-constant function of the {@link #getResultType declared type}
+     * that does not stand in for one of its arguments. Only the values of constant arguments may be read; the others
+     * can be placeholders. The default answers true only when no argument is a constant value, so a call with
+     * constant arguments is constructed while binding.
+     *
+     * @param position      the position of the call in the SQL statement
+     * @param args          the arguments {@link #newInstance} would receive, never modified
+     * @param argPositions  the positions of the arguments in the SQL statement
+     * @param configuration the configuration {@link #newInstance} would receive
+     * @return true when the call can be constructed later with the same outcome
+     * @throws SqlException the error {@link #newInstance} raises for these arguments
+     */
+    default boolean isConstructionDeferrable(int position, @Transient ObjList<Function> args, @Transient IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function arg = args.getQuick(i);
+            if (arg.isConstant() && !(arg instanceof TypeConstant)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Returns true if the function returns a cursor.
      *
      * @return true if the function returns a cursor
@@ -115,6 +154,19 @@ public interface FunctionFactory {
      * a query such that its result does not depend on any {@link Record} in the result set, i.e. now().
      */
     default boolean isRuntimeConstant() {
+        return false;
+    }
+
+    /**
+     * Whether {@link #newInstance} builds a {@link io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider} for
+     * a call over these bound arguments, known without building it; only the values of constant arguments are read.
+     * The answer holds for arguments {@link #newInstance} accepts. The default answers false.
+     *
+     * @param args                the bound arguments of the call, never modified
+     * @param isSymbolTableStatic whether the first argument reads a static symbol table
+     * @return true when the built function provides the matched symbol keys
+     */
+    default boolean isSymbolKeySetProvider(@Transient ObjList<BoundExpression> args, boolean isSymbolTableStatic) {
         return false;
     }
 
@@ -177,7 +229,7 @@ public interface FunctionFactory {
         return true;
     }
 
-    default boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
+    default boolean variadicTypeSupportUndefinedBindVariables(int argCount) {
         return true;
     }
 }

@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntStack;
 
 import java.util.ArrayDeque;
@@ -35,12 +35,17 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
 
     private final Deque<ExpressionNode> argStack = new ArrayDeque<>();
     private final IntStack argStackBottomStack = new IntStack();
-    private final Deque<IQueryModel> modelStack = new ArrayDeque<>();
+    private final Deque<QueryModel> modelStack = new ArrayDeque<>();
     // parseExpr() is reentrant; nested parses must not consume outer operands.
     private int argStackBottom;
-    private IQueryModel model;
+    private QueryModel model;
     // > 0 while parsing a join ON clause; blocks unsupported ON-clause sub-queries.
     private int subQueryBlockDepth;
+
+    @Override
+    public boolean isValueListAllowed() {
+        return subQueryBlockDepth > 0;
+    }
 
     @Override
     public void onNode(ExpressionNode node) throws SqlException {
@@ -101,7 +106,7 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
         subQueryBlockDepth++;
     }
 
-    void pushModel(IQueryModel model) {
+    void pushModel(QueryModel model) {
         if (this.model != null) {
             modelStack.push(this.model);
         }

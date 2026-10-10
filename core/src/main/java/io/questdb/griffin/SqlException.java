@@ -33,6 +33,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
     public static final int EXCEPTION_TABLE_DOES_NOT_EXIST = -105;
@@ -41,6 +42,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_VIEW_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
     private static final FiberLocal<SqlException> tlException = new FiberLocal<>(SqlException::new);
+    private static boolean isFlyweightReusedForTesting;
     private final StringSink message = new StringSink();
     private final StringSink tableName = new StringSink();
     private int error;
@@ -140,12 +142,21 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     public static SqlException position(int position) {
         SqlException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new SqlException()) != null;
+        assert isFlyweightReusedForTesting || (ex = new SqlException()) != null;
         ex.message.clear();
         ex.position = position;
         ex.error = 0;
         ex.isTableBusy = false;
         return ex;
+    }
+
+    /**
+     * With assertions enabled, {@link #position(int)} allocates a fresh instance per throw; this lets
+     * a test observe the per-carrier flyweight reuse that a production server performs.
+     */
+    @TestOnly
+    public static void setFlyweightReusedForTesting(boolean isReused) {
+        isFlyweightReusedForTesting = isReused;
     }
 
     public static SqlException tableDoesNotExist(int position, CharSequence tableName) {

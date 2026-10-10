@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,8 +36,13 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
+import io.questdb.griffin.engine.functions.GeoIntFunction;
+import io.questdb.griffin.engine.functions.GeoLongFunction;
+import io.questdb.griffin.engine.functions.GeoShortFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
@@ -54,6 +60,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -61,10 +68,27 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.ColumnType.*;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        int returnType = -1;
+        for (int i = 0, n = argTypes.size(); i < n; i++) {
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i));
+            if (returnType == ColumnType.UNDEFINED) {
+                return ColumnType.UNDEFINED;
+            }
+        }
+        return switch (tagOf(returnType)) {
+            case STRING, SYMBOL -> STRING;
+            case BOOLEAN, SHORT, BYTE, CHAR -> isNull(argTypes.getQuick(0)) ? returnType : argTypes.getQuick(0);
+            default -> returnType;
+        };
+    }
 
     @Override
     public String getSignature() {
@@ -132,6 +156,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case VARCHAR ->
                     argsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, argsSize);
             case UUID -> argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
+            case GEOBYTE -> new GeoByteCoalesceFunction(returnType, ownArgs(args), argsSize);
+            case GEOSHORT -> new GeoShortCoalesceFunction(returnType, ownArgs(args), argsSize);
+            case GEOINT -> new GeoIntCoalesceFunction(returnType, ownArgs(args), argsSize);
+            case GEOLONG -> new GeoLongCoalesceFunction(returnType, ownArgs(args), argsSize);
+            case INTERVAL -> new IntervalCoalesceFunction(returnType, ownArgs(args), argsSize);
             case BOOLEAN, SHORT, BYTE, CHAR ->
                 // Null on these data types not supported
                     args.getQuick(0);
@@ -164,6 +193,13 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 value.getLong1() != Numbers.LONG_NULL ||
                 value.getLong2() != Numbers.LONG_NULL ||
                 value.getLong3() != Numbers.LONG_NULL);
+    }
+
+    /**
+     * The arguments as a list the function may keep: the parser reuses a list of two.
+     */
+    private static ObjList<Function> ownArgs(ObjList<Function> args) {
+        return args.size() > 2 ? args : new ObjList<>(args);
     }
 
     private interface BinaryCoalesceFunction extends BinaryFunction {
@@ -422,6 +458,114 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class GeoByteCoalesceFunction extends GeoByteFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public GeoByteCoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public byte getGeoByte(Record rec) {
+            for (int i = 0; i < size; i++) {
+                final byte value = args.getQuick(i).getGeoByte(rec);
+                if (value != GeoHashes.BYTE_NULL) {
+                    return value;
+                }
+            }
+            return GeoHashes.BYTE_NULL;
+        }
+    }
+
+    private static class GeoIntCoalesceFunction extends GeoIntFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public GeoIntCoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public int getGeoInt(Record rec) {
+            for (int i = 0; i < size; i++) {
+                final int value = args.getQuick(i).getGeoInt(rec);
+                if (value != GeoHashes.INT_NULL) {
+                    return value;
+                }
+            }
+            return GeoHashes.INT_NULL;
+        }
+    }
+
+    private static class GeoLongCoalesceFunction extends GeoLongFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public GeoLongCoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public long getGeoLong(Record rec) {
+            for (int i = 0; i < size; i++) {
+                final long value = args.getQuick(i).getGeoLong(rec);
+                if (value != GeoHashes.NULL) {
+                    return value;
+                }
+            }
+            return GeoHashes.NULL;
+        }
+    }
+
+    private static class GeoShortCoalesceFunction extends GeoShortFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public GeoShortCoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            for (int i = 0; i < size; i++) {
+                final short value = args.getQuick(i).getGeoShort(rec);
+                if (value != GeoHashes.SHORT_NULL) {
+                    return value;
+                }
+            }
+            return GeoHashes.SHORT_NULL;
+        }
+    }
+
     private static class IPv4CoalesceFunction extends IPv4Function implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
@@ -473,6 +617,33 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return Numbers.INT_NULL;
+        }
+    }
+
+    private static class IntervalCoalesceFunction extends IntervalFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public IntervalCoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
+            for (int i = 0; i < size; i++) {
+                final Interval value = args.getQuick(i).getInterval(rec);
+                if (value.getLo() != Numbers.LONG_NULL) {
+                    return value;
+                }
+            }
+            return Interval.NULL;
         }
     }
 

@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
@@ -55,6 +54,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -120,8 +120,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
+            @NotNull ObjList<ObjectFactory<RecordSink>> masterAsOfJoinMapSinkFactories,
+            @NotNull ObjList<ObjectFactory<RecordSink>> slaveAsOfJoinMapSinkFactories,
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             int @NotNull [] columnSources,
@@ -176,12 +176,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                 perWorkerSlaveAsOfJoinSinks.add(new ObjList<>(slaveCount));
             }
             for (int s = 0; s < slaveCount; s++) {
-                if (masterAsOfJoinMapSinkClasses[s] != null) {
-                    ownerMasterAsOfJoinSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                    ownerSlaveAsOfJoinSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
+                if (masterAsOfJoinMapSinkFactories.getQuick(s) != null) {
+                    ownerMasterAsOfJoinSinks.add(masterAsOfJoinMapSinkFactories.getQuick(s).newInstance());
+                    ownerSlaveAsOfJoinSinks.add(slaveAsOfJoinMapSinkFactories.getQuick(s).newInstance());
                     for (int w = 0; w < workerCount; w++) {
-                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
-                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
+                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(masterAsOfJoinMapSinkFactories.getQuick(s).newInstance());
+                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(slaveAsOfJoinMapSinkFactories.getQuick(s).newInstance());
                     }
                 } else {
                     ownerMasterAsOfJoinSinks.add(null);

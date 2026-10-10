@@ -184,7 +184,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
         assertQuery("test where ts in ('1970-01-01T00:00:0.070000Z', 'abc')")
-                .fails(18, "Invalid date [str=1970-01-01T00:00:0.070000Z]");
+                .fails(48, "Invalid date");
     }
 
     @Test

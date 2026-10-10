@@ -1,0 +1,415 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.optimiser;
+
+import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
+import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
+import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.OuterColumnExpression;
+import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+
+import static io.questdb.griffin.optimiser.DecorrelationContext.isTrue;
+import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
+
+/**
+ * Turns equalities between outer and inner columns into mappings and join keys, and keys nullable join inputs
+ * to the columns that map their outer columns.
+ */
+final class CorrelationKeys implements Mutable {
+    final IntList deferredColumnIds = new IntList();
+    final ObjList<JoinInput> deferredInputs = new ObjList<>();
+    final IntList deferredOuterIds = new IntList();
+    final IntList droppedEqualities = new IntList();
+    private final DecorrelationContext ctx;
+    private final IntList readOuterIds = new IntList();
+    private final ConjunctTest undroppedConjuncts = conjunct -> !isDroppedEquality(conjunct);
+    private JoinInput keyedInput;
+    private JoinPlan keyedJoin;
+    private final ConjunctTest unkeyedConjuncts = conjunct -> !extractKey(keyedJoin, keyedInput, conjunct);
+
+    CorrelationKeys(DecorrelationContext ctx) {
+        this.ctx = ctx;
+    }
+
+    @Override
+    public void clear() {
+        deferredColumnIds.clear();
+        deferredInputs.clear();
+        deferredOuterIds.clear();
+        droppedEqualities.clear();
+        readOuterIds.clear();
+        keyedInput = null;
+        keyedJoin = null;
+    }
+
+    private static int inputOrder(JoinPlan join, int columnId) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        for (int i = 0, n = ordered.size(); i < n; i++) {
+            if (ordered.getQuick(i).getSourceOutput().getColumnIndexById(columnId) > -1) {
+                return i;
+            }
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private static void orderAfterProvider(ObjList<JoinInput> ordered, JoinInput input, int columnId) {
+        final int index = ordered.indexOf(input);
+        for (int i = index + 1, n = ordered.size(); i < n; i++) {
+            if (ordered.getQuick(i).getSourceOutput().getColumnIndexById(columnId) > -1) {
+                ordered.remove(index);
+                ordered.insert(i, 1, input);
+                return;
+            }
+        }
+    }
+
+    /**
+     * True when the column of the source join can carry the outer column: no step that can emit the column as NULL
+     * matches depending on the outer row, and the join orders the column's input no later than the first step whose
+     * condition reads the outer column, or, when a step of the join null-extends its master, the first deferred input
+     * that maps it. A step matches depending on the outer row when its ON condition reads an outer column, it is a
+     * deferred nullable input, or it null-extends its master after a step that reads an outer column. Without a step
+     * that null-extends its master, a deferred input joins after the input that provides its key instead.
+     */
+    private boolean canCarry(JoinPlan source, int columnId, int outerId) {
+        if (source == null) {
+            return true;
+        }
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(source);
+        int position = 0;
+        while (position < steps.size() && steps.getQuick(position).getSourceOutput().getColumnIndexById(columnId) < 0) {
+            position++;
+        }
+        if (position == steps.size()) {
+            return true;
+        }
+        final JoinInput input = steps.getQuick(position);
+        final boolean hasMasterNullingStep = LogicalPlans.lastMasterNullingStep(source) > -1;
+        final int firstRead = hasMasterNullingStep ? firstOuterRead(source, ctx.masterOuterIds, steps.size(), true) : Integer.MAX_VALUE;
+        for (int i = 1, n = steps.size(); i < n; i++) {
+            final JoinInput step = steps.getQuick(i);
+            if (LogicalPlans.isNullingStep(source, step, input)
+                    && (step.getOnResidual() != null && LogicalPlans.hasOuterColumn(step.getOnResidual()) || deferredInputs.indexOf(step) > -1
+                    || step.getJoinType().isMasterNulling() && firstRead < i)) {
+                return false;
+            }
+        }
+        readOuterIds.clear();
+        readOuterIds.add(outerId);
+        return position <= firstOuterRead(source, readOuterIds, steps.size(), hasMasterNullingStep);
+    }
+
+    private void collectEquality(ColumnExpression column, OuterColumnExpression outer, OutputSchema input, JoinPlan source, int base) {
+        final int outerId = outer.getColumnId();
+        if (ctx.masterOuterIds.contains(outerId) && pairIndex(droppedEqualities, outerId) < 0 && ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size()) < 0
+                && input.getColumnIndexById(column.getColumnId()) > -1 && column.getDataType() == outer.getDataType()
+                && canCarry(source, column.getColumnId(), outerId)) {
+            droppedEqualities.add(outerId);
+            droppedEqualities.add(column.getColumnId());
+        }
+    }
+
+    /**
+     * Moves a remapped equality between a column of the input and a column of an input joined before it into the
+     * input's keys; returns whether it moved.
+     */
+    private boolean extractKey(JoinPlan join, JoinInput input, BoundExpression condition) {
+        if (!(condition instanceof FunctionExpression call) || !Chars.equals(call.getName(), '=') || call.getArgumentCount() != 2
+                || !(call.argumentAt(0) instanceof ColumnExpression left) || !(call.argumentAt(1) instanceof ColumnExpression right)
+                || left.isCast() || right.isCast()) {
+            return false;
+        }
+        final OutputSchema slaveOutput = input.getSourceOutput();
+        final boolean isLeftSlave = slaveOutput.getColumnIndexById(left.getColumnId()) > -1;
+        final ColumnExpression slave = isLeftSlave ? left : right;
+        final ColumnExpression master = isLeftSlave ? right : left;
+        final int slaveOrder = join.getOrderedInputs().indexOf(input);
+        if (slaveOutput.getColumnIndexById(slave.getColumnId()) < 0 || inputOrder(join, master.getColumnId()) >= slaveOrder) {
+            return false;
+        }
+        final OutputSchema output = join.getOutput();
+        input.addKey(master.getColumnId(), slave.getColumnId(), ctx.joinedName(output, master.getColumnId()),
+                ctx.joinedName(output, slave.getColumnId()), condition.getPosition());
+        return true;
+    }
+
+    private boolean isDroppedEquality(BoundExpression predicate) {
+        return predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && "=".equals(call.getName())
+                && (isDroppedEquality(call.argumentAt(0), call.argumentAt(1)) || isDroppedEquality(call.argumentAt(1), call.argumentAt(0)));
+    }
+
+    private boolean isDroppedEquality(BoundExpression inner, BoundExpression outer) {
+        if (inner instanceof ColumnExpression column && outer instanceof OuterColumnExpression reference) {
+            final int index = pairIndex(droppedEqualities, reference.getColumnId());
+            return index > -1 && droppedEqualities.getQuick(index + 1) == column.getColumnId();
+        }
+        return false;
+    }
+
+    static boolean hasOuterCondition(JoinInput input) {
+        return switch (input.getJoinType()) {
+            case CROSS -> input.getPostJoinFilter() != null && LogicalPlans.hasOuterColumn(input.getPostJoinFilter());
+            case INNER -> input.getOnResidual() != null && LogicalPlans.hasOuterColumn(input.getOnResidual())
+                    || input.getPostJoinFilter() != null && LogicalPlans.hasOuterColumn(input.getPostJoinFilter());
+            case LEFT_OUTER -> input.getOnResidual() != null && LogicalPlans.hasOuterColumn(input.getOnResidual());
+            default -> false;
+        };
+    }
+
+    /**
+     * A second key of the step on the same master column holds as an equality between the two columns of the
+     * input.
+     */
+    void addKeyFilter(JoinInput step, int columnId, int keyId, OutputSchema output) throws SqlException {
+        final int position = step.getPosition();
+        final BoundExpression equality = ctx.context.bindCall("=", position, ctx.column(output, columnId, position), ctx.column(output, keyId, position), output);
+        step.setKeyFilter(step.getKeyFilter() == null ? equality : ctx.context.getRewriter().combineConjunction(step.getKeyFilter(), equality, position));
+    }
+
+    /**
+     * Records the equalities of the predicate between an outer column and a column of its input that can carry
+     * it; {@code source} is the block's source join, or null.
+     */
+    void collectEqualities(BoundExpression predicate, OutputSchema input, JoinPlan source, int base) {
+        if (!(predicate instanceof FunctionExpression call)) {
+            return;
+        }
+        if (call.isAnd()) {
+            collectEqualities(call.argumentAt(0), input, source, base);
+            collectEqualities(call.argumentAt(1), input, source, base);
+            return;
+        }
+        if (call.getArgumentCount() != 2 || !"=".equals(call.getName())) {
+            return;
+        }
+        final BoundExpression left = call.argumentAt(0);
+        final BoundExpression right = call.argumentAt(1);
+        if (left instanceof ColumnExpression column && right instanceof OuterColumnExpression outer) {
+            collectEquality(column, outer, input, source, base);
+        } else if (right instanceof ColumnExpression column && left instanceof OuterColumnExpression outer) {
+            collectEquality(column, outer, input, source, base);
+        }
+    }
+
+    /**
+     * Adds the outer columns of the deferred inputs above {@code base} to the sink.
+     */
+    void collectDeferredOuterIds(int base, IntList sink) {
+        for (int i = base, n = deferredInputs.size(); i < n; i++) {
+            sink.add(deferredOuterIds.getQuick(i));
+        }
+    }
+
+    /**
+     * Records the WHERE equalities between a column of the inputs before the step and an outer column of an
+     * enclosing lateral: the step's body reads that column for the outer one.
+     */
+    void collectOuterAliases(BoundExpression predicate, JoinPlan join, int index) {
+        if (!(predicate instanceof FunctionExpression call)) {
+            return;
+        }
+        if (call.isAnd()) {
+            collectOuterAliases(call.argumentAt(0), join, index);
+            collectOuterAliases(call.argumentAt(1), join, index);
+            return;
+        }
+        if (call.getArgumentCount() != 2 || !"=".equals(call.getName())) {
+            return;
+        }
+        final BoundExpression left = call.argumentAt(0);
+        final BoundExpression right = call.argumentAt(1);
+        final ColumnExpression column = left instanceof ColumnExpression c ? c : right instanceof ColumnExpression c ? c : null;
+        final OuterColumnExpression outer = left instanceof OuterColumnExpression o ? o : right instanceof OuterColumnExpression o ? o : null;
+        if (column == null || outer == null || column.getDataType() != outer.getDataType() || ctx.outerAliases.keyIndex(outer.getColumnId()) < 0) {
+            return;
+        }
+        for (int i = 0; i < index; i++) {
+            if (join.getInputs().getQuick(i).getSourceOutput().getColumnIndexById(column.getColumnId()) > -1) {
+                ctx.outerAliases.put(outer.getColumnId(), column.getColumnId());
+                return;
+            }
+        }
+    }
+
+    /**
+     * Moves the mapping of a nullable join input, whose correlated columns read NULL for unmatched rows, to
+     * the deferred list: the block satisfies those outer columns itself and the input joins on them.
+     */
+    void deferMapping(JoinInput input, int inputBase) {
+        for (int i = inputBase, n = ctx.mappedOuterIds.size(); i < n; i++) {
+            deferredInputs.add(input);
+            deferredOuterIds.add(ctx.mappedOuterIds.getQuick(i));
+            deferredColumnIds.add(ctx.mappedColumnIds.getQuick(i));
+        }
+        ctx.mappedOuterIds.setPos(inputBase);
+        ctx.mappedColumnIds.setPos(inputBase);
+    }
+
+    /**
+     * The column of a deferred input above {@code base} that maps the outer column, or -1.
+     */
+    int deferredColumn(JoinInput input, int outerId, int base) {
+        for (int i = base, n = deferredInputs.size(); i < n; i++) {
+            if (deferredInputs.getQuick(i) == input && deferredOuterIds.getQuick(i) == outerId) {
+                return deferredColumnIds.getQuick(i);
+            }
+        }
+        return -1;
+    }
+
+    BoundExpression dropEqualities(BoundExpression predicate) throws SqlException {
+        return ctx.context.getRewriter().retainConjuncts(predicate, undroppedConjuncts);
+    }
+
+    /**
+     * The ordered position of the first step of the join that reads one of the outer columns: through its ON
+     * condition or key filter, through its post-join filter when the step precedes {@code filterLimit}, or, when
+     * {@code isDeferredRead}, as a deferred input that maps one of them. Integer.MAX_VALUE when no step does.
+     */
+    int firstOuterRead(JoinPlan join, IntList outerIds, int filterLimit, boolean isDeferredRead) {
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+        int first = Integer.MAX_VALUE;
+        for (int i = 0, n = isDeferredRead ? deferredInputs.size() : 0; i < n; i++) {
+            final int position = steps.indexOf(deferredInputs.getQuick(i));
+            if (position > -1 && position < first && outerIds.contains(deferredOuterIds.getQuick(i))) {
+                first = position;
+            }
+        }
+        for (int i = 0, n = Math.min(steps.size(), first); i < n; i++) {
+            final JoinInput step = steps.getQuick(i);
+            if (ctx.readsAnyOuter(step.getOnResidual(), outerIds) || ctx.readsAnyOuter(step.getKeyFilter(), outerIds)
+                    || i < filterLimit && ctx.readsAnyOuter(step.getPostJoinFilter(), outerIds)) {
+                return i;
+            }
+        }
+        return first;
+    }
+
+    boolean isEveryOuterColumnEquated(int chainOuterBase, int base) {
+        for (int i = chainOuterBase, n = ctx.chainOuterIds.size(); i < n; i++) {
+            final int outerId = ctx.chainOuterIds.getQuick(i);
+            if (ctx.masterOuterIds.contains(outerId) && ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size()) < 0
+                    && pairIndex(droppedEqualities, outerId) < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void joinMappedInput(JoinInput input, int inputBase, int base) {
+        for (int i = inputBase; i < ctx.mappedOuterIds.size(); i++) {
+            final int outerId = ctx.mappedOuterIds.getQuick(i);
+            final int earlier = ctx.mappedColumn(outerId, base, inputBase);
+            if (earlier > -1) {
+                final CharSequence name = ctx.outerRefName(outerId);
+                input.addKey(earlier, ctx.mappedColumnIds.getQuick(i), name, name, input.getPosition());
+                ctx.mappedOuterIds.removeIndex(i);
+                ctx.mappedColumnIds.removeIndex(i);
+                i--;
+            }
+        }
+    }
+
+    /**
+     * Keys each deferred nullable input to the mapped column of its outer column, joining it after the input
+     * that provides the column.
+     */
+    void keyDeferredInputs(JoinPlan join, int deferredBase, int base) {
+        for (int i = deferredBase, n = deferredInputs.size(); i < n; i++) {
+            final JoinInput input = deferredInputs.getQuick(i);
+            final int outerId = deferredOuterIds.getQuick(i);
+            final int columnId = ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size());
+            final CharSequence name = ctx.outerRefName(outerId);
+            input.addKey(columnId, deferredColumnIds.getQuick(i), name, name, input.getPosition());
+            orderAfterProvider(join.getOrderedInputs(), input, columnId);
+        }
+    }
+
+    /**
+     * Keys the input by the equalities its remapped conditions hold with the inputs joined before it: those of
+     * the ON condition, and of the WHERE conjuncts of an input that does not null-extend.
+     */
+    void keyOuterConditions(JoinPlan join, JoinInput input) throws SqlException {
+        keyedJoin = join;
+        keyedInput = input;
+        final boolean isCross = input.getJoinType() == JoinKind.CROSS;
+        if (!input.getJoinType().isBarrier()) {
+            input.setPostJoinFilter(ctx.context.getRewriter().retainConjuncts(input.getPostJoinFilter(), unkeyedConjuncts));
+        }
+        if (!isCross) {
+            input.setOnResidual(ctx.context.getRewriter().retainConjuncts(input.getOnResidual(), unkeyedConjuncts));
+        }
+    }
+
+    /**
+     * Takes the ON condition of a LEFT step, its first {@code keyCount} keys as equalities and its residual,
+     * as one predicate over the join output; the step loses both. A scalar body evaluates it over its
+     * empty-input values.
+     */
+    BoundExpression stepCondition(JoinPlan join, JoinInput step, int keyCount) throws SqlException {
+        BoundExpression condition = step.getOnResidual();
+        if (keyCount == 0 && isTrue(condition)) {
+            return null;
+        }
+        final OutputSchema output = join.getOutput();
+        for (int i = 0; i < keyCount; i++) {
+            final int masterId = step.getMasterKeyColumnIds().getQuick(i);
+            final int slaveId = step.getSlaveKeyColumnIds().getQuick(i);
+            final int position = step.getKeyPositions().getQuick(i);
+            final BoundExpression equality = ctx.context.bindCall("=", position,
+                    ctx.planNodes.columns.next().of(slaveId, output.getColumnType(output.getColumnIndexById(slaveId)), position),
+                    ctx.planNodes.columns.next().of(masterId, output.getColumnType(output.getColumnIndexById(masterId)), position), output);
+            condition = condition == null ? equality : ctx.context.getRewriter().combineConjunction(condition, equality, step.getPosition());
+        }
+        for (int i = 0; i < keyCount; i++) {
+            step.getMasterKeyColumnIds().removeIndex(0);
+            step.getSlaveKeyColumnIds().removeIndex(0);
+            step.getMasterKeyNames().remove(0);
+            step.getSlaveKeyNames().remove(0);
+            step.getKeyPositions().removeIndex(0);
+        }
+        step.setOnResidual(null);
+        return condition;
+    }
+
+    /**
+     * Forgets the deferred inputs above {@code base}.
+     */
+    void truncateDeferred(int base) {
+        deferredInputs.setPos(base);
+        deferredOuterIds.setPos(base);
+        deferredColumnIds.setPos(base);
+    }
+}

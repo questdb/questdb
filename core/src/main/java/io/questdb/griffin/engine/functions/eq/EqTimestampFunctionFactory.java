@@ -41,12 +41,22 @@ import io.questdb.std.ObjList;
 public class EqTimestampFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "=(NN)";
     }
 
     @Override
     public boolean isBoolean() {
+        return true;
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
         return true;
     }
 
@@ -80,7 +90,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         // That shortcuts every future evaluation and also skips the per-row virtual
         // call into a constant function. The args are no longer referenced by the
         // returned function, so close them here per the factory contract (same as
-        // FunctionParser.functionToConstant does when folding).
+        // FunctionResolver.functionToConstant does when folding).
         if (left.isConstant() && right.isConstant()) {
             long leftVal = left.getTimestamp(null);
             long rightVal = right.getTimestamp(null);

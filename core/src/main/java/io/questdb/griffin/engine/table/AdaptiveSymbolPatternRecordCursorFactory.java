@@ -46,14 +46,12 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -86,16 +84,6 @@ import java.util.concurrent.atomic.AtomicLong;
  *       forcing the whole shape to be serial. Both routes share one filter instance, so a
  *       re-bound bind variable cannot make them disagree.</li>
  * </ul>
- * <p>
- * Self-filtering mode also advertises FILTER STEALING, because being the top-level operator with
- * no page frames is exactly what a parallel parent cannot work with. A parent that needs page
- * frames - parallel GROUP BY, SAMPLE BY, async top-K - admits a child through either
- * {@code supportsPageFrameCursor()} or {@code supportsFilterStealing()}, and self-filtering mode
- * answered false to both, so the parent silently fell back to its serial operator EVEN WHEN the
- * per-open estimate would have picked the parallel scan. Measured with four workers over 10M rows
- * and a pattern matching 10% of them, that cost 28.982 ms against 8.644 ms for a keyed GROUP BY and
- * 34.802 ms against 8.962 ms for a SAMPLE BY. See {@link #supportsFilterStealing()} and
- * {@link #halfClose()} for what a steal costs in return.
  * <p>
  * The conservative policy opens an index delegate only after a bounded estimate proves that the
  * matching index entries cover at most a fixed share of the selected rows. The share is route
@@ -246,9 +234,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     // can be handed to the delegate instead of the delegate acquiring a second reader.
     private final NonOwningPartitionFrameCursorFactory sharedFrameFactory;
     private final SymbolTableSourceMapper symbolTableSourceMapper;
-    // Set by halfClose(). Marks that a parent took the scan delegate's base and the prepared filter,
-    // so _close() must free neither them nor anything halfClose() already freed.
-    private boolean isFilterStolen;
 
     public AdaptiveSymbolPatternRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -281,8 +266,13 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 ? MAX_COVERING_ROUTE_ROW_SHARE_DIVISOR
                 : MAX_INDEX_ROUTE_ROW_SHARE_DIVISOR;
         this.scanDelegate = scanDelegate;
-        this.indexRouteFilterCursor = isSelfFiltering ? new FilteredRecordCursor(patternFilter) : null;
-        this.symbolTableSourceMapper = new SymbolTableSourceMapper(columnIndexes);
+        try {
+            this.indexRouteFilterCursor = isSelfFiltering ? new FilteredRecordCursor(patternFilter) : null;
+            this.symbolTableSourceMapper = new SymbolTableSourceMapper(columnIndexes);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @TestOnly
@@ -295,33 +285,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
 
     /**
      * The scan delegate's own base - a bare page-frame factory - in self-filtering mode, and null in
-     * wrapped mode, which does not offer filter stealing. See {@link #supportsFilterStealing()}.
+     * wrapped mode.
      */
     @Override
     public RecordCursorFactory getBaseFactory() {
         return indexRouteFilterCursor != null ? scanDelegate.getBaseFactory() : null;
-    }
-
-    @Override
-    public @Nullable ObjList<Function> getBindVarFunctions() {
-        return indexRouteFilterCursor != null ? scanDelegate.getBindVarFunctions() : null;
-    }
-
-    // The next three answer null today, whichever mode this factory is in: in wrapped mode the guard
-    // returns null, and in self-filtering mode the scan delegate is always the
-    // AsyncFilteredRecordCursorFactory built by tryGenerateSymbolPatternIndex, which overrides none of
-    // them and so falls through to the interface defaults. They stay because a stealing parent reads
-    // this whole group together with getFilter() - see SqlCodeGenerator's parallel-aggregate steal -
-    // so it is a contract unit that must keep delegating if the scan delegate ever stops being async.
-
-    @Override
-    public @Nullable MemoryCARW getBindVarMemory() {
-        return indexRouteFilterCursor != null ? scanDelegate.getBindVarMemory() : null;
-    }
-
-    @Override
-    public @Nullable CompiledFilter getCompiledFilter() {
-        return indexRouteFilterCursor != null ? scanDelegate.getCompiledFilter() : null;
     }
 
     @Override
@@ -417,55 +385,8 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
-    public @Nullable ExpressionNode getStealFilterExpr() {
-        return indexRouteFilterCursor != null ? scanDelegate.getStealFilterExpr() : null;
-    }
-
-    @Override
     public TableToken getTableToken() {
         return dfcFactory.getTableToken();
-    }
-
-    /**
-     * Dismantles this factory after a parent has stolen the filter. The parent keeps exactly two
-     * things: {@link #getBaseFactory()}, the scan delegate's bare page-frame factory, and
-     * {@link #getFilter()}, the shared prepared filter. Everything else this factory owns is freed
-     * here, because the code generator drops a stolen-from factory without ever calling
-     * {@code close()} on it - {@code halfClose()} IS the terminal cleanup.
-     * <p>
-     * Ownership of {@code dfcFactory} moves to {@link #sharedFrameFactory}, which the surviving base
-     * still holds and still closes. The base keeps opening through that wrapper, so it keeps calling
-     * back into {@link #prepareKeysFor}: that method rebuilds the stolen filter's matched-key set
-     * against the executing reader, since {@code PreparedSymbolPatternFilter.init()} deliberately
-     * leaves the provider alone, but skips the effective-key list whose only consumers halfClose()
-     * frees. The half-closed factory therefore stays reachable as the wrapper's owner; only its
-     * delegates are gone.
-     */
-    @Override
-    public void halfClose() {
-        assert indexRouteFilterCursor != null : "only self-filtering mode advertises filter stealing";
-        isFilterStolen = true;
-        // The index route is unreachable from here on: the parent aggregates over page frames the
-        // bitmap index cannot supply. That is what a steal costs -- a pattern selective enough for
-        // the per-open estimate to admit the index now runs the parallel scan instead.
-        Throwable failure = Misc.freeBestEffort(null, sharedFrameFactory.takePinnedCursor());
-        // Order matters: closing the index delegate closes the shared wrapper too, so the ownership
-        // transfer below has to come after it, or the wrapper would free dfcFactory here and the
-        // surviving base would then hold a closed one.
-        failure = Misc.freeBestEffort(failure, indexDelegate);
-        try {
-            // Frees the async machinery but neither the base nor the filter, which is precisely the
-            // pair the parent took.
-            scanDelegate.halfClose();
-        } catch (Throwable th) {
-            if (failure == null) {
-                failure = th;
-            } else if (failure != th) {
-                failure.addSuppressed(th);
-            }
-        }
-        sharedFrameFactory.assumeDelegateOwnership();
-        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -479,27 +400,12 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
-    public boolean supportsFilterStealing() {
-        // Self-filtering mode only, where this factory is the top-level operator and supplies no page
-        // frames. Wrapped mode needs no answer here: it already supplies frames, so its parent admits
-        // it directly and steals from the async filter above it instead.
-        //
-        // The claim a true makes is that this factory is a filter over getBaseFactory(). That holds
-        // for the scan route verbatim, and it is the route the estimate picks for every pattern the
-        // index route would lose on. It does NOT hold for the index route, which the steal discards
-        // outright -- see halfClose(). The alternative is what shipped before: no parent can
-        // parallelise over a symbol-pattern filter at all, on any pattern.
-        return indexRouteFilterCursor != null && scanDelegate.supportsFilterStealing();
-    }
-
-    @Override
     public boolean supportsPageFrameCursor() {
         // True exactly in wrapped mode. getPageFrameCursor() opens only the covering delegate or the
         // scan delegate, and both supply page frames, so the answer holds for every route it can take.
         // In self-filtering mode the answer must stay false for a second, stronger reason: the scan
         // delegate is then an async-filtered factory, so exposing frames upward would either hand the
         // caller a factory that has no frames or, in an earlier link of the chain, unfiltered rows.
-        // A parallel parent reaches the scan plan through supportsFilterStealing() instead.
         return coveringDelegate != null;
     }
 
@@ -779,20 +685,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     ) throws SqlException {
         symbolTableSourceMapper.of(frameCursor);
         patternFilter.prepare(symbolTableSourceMapper, executionContext);
-        if (isFilterStolen) {
-            return false;
-        }
         return buildEffectiveKeys(symbolTableSourceMapper, isProbeCapApplied);
     }
 
     @Override
     protected void _close() {
-        if (isFilterStolen) {
-            // halfClose() already freed everything this factory still owned and handed the scan
-            // delegate's base and the shared filter to the parent that stole them. Freeing again here
-            // would free the parent's own children.
-            return;
-        }
         // Best-effort: in self-filtering mode the index and scan delegates own compiled filter
         // functions, so a throw from the first close must not strand the rest. The pin release joins
         // the chain rather than preceding it, so a cleanup failure there cannot strand the delegates.
@@ -827,17 +724,18 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
      * {@code effectiveKeys} list already carries: one cursor open at a time per compiled factory.
      * <p>
      * Non-owning is the DEFAULT, not an invariant: the owner closes the real factory exactly once, so
-     * this wrapper closes nothing. {@link #assumeDelegateOwnership()} flips that when a parent steals
-     * the owner's filter, because the owner is then dismantled while the base factory holding this
-     * wrapper lives on.
+     * this wrapper closes nothing. A parallel consumer that applies the pattern filter itself reads the
+     * page-frame scan over a wrapper with no owner, see {@link #ofStolenFilter}, which closes the real
+     * factory and prepares the filter's key set against every cursor it opens.
      */
     public static final class NonOwningPartitionFrameCursorFactory implements PartitionFrameCursorFactory {
         private PartitionFrameCursorFactory delegate;
-        private boolean isDelegateOwned;
         private AdaptiveSymbolPatternRecordCursorFactory owner;
         private IntList pinnedColumnIndexes;
         private PartitionFrameCursor pinnedCursor;
         private int pinnedDirection;
+        private PreparedSymbolPatternFilter stolenFilter;
+        private SymbolTableSourceMapper stolenFilterSymbols;
 
         public NonOwningPartitionFrameCursorFactory(PartitionFrameCursorFactory delegate) {
             this.delegate = delegate;
@@ -845,7 +743,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void close() {
-            if (isDelegateOwned) {
+            if (stolenFilter != null) {
                 delegate = Misc.free(delegate);
             }
         }
@@ -871,7 +769,12 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 // A fresh reader may already carry a newer transaction than the estimate costed, so the
                 // key lists have to be rebuilt from THIS reader's symbol dictionary before the delegate
                 // binds them.
-                owner.prepareKeysFor(cursor, executionContext, false);
+                if (owner != null) {
+                    owner.prepareKeysFor(cursor, executionContext, false);
+                } else {
+                    stolenFilterSymbols.of(cursor);
+                    stolenFilter.prepare(stolenFilterSymbols, executionContext);
+                }
             } catch (Throwable th) {
                 Misc.free(cursor);
                 throw th;
@@ -897,6 +800,20 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         @Override
         public TableToken getTableToken() {
             return delegate.getTableToken();
+        }
+
+        /**
+         * Makes the wrapper the owner of the real partition-frame factory for a page-frame scan a parallel consumer
+         * reads, preparing the key set of the consumer's pattern filter against the reader of every cursor it opens.
+         */
+        public void ofStolenFilter(PreparedSymbolPatternFilter filter, IntList columnIndexes) {
+            stolenFilter = filter;
+            stolenFilterSymbols = new SymbolTableSourceMapper(columnIndexes);
+        }
+
+        @Override
+        public void setAuthorizedColumnIndexes(IntList columnIndexes) {
+            delegate.setAuthorizedColumnIndexes(columnIndexes);
         }
 
         @Override
@@ -927,16 +844,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 return order;
             }
             return delegate.getOrder() == ORDER_DESC ? ORDER_DESC : ORDER_ASC;
-        }
-
-        /**
-         * Takes over closing the real partition-frame factory. The owner calls this from
-         * {@link AdaptiveSymbolPatternRecordCursorFactory#halfClose()}, where it stops being the
-         * closer, and the base factory that survives the steal becomes the only remaining holder of
-         * this wrapper - and therefore the one that closes it.
-         */
-        void assumeDelegateOwnership() {
-            isDelegateOwned = true;
         }
 
         void of(AdaptiveSymbolPatternRecordCursorFactory owner) {

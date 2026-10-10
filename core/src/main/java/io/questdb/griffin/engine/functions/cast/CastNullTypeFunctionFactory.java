@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class CastNullTypeFunctionFactory implements FunctionFactory {
@@ -42,7 +43,9 @@ public class CastNullTypeFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (args.size() == 2) {
-            return Constants.getNullConstant(args.getQuick(1).getType());
+            final Function nullConstant = Constants.getNullConstant(args.getQuick(1).getType());
+            Misc.freeObjList(args);
+            return nullConstant;
         }
         throw SqlException.$(position, "cast accepts 2 arguments");
     }

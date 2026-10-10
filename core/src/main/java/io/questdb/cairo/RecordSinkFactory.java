@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.ex.BytecodeException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -637,8 +638,7 @@ public class RecordSinkFactory {
      * - invokeInterface: 5 bytes
      * - getfield: 3 bytes
      * - dup_x2: 1 byte
-     * - ldc2_w: 3 bytes
-     * - lmul: 1 byte
+     * - invokestatic: 3 bytes
      */
     private static int estimateColumnBytecodeSize(int type) {
         int tag = ColumnType.tagOf(type);
@@ -814,7 +814,7 @@ public class RecordSinkFactory {
         final int wPutDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal128", "(Lio/questdb/std/Decimal128;)V");
         final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(Lio/questdb/std/Decimal256;)V");
 
-        final int constantLong1000 = asm.poolLongConst(1000L);
+        final int microsToNanosIndex = asm.poolMethod(CommonUtils.class, "microsToNanos", "(J)J");
         final int copyNameIndex = asm.poolUtf8("copy");
         final int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
@@ -1241,8 +1241,7 @@ public class RecordSinkFactory {
                         asm.iconst(skewedIdx);
                         asm.invokeInterface(rGetTimestamp, 1);
                         if (timestampAsNanos) {
-                            asm.ldc2_w(constantLong1000);
-                            asm.lmul();
+                            asm.invokeStatic(microsToNanosIndex);
                         }
                         asm.invokeInterface(wPutTimestamp, 2);
                         break;
@@ -1624,7 +1623,7 @@ public class RecordSinkFactory {
         final int wPutDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal128", "(Lio/questdb/std/Decimal128;)V");
         final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(Lio/questdb/std/Decimal256;)V");
 
-        final int constantLong1000 = asm.poolLongConst(1000L);
+        final int microsToNanosIndex = asm.poolMethod(CommonUtils.class, "microsToNanos", "(J)J");
         final int copyNameIndex = asm.poolUtf8("copy");
         final int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
@@ -1769,9 +1768,7 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetTimestamp, 1);
                     if (timestampAsNanos) {
-                        // Convert microseconds to nanoseconds: multiply by 1000
-                        asm.ldc2_w(constantLong1000);
-                        asm.lmul();
+                        asm.invokeStatic(microsToNanosIndex);
                     }
                     asm.invokeInterface(wPutTimestamp, 2);
                     break;

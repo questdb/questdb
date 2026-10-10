@@ -70,8 +70,7 @@ public abstract class AbstractIntCursorFunctionFactory implements FunctionFactor
                 // sentinel-null comparison convention on whichever typed path the cursor selects
                 break;
             default:
-                throw SqlException.$(argPositions.getQuick(0), "left operand must be BYTE, SHORT or INT, found: ")
-                        .put(ColumnType.nameOf(arg0.getType()));
+                throw ScalarSubQueryUtils.unsupportedOperand(argPositions.getQuick(0), arg0.getType());
         }
         final int cursorTag = ColumnType.tagOf(metadata.getColumnType(0));
         return switch (cursorTag) {

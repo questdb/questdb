@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.SqlException;
 import org.junit.Test;
 
 public class PivotTest extends AbstractSqlParserTest {
@@ -314,8 +315,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [side]
                               values: [first_not_null(case([first(price),NaN,symbol,switch(symbol,'BTC-USD',first(price),NaN)])),first_not_null(case([first(price)_2,NaN,symbol,switch(symbol,'BTC-USD',first(price)_2,NaN)]))]
-                                VirtualRecord
-                                  functions: [side,first(price),symbol,first(price)]
+                                SelectedRecord
                                     Async JIT Group By workers: 1
                                       keys: [side,symbol]
                                       values: [first(price)]
@@ -594,18 +594,17 @@ public class PivotTest extends AbstractSqlParserTest {
                 .ddl(ddlCities)
                 .mutateWith(dmlCities)
                 .expectSize()
+                .noRandomAccess()
                 .withPlan("""
-                        Encode sort
-                          keys: [2000]
-                            GroupBy vectorized: false
-                              values: [first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year]))]
-                                Async JIT Group By workers: 1
-                                  keys: [year]
-                                  values: [sum(population)]
-                                  filter: year in [2000,2010,2020]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: cities
+                        GroupBy vectorized: false
+                          values: [first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year]))]
+                            Async JIT Group By workers: 1
+                              keys: [year]
+                              values: [sum(population)]
+                              filter: year in [2000,2010,2020]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cities
                         """)
                 .returns("""
                         2000\t2010\t2020
@@ -683,6 +682,16 @@ public class PivotTest extends AbstractSqlParserTest {
                     )
                     """)
                     .fails(28, "PIVOT produces too many columns: 12, limit is 10");
+        });
+    }
+
+    @Test
+    public void testPivotMeasureAliasDuplicatesColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowJoinTables();
+            assertExceptionNoLeakCheck("SELECT * FROM q PIVOT (sum(px) sym, count() c FOR sym IN ('a', 'b'))", 0, "Duplicate column [name=sym]");
+            assertExceptionNoLeakCheck("SELECT * FROM q PIVOT (sum(px) x, count() x FOR sym IN ('a', 'b'))", 0, "Duplicate column [name=x]");
+            assertExceptionNoLeakCheck("SELECT * FROM t PIVOT (sum(v) ts FOR s IN ('a', 'b') GROUP BY ts)", 0, "Duplicate column [name=ts]");
         });
     }
 
@@ -953,6 +962,56 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
             assertQuery("SELECT t1.\"in\" FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1")
                     .fails(7, "Invalid column: t1.in");
+        });
+    }
+
+    @Test
+    public void testPivotProtectedColumnReferenceableThroughJoinScope() throws Exception {
+        // The counterpart of testPivotProtectedColumnNotReferenceableFromEnclosingQuery: a join scope names its
+        // inputs' columns bare, so the composed reference t1."in" resolves through a join, a LATERAL body and a
+        // temporal join, and the enclosing query projects and aliases it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO data VALUES ('A', 'in', 10, '2024-01-01T00:00:00.000000Z'), ('B', 'in', 30, '2024-01-01T01:00:00.000000Z');");
+            assertQuery("""
+                    SELECT t1."in" AS v FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN (SELECT 1 x) t2
+                    ORDER BY v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            10
+                            30
+                            """);
+            assertQuery("""
+                    SELECT l.y FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN LATERAL (SELECT t1."in" + 1 AS y FROM long_sequence(1)) l
+                    ORDER BY l.y
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            y
+                            11
+                            31
+                            """);
+            assertQuery("""
+                    SELECT t1."in" AS v FROM
+                      (SELECT * FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY ts)) TIMESTAMP(ts)) t1
+                      ASOF JOIN data t2
+                    ORDER BY v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            10
+                            30
+                            """);
         });
     }
 
@@ -2054,6 +2113,73 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotOverHorizonJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 1, '2024-01-01T00:00:00Z'), ('b', 2, '2024-01-01T00:00:01Z'), ('a', 3, '2024-01-01T00:00:02Z'),
+                        ('b', 4, '2024-01-01T00:00:03Z'), ('c', 5, '2024-01-01T00:00:04Z')
+                    """);
+            execute("CREATE TABLE q (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO q VALUES ('a', 10.0, '2024-01-01T00:00:00Z'), ('b', 20.0, '2024-01-01T00:00:01Z'), ('a', 30.0, '2024-01-01T00:00:01.5Z')");
+            assertQuery("SELECT * FROM t HORIZON JOIN q ON (t.s = q.sym) RANGE FROM 0s TO 1s STEP 1s AS h PIVOT (SUM(px) FOR s IN ('a', 'b'))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            80.0\t80.0
+                            """);
+            assertQuery("SELECT * FROM t HORIZON JOIN q ON (t.s = q.sym) LIST (0s, 1s) AS h WHERE v > 1 PIVOT (SUM(px), COUNT() FOR s IN ('a', 'b'))")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_SUM(px)\ta_COUNT()\tb_SUM(px)\tb_COUNT()
+                            60.0\t2\t80.0\t4
+                            """);
+            assertQuery("SELECT * FROM t HORIZON JOIN q ON (t.s = q.sym) LIST (0s, 1s) AS h PIVOT (AVG(px) FOR s IN ('a', 'b') GROUP BY h.offset) ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            h.offset\ta\tb
+                            0\t20.0\t20.0
+                            1000000\t20.0\t20.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotOverLatestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (s SYMBOL, g INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO k VALUES
+                        ('a', 1, 1, '2024-01-01T00:00:00Z'), ('b', 1, 2, '2024-01-01T00:00:01Z'), ('a', 2, 3, '2024-01-01T00:00:02Z'),
+                        ('a', 2, 4, '2024-01-01T00:00:03Z'), ('b', 3, 5, '2024-01-01T00:00:04Z')
+                    """);
+            assertQuery("SELECT * FROM k LATEST ON ts PARTITION BY g PIVOT (SUM(v) FOR s IN ('a', 'b') GROUP BY g) ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\ta\tb
+                            1\tnull\t2
+                            2\t4\tnull
+                            3\tnull\t5
+                            """);
+            assertQuery("SELECT * FROM k LATEST ON ts PARTITION BY s, g PIVOT (SUM(v) FOR s IN ('a', 'b'))")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            a\tb
+                            5\t7
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotToTableWithOperatorTokenColumnNames() throws Exception {
         // Operator-token pivot values now yield clean physical column names, so CREATE TABLE AS
         // SELECT succeeds (the old "in"-with-quotes name was rejected as invalid) and the columns
@@ -2083,6 +2209,110 @@ public class PivotTest extends AbstractSqlParserTest {
                             A	10	20
                             B	30	40
                             """);
+        });
+    }
+
+    @Test
+    public void testPivotWindowJoinErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowJoinTables();
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (sum(px) FOR sym IN ('a', 'b'))", 115, "WINDOW join cannot reference right table non-aggregate column: sym");
+        });
+    }
+
+    @Test
+    public void testPivotWindowJoinGroupByMasterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowJoinTables();
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW
+                    PIVOT (sum(px) FOR s IN ('a', 'b') GROUP BY v)
+                    ORDER BY v
+                    """)
+                    .expectSize()
+                    .returns("""
+                            v\ta\tb
+                            1\t10.0\tnull
+                            2\tnull\t20.0
+                            3\t140.0\tnull
+                            4\tnull\t25.0
+                            5\t100.0\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotWindowJoinMergesMasterRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowJoinTables();
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW
+                    PIVOT (sum(px) total, count() c, min(px) lo, max(px) hi, first(px) f, last(px) l, avg(px) av FOR s IN ('a', 'b'))
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_total\ta_c\ta_lo\ta_hi\ta_f\ta_l\ta_av\tb_total\tb_c\tb_lo\tb_hi\tb_f\tb_l\tb_av
+                            250.0\t5\t10.0\t100.0\t10.0\t100.0\t50.0\t45.0\t3\t5.0\t20.0\t20.0\t5.0\t15.0
+                            """);
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    WHERE v > 1
+                    PIVOT (sum(px) / count(px) FOR s IN ('a', 'b') GROUP BY v % 2)
+                    ORDER BY 1
+                    """)
+                    .expectSize()
+                    .returns("""
+                            v % 2\ta\tb
+                            0\tnull\t12.5
+                            1\t65.0\tnull
+                            """);
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (avg(px) * 2 FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports avg, first and last only as direct measures");
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW PIVOT (count_distinct(px) FOR s IN ('a', 'b'))", 103, "PIVOT over WINDOW JOIN supports only sum, count, min, max, avg, first and last aggregates");
+        });
+    }
+
+    @Test
+    public void testPivotWindowJoinMergesNullsAndTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createWindowJoinTables();
+            execute("CREATE TABLE qn (sym SYMBOL, px DOUBLE, ip INT, lp LONG, sp SHORT, fp FLOAT, bp BOOLEAN, dp DECIMAL(10, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO qn VALUES
+                        ('a', NULL, 1, 1, 1, 1.5, true, 1.25m, 1_000_000),
+                        ('b', 7, 5, 6, 7, 3.5, true, 3.75m, 2_000_000),
+                        ('a', 100, NULL, 4, 3, 2.5, false, 2.50m, 3_000_000)
+                    """);
+            assertQuery("""
+                    SELECT * FROM t
+                    WINDOW JOIN qn ON (t.s = qn.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    PIVOT (first(px) f, last(px) l, avg(ip) ai, avg(lp) al, avg(sp) ash, avg(fp) af FOR s IN ('a', 'b'))
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_f\ta_l\ta_ai\ta_al\ta_ash\ta_af\tb_f\tb_l\tb_ai\tb_al\tb_ash\tb_af
+                            null\t100.0\t1.0\t2.5\t2.0\t2.0\t7.0\t7.0\t5.0\t6.0\t7.0\t3.5
+                            """);
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN qn ON (t.s = qn.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING PIVOT (avg(bp) FOR s IN ('a', 'b'))", 124, "PIVOT over WINDOW JOIN supports avg only over DOUBLE, FLOAT, INT, LONG and SHORT values");
+            assertExceptionNoLeakCheck("SELECT * FROM t WINDOW JOIN qn ON (t.s = qn.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING PIVOT (avg(dp) FOR s IN ('a', 'b'))", 124, "PIVOT over WINDOW JOIN supports avg only over DOUBLE, FLOAT, INT, LONG and SHORT values");
+        });
+    }
+
+    @Test
+    public void testPivotWindowOrderByExpressionErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck("SELECT * FROM t PIVOT (SUM(lag(v) OVER (ORDER BY ts + 0)) FOR s IN ('a', 'b'))", 52, "Invalid column: +");
+            assertExceptionNoLeakCheck("SELECT * FROM t PIVOT (SUM(lag(v) OVER (ORDER BY abs(v))) FOR s IN ('a', 'b'))", 49, "Invalid column: abs");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t PIVOT (SUM(lag(v) OVER (PARTITION BY s ORDER BY ts)) + SUM(v) FOR s IN ('a', 'b'))",
+                    23,
+                    "Aggregate over window function cannot be combined with other terms. Use a sub-query."
+            );
         });
     }
 
@@ -2283,22 +2513,22 @@ public class PivotTest extends AbstractSqlParserTest {
                                                     Union All
                                                         Union All
                                                             VirtualRecord
-                                                              functions: [2022,'C1',10]
+                                                              functions: ['C1',2022,10]
                                                                 long_sequence count: 1
                                                             VirtualRecord
-                                                              functions: [2018,'C1',20]
+                                                              functions: ['C1',2018,20]
                                                                 long_sequence count: 1
                                                         VirtualRecord
-                                                          functions: [2017,'C1',0]
+                                                          functions: ['C1',2017,0]
                                                             long_sequence count: 1
                                                     VirtualRecord
-                                                      functions: [2022,'C2',10]
+                                                      functions: ['C2',2022,10]
                                                         long_sequence count: 1
                                                 VirtualRecord
-                                                  functions: [2010,'C2',30]
+                                                  functions: ['C2',2010,30]
                                                     long_sequence count: 1
                                             VirtualRecord
-                                              functions: [2010,'C3',80]
+                                              functions: ['C3',2010,80]
                                                 long_sequence count: 1
                         """)
                 .returns("""
@@ -3270,7 +3500,7 @@ public class PivotTest extends AbstractSqlParserTest {
             // │ US      │   NULL │   NULL │
             // └─────────┴────────┴────────┘
             //
-            // We return empty rows because pushPivotFiltersToInnerModel() pushes IN filter
+            // We return empty rows because PivotBinder.rewritePivot() pushes IN filter
             // conditions down to the inner query, so no rows match when FOR values don't
             // exist in the data (e.g., year IN (1990, 1995) filters out all rows).
             // This behavior is kept for performance reasons.
@@ -3346,7 +3576,7 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
-    // Tests for printRecordColumnOrNull - various data types in PIVOT IN subqueries
+    // Tests for various data types in PIVOT IN subqueries
 
     @Test
     public void testPivotWithNullValues() throws Exception {
@@ -3480,7 +3710,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                     Encode sort light
                                       keys: [timestamp]
                                         Async JIT Group By workers: 1
-                                          keys: [symbol,side,timestamp]
+                                          keys: [timestamp,symbol,side]
                                           keyFunctions: [timestamp_floor_utc('1d',timestamp)]
                                           values: [last(price)]
                                           filter: side in [buy,sell]
@@ -4139,5 +4369,18 @@ public class PivotTest extends AbstractSqlParserTest {
                             US\t8579\t8783\t9510
                             """);
         });
+    }
+
+    private static void createWindowJoinTables() throws SqlException {
+        execute("CREATE TABLE t (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t VALUES
+                    ('a', 1, 1_000_000), ('b', 2, 2_000_000), ('a', 3, 3_000_000), ('b', 4, 4_000_000), ('a', 5, 5_000_000)
+                """);
+        execute("CREATE TABLE q (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO q VALUES
+                    ('a', 10, 1_000_000), ('b', 20, 2_000_000), ('a', 30, 2_500_000), ('a', 100, 3_000_000), ('b', 5, 4_000_000)
+                """);
     }
 }

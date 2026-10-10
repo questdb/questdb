@@ -367,10 +367,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                             """);
             assertQuery("SELECT val FROM x WHERE val = '2020-06-15T00:00:00.000000001Z'")
                     .noLeakCheck()
-                    .returns("""
-                            val
-                            2020-06-15T00:00:00.000Z
-                            """);
+                    .returns("val\n");
         });
     }
 

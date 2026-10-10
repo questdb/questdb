@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -62,6 +63,11 @@ public class TestMatchFunctionFactory implements FunctionFactory {
 
     public static boolean isClosed() {
         return closeCount.get() == 1;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override

@@ -36,6 +36,11 @@ import io.questdb.std.ObjList;
 
 public class CastCharToLongFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Al)";
     }

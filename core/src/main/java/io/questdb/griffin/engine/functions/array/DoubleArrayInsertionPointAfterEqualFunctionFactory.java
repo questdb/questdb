@@ -43,6 +43,11 @@ public class DoubleArrayInsertionPointAfterEqualFunctionFactory implements Funct
     private static final String FUNCTION_NAME = "insertion_point";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[]D)";
     }

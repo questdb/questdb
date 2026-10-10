@@ -12,12 +12,15 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.BindVarTuple;
@@ -54,21 +57,22 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
-                              stride: '1h'
-                              fill: null
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
+                                  stride: '1h'
+                                  fill: null
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
-                                      values: [sum(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: x
-                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                          values: [sum(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: x
+                                                  intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
                             """);
         });
     }
@@ -222,7 +226,7 @@ public class SampleByFillTest extends AbstractCairoTest {
             String sql = "SELECT first(val), ts FROM x SAMPLE BY 1h FILL('a') ALIGN TO CALENDAR";
             assertQuery(sql)
                     .noLeakCheck()
-                    .fails(sql.indexOf("'a'"), "inconvertible value: `a` [CHAR -> DECIMAL(10,2)]");
+                    .fails(sql.indexOf("'a'"), "invalid fill value: 'a'");
         });
     }
 
@@ -1507,7 +1511,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillRejectInvalidOffsetAtRuntime() throws Exception {
         // Bind-variable OFFSET with an unparseable runtime value on a
-        // keyed FILL(PREV) shape. The rewriteSampleBy path threads the
+        // keyed FILL(PREV) shape. The SampleByBinder.bindSampleBy path threads the
         // offset through timestamp_floor_utc as an AGB key function; the
         // function's init() validates the offset and surfaces SqlException
         // before SampleByFillCursor.of() gets to evaluate its own offset
@@ -1556,7 +1560,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     public void testFillRejectInvalidTimezoneAtRuntime() throws Exception {
         // Bind-variable TIME ZONE with an unparseable runtime value on a
         // keyed FILL(PREV) 1d shape. As with testFillRejectInvalidOffsetAtRuntime,
-        // the rewriteSampleBy path threads the timezone through
+        // the SampleByBinder.bindSampleBy path threads the timezone through
         // timestamp_floor_utc as an AGB key function; that function's
         // init() validates the zone and throws before SampleByFillCursor.of()
         // gets to its own tz-resolution branch. Diversifies
@@ -1599,6 +1603,46 @@ public class SampleByFillTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .fails(badPos, "fill value must be a constant expression");
+        });
+    }
+
+    @Test
+    public void testFillSemanticsSameOnBothShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            final String[][] cases = {
+                    {"sum(i), avg(d)", "FILL(0)"},
+                    {"sum(i), first(str)", "FILL(NULL)"},
+                    {"sum(i), first(str)", "FILL(PREV)"},
+                    {"sum(i) a, sum(l) b", "FILL(PREV(b), PREV)"},
+                    {"sum(i) a, sum(l) b", "FILL(PREV, PREV(a))"},
+                    {"sym, sum(i) a, sum(l) b", "FILL(PREV, PREV(a)) ORDER BY ts, sym"},
+                    {"sum(i)", "FROM '2024-01-01T01:00:00.000000Z' TO '2024-01-01T05:00:00.000000Z' FILL(5)"},
+                    {"sym, sum(i)", "FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(5) ORDER BY ts, sym"},
+                    {"sum(i)", "FROM '2023-12-31T22:00:00.000000Z' TO '2024-01-01T04:00:00.000000Z' FILL(PREV)"},
+            };
+            final StringSink bucket = new StringSink();
+            for (String[] c : cases) {
+                final String sql = "SELECT ts, " + c[0] + " FROM t_fv SAMPLE BY %s " + c[1];
+                printSql(String.format(sql, "1h"), bucket);
+                printSql(String.format(sql, "(0+1)h"));
+                TestUtils.assertEquals(sql, bucket, sink);
+            }
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i), avg(d) FROM t_fv SAMPLE BY 1h FILL(1 + 1)", "+", "not enough fill values");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) a, sum(l) b FROM t_fv SAMPLE BY 1h FILL(PREV(missing), PREV)", "missing",
+                    "PREV(col): column not found in output: missing");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) a, sum(l) b FROM t_fv SAMPLE BY 1h FILL(PREV(b), 7)", "PREV(b)",
+                    "FILL(PREV) cannot reference a column that is itself filled with a constant");
+            assertQuery("SELECT ts, sum(i) a, sum(l) b FROM t_fv SAMPLE BY 1h FILL(PREV, PREV(a)) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ta\tb
+                            2024-01-01T00:00:00.000000Z\t1\t1
+                            2024-01-01T01:00:00.000000Z\t1\t1
+                            2024-01-01T02:00:00.000000Z\t3\t3
+                            """);
         });
     }
 
@@ -1951,19 +1995,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: mixed
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: mixed
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [first(a),first(b),first(c)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [first(a),first(b),first(c)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """)
                     .returns("""
                             first\tfirst1\tfirst2\tts
@@ -2028,6 +2073,56 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueInvalidFailsAtCompileTimeOnBothShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            final String[] aggregates = {"sum(i)", "min(i)", "sum(l)", "avg(d)", "max(f)", "first(ip)", "first(dt)", "first(ch)", "first(dec)", "first(u)"};
+            final String[] fills = {"'abc'", "'2024-01-01'"};
+            for (String aggregate : aggregates) {
+                for (String fill : fills) {
+                    assertFillCompileErrorOnAllShapes("SELECT ts, " + aggregate + " FROM t_fv SAMPLE BY 1h FILL(" + fill + ")", fill);
+                }
+            }
+            final String[] integerAggregates = {"sum(i)", "min(i)", "sum(l)", "first(ch)"};
+            for (String aggregate : integerAggregates) {
+                assertFillCompileErrorOnAllShapes("SELECT ts, " + aggregate + " FROM t_fv SAMPLE BY 1h FILL(1.5)", "1.5");
+                assertFillCompileErrorOnAllShapes("SELECT ts, " + aggregate + " FROM t_fv SAMPLE BY 1h FILL('1.5')", "'1.5'");
+            }
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL('')", "''");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i), avg(d) FROM t_fv SAMPLE BY 1h FILL(0, 'abc')", "'abc'");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i), avg(d) FROM t_fv SAMPLE BY 1h FILL(PREV, 'abc')", "'abc'");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sym, sum(i) FROM t_fv SAMPLE BY 1h FILL('abc')", "'abc'");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(zz)", "zz");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(sum(i))", "sum");
+            assertFillCompileError("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-02' FILL('abc')", "'abc'");
+            assertFillCompileError("SELECT ts, sum(i) FROM t_fv SAMPLE BY (0+1)h FROM '2024-01-01' TO '2024-01-02' FILL('abc')", "'abc'");
+        });
+    }
+
+    @Test
+    public void testFillValueMessagesAreShapeIndependent() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(true)", "true",
+                    "fill value of type BOOLEAN cannot fill column of type LONG");
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(str) FROM t_fv SAMPLE BY 1h FILL(0)", "0",
+                    "fill value of type INT cannot fill column of type STRING");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(rnd_int())", "rnd_int",
+                    "fill value must be a constant expression");
+            assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL(now())", "now",
+                    "fill value must be a constant expression");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "5");
+            assertFillCompileErrorOnAllShapes("SELECT ts, avg(d) FROM t_fv SAMPLE BY 1h FILL($1)", "$1",
+                    "fill value must be a constant expression");
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(bo) FROM t_fv SAMPLE BY 1h FILL(NULL)", "NULL",
+                    "fill value of type NULL cannot fill column of type BOOLEAN");
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(ts) FROM t_fv SAMPLE BY 1h FILL(0)", "0",
+                    "Invalid fill value: '0'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
+        });
+    }
+
+    @Test
     public void testFillValueRejectedForArrayAggregate() throws Exception {
         // first(array) returns DOUBLE[]. FirstArrayGroupByFunction omits
         // SAMPLE_BY_FILL_VALUE from getSampleByFlags(), so the GroupByUtils
@@ -2036,8 +2131,7 @@ public class SampleByFillTest extends AbstractCairoTest {
         // would have produced "fill value of type INT cannot fill column of
         // type DOUBLE[]". Both messages reject the same query; the flag-based
         // one is the active rejection point on the array_agg branch because
-        // rewriteSelectClause0 now re-exposes the rewritten FILL list onto
-        // groupByModel.sampleByFill for validation.
+        // SampleByBinder validates the FILL list against each aggregate.
         assertQuery("SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)")
                 .ddl("CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
                 .fails(52, "support for VALUE fill is not yet implemented [function=first(a), class=io.questdb.griffin.engine.functions.groupby.FirstArrayGroupByFunction]");
@@ -2085,6 +2179,41 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueSameOnBothShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            final String[][] cases = {
+                    {"sum(i)", "-1"}, {"sum(i)", "'1'"}, {"sum(i)", "1 + 1"}, {"sum(i)", "NaN"}, {"sum(i)", "null::int"},
+                    {"avg(d)", "'1.5'"}, {"avg(d)", "-0.5"}, {"avg(d)", "length('ab')"}, {"max(f)", "'2.5'"},
+                    {"first(ip)", "'1.1.1.1'"}, {"first(ip)", "NULL"}, {"first(dt)", "0"}, {"first(dt)", "'2024-01-01'::date"},
+                    {"first(dt)", "NULL"}, {"first(ch)", "'z'"}, {"first(str)", "'q'"}, {"first(str)", "NULL"},
+                    {"first(vc)", "'q'"}, {"first(vc)", "NULL"}, {"first(sym)", "'q'"}, {"first(sym)", "NULL"},
+                    {"first(bo)", "true"}, {"first(u)", "'11111111-1111-1111-1111-111111111111'"}, {"first(u)", "NULL"},
+                    {"first(dec)", "1 + 1"}, {"first(dec)", "'1.5'"}, {"first(dec)", "1.5m"}, {"first(dec)", "NULL"},
+                    {"first(ts)", "'2024-01-01T00:00:00.000Z'"}, {"first(tn)", "'2024-01-01T00:00:00.000000001Z'"},
+                    {"sum(i), avg(d)", "NULL, '7'"}, {"sum(i), first(str)", "-1, 'q'"}
+            };
+            final StringSink bucket = new StringSink();
+            for (String[] c : cases) {
+                final String sql = "SELECT ts, " + c[0] + " FROM t_fv SAMPLE BY %s FILL(" + c[1] + ")";
+                printSql(String.format(sql, "1h"), bucket);
+                printSql(String.format(sql, "(0+1)h"));
+                TestUtils.assertEquals(sql, bucket, sink);
+            }
+            assertQuery("SELECT ts, first(tn), first(str) FROM t_fv SAMPLE BY (0+1)h FILL('2024-01-01T00:00:00.000000001Z', 'q')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tfirst\tfirst1
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000001Z\tx
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000001Z\tq
+                            2024-01-01T02:00:00.000000Z\t2024-01-03T00:00:00.000000001Z\tz
+                            """);
+        });
+    }
+
+    @Test
     public void testFillValueStringCastsToDecimalAggregate() throws Exception {
         // STRING -> DECIMAL implicit cast exists via CastStrToDecimalFunctionFactory.
         assertMemoryLeak(() -> {
@@ -2095,8 +2224,27 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueUuidStringValidatedOnBothShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            createFillValueTable();
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(u) FROM t_fv SAMPLE BY 1h FILL('not-a-uuid')", "'not-a-uuid'");
+            assertFillCompileErrorOnAllShapes("SELECT ts, first(u) FROM t_fv SAMPLE BY 1h FILL('1.1.1.1')", "'1.1.1.1'");
+            final String expected = """
+                    ts\tfirst
+                    2024-01-01T00:00:00.000000Z\t11111111-1111-1111-1111-111111111111
+                    2024-01-01T01:00:00.000000Z\t22222222-2222-2222-2222-222222222222
+                    2024-01-01T02:00:00.000000Z\t33333333-3333-3333-3333-333333333333
+                    """;
+            assertQuery("SELECT ts, first(u) FROM t_fv SAMPLE BY 1h FILL('22222222-2222-2222-2222-222222222222')")
+                    .noLeakCheck().timestamp("ts").noRandomAccess().returns(expected);
+            assertQuery("SELECT ts, first(u) FROM t_fv SAMPLE BY (0+1)h FILL('22222222-2222-2222-2222-222222222222')")
+                    .noLeakCheck().timestamp("ts").noRandomAccess().returns(expected);
+        });
+    }
+
+    @Test
     public void testFillValueWithSumMinusConstantOverFill() throws Exception {
-        // SqlOptimiser.rewriteAggregate would normally split sum(c - K) into sum(c) -
+        // AggregateRewrite would normally split sum(c - K) into sum(c) -
         // count(*) * K when K is an integer constant. Under SAMPLE BY FILL the rewrite
         // is unsafe: the per-aggregate FILL value would land on both inner aggregates
         // and the outer arithmetic would yield v - v * K instead of the user-visible
@@ -2114,19 +2262,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c-1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_minus
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c-1000)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_minus
                             """)
                     .returns("""
                             s\tts
@@ -2151,19 +2300,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c+1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_plus
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c+1000)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_plus
                             """)
                     .returns("""
                             s\tts
@@ -2190,19 +2340,20 @@ public class SampleByFillTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: value
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(c*1000)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t_fv_sum_mul
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c*1000)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_mul
                             """)
                     .returns("""
                             s\tts
@@ -2298,22 +2449,25 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRoutingAlignToFirstObservationStaysOnLegacyPath() throws Exception {
+    public void testRoutingAlignToFirstObservationFillsAboveSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            // ALIGN TO FIRST OBSERVATION forces the legacy cursor path because
-            // the fast-path bucket grid depends on timestamp_floor_utc's
-            // calendar alignment, which is incompatible with observation-anchored
-            // buckets. The plan must show "Sample By" without the "Fill" suffix.
+            // ALIGN TO FIRST OBSERVATION keeps the Sample By cursor, because
+            // timestamp_floor_utc cannot express observation-anchored buckets;
+            // the unified fill cursor fills its gaps.
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT first(val) FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
-                              fill: null
-                              values: [first(val)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: x
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: null
+                                    Sample By
+                                      fill: none
+                                      values: [first(val)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """);
         });
     }
@@ -2322,8 +2476,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     public void testRoutingFillLinearStaysOnInterpolatePath() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(LINEAR) needs forward-looking interpolation that the streaming
-            // fast path cannot provide; SqlOptimiser.hasLinearFill disables the
-            // rewrite. The plan must show "Sample By" without the "Fill" suffix.
+            // fast path cannot provide, so SampleByFactoryGenerator keeps it off
+            // that path. The plan must show "Sample By" without the "Fill" suffix.
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT first(val) FROM x SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR")
                     .noLeakCheck()
@@ -2339,11 +2493,10 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRoutingFromBindVariableStaysOnLegacyPath() throws Exception {
+    public void testRoutingFromBindVariableKeepsSampleByCursor() throws Exception {
         assertMemoryLeak(() -> {
-            // A bind variable as the FROM lower bound disables the rewriteSampleBy
-            // gate in SqlOptimiser (sampleByFrom.type == BIND_VARIABLE). The query
-            // must execute on the legacy cursor path and produce correct rows.
+            // A bind variable as the FROM lower bound keeps the Sample By cursor
+            // (SampleByBinder.requiresSampleByCursor); the unified fill cursor fills it.
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
@@ -2570,5 +2723,44 @@ public class SampleByFillTest extends AbstractCairoTest {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.value.max.bytes)");
             }
         });
+    }
+
+    private static void assertFillCompileError(String sql, String fill) throws Exception {
+        assertFillCompileError(sql, fill, "invalid fill value: " + fill);
+    }
+
+    private static void assertFillCompileError(String sql, String fill, String message) throws Exception {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            Assert.fail("expected compile-time error: " + sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(sql, sql.lastIndexOf(fill), e.getPosition());
+            TestUtils.assertEquals(message, e.getFlyweightMessage());
+        }
+    }
+
+    private static void assertFillCompileErrorOnAllShapes(String sql, String fill) throws Exception {
+        assertFillCompileErrorOnAllShapes(sql, fill, "invalid fill value: " + fill);
+    }
+
+    private static void assertFillCompileErrorOnAllShapes(String sql, String fill, String message) throws Exception {
+        assertFillCompileError(sql, fill, message);
+        assertFillCompileError(sql.replace("SAMPLE BY 1h", "SAMPLE BY (0+1)h"), fill, message);
+        assertFillCompileError(sql + " ALIGN TO FIRST OBSERVATION", fill, message);
+    }
+
+    private static void createFillValueTable() throws SqlException {
+        execute("""
+                CREATE TABLE t_fv (i INT, l LONG, d DOUBLE, f FLOAT, ip IPv4, dt DATE, ch CHAR, bo BOOLEAN, sym SYMBOL,
+                str STRING, vc VARCHAR, u UUID, dec DECIMAL(10,2), tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY""");
+        execute("""
+                INSERT INTO t_fv VALUES
+                (1, 1, 1.0, 1.0, '1.1.1.1', '2024-01-01', 'a', true, 'a', 'x', 'x', '11111111-1111-1111-1111-111111111111', 1.25m,
+                 '2024-01-01T00:00:00.000000001Z', '2024-01-01T00:00:00.000000Z'),
+                (3, 3, 3.0, 3.0, '3.3.3.3', '2024-01-03', 'c', false, 'b', 'z', 'z', '33333333-3333-3333-3333-333333333333', 3.75m,
+                 '2024-01-03T00:00:00.000000001Z', '2024-01-01T02:00:00.000000Z')
+                """);
     }
 }

@@ -25,6 +25,19 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.functions.bool.AndFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
+import io.questdb.griffin.engine.functions.array.DoubleArrayElemAvgFunctionFactory;
+import io.questdb.griffin.engine.functions.array.DoubleArrayElemMaxFunctionFactory;
+import io.questdb.griffin.engine.functions.array.DoubleArrayElemMinFunctionFactory;
+import io.questdb.griffin.engine.functions.array.DoubleArrayElemSumFunctionFactory;
+import io.questdb.griffin.engine.functions.array.ArrayDimLengthFunctionFactory;
+import io.questdb.griffin.engine.functions.array.DoubleArrayAccessFunctionFactory;
+import io.questdb.griffin.engine.functions.array.DoubleArraySliceFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
@@ -35,15 +48,49 @@ public class FunctionFactoryDescriptor {
     private static final int TYPE_MASK = ~(ARRAY_MASK | CONST_MASK);
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private final long[] argTypes;
+    private FunctionFactoryDescriptor commutedEquality;
     private final FunctionFactory factory;
+    private final boolean isAnd;
+    private final boolean isArrayAccess;
+    private final boolean isArrayColumnLayoutSensitive;
+    private final boolean isArrayElementWiseScalar;
+    private final boolean isCase;
+    private final boolean isOr;
+    private final boolean isOrderSensitiveAggregate;
+    private final boolean isRelocatableScalar;
+    private final boolean isRowCount;
+    private final boolean isSwitch;
+    private final String name;
     private final int openParenIndex;
     private final int sigArgCount;
 
     public FunctionFactoryDescriptor(FunctionFactory factory) throws SqlException {
+        this(factory, RelocatableScalarFactories.contains(factory));
+    }
+
+    // Only the cache's audited argument-swapping/negating aliases inherit this contract.
+    FunctionFactoryDescriptor(FunctionFactory factory, boolean isRelocatableScalar) throws SqlException {
         this.factory = factory;
+        this.isAnd = factory.getClass() == AndFunctionFactory.class;
+        this.isArrayAccess = factory.getClass() == DoubleArrayAccessFunctionFactory.class
+                || factory.getClass() == DoubleArraySliceFunctionFactory.class;
+        this.isArrayColumnLayoutSensitive = isArrayAccess || factory.getClass() == ArrayDimLengthFunctionFactory.class;
+        this.isArrayElementWiseScalar = factory.getClass() == DoubleArrayElemAvgFunctionFactory.class
+                || factory.getClass() == DoubleArrayElemMaxFunctionFactory.class
+                || factory.getClass() == DoubleArrayElemMinFunctionFactory.class
+                || factory.getClass() == DoubleArrayElemSumFunctionFactory.class;
+        this.isCase = factory.getClass() == CaseFunctionFactory.class;
+        this.isOr = factory.getClass() == OrFunctionFactory.class;
+        this.isSwitch = factory.getClass() == SwitchFunctionFactory.class;
+        this.isRelocatableScalar = isRelocatableScalar;
+        this.isRowCount = factory.getClass() == CountGroupByFunctionFactory.class;
 
         final String sig = factory.getSignature();
         this.openParenIndex = validateSignatureAndGetNameSeparator(sig);
+        this.name = sig.substring(0, openParenIndex);
+        this.isOrderSensitiveAggregate = factory.isGroupBy() && (Chars.equalsIgnoreCase(name, "array_agg")
+                || Chars.equalsIgnoreCase(name, "first") || Chars.equalsIgnoreCase(name, "first_not_null")
+                || Chars.equalsIgnoreCase(name, "last") || Chars.equalsIgnoreCase(name, "last_not_null"));
         // validate data types
         int typeCount = 0;
         for (
@@ -250,16 +297,69 @@ public class FunctionFactoryDescriptor {
         return (int) (mask >>> (32 - (index % 2) * 32));
     }
 
+    public FunctionFactoryDescriptor getCommutedEquality() {
+        return commutedEquality;
+    }
+
+    public boolean isOrderSensitiveAggregate() {
+        return isOrderSensitiveAggregate;
+    }
+
+    void setCommutedEquality(FunctionFactoryDescriptor descriptor) {
+        commutedEquality = descriptor;
+    }
+
     public FunctionFactory getFactory() {
         return factory;
     }
 
     public String getName() {
-        return factory.getSignature().substring(0, openParenIndex);
+        return name;
     }
 
     public int getSigArgCount() {
         return sigArgCount;
+    }
+
+    public boolean isAnd() {
+        return isAnd;
+    }
+
+    public boolean isArrayAccess() {
+        return isArrayAccess;
+    }
+
+    public boolean isArrayColumnLayoutSensitive() {
+        return isArrayColumnLayoutSensitive;
+    }
+
+    public boolean isArrayElementWiseScalar() {
+        return isArrayElementWiseScalar;
+    }
+
+    public boolean isCase() {
+        return isCase;
+    }
+
+    public boolean isOr() {
+        return isOr;
+    }
+
+    /**
+     * Audited scalar construction depends only on typed arguments: private leaves
+     * may relocate before adoption, and selected calls may be constructed again.
+     * FunctionBinder additionally enforces branch restrictions for NULL overloads.
+     */
+    public boolean isRelocatableScalar() {
+        return isRelocatableScalar;
+    }
+
+    public boolean isRowCount() {
+        return isRowCount;
+    }
+
+    public boolean isSwitch() {
+        return isSwitch;
     }
 
     private static long toUnsignedLong(int type) {

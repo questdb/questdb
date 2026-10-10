@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
@@ -33,6 +34,18 @@ import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
  * Should not be implemented by types that can't be used for columns, e.g. {@link IntervalColumn}.
  */
 public interface ColumnFunction extends Function {
+
+    /**
+     * Whether the function that reads a column of the type is thread-safe: one that converts values through its own
+     * buffers, such as a character or variable-size column, is not.
+     */
+    static boolean isThreadSafeType(int columnType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE, ColumnType.SYMBOL,
+                 ColumnType.BINARY, ColumnType.LONG256, ColumnType.INTERVAL, ColumnType.RECORD -> false;
+            default -> true;
+        };
+    }
 
     /**
      * Returns the underlying {@link ColumnFunction} of {@code f}, peeling any
@@ -61,6 +74,11 @@ public interface ColumnFunction extends Function {
             return getColumnIndex() == that.getColumnIndex();
         }
         return false;
+    }
+
+    @Override
+    default boolean isThreadSafe() {
+        return isThreadSafeType(getType());
     }
 
     @Override

@@ -385,11 +385,12 @@ public final class ParquetRowGroupFilter {
                                 Function f = valueFunctions.getQuick(j);
                                 int vType = f.getType();
                                 if (ColumnType.isTimestamp(vType) || vType == ColumnType.DATE) {
-                                    if (columnType == vType) {
-                                        filterValues.putLong(f.getTimestamp(null));
-                                    } else {
-                                        filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
-                                    }
+                                    // A finer bound rounds to the column's precision on the side that
+                                    // keeps every row the predicate keeps.
+                                    final long value = f.getTimestamp(null);
+                                    final int valueType = ColumnType.getTimestampType(vType);
+                                    filterValues.putLong(opType == PushdownFilterExtractor.OP_LT || opType == PushdownFilterExtractor.OP_GE
+                                            ? driver.ceilFrom(value, valueType) : driver.floorFrom(value, valueType));
                                 } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                     // getLong() throws on a FLOAT/DOUBLE function, and the row-level filter
                                     // compares this column at double width, so the bound takes the same

@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -33,7 +35,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.GenerationStepContext;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
@@ -138,5 +142,59 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
                 throw new RuntimeException(ref.get());
             }
         });
+    }
+
+    @Test
+    public void testRenameBetweenBindAndGenerationKeepsBoundTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t1 AS (
+                        SELECT x, timestamp_sequence('2022-02-24T04', 100_000_000) ts FROM long_sequence(2)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("""
+                    CREATE TABLE t2 AS (
+                        SELECT x + 10 x, timestamp_sequence('2022-02-24T04', 100_000_000) ts FROM long_sequence(2)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            drainWalQueue();
+            final int[] generations = {0};
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    GenerationStepContext context = new GenerationStepContext(engine)
+            ) {
+                // Every generation, retries included, runs after a rename that binding did not see:
+                // the step swaps once per attempt, as the compiler turns from binding to generation.
+                context.setStep(() -> {
+                    generations[0]++;
+                    try {
+                        swapTableNames();
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+                try (RecordCursorFactory factory = compiler.compile(
+                        "SELECT t1.x, t2.x FROM t1 JOIN t2 ON t1.ts = t2.ts",
+                        context
+                ).getRecordCursorFactory()) {
+                    context.setStep(null);
+                    Assert.assertTrue(generations[0] > 0);
+                    try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("cursor must reject names that moved to other tables");
+                    } catch (TableReferenceOutOfDateException expected) {
+                    }
+                    swapTableNames();
+                    assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().returns("""
+                            x\tx1
+                            1\t11
+                            2\t12
+                            """);
+                }
+            }
+        });
+    }
+
+    private static void swapTableNames() throws SqlException {
+        execute("RENAME TABLE t1 TO temp");
+        execute("RENAME TABLE t2 TO t1");
+        execute("RENAME TABLE temp TO t2");
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -42,6 +43,11 @@ import org.jetbrains.annotations.NotNull;
 import java.util.regex.Matcher;
 
 public class MatchStrFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
     @Override
     public String getSignature() {
         return "~(SS)";

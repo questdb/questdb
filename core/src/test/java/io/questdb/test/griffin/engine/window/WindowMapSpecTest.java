@@ -45,7 +45,7 @@ import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapSpec;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -101,7 +101,7 @@ public class WindowMapSpecTest {
     public void testAnExpressionOrderTermDeclines() throws SqlException {
         // The term resolves to no base column, and two windows ordered by two expressions
         // nothing compared must not be read as ordered alike.
-        Assert.assertNull(spec(builder().orderBy(literal("x + 1"), IQueryModel.ORDER_DIRECTION_ASCENDING)));
+        Assert.assertNull(spec(builder().orderBy(literal("x + 1"), QueryModel.ORDER_DIRECTION_ASCENDING)));
         // ... while the same window ordered by a plain column is a spec.
         Assert.assertNotNull(spec(builder()));
     }
@@ -163,8 +163,8 @@ public class WindowMapSpecTest {
         assertDistinct(reference, builder().keyColumnType(ColumnType.STRING));
 
         // The row order the cumulative frame is accumulated in.
-        assertDistinct(reference, builder().orderBy(literal("y"), IQueryModel.ORDER_DIRECTION_ASCENDING));
-        assertDistinct(reference, builder().orderBy(literal("ts"), IQueryModel.ORDER_DIRECTION_DESCENDING));
+        assertDistinct(reference, builder().orderBy(literal("y"), QueryModel.ORDER_DIRECTION_ASCENDING));
+        assertDistinct(reference, builder().orderBy(literal("ts"), QueryModel.ORDER_DIRECTION_DESCENDING));
         assertDistinct(reference, builder().orderDismissed(false));
         assertDistinct(reference, builder().scanDirection(RecordCursorFactory.SCAN_DIRECTION_BACKWARD));
 
@@ -308,7 +308,7 @@ public class WindowMapSpecTest {
         private int framingMode = WindowExpression.FRAMING_ROWS;
         private boolean isOrderDismissed = true;
         private int keyColumnType = ColumnType.VARCHAR;
-        private IntList orderByDirections = directions(IQueryModel.ORDER_DIRECTION_ASCENDING);
+        private IntList orderByDirections = directions(QueryModel.ORDER_DIRECTION_ASCENDING);
         private ObjList<ExpressionNode> orderBy = nodes(literal("ts"));
         private WindowFunction.Pass1ScanDirection pass1ScanDirection = WindowFunction.Pass1ScanDirection.FORWARD;
         private int passCount = WindowFunction.ZERO_PASS;

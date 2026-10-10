@@ -39,36 +39,48 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.plan.logical.AggregatePlan;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.FillPlan;
+import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GroupingPlan;
+import io.questdb.griffin.plan.logical.LatestByPlan;
+import io.questdb.griffin.plan.logical.LimitPlan;
+import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.SampleByPlan;
+import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SetOperationPlan;
+import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
-import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.ArrayDeque;
-
-import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
-import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 /**
  * Create mat view operation relies on implicit create table as select operation.
@@ -93,15 +105,13 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final boolean deferred;
     private final int periodDelay;
     private final char periodDelayUnit;
+    private final StringSink intervalSink = new StringSink();
     private final int refreshType;
-    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
     private final int timerInterval;
     private final char timerUnit;
-    private final IntList tmpColumnIndexes = new IntList();
-    private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
     private final MatViewDefinition viewDefinition = new MatViewDefinition();
     private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
@@ -109,6 +119,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private char periodLengthUnit;
     private long samplingInterval;
     private char samplingIntervalUnit;
+    private int scanColumnId;
     private long timerStartUs;
     private String timerTimeZone;
 
@@ -191,6 +202,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return createTableOperation.getIndexBlockCapacity(columnIndex);
+    }
+
+    @Override
+    public byte getIndexType(int index) {
+        return createTableOperation.getIndexType(index);
     }
 
     @Override
@@ -314,11 +330,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public byte getIndexType(int index) {
-        return createTableOperation.getIndexType(index);
-    }
-
-    @Override
     public boolean isMatView() {
         return true;
     }
@@ -340,56 +351,17 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public void validateAndUpdateMetadataFromModel(
+    public void validateAndUpdateMetadataFromPlan(
             @NotNull SqlExecutionContext sqlExecutionContext,
-            @NotNull FunctionFactoryCache functionFactoryCache,
-            @NotNull IQueryModel queryModel
+            @NotNull @Transient LogicalPlan root,
+            @NotNull @Transient IntList positions
     ) throws SqlException {
-        // Create view columns based on query.
-        final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
-        assert columns.size() > 0;
-
+        final OutputSchema columns = root.getOutput();
+        assert columns.getColumnCount() > 0;
         // We do not know types of columns at this stage.
         // Compiler must put table together using query metadata.
-        createColumnModelMap.clear();
-        final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap =
-                createTableOperation.getAugmentedColumnMetadata();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            // Key the column-model map by the clean display name, matching the factory metadata names
-            // (CreateTableOperation resolves these verbatim). toColumnName is identity for ordinary
-            // names, so only a quote-protected alias (operator token / dotted) is affected - without
-            // this its index/dedup/cast/symbol-capacity defs would silently miss downstream.
-            final CharSequence columnName = SqlUtil.toColumnName(qc.getName());
-            final CreateTableColumnModel model = CreateTableColumnModel.FACTORY.newInstance();
-            model.setColumnNamePos(qc.getAst().position);
-            model.setColumnType(ColumnType.UNDEFINED);
-            // Copy index() definitions from create table op, so that we don't lose them.
-            TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
-            if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
-                model.setIndexType(augColumnMetadata.getIndexType(), qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
-            }
-            createColumnModelMap.put(columnName, model);
-        }
-
+        createTableOperation.initColumnModels(createColumnModelMap, columns, positions);
         final String timestamp = createTableOperation.getTimestampColumnName();
-        final int timestampPos = createTableOperation.getTimestampColumnNamePosition();
-        if (timestamp != null) {
-            final CreateTableColumnModel timestampModel = createColumnModelMap.get(timestamp);
-            if (timestampModel == null) {
-                throw SqlException.position(timestampPos)
-                        .put("TIMESTAMP column does not exist [name=")
-                        .put(timestamp).put(']');
-            }
-            final int timestampType = timestampModel.getColumnType();
-            // type can be -1 for create table as select because types aren't known yet
-            if (!ColumnType.isTimestamp(timestampType) && timestampType != ColumnType.UNDEFINED) {
-                throw SqlException.position(timestampPos)
-                        .put("TIMESTAMP column expected [actual=")
-                        .put(ColumnType.nameOf(timestampType)).put(']');
-            }
-        }
-
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
 
         final TableToken baseTableToken = sqlExecutionContext.getTableTokenIfExists(baseTableName);
@@ -412,35 +384,53 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // Find sampling interval.
         CharSequence intervalExpr = null;
         int intervalPos = 0;
-        final ExpressionNode sampleBy = findSampleByNode(queryModel);
+        final GroupingPlan sampleBy = findSampleBy(root);
         // Vanilla SAMPLE BY.
-        if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
-            intervalExpr = sampleBy.token;
-            intervalPos = sampleBy.position;
+        if (sampleBy instanceof SampleByPlan cursor) {
+            intervalExpr = cursor.getPeriodToken();
+            intervalPos = cursor.getPeriodPosition();
+        } else if (sampleBy != null) {
+            final ConstantExpression period = (ConstantExpression) sampleByBucket((AggregatePlan) sampleBy).argumentAt(0);
+            intervalExpr = intervalText(period);
+            intervalPos = period.getPosition();
+        }
+        if (sampleBy != null && timestamp == null && isDirectTableSampleBy(sampleBy)) {
+            // SAMPLE BY buckets the base designated timestamp, which the view must select.
+            final String tsName = sampleByTimestampName(sqlExecutionContext, baseTableToken);
+            if (tsName != null && createColumnModelMap.get(tsName) == null && !isTimestampSelected(root, tsName)) {
+                throw SqlException.position(selectTextPosition)
+                        .put("TIMESTAMP column does not exist or not present in select list [name=")
+                        .put(tsName).put(']');
+            }
         }
 
         // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY).
         if (intervalExpr == null) {
-            final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
-            if (queryColumn != null) {
-                final ExpressionNode ast = queryColumn.getAst();
-                final ExpressionNode intervalNode = SqlUtil.getTimestampFloorInterval(ast);
-                intervalExpr = intervalNode.token;
-                intervalPos = intervalNode.position;
-                if (timestamp == null) {
-                    // Clean name: the persisted designated-timestamp name is resolved verbatim against
-                    // factory metadata downstream, and the model map is keyed clean (see above). Compute
-                    // it once - toColumnName re-scans the alias and allocates a String on each call.
-                    final String tsName = SqlUtil.toColumnName(queryColumn.getName());
-                    createTableOperation.setTimestampColumnName(tsName);
-                    createTableOperation.setTimestampColumnNamePosition(ast.position);
-                    final CreateTableColumnModel timestampModel = createColumnModelMap.get(tsName);
-                    if (timestampModel == null) {
-                        throw SqlException.position(selectTextPosition)
-                                .put("TIMESTAMP column does not exist or not present in select list [name=")
-                                .put(tsName).put(']');
+            FunctionExpression floor = null;
+            for (LogicalPlan level = root; level != null && floor == null; level = nextLevel(level)) {
+                if (!(level instanceof ProjectPlan project)) {
+                    continue;
+                }
+                for (int i = 0, n = project.getExpressions().size(); i < n && floor == null; i++) {
+                    floor = timestampFloorCall(project, i);
+                    if (floor != null && timestamp == null) {
+                        // The persisted designated-timestamp name is resolved verbatim against factory metadata
+                        // downstream, and the model map is keyed by the same output names.
+                        final String tsName = Chars.toString(project.getOutput().getColumnName(i));
+                        createTableOperation.setTimestampColumnName(tsName);
+                        createTableOperation.setTimestampColumnNamePosition(floor.getPosition());
+                        if (createColumnModelMap.get(tsName) == null) {
+                            throw SqlException.position(selectTextPosition)
+                                    .put("TIMESTAMP column does not exist or not present in select list [name=")
+                                    .put(tsName).put(']');
+                        }
                     }
                 }
+            }
+            if (floor != null) {
+                final ConstantExpression interval = (ConstantExpression) floor.argumentAt(0);
+                intervalExpr = intervalText(interval);
+                intervalPos = interval.getPosition();
             }
         }
 
@@ -468,15 +458,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final QueryColumn column = columns.getQuick(i);
-                if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
-                    final String columnName = SqlUtil.toColumnName(column.getName());
+            for (int i = 0, n = columns.getColumnCount(); i < n; i++) {
+                if (!readsAggregate(root, columns.getColumnId(i))) {
+                    final CharSequence columnName = columns.getColumnName(i);
                     final CreateTableColumnModel columnModel = createColumnModelMap.get(columnName);
                     if (columnModel == null) {
                         throw SqlException.$(0, "missing column [name=").put(columnName).put(']');
                     }
-                    copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
+                    copyBaseTableSymbolColumnCapacity(root, columns.getColumnId(i), columnModel, baseTableToken, baseTableMetadata);
                 }
             }
         }
@@ -539,158 +528,298 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }
 
-    private static void copyBaseTableSymbolColumnCapacity(
-            @Nullable ExpressionNode columnNode,
-            @Nullable IQueryModel queryModel,
+    /**
+     * The first SAMPLE BY, plain select levels down from the root, whose period is spelled as a constant: its
+     * cursor, or the aggregate grouped by its bucket; null when there is none. A level that groups explicitly,
+     * joins, reads a table with LATEST ON or is a set operation ends the search, as a non-plain select model does.
+     */
+    private static GroupingPlan findSampleBy(LogicalPlan root) {
+        LogicalPlan plan = root;
+        while (true) {
+            switch (plan) {
+                case SampleByPlan sampleBy -> {
+                    return sampleBy.getPeriodToken() != null ? sampleBy : null;
+                }
+                case AggregatePlan aggregate -> {
+                    if (aggregate.hasSampleByBucket()) {
+                        return aggregate;
+                    }
+                    if (aggregate.hasExplicitGrouping()) {
+                        return null;
+                    }
+                    plan = aggregate.getInput();
+                }
+                case ProjectPlan _, FilterPlan _, SortPlan _, LimitPlan _, DistinctPlan _, WindowPlan _, FillPlan _ ->
+                        plan = plan.inputAt(0);
+                default -> {
+                    return null;
+                }
+            }
+        }
+    }
+
+    /**
+     * Whether the SAMPLE BY buckets a table directly, rather than a joined source or a sub-query.
+     */
+    private static boolean isDirectTableSampleBy(GroupingPlan sampleBy) {
+        LogicalPlan input = sampleBy.getInput();
+        while (input instanceof FilterPlan || input instanceof LatestByPlan) {
+            input = input.inputAt(0);
+        }
+        return input instanceof ScanPlan;
+    }
+
+    private static boolean isTimestampFloor(BoundExpression expression) {
+        return expression instanceof FunctionExpression call
+                && (TimestampFloorFunctionFactory.NAME.equals(call.getName()) || TimestampFloorFromOffsetUtcFunctionFactory.NAME.equals(call.getName()));
+    }
+
+    /**
+     * The plan the next plain select level down from {@code plan} starts at; null below a level that is not plain:
+     * a table, a join, a LATEST ON, an explicit GROUP BY, a SAMPLE BY or a set operation.
+     */
+    private static LogicalPlan nextLevel(LogicalPlan plan) {
+        return switch (plan) {
+            case ProjectPlan _, FilterPlan _, SortPlan _, LimitPlan _, DistinctPlan _, WindowPlan _, FillPlan _ ->
+                    plan.inputAt(0);
+            case AggregatePlan aggregate ->
+                    aggregate.hasExplicitGrouping() || aggregate.hasSampleByBucket() ? null : aggregate.getInput();
+            default -> null;
+        };
+    }
+
+    /**
+     * Whether the expression, over {@code input}, reads an aggregate: directly, or through the plain select levels
+     * beneath it.
+     */
+    private static boolean readsAggregate(LogicalPlan input, BoundExpression expression) {
+        if (expression instanceof ColumnExpression column) {
+            return input.getOutput().getColumnIndexById(column.getColumnId()) >= 0 && readsAggregate(input, column.getColumnId());
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (readsAggregate(input, call.argumentAt(i))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether column {@code id} of {@code plan} is an aggregate, or computes over one through the plain select
+     * levels beneath; a key of an explicit GROUP BY counts as none, as it does in its select model.
+     */
+    private static boolean readsAggregate(LogicalPlan plan, int id) {
+        while (true) {
+            switch (plan) {
+                case ProjectPlan project -> {
+                    final BoundExpression expression = project.getExpressions().getQuick(project.getOutput().getColumnIndexById(id));
+                    if (!(expression instanceof ColumnExpression column)) {
+                        return readsAggregate(project.getInput(), expression);
+                    }
+                    id = column.getColumnId();
+                    plan = project.getInput();
+                }
+                case GroupingPlan grouping -> {
+                    final int index = grouping.getOutput().getColumnIndexById(id);
+                    if (index >= grouping.getGroupingExpressions().size()) {
+                        return true;
+                    }
+                    if (grouping.hasExplicitGrouping()) {
+                        return false;
+                    }
+                    final BoundExpression key = grouping.getGroupingExpressions().getQuick(index);
+                    if (!(key instanceof ColumnExpression column)) {
+                        return readsAggregate(grouping.getInput(), key);
+                    }
+                    id = column.getColumnId();
+                    plan = grouping.getInput();
+                }
+                case SetOperationPlan operation -> {
+                    id = operation.getLeft().getOutput().getColumnId(operation.getOutput().getColumnIndexById(id));
+                    plan = operation.getLeft();
+                }
+                default -> {
+                    LogicalPlan next = null;
+                    for (int i = 0, n = plan.inputCount(); i < n && next == null; i++) {
+                        final LogicalPlan input = plan.inputAt(i);
+                        if (input != null && input.getOutput().getColumnIndexById(id) >= 0) {
+                            next = input;
+                        }
+                    }
+                    if (next == null) {
+                        return false;
+                    }
+                    plan = next;
+                }
+            }
+        }
+    }
+
+    /**
+     * The SAMPLE BY bucket the aggregate groups by: the timestamp_floor_utc key over the input's designated
+     * timestamp, with the period as its first argument. No other key reads that timestamp directly, as the
+     * select expressions that do compute over the bucket.
+     */
+    private static FunctionExpression sampleByBucket(AggregatePlan aggregate) {
+        final int timestampId = aggregate.getInput().getOutput().getTimestampColumnId();
+        final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (keys.getQuick(i) instanceof FunctionExpression call
+                    && TimestampFloorFromOffsetUtcFunctionFactory.NAME.equals(call.getName()) && call.getArgumentCount() == 5
+                    && call.argumentAt(0) instanceof ConstantExpression
+                    && call.argumentAt(1) instanceof ColumnExpression column && column.getColumnId() == timestampId) {
+                return call;
+            }
+        }
+        throw new IllegalStateException("SAMPLE BY bucket is not a grouping key");
+    }
+
+    private static String sampleByTimestampName(SqlExecutionContext sqlExecutionContext, TableToken baseTableToken) {
+        try (TableMetadata metadata = sqlExecutionContext.getCairoEngine().getTableMetadata(baseTableToken)) {
+            final int index = metadata.getTimestampIndex();
+            return index < 0 ? null : Chars.toString(metadata.getColumnName(index));
+        }
+    }
+
+    /**
+     * The timestamp_floor call that defines visible column {@code index} of {@code project}: its expression, or the
+     * key of the grouping beneath it that the column reads as spelled; null for any other column.
+     */
+    private static FunctionExpression timestampFloorCall(ProjectPlan project, int index) {
+        if (!project.getOutput().isVisible(index)) {
+            return null;
+        }
+        final BoundExpression expression = project.getExpressions().getQuick(index);
+        if (isTimestampFloor(expression)) {
+            return (FunctionExpression) expression;
+        }
+        if (!(expression instanceof ColumnExpression column) || column.isCast()) {
+            return null;
+        }
+        LogicalPlan input = project.getInput();
+        while (input instanceof SortPlan || input instanceof LimitPlan || input instanceof FillPlan) {
+            input = input.inputAt(0);
+        }
+        if (!(input instanceof GroupingPlan grouping)) {
+            return null;
+        }
+        final int keyIndex = grouping.getOutput().getColumnIndexById(column.getColumnId());
+        return keyIndex >= 0 && keyIndex < grouping.getGroupingExpressions().size() && isTimestampFloor(grouping.getGroupingExpressions().getQuick(keyIndex))
+                ? (FunctionExpression) grouping.getGroupingExpressions().getQuick(keyIndex) : null;
+    }
+
+    /**
+     * The scan whose column, left in {@link #scanColumnId}, column {@code id} of {@code plan} reads as a plain
+     * column: through projections and grouping keys that copy it, the SAMPLE BY bucket that reads the timestamp a
+     * select column spells, joins and set operations (the right branch first); null when a computation defines
+     * the column.
+     */
+    private ScanPlan columnScan(LogicalPlan plan, int id) {
+        while (true) {
+            switch (plan) {
+                case ScanPlan scan -> {
+                    scanColumnId = id;
+                    return scan;
+                }
+                case ProjectPlan project -> {
+                    if (!(project.getExpressions().getQuick(project.getOutput().getColumnIndexById(id)) instanceof ColumnExpression column) || column.isCast()) {
+                        return null;
+                    }
+                    id = column.getColumnId();
+                    plan = project.getInput();
+                }
+                case GroupingPlan grouping -> {
+                    final int index = grouping.getOutput().getColumnIndexById(id);
+                    if (index >= grouping.getGroupingExpressions().size()) {
+                        return null;
+                    }
+                    final BoundExpression key = grouping.getGroupingExpressions().getQuick(index);
+                    final ColumnExpression column;
+                    if (key instanceof ColumnExpression keyColumn) {
+                        column = keyColumn.isCast() ? null : keyColumn;
+                    } else if (grouping instanceof AggregatePlan aggregate && aggregate.hasSampleByBucket() && key == sampleByBucket(aggregate)) {
+                        column = (ColumnExpression) ((FunctionExpression) key).argumentAt(1);
+                    } else {
+                        column = null;
+                    }
+                    if (column == null) {
+                        return null;
+                    }
+                    id = column.getColumnId();
+                    plan = grouping.getInput();
+                }
+                case SetOperationPlan operation -> {
+                    final int index = operation.getOutput().getColumnIndexById(id);
+                    final ScanPlan right = columnScan(operation.getRight(), operation.getRight().getOutput().getColumnId(index));
+                    if (right != null) {
+                        return right;
+                    }
+                    id = operation.getLeft().getOutput().getColumnId(index);
+                    plan = operation.getLeft();
+                }
+                default -> {
+                    LogicalPlan next = null;
+                    for (int i = 0, n = plan.inputCount(); i < n && next == null; i++) {
+                        final LogicalPlan input = plan.inputAt(i);
+                        if (input != null && input.getOutput().getColumnIndexById(id) >= 0) {
+                            next = input;
+                        }
+                    }
+                    if (next == null) {
+                        return null;
+                    }
+                    plan = next;
+                }
+            }
+        }
+    }
+
+    private void copyBaseTableSymbolColumnCapacity(
+            @NotNull LogicalPlan root,
+            int columnId,
             @NotNull CreateTableColumnModel columnModel,
-            @NotNull CharSequence baseTableName,
+            @NotNull TableToken baseTableToken,
             @NotNull TableMetadata baseTableMetadata
     ) {
-        if (columnNode != null && queryModel != null) {
-            if (columnNode.type == ExpressionNode.LITERAL) {
-                if (queryModel.getTableName() != null) {
-                    if (Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
-                        final CharSequence columnName = resolveColumnName(columnNode, queryModel);
-                        if (columnName != null) {
-                            final int columnIndex = baseTableMetadata.getColumnIndexQuiet(columnName);
-                            if (columnIndex > -1) {
-                                final TableColumnMetadata baseTableColumnMetadata = baseTableMetadata.getColumnMetadata(columnIndex);
-                                if (baseTableColumnMetadata.getColumnType() == ColumnType.SYMBOL) {
-                                    columnModel.setSymbolCapacity(baseTableColumnMetadata.getSymbolCapacity());
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Check nested queryModel.
-                    final QueryColumn column = queryModel.getAliasToColumnMap().get(columnNode.token);
-                    copyBaseTableSymbolColumnCapacity(
-                            column != null ? column.getAst() : columnNode,
-                            queryModel.getNestedModel(),
-                            columnModel,
-                            baseTableName,
-                            baseTableMetadata
-                    );
-                }
+        final ScanPlan scan = columnScan(root, columnId);
+        if (scan == null || !scan.getTableToken().equals(baseTableToken)) {
+            return;
+        }
+        final int columnIndex = baseTableMetadata.getColumnIndexQuiet(scan.getOutput().getColumnName(scan.getOutput().getColumnIndexById(scanColumnId)));
+        if (columnIndex > -1) {
+            final TableColumnMetadata baseTableColumnMetadata = baseTableMetadata.getColumnMetadata(columnIndex);
+            if (baseTableColumnMetadata.getColumnType() == ColumnType.SYMBOL) {
+                columnModel.setSymbolCapacity(baseTableColumnMetadata.getSymbolCapacity());
             }
-
-            for (int i = 1, n = queryModel.getJoinModels().size(); i < n; i++) {
-                copyBaseTableSymbolColumnCapacity(columnNode, queryModel.getJoinModels().getQuick(i), columnModel, baseTableName, baseTableMetadata);
-            }
-
-            copyBaseTableSymbolColumnCapacity(columnNode, queryModel.getUnionModel(), columnModel, baseTableName, baseTableMetadata);
         }
     }
 
-    private static ExpressionNode findSampleByNode(IQueryModel model) {
-        while (model != null) {
-            if (SqlUtil.isNotPlainSelectModel(model)) {
-                break;
+    private CharSequence intervalText(ConstantExpression interval) {
+        return switch (ColumnType.tagOf(interval.getDataType())) {
+            case ColumnType.VARCHAR -> interval.getVarcharValue().asAsciiCharSequence();
+            case ColumnType.CHAR -> {
+                intervalSink.clear();
+                intervalSink.put((char) interval.getLongValue());
+                yield intervalSink;
             }
-
-            final ExpressionNode sampleBy = model.getSampleBy();
-            if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
-                return sampleBy;
-            }
-
-            model = model.getNestedModel();
-        }
-        return null;
+            default -> interval.getStrValue();
+        };
     }
 
-    private static QueryColumn findTimestampFloorColumn(IQueryModel model) {
-        while (model != null) {
-            if (SqlUtil.isNotPlainSelectModel(model)) {
-                break;
-            }
-
-            final ObjList<QueryColumn> queryColumns = model.getBottomUpColumns();
-            for (int i = 0, n = queryColumns.size(); i < n; i++) {
-                final QueryColumn queryColumn = queryColumns.getQuick(i);
-                final ExpressionNode ast = queryColumn.getAst();
-                if (SqlUtil.isTimestampFloorFunction(ast)) {
-                    return queryColumn;
-                }
-            }
-            model = model.getNestedModel();
-        }
-        return null;
-    }
-
-    private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, IQueryModel queryModel) {
-        final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
-        if (dotIndex > -1) {
-            if (Chars.equalsIgnoreCase(queryModel.getName(), columnNode.token, 0, dotIndex)) {
-                return columnNode.token.subSequence(dotIndex + 1, columnNode.token.length());
-            }
-        } else {
-            return columnNode.token;
-        }
-        return null;
-    }
-
-    private boolean hasNoAggregates(FunctionFactoryCache functionFactoryCache, IQueryModel queryModel, int columnIndex) {
-        tmpColumnIndexes.clear();
-        tmpColumnIndexes.add(columnIndex);
-
-        for (; ; ) {
-            // First, check the columns for aggregate functions
-            // and accumulate all literals we've met on the way.
-            tmpLiterals.clear();
-            for (int i = 0, n = tmpColumnIndexes.size(); i < n; i++) {
-                final int idx = tmpColumnIndexes.getQuick(i);
-                ExpressionNode node = queryModel.getBottomUpColumns().getQuick(idx).getAst();
-                // pre-order iterative tree traversal
-                // see: http://en.wikipedia.org/wiki/Tree_traversal
-                sqlNodeStack.clear();
-                while (!sqlNodeStack.isEmpty() || node != null) {
-                    if (node != null) {
-                        switch (node.type) {
-                            case LITERAL:
-                                tmpLiterals.add(node.token);
-                                node = null;
-                                continue;
-                            case FUNCTION:
-                                if (functionFactoryCache.isGroupBy(node.token)) {
-                                    return false;
-                                }
-                                break;
-                            default:
-                                for (int j = 0, m = node.args.size(); j < m; j++) {
-                                    sqlNodeStack.add(node.args.getQuick(j));
-                                }
-                                if (node.rhs != null) {
-                                    sqlNodeStack.push(node.rhs);
-                                }
-                                break;
-                        }
-                        node = node.lhs;
-                    } else {
-                        node = sqlNodeStack.poll();
-                    }
-                }
-            }
-
-            // If the model is not an outer select, we're done.
-            if (queryModel.getNestedModel() == null || SqlUtil.isNotPlainSelectModel(queryModel)) {
+    /**
+     * Whether a column of the root reads, as a plain column, a table column named {@code timestampName}.
+     */
+    private boolean isTimestampSelected(LogicalPlan root, CharSequence timestampName) {
+        final OutputSchema columns = root.getOutput();
+        for (int i = 0, n = columns.getColumnCount(); i < n; i++) {
+            final ScanPlan scan = columnScan(root, columns.getColumnId(i));
+            if (scan != null && Chars.equalsIgnoreCase(scan.getOutput().getColumnName(scan.getOutput().getColumnIndexById(scanColumnId)), timestampName)) {
                 return true;
             }
-
-            // OK, it's a simple select model, so we need to check the nested model
-            // as the column may reference nested aggregates.
-            // Example:
-            //   SELECT c FROM (SELECT count() AS c FROM x);
-            queryModel = queryModel.getNestedModel();
-
-            // Collect column indexes to check in the next iteration and carry on.
-            tmpColumnIndexes.clear();
-            for (int i = 0, n = queryModel.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn column = queryModel.getBottomUpColumns().getQuick(i);
-                if (tmpLiterals.contains(column.getAlias())) {
-                    tmpColumnIndexes.add(i);
-                }
-            }
         }
+        return false;
     }
 
     private void updateMatViewTablePartitionBy(int timestampType) throws SqlException {

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -49,6 +50,11 @@ public class TestLatchedCounterFunctionFactory implements FunctionFactory {
     public static void reset(Callback callback) {
         CALLBACK = callback;
         COUNTER.set(0);
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override

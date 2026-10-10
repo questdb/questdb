@@ -70,8 +70,8 @@ public class WindowContextImpl implements WindowContext, Mutable {
      * where it can name both the width that does not fit and the widest one that does.
      * <p>
      * The check is sign-symmetric, which matters because the two callers use opposite sign
-     * conventions: a plain RANGE frame negates a PRECEDING bound, while {@code SqlOptimiser}
-     * stores a WINDOW JOIN PRECEDING bound positive. The {@code Long.MIN_VALUE} special case
+     * conventions: a plain RANGE frame negates a PRECEDING bound, while the WINDOW JOIN
+     * binding stores a PRECEDING bound positive. The {@code Long.MIN_VALUE} special case
      * below is reachable only from the negating caller, and only on the frame's START bound: a
      * bound reaches this method only when it carries a time unit, which the parser allows on
      * RANGE frames alone, and on a RANGE frame {@code normalizeWindowFrame()} folds a literal

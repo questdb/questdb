@@ -278,7 +278,7 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidLoTypeFreesParsedFunction() throws Exception {
-        // toLimitFunction() parses the LIMIT expression before validating it, so a rejected
+        // OrderBinder.bindLimit() parses the LIMIT expression before validating it, so a rejected
         // expression that owns native memory leaked it: an ARRAY constant holds a DirectArray, and
         // neither the type coercion nor the explicit type check freed the parsed function. The
         // callers cannot free it either - they never receive it.
@@ -1594,8 +1594,8 @@ public class LimitTest extends AbstractCairoTest {
     public void testTopKDoesNotPeelExtraNullColumnSplice() throws Exception {
         // WINDOW JOIN with always-false ON wraps the master in an ExtraNullColumnCursorFactory
         // that splices in NULL columns for every aggregate from the (vacant) right side. The
-        // unified parallel top-K gate must not peel that wrapper; without canPeelForTopK guarding
-        // the splice, top-K iterates the master directly and silently drops the window aggregate.
+        // parallel top-K must not build itself under that wrapper; otherwise top-K iterates the
+        // master directly and silently drops the window aggregate.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1627,7 +1627,7 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testTopKDoesNotPeelExtraNullColumnSpliceOrderByNullColumn() throws Exception {
         // ORDER BY a column that exists only in the spliced layer. Pre-fix this hit
-        // AssertionError: index out of bounds, 3 >= 3 from buildAsyncTopKOverStolenFilter
+        // AssertionError: index out of bounds, 3 >= 3 from SortFactoryGenerator
         // because the gate translated the projected index against the unwrapped master metadata.
         // Post-fix the splice is the page-frame leaf, baseMetadata covers the null column, and
         // top-K runs to completion (all rows tie on NULL — comparator stability picks any 3).
@@ -1720,7 +1720,7 @@ public class LimitTest extends AbstractCairoTest {
                     .returns(expected);
 
             // repeated execution must not leak filter, function, page-frame or
-            // comparator state across the steal/halfClose/transfer boundary.
+            // comparator state across the stolen filter's transfer to the top-K.
             for (int i = 0; i < 5; i++) {
                 assertQuery("select x + 1 as x_plus from tab where ts2 in '1970' order by ts2 desc limit 1")
                         .noLeakCheck()

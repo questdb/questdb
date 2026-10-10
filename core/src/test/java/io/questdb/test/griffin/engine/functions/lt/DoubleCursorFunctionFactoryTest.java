@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
@@ -61,6 +62,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -521,13 +523,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     .withContext(ctx)
                     .noLeakCheck()
                     .assertsPlanContaining("Async Horizon Join workers: 4");
-            TestCloseCounterFunctionFactory.reset();
-            compiler.compile(query, ctx).getRecordCursorFactory().close();
-            Assert.assertEquals(
-                    "each aggregate must compile once for the owner and once per worker clone",
-                    5,
-                    TestCloseCounterFunctionFactory.created()
-            );
+            assertAggregateCompilesOncePerWorker(compiler, ctx, query);
         });
     }
 
@@ -546,13 +542,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     .withContext(ctx)
                     .noLeakCheck()
                     .assertsPlanContaining("Async Multi Horizon Join workers: 4");
-            TestCloseCounterFunctionFactory.reset();
-            compiler.compile(query, ctx).getRecordCursorFactory().close();
-            Assert.assertEquals(
-                    "each aggregate must compile once for the owner and once per worker clone",
-                    5,
-                    TestCloseCounterFunctionFactory.created()
-            );
+            assertAggregateCompilesOncePerWorker(compiler, ctx, query);
         });
     }
 
@@ -665,33 +655,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                 Assert.assertEquals(29, ((SqlException) failure).getPosition());
                 TestUtils.assertContains(failure.getMessage(), "HORIZON JOIN requires offset configuration");
                 Assert.assertEquals(TestFaultFunctionFactory.created(), TestFaultFunctionFactory.closeCalls());
-                Assert.assertEquals(10, TestFaultFunctionFactory.created());
-                Assert.assertArrayEquals(
-                        new Throwable[]{
-                                TestFaultFunctionFactory.closeFailure(1),
-                                TestFaultFunctionFactory.closeFailure(6)
-                        },
-                        failure.getSuppressed()
-                );
-                Assert.assertArrayEquals(
-                        new Throwable[]{
-                                TestFaultFunctionFactory.closeFailure(2),
-                                TestFaultFunctionFactory.closeFailure(3),
-                                TestFaultFunctionFactory.closeFailure(4),
-                                TestFaultFunctionFactory.closeFailure(0)
-                        },
-                        failure.getSuppressed()[0].getSuppressed()
-                );
-                Assert.assertArrayEquals(
-                        new Throwable[]{
-                                TestFaultFunctionFactory.closeFailure(7),
-                                TestFaultFunctionFactory.closeFailure(8),
-                                TestFaultFunctionFactory.closeFailure(9),
-                                TestFaultFunctionFactory.closeFailure(5)
-                        },
-                        failure.getSuppressed()[1].getSuppressed()
-                );
                 Assert.assertEquals(0, engine.getBusyReaderCount());
+                // The compiler validates the offsets before it creates any sub-query or filter.
+                Assert.assertEquals(0, TestFaultFunctionFactory.created());
+                Assert.assertEquals(0, failure.getSuppressed().length);
             } finally {
                 TestFaultFunctionFactory.disarm();
             }
@@ -811,6 +778,40 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     }
 
     @Test
+    public void testWindowJoinWorkerAggregateCloneCompilationFailureFreesPartialClones() throws Exception {
+        runWithPool((compiler, ctx) -> {
+            execute(
+                    compiler,
+                    "create table trades as (" +
+                            "  select x::double qty, timestamp_sequence(10_000_000, 10_000_000) ts" +
+                            "  from long_sequence(1_000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            execute(
+                    compiler,
+                    "create table prices as (" +
+                            "  select x::double price, timestamp_sequence(10_000_000, 10_000_000) ts" +
+                            "  from long_sequence(1_000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            final String query = "SELECT avg(p.price + alloc(32) + (case when test_fault() then 1.0 else 2.0 end)) a " +
+                    "FROM trades t " +
+                    "WINDOW JOIN prices p RANGE BETWEEN 1 seconds PRECEDING AND 1 seconds FOLLOWING EXCLUDE PREVAILING";
+            TestFaultFunctionFactory.armToFailAfterCompiles(3);
+            try {
+                compiler.compile(query, ctx);
+                Assert.fail("compilation should have failed with the injected fault");
+            } catch (Throwable e) {
+                TestUtils.assertContains(e.getMessage(), "test_fault: injected compile failure");
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    @Test
     public void testSampleByFillLinearCursorComparisonKey() throws Exception {
         // regression: compiling the scalar sub-query of a cursor-comparison key must not corrupt
         // generateSampleBy's projection scratch state, and the execution plan must render across
@@ -839,7 +840,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
 
     @Test
     public void testWorkerGroupByCloneCompilationFailureFreesPartialClones() throws Exception {
-        // compileWorkerGroupByFunctionsConditionally compiles one clone list per worker. When a
+        // AggregateFactoryGenerator compiles one clone list per worker. When a
         // later clone's compilation throws, the helper must free the already-compiled clones, or
         // their resources leak. alloc() places tracked native memory in the aggregate argument
         // and the armed test_fault() makes a later worker clone's compilation throw after the
@@ -857,9 +858,9 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     ctx
             );
             final String query = "SELECT avg(qty + alloc(32) + (case when test_fault() then 1.0 else 2.0 end)) a FROM t";
-            // owner assembly compiles test_fault() once, then each of the 4 worker clones
+            // test_fault() compiles twice before the worker clones, then each of the 4 worker clones
             // compiles it once more; fail on the second clone
-            TestFaultFunctionFactory.armToFailAfterCompiles(2);
+            TestFaultFunctionFactory.armToFailAfterCompiles(3);
             try {
                 compiler.compile(query, ctx);
                 Assert.fail("compilation should have failed with the injected fault");
@@ -873,7 +874,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
 
     @Test
     public void testWorkerKeyCloneCompilationFailureFreesPartialClones() throws Exception {
-        // compilePerWorkerInnerProjectionFunctions compiles one projection clone list per worker.
+        // AggregateFactoryGenerator compiles one projection clone list per worker.
         // When a later clone's compilation throws, the helper must free the already-compiled
         // clones, or their resources - including the cursor-comparison key's nested sub-query
         // factory - leak. alloc() places tracked native memory in the key expression and the
@@ -884,9 +885,9 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             final String query = "SELECT t.qty + alloc(32) + (case when test_fault() then 1.0 else 2.0 end) > (SELECT max(price) FROM prices) k, avg(p.price) a " +
                     "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0) AS h " +
                     "GROUP BY k ORDER BY k";
-            // owner assembly compiles test_fault() once, then each of the 4 worker clones
+            // test_fault() compiles twice before the worker clones, then each of the 4 worker clones
             // compiles it once more; fail on the second clone
-            TestFaultFunctionFactory.armToFailAfterCompiles(2);
+            TestFaultFunctionFactory.armToFailAfterCompiles(3);
             try {
                 compiler.compile(query, ctx);
                 Assert.fail("compilation should have failed with the injected fault");
@@ -1009,7 +1010,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         // generator catch must free the completed projection clones - including the
         // cursor-comparison key's nested sub-query factory and its tracked native memory. The
         // helper that compiled the projection clones has already returned, so only a
-        // catch-visible owner in generateSelectGroupBy can reach them. alloc() places tracked
+        // catch-visible owner in AggregateFactoryGenerator can reach them. alloc() places tracked
         // native memory in each projection clone and the armed test_fault() makes a later
         // worker filter clone's compilation throw after every projection clone compiled.
         runWithPool((compiler, ctx) -> {
@@ -1023,13 +1024,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             );
             final String query = "SELECT qty + alloc(32) > (SELECT max(price) FROM t) k, avg(price) a " +
                     "FROM t WHERE test_fault() GROUP BY k";
-            // test_fault() compiles five times before the keyed group-by clones the stolen
-            // filter: once for the owner filter and four times for the async filter factory's
-            // worker clones (generateFilter0 builds those before the group-by steals the
-            // filter). The keyed group-by then compiles the per-worker projection clones and
-            // re-clones the filter once per worker; fail on the second of those, after every
-            // projection clone compiled
-            TestFaultFunctionFactory.armToFailAfterCompiles(6);
+            // test_fault() compiles once for the owner filter. The keyed group-by then compiles
+            // the per-worker projection clones and clones the filter it applies once per worker;
+            // fail on the second filter clone, after every projection clone compiled
+            TestFaultFunctionFactory.armToFailAfterCompiles(2);
             try {
                 compiler.compile(query, ctx);
                 Assert.fail("compilation should have failed with the injected fault");
@@ -1060,38 +1058,38 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             );
             try {
                 compiler.compile(
-                        "select ts, sum(price + alloc(32)) s from t sample by 1d fill(no_such_column)",
+                        "select ts, sum(price + alloc(32)) s from t sample by 1d fill('abc')",
                         ctx
                 );
                 Assert.fail("fill-value parse failure expected");
             } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "Invalid column");
+                TestUtils.assertContains(e.getMessage(), "invalid fill value");
             }
         });
     }
 
     @Test
-    public void testSampleByKeyedFromToFailureFreesAssembledFunctions() throws Exception {
+    public void testSampleByKeyedLinearFailureFreesAssembledFunctions() throws Exception {
         // generateSampleBy assembles the group-by and projection functions (including any
         // resource-bearing scalar sub-query keys and aggregate arguments) before rejecting the
-        // unsupported keyed FROM/TO combination. When guardAgainstFromToWithKeyedSampleBy throws,
-        // the catch must free the assembled owner lists. alloc() places tracked native memory in
-        // both the key and the aggregate argument so assertMemoryLeak() sees the leak.
+        // unsupported keyed LINEAR fill list. When that rejection throws, the catch must free the
+        // assembled owner lists. alloc() places tracked native memory in both the key and the
+        // aggregate argument so assertMemoryLeak() sees the leak.
         assertMemoryLeak(() -> {
             execute("create table t as (" +
                     "select x::double price, x::double qty, timestamp_sequence(0, 60000000) ts" +
                     " from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
-            assertQuery("select price + alloc(32) > (select avg(price) from t) k, sum(qty + alloc(32)) s " +
-                    "from t sample by 1h from dateadd('h', 0, '1970-01-01'::timestamp) fill(prev)")
-                    .fails(-1, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+            assertQuery("select price + alloc(32) > (select avg(price) from t) k, sum(qty + alloc(32)) s, max(qty) m " +
+                    "from t sample by 1h fill(linear, prev)")
+                    .fails(-1, "linear interpolation is not supported when using fill values for keyed sample by expression");
         });
     }
 
     @Test
     public void testWindowJoinCursorComparisonProjection() throws Exception {
         // regression: compiling the scalar sub-query of a cursor-comparison projection must not
-        // corrupt the WINDOW JOIN aggregation scratch state in generateJoins, and the execution
+        // corrupt the WINDOW JOIN aggregation temporary state in JoinFactoryGenerator, and the execution
         // plan must render across the nested sub-query plan
         assertMemoryLeak(() -> {
             execute("create table trades as (" +
@@ -1163,7 +1161,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     @Test
     public void testHorizonJoinAggregateSubQueryKey() throws Exception {
         // regression: a cursor-comparison GROUP BY key whose scalar sub-query itself aggregates
-        // recursively re-enters group-by generation while generateHorizonJoinFactory holds its
+        // recursively re-enters group-by generation while AggregateFactoryGenerator holds its
         // projection scratch state; the factory must stay keyed and produce correct groups
         assertMemoryLeak(() -> {
             execute("create table trades as (" +
@@ -1193,7 +1191,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     @Test
     public void testMultiHorizonJoinAggregateSubQueryKey() throws Exception {
         // multi-slave counterpart of testHorizonJoinAggregateSubQueryKey, covering
-        // generateMultiHorizonJoinFactory's projection scratch state
+        // AggregateFactoryGenerator's projection temporary state
         assertMemoryLeak(() -> {
             execute("create table trades as (" +
                     "select 'A'::symbol sym, x::double qty, timestamp_sequence(1000000, 1000000) ts" +
@@ -1507,8 +1505,9 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             TestTimestampCounterFactory.COUNTER.set(0);
             TestWorkerCloneFunctionFactory.arm(5000);
             try {
+                final int owner = bindTimePreparations();
                 try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
-                    Assert.assertEquals("owner plus four worker instances", 5, TestWorkerCloneFunctionFactory.created());
+                    Assert.assertEquals("owner plus four worker instances", owner + 5, TestWorkerCloneFunctionFactory.created());
                     try (RecordCursor cursor = factory.getCursor(ctx)) {
                         TestUtils.assertCursor("s\n5000\n", cursor, factory.getMetadata(), true, sink);
                     }
@@ -1519,10 +1518,13 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                 Assert.assertTrue("a non-owner thread must evaluate a worker clone", TestWorkerCloneFunctionFactory.workerEvaluations() > 0);
                 int totalEvaluations = 0;
                 int evaluatedClones = 0;
-                for (int i = 0, n = TestWorkerCloneFunctionFactory.created(); i < n; i++) {
+                for (int i = 0; i < owner; i++) {
+                    Assert.assertEquals("the bind-time preparation must never evaluate", 0, TestWorkerCloneFunctionFactory.evaluations(i));
+                }
+                for (int i = owner, n = TestWorkerCloneFunctionFactory.created(); i < n; i++) {
                     final int evaluations = TestWorkerCloneFunctionFactory.evaluations(i);
                     totalEvaluations += evaluations;
-                    if (i > 0 && evaluations > 0) {
+                    if (i > owner && evaluations > 0) {
                         evaluatedClones++;
                     }
                 }
@@ -2070,32 +2072,58 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         });
     }
 
+    private static void assertAggregateCompilesOncePerWorker(SqlCompiler compiler, SqlExecutionContext ctx, String query) throws SqlException {
+        TestCloseCounterFunctionFactory.reset();
+        compiler.compile(query, ctx).getRecordCursorFactory().close();
+        Assert.assertEquals(
+                "each aggregate must compile once for the owner and once per worker clone",
+                bindTimePreparations() + 5,
+                TestCloseCounterFunctionFactory.created()
+        );
+        Assert.assertEquals(TestCloseCounterFunctionFactory.created(), TestCloseCounterFunctionFactory.closeCalls());
+    }
+
+    /**
+     * The logical plan path binds and then closes one type-check preparation of each expression
+     * before it generates the owner, so that preparation precedes the owner in creation order.
+     */
+    private static int bindTimePreparations() {
+        return 1;
+    }
+
     private static void assertHorizonCompileRollback(
             SqlCompiler compiler,
             SqlExecutionContext ctx,
             String query
     ) {
-        TestFaultFunctionFactory.armCloseFailures();
+        final int owner = bindTimePreparations();
+        TestFaultFunctionFactory.armCloseFailures(owner);
         // Owner assembly compiles once; fail on the second worker clone after one worker succeeds.
-        TestFaultFunctionFactory.armToFailAfterCompiles(2);
+        TestFaultFunctionFactory.armToFailAfterCompiles(owner + 2);
         try {
             compiler.compile(query, ctx);
             Assert.fail("compilation should have failed with the injected fault");
         } catch (Throwable failure) {
             Assert.assertSame(TestFaultFunctionFactory.lastCompileFailure(), failure);
             Assert.assertEquals(TestFaultFunctionFactory.created(), TestFaultFunctionFactory.closeCalls());
-            Assert.assertEquals(2, TestFaultFunctionFactory.created());
+            Assert.assertEquals(owner + 2, TestFaultFunctionFactory.created());
             Assert.assertEquals(2, TestFaultFunctionFactory.closeFailureCount());
             final Throwable[] suppressed = failure.getSuppressed();
             Assert.assertEquals(2, suppressed.length);
             // Failures are assigned at function creation: owner first, then the successful worker clone.
             // The worker compiler rolls its clone back before the horizon generator closes the owner.
-            Assert.assertSame(TestFaultFunctionFactory.closeFailure(1), suppressed[0]);
-            Assert.assertSame(TestFaultFunctionFactory.closeFailure(0), suppressed[1]);
+            Assert.assertSame(TestFaultFunctionFactory.closeFailure(owner + 1), suppressed[0]);
+            Assert.assertSame(TestFaultFunctionFactory.closeFailure(owner), suppressed[1]);
             Assert.assertEquals("all master and slave factories must release their readers", 0, engine.getBusyReaderCount());
         } finally {
             TestFaultFunctionFactory.disarm();
         }
+    }
+
+    private static ObjList<ObjectFactory<RecordSink>> noSinkFactories(int count) {
+        final ObjList<ObjectFactory<RecordSink>> factories = new ObjList<>(count);
+        factories.setPos(count);
+        return factories;
     }
 
     private void assertHorizonConstructorRollback(boolean isMulti) {
@@ -2146,8 +2174,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         masterFactory,
                         slaveStates,
                         null,
-                        new Class[2],
-                        new Class[2],
+                        noSinkFactories(2),
+                        noSinkFactories(2),
                         new long[]{0},
                         0,
                         groupByFunctions,
@@ -2340,8 +2368,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     masterFactory,
                     states,
                     null,
-                    new Class[3],
-                    new Class[3],
+                    noSinkFactories(3),
+                    noSinkFactories(3),
                     new long[]{0},
                     0,
                     groups,

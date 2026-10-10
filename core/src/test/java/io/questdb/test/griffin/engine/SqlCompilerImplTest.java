@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
@@ -38,12 +39,19 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.BatchCallback;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -54,7 +62,7 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -65,6 +73,7 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -76,14 +85,6 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
@@ -92,6 +93,15 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
@@ -3097,6 +3107,48 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompileBatchRetriesStaleTableFromStatementStart() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (42)");
+            final ObjList<String> results = new ObjList<>();
+            try (
+                    StaleOnceContext context = new StaleOnceContext();
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                compiler.compileBatch("SELECT 1 a; SELECT * FROM t", context, new BatchCallback() {
+                    @Override
+                    public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
+                        final StringSink rows = new StringSink();
+                        rows.put(queryText).put(" -> ");
+                        try (
+                                RecordCursorFactory factory = cq.getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(context)
+                        ) {
+                            final RecordMetadata metadata = factory.getMetadata();
+                            CursorPrinter.println(metadata, rows);
+                            final Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                TestUtils.println(record, metadata, rows);
+                            }
+                        }
+                        results.add(rows.toString());
+                    }
+
+                    @Override
+                    public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
+                        return true;
+                    }
+                });
+                Assert.assertTrue("must inject a stale table reference while binding", context.hasInjected);
+            }
+            Assert.assertEquals(2, results.size());
+            TestUtils.assertEquals("SELECT 1 a; -> a\n1\n", results.getQuick(0));
+            TestUtils.assertEquals("SELECT * FROM t -> x\n42\n", results.getQuick(1));
+        });
+    }
+
+    @Test
     public void testCompileBeginTransaction() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -4552,7 +4604,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testEvaluateNullArithmeticColumnExpression() throws Exception {
         // Regression: AddIntFunc.isConstant() used to claim true when one operand was a null
         // constant, even if the other operand was a column reference. This made
-        // FunctionParser.functionToConstant() try to evaluate the expression at compile time
+        // FunctionResolver.functionToConstant() try to evaluate the expression at compile time
         // with a null record, which NPEd on the column's getInt(null). The fuzzer surfaced
         // this via filter and projection expressions like `WHERE c6 >= ((null + c6) + ...)`.
         //
@@ -5182,6 +5234,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
+                @Override
+                public TableReader getReader(TableToken tableToken, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                    fiddler.run(this);
+                    return super.getReader(tableToken, readerPoolSupervisor);
+                }
+
                 @Override
                 public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
                     fiddler.run(this);
@@ -8152,7 +8210,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         ")")
                 .returns("""
                         x\tts
-                        2\t2019-10-17T00:00:00.200000Z
                         3\t2019-10-17T00:00:00.700000Z
                         4\t2019-10-17T00:00:00.800000Z
                         """);
@@ -8614,6 +8671,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
+            public TableReader getReader(TableToken tableToken, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                fiddler.run(this);
+                return super.getReader(tableToken, readerPoolSupervisor);
+            }
+
+            @Override
             public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
                 fiddler.run(this);
                 return super.getReader(tableToken, metadataVersion, readerPoolSupervisor);
@@ -8859,7 +8922,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public int parseShowSql(GenericLexer lexer, IQueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
+        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
             parseShowSqlCalled = true;
             return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }
@@ -8885,6 +8948,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
             compileDropOtherCalled = true;
             super.compileDropOther(executionContext, tok, position);
+        }
+    }
+
+    private static class StaleOnceContext extends SqlExecutionContextImpl {
+        private boolean hasInjected;
+
+        private StaleOnceContext() {
+            super(engine, 1);
+            with(AllowAllSecurityContext.INSTANCE);
+        }
+
+        @Override
+        public TableReader getReader(TableToken token) {
+            if (!hasInjected && token.getTableName().equals("t")) {
+                hasInjected = true;
+                throw TableReferenceOutOfDateException.of(token);
+            }
+            return super.getReader(token);
         }
     }
 }

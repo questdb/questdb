@@ -62,14 +62,11 @@ import java.io.Closeable;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
 public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
-    @TestOnly
-    private static volatile Runnable constructorFailureHookForTesting;
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
     private RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private AsyncFilteredRecordCursor cursor;
     private Function filter;
-    private final ExpressionNode filterExpr;
     private PageFrameSequence<AsyncFilterAtom> frameSequence;
     private Function limitLoFunction;
     private final int limitLoPos;
@@ -87,32 +84,24 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull IntHashSet filterUsedColumnIndexes,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
-            @NotNull ExpressionNode filterExpr,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             int workerCount,
             boolean enablePreTouch
     ) {
         super(base.getMetadata());
-        final Runnable constructorFailureHook = constructorFailureHookForTesting;
-        if (constructorFailureHook != null) {
-            constructorFailureHook.run();
-        }
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
         this.filter = filter;
-        this.filterExpr = filterExpr;
         // A throw part-way through this constructor never returns the factory, so _close() never runs
         // and everything allocated up to that point is unreachable: the cursors hold native records
-        // and page frame memory, and a per-worker filter can hold native memory of its own. The
-        // caller frees what it passed in (the filter and the base factory), so build the rest into
-        // locals and release them here.
+        // and page frame memory, and a per-worker filter can hold native memory of its own. Build the
+        // rest into locals and release them here, together with the inputs this constructor consumes.
         //
-        // The caller retains the per-worker filter list until this constructor returns. Once the atom
-        // takes the filters, its failure paths close them and null the list slots, so the caller can
-        // safely close any remaining entries. The atom belongs to the frame sequence from the moment
-        // the PageFrameSequence constructor is entered: that constructor closes the atom on its own
-        // failure path, and close() closes it afterwards. Nothing that can throw sits between the two
+        // Once the atom takes the per-worker filters, its failure paths close them and null the list
+        // slots. The atom belongs to the frame sequence from the moment the PageFrameSequence
+        // constructor is entered: that constructor closes the atom on its own failure path, and
+        // close() closes it afterwards. Nothing that can throw sits between the two
         // calls, so isPerWorkerFiltersOwned covers the whole gap and every object below is closed
         // exactly once on every path.
         AsyncFilteredRecordCursor cursor = null;
@@ -154,8 +143,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 Misc.freeObjList(perWorkerFilters, th);
             }
             // The cursors are not open yet, and close() frees their records only once they are, so
-            // release the records directly - the same call halfClose() makes on the open factory.
-            halfCloseBestEffort(th, frameSequence, cursor, negativeLimitCursor);
+            // release the records directly.
+            freeExecutionStateBestEffort(th, frameSequence, cursor, negativeLimitCursor);
+            Misc.free(filter, th);
+            Misc.free(limitLoFunction, th);
+            Misc.free(base, th);
             throw th;
         }
         this.cursor = cursor;
@@ -163,10 +155,20 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.frameSequence = frameSequence;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = maxNegativeLimit;
-        // Assigned last: _close() frees this field, so it must not be set before a statement that
-        // can still throw, or the caller's own free would become a double free.
         this.limitLoFunction = limitLoFunction;
         this.workerCount = workerCount;
+    }
+
+    /**
+     * Test-only entry point for exercising execution-state cleanup failure handling without exposing concrete cursors.
+     */
+    @TestOnly
+    public static void freeExecutionStateForTesting(
+            Closeable frameSequence,
+            RecordFreer cursor,
+            RecordFreer negativeLimitCursor
+    ) {
+        freeExecutionState(frameSequence, cursor, negativeLimitCursor);
     }
 
     @Override
@@ -251,28 +253,13 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return filter.isStableWithinExecution() && base.isStableWithinExecution();
-    }
-
-    @Override
     public int getScanDirection() {
         return base.getScanDirection();
     }
 
     @Override
-    public ExpressionNode getStealFilterExpr() {
-        return filterExpr;
-    }
-
-    @Override
     public TableToken getTableToken() {
         return base.getTableToken();
-    }
-
-    @Override
-    public void halfClose() {
-        halfClose(frameSequence, cursor, negativeLimitCursor);
     }
 
     @Override
@@ -291,11 +278,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         // made this factory wrongly report false while its cursor still serviced
         // recordAt(), violating the cursor random-access contract.
         return true;
-    }
-
-    @Override
-    public boolean supportsFilterStealing() {
-        return limitLoFunction == null;
     }
 
     @Override
@@ -339,23 +321,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         }
         sink.attr("filter").val(frameSequence.getAtom());
         sink.child(base, order);
-    }
-
-    /**
-     * Test-only entry point for exercising half-close failure handling without exposing concrete cursors.
-     */
-    @TestOnly
-    public static void halfCloseForTesting(
-            Closeable frameSequence,
-            RecordFreer cursor,
-            RecordFreer negativeLimitCursor
-    ) {
-        halfClose(frameSequence, cursor, negativeLimitCursor);
-    }
-
-    @TestOnly
-    public static void setConstructorFailureHookForTesting(@Nullable Runnable hook) {
-        constructorFailureHookForTesting = hook;
     }
 
     private static void filter(
@@ -424,15 +389,15 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         }
     }
 
-    private static void halfClose(
+    private static void freeExecutionState(
             Closeable frameSequence,
             RecordFreer cursor,
             RecordFreer negativeLimitCursor
     ) {
-        CairoException.rethrowCleanupFailure(halfCloseBestEffort(null, frameSequence, cursor, negativeLimitCursor));
+        CairoException.rethrowCleanupFailure(freeExecutionStateBestEffort(null, frameSequence, cursor, negativeLimitCursor));
     }
 
-    private static Throwable halfCloseBestEffort(
+    private static Throwable freeExecutionStateBestEffort(
             Throwable cleanupFailure,
             @Nullable Closeable frameSequence,
             @Nullable RecordFreer cursor,
@@ -465,7 +430,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     /**
-     * Test-only abstraction for observable record cleanup in {@link #halfCloseForTesting}.
+     * Test-only abstraction for observable record cleanup in {@link #freeExecutionStateForTesting}.
      */
     @FunctionalInterface
     @TestOnly
@@ -495,7 +460,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
         Throwable cleanupFailure = Misc.freeBestEffort(null, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, negativeLimitRows);
-        cleanupFailure = halfCloseBestEffort(cleanupFailure, frameSequence, cursor, negativeLimitCursor);
+        cleanupFailure = freeExecutionStateBestEffort(cleanupFailure, frameSequence, cursor, negativeLimitCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filter);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, limitLoFunction);
         CairoException.rethrowCleanupFailure(cleanupFailure);

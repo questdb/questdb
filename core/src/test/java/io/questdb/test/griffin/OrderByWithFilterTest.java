@@ -395,12 +395,11 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                   keys: [address]
                                     VirtualRecord
                                       functions: [timestamp_floor('minute',ts),concat([address,workspace]),address]
-                                        SelectedRecord
-                                            Async JIT Filter workers: 1
-                                              filter: (workspace='a' and method_id='d')
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tab
+                                        Async JIT Filter workers: 1
+                                          filter: (workspace='a' and method_id='d')
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
                             """)
                     .returns("""
                             month\tuid
@@ -488,21 +487,20 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                                 Encode sort
                                   keys: [ts desc]
                                     VirtualRecord
-                                      functions: [timestamp_floor('minute',ts),ts1,concat([address,workspace]),ts]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace
+                                      functions: [timestamp_floor('minute',t2.ts),t1.ts,concat([t1.address,t2.workspace]),t2.ts]
+                                        Hash Join Light
+                                          condition: t2.workspace=t1.workspace and t2.method_id=t1.method_id
+                                            Async JIT Filter workers: 1
+                                              filter: (workspace='a' and method_id='d')
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                            Hash
                                                 Async JIT Filter workers: 1
                                                   filter: (workspace='a' and method_id='d')
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: tab
-                                                Hash
-                                                    Async JIT Filter workers: 1
-                                                      filter: (method_id='d' and workspace='a')
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: tab
                             """)
                     .returns("""
                             month\tts1\tuid

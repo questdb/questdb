@@ -24,9 +24,41 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-public class CastLong256ToFloatFunctionFactory extends CastLongToFloatFunctionFactory {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+
+public class CastLong256ToFloatFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.FLOAT;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Hf)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(args.getQuick(0));
+    }
+
+    private static class Func extends AbstractCastToFloatFunction {
+        public Func(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            final long value = arg.getLong(rec);
+            return value == Numbers.LONG_NULL ? Float.NaN : value;
+        }
     }
 }

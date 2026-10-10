@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +36,9 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -54,6 +58,19 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
     public static boolean isSymbolKeyScanCounterEnabled = false;
     @TestOnly
     public static final AtomicLong testSymbolKeyScans = new AtomicLong();
+    private static final MatchSymbolFunctionFactory INSTANCE = new MatchSymbolFunctionFactory();
+
+    /**
+     * The factory of the function that matches the positive form of a symbol pattern: this one for {@code !~}, else the
+     * overload of the pattern, or of the pattern its {@code not} negates.
+     */
+    public static FunctionFactory positivePatternFactory(FunctionExpression pattern) {
+        if ("!~".equals(pattern.getName())) {
+            return INSTANCE;
+        }
+        final FunctionExpression positive = pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
+        return positive.getOverload().getFactory();
+    }
 
     public static boolean symbolMatches(Function arg, Record rec, IntList symbolKeys) {
         final int key = arg.getInt(rec);
@@ -64,8 +81,30 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "~(KS)";
+    }
+
+    @Override
+    public boolean isSymbolKeySetProvider(ObjList<BoundExpression> args, boolean isSymbolTableStatic) {
+        if (!isSymbolTableStatic) {
+            return false;
+        }
+        final BoundExpression pattern = args.getQuick(1);
+        if (pattern instanceof ConstantExpression constant) {
+            return switch (ColumnType.tagOf(constant.getDataType())) {
+                case ColumnType.STRING, ColumnType.SYMBOL -> constant.getStrValue() != null;
+                case ColumnType.VARCHAR -> constant.getVarcharValue() != null;
+                case ColumnType.CHAR -> constant.getLongValue() != 0;
+                default -> false;
+            };
+        }
+        return (pattern.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == BoundExpression.RUNTIME_CONSTANT;
     }
 
     @Override

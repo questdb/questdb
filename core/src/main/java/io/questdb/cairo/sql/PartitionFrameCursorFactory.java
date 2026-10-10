@@ -92,14 +92,6 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
         return true;
     }
 
-    /**
-     * Returns {@code true} if repeated cursor opens within one query execution produce the same
-     * partition frames. Unknown implementations inherit the fail-safe determinism-derived default.
-     */
-    default boolean isStableWithinExecution() {
-        return !isNonDeterministic();
-    }
-
     TableToken getTableToken();
 
     /**
@@ -112,6 +104,12 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     default boolean isIntervalScan() {
         return false;
     }
+
+    /**
+     * Sets the table indexes, in reporting order, of the columns the query references; opening a cursor checks the
+     * SELECT permission on them as well as on the columns the cursor reads.
+     */
+    void setAuthorizedColumnIndexes(IntList columnIndexes);
 
     void setPushdownFilterCondition(
             long partitionTableVersion,

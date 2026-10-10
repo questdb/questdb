@@ -51,7 +51,7 @@ import org.junit.Test;
  * {@code goActive()} - so a commit to {@code bounds} landing between the two opens could make the
  * pruning bound stricter than the residual and silently drop qualifying rows.
  *
- * <p>{@link io.questdb.griffin.WhereClauseParser} now evaluates each dynamic bound exactly once: the
+ * <p>{@code IntervalExtractor} evaluates each dynamic bound exactly once: the
  * pruning inverter's {@link io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction}
  * publishes its single per-execution value into a
  * {@link io.questdb.griffin.model.ScalarTimestampBoundHolder} at partition-frame open, and the
@@ -166,7 +166,7 @@ public class ScalarSubqueryBoundSingleEvaluationTest extends AbstractCairoTest {
                         );
                 try (RecordCursorFactory factory = select(sql, ctx)) {
                     // reset after the compile: the JIT serialization attempt (SqlCodeGenerator.
-                    // generateFilter0) opens a page-frame cursor at compile time on JIT-capable
+                    // FilterFactoryGenerator) opens a page-frame cursor at compile time on JIT-capable
                     // platforms, which evaluates the pruning bound once outside any execution
                     TestTimestampCounterFactory.COUNTER.set(0);
                     try (RecordCursor cursor = factory.getCursor(ctx)) {
@@ -256,7 +256,7 @@ public class ScalarSubqueryBoundSingleEvaluationTest extends AbstractCairoTest {
                         );
                 try (RecordCursorFactory factory = select(sql, ctx)) {
                     // reset after the compile: the JIT serialization attempt (SqlCodeGenerator.
-                    // generateFilter0) opens a page-frame cursor at compile time on JIT-capable
+                    // FilterFactoryGenerator) opens a page-frame cursor at compile time on JIT-capable
                     // platforms, which evaluates the pruning bound once outside any execution
                     TestTimestampCounterFactory.COUNTER.set(0);
                     try (RecordCursor cursor = factory.getCursor(ctx)) {

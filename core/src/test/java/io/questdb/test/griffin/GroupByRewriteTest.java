@@ -199,18 +199,17 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                               functions: [ts,price,price1/sum]
                                 GroupBy vectorized: false
                                   keys: [ts,price,price1]
-                                  values: [sum(amount)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: t2.sym=t1.sym
-                                          symbolKeyJoin: true
+                                  values: [sum(t1.amount)]
+                                    Hash Join Light
+                                      condition: t2.sym=t1.sym
+                                      symbolKeyJoin: true
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                        Hash
                                             PageFrame
                                                 Row forward scan
-                                                Frame forward scan on: trades
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: trades2
+                                                Frame forward scan on: trades2
                             """);
         });
     }

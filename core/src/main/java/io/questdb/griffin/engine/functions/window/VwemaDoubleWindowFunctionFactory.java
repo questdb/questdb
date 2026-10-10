@@ -92,6 +92,11 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
     static final ArrayColumnTypes VWEMA_COLUMN_TYPES_LV;
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

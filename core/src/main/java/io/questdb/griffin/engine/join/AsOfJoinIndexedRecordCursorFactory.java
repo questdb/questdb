@@ -37,9 +37,9 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -65,25 +65,30 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             int columnSplit,
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping symbolJoinKeyMapping,
-            JoinContext joinContext,
+            Plannable joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
+        this.toleranceInterval = toleranceInterval;
         RecordMetadata masterMeta = masterFactory.getMetadata();
         RecordMetadata slaveMeta = slaveFactory.getMetadata();
-        this.cursor = new AsOfJoinIndexedRecordCursor(
-                columnSplit,
-                NullRecordFactory.getInstance(slaveMeta),
-                masterMeta.getTimestampIndex(),
-                masterMeta.getTimestampType(),
-                slaveMeta.getTimestampIndex(),
-                slaveMeta.getTimestampType(),
-                configuration.getSqlAsOfJoinLookAhead()
-        );
-        this.toleranceInterval = toleranceInterval;
+        try {
+            this.cursor = new AsOfJoinIndexedRecordCursor(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveMeta),
+                    masterMeta.getTimestampIndex(),
+                    masterMeta.getTimestampType(),
+                    slaveMeta.getTimestampIndex(),
+                    slaveMeta.getTimestampType(),
+                    configuration.getSqlAsOfJoinLookAhead()
+            );
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

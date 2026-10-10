@@ -44,9 +44,9 @@ import org.jetbrains.annotations.Nullable;
 public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCursor {
     protected final ObjList<GroupByFunction> groupByFunctions;
     protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
+    protected final ObjList<Function> recordFunctions;
     protected final int timestampIndex;
     private final GroupByAllocator allocator;
-    private final ObjList<Function> recordFunctions;
     protected RecordCursor baseCursor;
     protected Record baseRecord;
     protected SqlExecutionCircuitBreaker circuitBreaker;
@@ -235,7 +235,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             // FROM-TO may apply to align to calendar queries, fixing the lower bound.
             if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
                 from = sampleFromFunc.getTimestamp(null);
-                timestampSampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) : 0);
+                timestampSampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) + tzOffset : 0);
             } else {
                 timestampSampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
             }

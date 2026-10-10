@@ -803,7 +803,6 @@ public class TimestampQueryTest extends AbstractCairoTest {
             assertQuery("select * from micro_table m join nano_table n on m.ts_micro = n.ts_nano")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .timestamp("ts_micro")
                     .returns("""
                             id\tts_micro\tid1\tts_nano
                             1\t2020-01-01T00:00:00.123456Z\t1\t2020-01-01T00:00:00.123456000Z

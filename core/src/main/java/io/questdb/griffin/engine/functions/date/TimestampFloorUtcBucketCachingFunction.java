@@ -32,6 +32,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Base for timestamp_floor_utc() and timestamp_floor() with a constant named time zone.
@@ -209,4 +211,11 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
         // a single comparison: the sign of the distance is a coin toss for unordered timestamps
         return Math.abs(distance) < nearMissDistance;
     }
+
+    @TestOnly
+    void toCacheState(CharSink<?> sink) {
+        sink.put(cachedLo).put(';').put(cachedHi).put(';').put(cachedResult).put(';').put(lastMissTimestamp).put(';')
+                .put(tzSegmentLo).put(';').put(tzSegmentHi).put(';').put(tzSegmentOffset);
+    }
+
 }

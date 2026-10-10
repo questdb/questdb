@@ -64,6 +64,21 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                         """);
     }
 
+    @Test
+    public void testOrderByDecimalConstantFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            assertQuery("SELECT x FROM t ORDER BY 1.5")
+                    .fails(25, "Invalid table name or alias");
+            assertQuery("SELECT x \"1.5\" FROM t ORDER BY 1.5")
+                    .fails(31, "Invalid table name or alias");
+            assertQuery("SELECT count() FROM t ORDER BY 2.")
+                    .fails(31, "Invalid table name or alias");
+            assertQuery("SELECT x FROM t ORDER BY 1e3")
+                    .fails(25, "Invalid column: 1e3");
+        });
+    }
+
     // fails with duplicate column : column because alias created for 'x*x' clashes with one created for x+rnd_int(1,10,0)*0
     // TODO: test with order by x*2 in outer query
     @Test
@@ -284,6 +299,49 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByRowCountByUnselectedExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            assertQuery("SELECT count() FROM t ORDER BY max(x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            3
+                            """);
+            assertQuery("SELECT count() FROM t ORDER BY count() + 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            3
+                            """);
+            assertQuery("SELECT count() FROM t ORDER BY x")
+                    .fails(31, "ORDER BY expressions must appear in select list. Invalid column: x");
+            assertQuery("SELECT count() c FROM t ORDER BY c + 1")
+                    .fails(33, "Invalid column: c");
+            assertQuery("SELECT count() FROM t ORDER BY 'abc'")
+                    .fails(31, "Invalid column: 'abc'");
+        });
+    }
+
+    @Test
+    public void testOrderByStringConstantFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, y INT)");
+            assertQuery("SELECT x FROM t ORDER BY 'x'")
+                    .fails(25, "Invalid column: 'x'");
+            assertQuery("SELECT x, y FROM t ORDER BY y, 'abc' DESC")
+                    .fails(31, "Invalid column: 'abc'");
+            assertQuery("SELECT x FROM t ORDER BY true")
+                    .fails(25, "Invalid column: true");
+        });
+    }
+
+    @Test
     public void testOrderByTwoColumnsInJoin() throws Exception {
         assertQuery("select * " +
                 "from (" +
@@ -373,18 +431,18 @@ public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByPositionAfterCountDistinctRewrite() throws Exception {
-        // SqlOptimiser.rewriteCountDistinct lifts the count_distinct argument
-        // into an inner GROUP BY model whose alias comes from the AST token.
+        // AggregateBinder.rewriteCountDistinct lifts the count_distinct argument
+        // into an inner aggregate whose column name comes from the AST token.
         // For a CAST argument that token is "cast", which used to leak into
-        // positional ORDER BY resolution because rewriteOrderByPosition picked
-        // the inner GROUP BY's bottom-up columns. The optimiser now resolves
-        // positional refs against the outermost SELECT projection.
+        // positional ORDER BY resolution. OrderBinder resolves positional refs
+        // against the outermost SELECT projection.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (c1 BOOLEAN)");
             execute("INSERT INTO t VALUES (true)");
             assertQuery("SELECT count_distinct('M'::CHAR) AS a0 FROM t ORDER BY 1")
                     .noLeakCheck()
                     .expectSize()
+                    .noRandomAccess()
                     .returns("a0\n1\n");
         });
     }

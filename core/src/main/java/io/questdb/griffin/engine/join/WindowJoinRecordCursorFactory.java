@@ -179,7 +179,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 );
             }
         } catch (Throwable th) {
-            releaseAdoptedStateOnConstructorFailure();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -333,13 +333,6 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
      * the join filter, the window bound functions, the group-by functions, the cursor and the map
      * value - in one place.
      */
-    private void releaseAdoptedStateOnConstructorFailure() {
-        masterFactory = null;
-        slaveFactory = null;
-        joinMetadata = null;
-        close();
-    }
-
     private class WindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
         protected final JoinRecord internalJoinRecord;

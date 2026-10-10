@@ -32,13 +32,17 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -46,11 +50,30 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 
-public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory {
+public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(2));
+    }
 
     @Override
     public String getSignature() {
         return "dateadd(AINS)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(0) instanceof ConstantExpression && call.argumentAt(1) instanceof ConstantExpression
+                && call.argumentAt(3) instanceof ConstantExpression ? 2 : -1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(call.getDataType());
+        final char period = arguments.constant(call.argumentAt(0)).getChar(null);
+        return TimestampAddConstConstVarConst.invert(io, period, driver.getAddMethod(period), arguments.constant(call.argumentAt(1)).getInt(null),
+                arguments.getTimezoneRules(driver, arguments.constant(call.argumentAt(3)).getStrA(null)), driver);
     }
 
     @Override
@@ -70,9 +93,13 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
         if (periodFunc.isConstant() && tzFunc.isConstant()) {
             // validate timezone and parse timezone into rules, that provide the offset by timestamp
+            final CharSequence timezone = tzFunc.getStrA(null);
+            if (timezone == null) {
+                throw SqlException.$(argPositions.getQuick(3), "NULL timezone");
+            }
             final TimeZoneRules timeZoneRules;
             try {
-                timeZoneRules = ColumnType.getTimestampDriver(timestampType).getTimezoneRules(DateLocaleFactory.EN_LOCALE, tzFunc.getStrA(null));
+                timeZoneRules = ColumnType.getTimestampDriver(timestampType).getTimezoneRules(DateLocaleFactory.EN_LOCALE, timezone);
             } catch (CairoException e) {
                 throw SqlException.position(argPositions.getQuick(3)).put(e.getFlyweightMessage());
             }
@@ -167,56 +194,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            if (stride == Numbers.INT_NULL) {
-                return NONE;
-            }
-            // a positive local add near the domain max overflows the long boundary and wraps to a
-            // low value; with an open lower but finite upper bound that wrapped value matches and
-            // splits the preimage. The designated timestamp is non-negative, so a negative add
-            // cannot underflow.
-            if (stride > 0 && io.getLo() == Numbers.LONG_NULL && io.getHi() != Long.MAX_VALUE) {
-                return NONE;
-            }
-            // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift);
-            // calendar units add a further +/-1 unit of day-clamping slack.
-            final long margin = timestampDriver.fromDays(2);
-            final boolean isCalendar = period == 'M' || period == 'y';
-            // a fixed unit is a constant local shift, exact when no transition splits source and target
-            if (!isCalendar && tryExactShift(io, margin)) {
-                return EXACT;
-            }
-            long lo = io.getLo();
-            long hi = io.getHi();
-            if (lo != Numbers.LONG_NULL) {
-                long w = periodAddFunction.add(lo, -stride);
-                if (addOverflows(lo, w, -stride)) {
-                    return NONE;
-                }
-                if (isCalendar) {
-                    final long c = periodAddFunction.add(w, -1);
-                    if (c >= w) {
-                        return NONE;
-                    }
-                    w = c;
-                }
-                lo = w < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : w - margin;
-            }
-            if (hi != Long.MAX_VALUE) {
-                long w = periodAddFunction.add(hi, -stride);
-                if (addOverflows(hi, w, -stride)) {
-                    return NONE;
-                }
-                if (isCalendar) {
-                    final long c = periodAddFunction.add(w, 1);
-                    if (c <= w) {
-                        return NONE;
-                    }
-                    w = c;
-                }
-                hi = w > Long.MAX_VALUE - margin ? Long.MAX_VALUE : w + margin;
-            }
-            io.of(lo, hi);
-            return SUPERSET;
+            return invert(io, period, periodAddFunction, stride, timeZoneRules, timestampDriver);
         }
 
         @Override
@@ -228,7 +206,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             return units > 0 ? result <= base : units < 0 && result >= base;
         }
 
-        private boolean tryExactShift(Interval io, long margin) {
+        private static boolean tryExactShift(Interval io, TimestampDriver.TimestampAddMethod periodAddFunction, int stride, TimeZoneRules timeZoneRules, long margin) {
             final long k = periodAddFunction.add(0, stride);
             if (addOverflows(0, k, stride)) {
                 return false;
@@ -265,6 +243,66 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             }
             io.of(newLo, newHi);
             return true;
+        }
+
+        static int invert(
+                Interval io,
+                char period,
+                TimestampDriver.TimestampAddMethod periodAddFunction,
+                int stride,
+                TimeZoneRules timeZoneRules,
+                TimestampDriver timestampDriver
+        ) {
+            if (stride == Numbers.INT_NULL) {
+                return NONE;
+            }
+            // a positive local add near the domain max overflows the long boundary and wraps to a
+            // low value; with an open lower but finite upper bound that wrapped value matches and
+            // splits the preimage. The designated timestamp is non-negative, so a negative add
+            // cannot underflow.
+            if (stride > 0 && io.getLo() == Numbers.LONG_NULL && io.getHi() != Long.MAX_VALUE) {
+                return NONE;
+            }
+            // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift);
+            // calendar units add a further +/-1 unit of day-clamping slack.
+            final long margin = timestampDriver.fromDays(2);
+            final boolean isCalendar = period == 'M' || period == 'y';
+            // a fixed unit is a constant local shift, exact when no transition splits source and target
+            if (!isCalendar && tryExactShift(io, periodAddFunction, stride, timeZoneRules, margin)) {
+                return EXACT;
+            }
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (lo != Numbers.LONG_NULL) {
+                long w = periodAddFunction.add(lo, -stride);
+                if (addOverflows(lo, w, -stride)) {
+                    return NONE;
+                }
+                if (isCalendar) {
+                    final long c = periodAddFunction.add(w, -1);
+                    if (c >= w) {
+                        return NONE;
+                    }
+                    w = c;
+                }
+                lo = w < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : w - margin;
+            }
+            if (hi != Long.MAX_VALUE) {
+                long w = periodAddFunction.add(hi, -stride);
+                if (addOverflows(hi, w, -stride)) {
+                    return NONE;
+                }
+                if (isCalendar) {
+                    final long c = periodAddFunction.add(w, 1);
+                    if (c <= w) {
+                        return NONE;
+                    }
+                    w = c;
+                }
+                hi = w > Long.MAX_VALUE - margin ? Long.MAX_VALUE : w + margin;
+            }
+            io.of(lo, hi);
+            return SUPERSET;
         }
     }
 

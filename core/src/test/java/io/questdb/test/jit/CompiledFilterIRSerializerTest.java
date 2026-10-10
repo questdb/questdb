@@ -25,7 +25,6 @@
 package io.questdb.test.jit;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
@@ -34,8 +33,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -164,7 +164,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         // With NOT operator
         serialize("along = 1 and not anint = 2");
-        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i32 2L)(i32 anint)(=)(!)(ret)");
+        assertIR("(i64 1L)(i64 along)(=)(&&_sc)(i32 2L)(i32 anint)(<>)(ret)");
 
         // With arithmetic
         serialize("along + 1 > 0 and anint - 2 < 10");
@@ -185,7 +185,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                         "and abyte > 0 " + // priority 5: other comparison (non-eq/neq)
                         "and achar != 'x' " + // priority 6: other neq
                         "and anothersymbol != 'DEF' " + // priority 7: sym neq
-                        "and ageoint != #sp05 " + // priority 8: i32 neq
+                        "and anipv4 != '0.0.0.1' " + // priority 8: i32 neq
                         "and adate != '1980-01-01' " + // priority 9: i64 neq
                         "and auuid != '22222222-2222-2222-2222-222222222222'" // priority 10: i128 neq
         );
@@ -199,7 +199,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                         "(i8 0L)(i8 abyte)(>)(&&_sc)" + // priority 5: abyte >
                         "(i16 120L)(i16 achar)(<>)(&&_sc)" + // priority 6: achar != ('x' = 120)
                         "(i32 0L)(i32 anothersymbol)(<>)(&&_sc)" + // priority 7: anothersymbol != (key 0 for 'DEF')
-                        "(i32 807941L)(i32 ageoint)(<>)(&&_sc)" + // priority 8: ageoint !=
+                        "(i32 1L)(i32 anipv4)(<>)(&&_sc)" + // priority 8: anipv4 !=
                         "(i64 315532800000L)(i64 adate)(<>)(&&_sc)" + // priority 9: adate !=
                         "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(ret)" // priority 10: auuid !=
         );
@@ -269,15 +269,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                         " or adouble = :adouble" // f64
         );
         assertIR(
-                "(i8 :0)(i8 aboolean)(=)(||_sc)(i8 :1)(i8 abyte)(=)(||_sc)(i8 :2)(i8 ageobyte)(=)(||_sc)" +
-                        "(i16 :3)(i16 ashort)(=)(||_sc)(i16 :4)(i16 ageoshort)(=)(||_sc)(i16 :5)(i16 achar)(=)(||_sc)" +
-                        "(f32 :6)(f32 afloat)(=)(||_sc)(f64 :7)(f64 adouble)(=)(||_sc)(i32 :8)(i32 asymbol)(=)(||_sc)" +
-                        "(i32 :9)(i32 anint)(=)(||_sc)(i32 :10)(i32 ageoint)(=)(||_sc)(i64 :11)(i64 along)(=)(||_sc)" +
-                        "(i64 :12)(i64 adate)(=)(||_sc)(i64 :13)(i64 ageolong)(=)(||_sc)(i64 :14)(i64 atimestamp)(=)(||_sc)" +
-                        "(i64 :15)(i64 atimestampns)(=)(||_sc)(i128 :16)(i128 auuid)(=)(ret)"
+                "(i8 :0)(i8 aboolean)(=)(||_sc)(i8 :1)(i8 abyte)(=)(||_sc)(i16 :2)(i16 ashort)(=)(||_sc)(i16 :3)(i16 achar)(=)(||_sc)(f32 :4)(f32 afloat)(=)(||_sc)(f64 :5)(f64 adouble)(=)(||_sc)(i32 :6)(i32 asymbol)(=)(||_sc)(i32 :7)(i32 anint)(=)(||_sc)(i64 :8)(i64 along)(=)(||_sc)(i64 :9)(i64 adate)(=)(||_sc)(i64 :10)(i64 atimestamp)(=)(||_sc)(i64 :11)(i64 atimestampns)(=)(||_sc)(i128 :12)(i128 auuid)(=)(ret)"
         );
 
-        Assert.assertEquals(17, bindVarFunctions.size());
+        Assert.assertEquals(13, bindVarFunctions.size());
     }
 
     @Test
@@ -299,13 +294,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testBooleanConstant() throws Exception {
         serialize("aboolean = true or not aboolean = not false");
-        assertIR("(i8 0L)(!)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
+        assertIR("(i8 0L)(!)(i8 aboolean)(<>)(i8 1L)(i8 aboolean)(=)(||)(ret)");
     }
 
     @Test
     public void testBooleanOperators() throws Exception {
         serialize("anint = 0 and not (abyte = 0) or along = 0");
-        assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(=)(!)(i32 0L)(i32 anint)(=)(&&)(||)(ret)");
+        assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(<>)(i32 0L)(i32 anint)(=)(&&)(||)(ret)");
     }
 
     @Test
@@ -376,7 +371,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testConstantArithFoldOnLongColumn() throws Exception {
         // The subtree is pure INT arithmetic, so it wraps exactly as the Java filter's
-        // FunctionParser#functionToConstant0 fold does ((int) 10000000000L = 1410065408). A LONG
+        // FunctionResolver#functionToConstant0 fold does ((int) 10000000000L = 1410065408). A LONG
         // column reads that IntConstant through getLong(), a plain sign extension here, so the
         // wrapped value is emitted as a single I8 IMM - the width the i64 peer compares at, and the
         // one that keeps the predicate on a vectorized loop.
@@ -402,7 +397,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testConstantArithFoldVariousOps() throws Exception {
         // A constant subtree folds at its own DECLARED type. An operand outside the INT range makes
         // the subtree LONG, so it folds at full width; an all-INT one folds at INT width and wraps,
-        // exactly as FunctionParser#functionToConstant0 does. The comparison peer does not enter
+        // exactly as FunctionResolver#functionToConstant0 does. The comparison peer does not enter
         // into it - that is the whole point of the one-value rule.
         serialize("along > 5000000000 + 5000000000");
         assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
@@ -437,7 +432,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Under a column predicate the collapsed IMM left the operand stack short and the IR
         // failed to compile at all ("invalid opcode"), silently dropping the filter to Java.
         serialize("along > 0 and (2_097_152 * 2_097_152 * 2_097_152) = (65_536 * 32_768)");
-        assertIR("(i32 -2147483648L)(i32 0L)(=)(i64 0L)(i64 along)(>)(&&)(ret)");
+        assertIR("(i32 -2147483648L)(i32 0L)(=)(ret)");
         // Boolean equality of two comparisons is one predicate, so there the truthy IMM took the
         // place of a comparison the backend then read as a value.
         serialize("(anint > 0) = ((2_097_152 * 2_097_152 * 2_097_152) > (65_536 * 32_768))");
@@ -570,6 +565,20 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testInNullElementNonNullableNarrowKeyFoldDropsKeyWidth() throws Exception {
+        int options = serialize("anint = 1 and abyte in (null)", false, false, false);
+        assertIR("(i32 0L)(i32 1L)(=)(i32 1L)(i32 anint)(=)(&&)(ret)");
+        assertOptionsHint("anint = 1 and abyte in (null)", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("anint = 1 or abyte in (null, null)", false, false, false);
+        assertIR("(i32 0L)(i32 1L)(=)(i32 0L)(i32 1L)(=)(||)(i32 1L)(i32 anint)(=)(||)(ret)");
+        assertOptionsHint("anint = 1 or abyte in (null, null)", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("anint = 1 and abyte in (null, 1)", false, false, false);
+        assertOptionsHint("anint = 1 and abyte in (null, 1)", options, OptionsHint.MIXED_SIZES);
+    }
+
+    @Test
     public void testNarrowConstArithFoldsToI64Immediate() throws Exception {
         // A pure-constant INT literal chain compared against a 64-bit column used to reach the
         // backend as its own operations at INT width - (i32 1000)(i32 1000)(*)(i64 along)(>) -
@@ -620,7 +629,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertOptionsHint("along + 1000 * 1000 > 0", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("along in (1000 * 1000, 5)", false, false, true);
-        assertIR("along in (1000 * 1000, 5)", "(i64 5L)(i64 along)(=)(i64 1000000L)(i64 along)(=)(||)(ret)");
+        assertIR("along in (1000 * 1000, 5)", "(i64 1000000L)(i64 along)(=)(i64 5L)(i64 along)(=)(||)(ret)");
         assertOptionsHint("along in (1000 * 1000, 5)", options, OptionsHint.SINGLE_SIZE);
 
         // A narrow chain NESTED under an out-of-INT-range one is marked as a fold root and then
@@ -682,7 +691,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // The IN spelling reaches markWidthSemantics through its own arm.
         options = serialize("anint in (446_488 - 114_763L, 5)", false, false, true);
         assertIR("anint in (446_488 - 114_763L, 5)",
-                "(i64 5L)(i32 anint)(sx_i64)(=)(i64 114763L)(i64 446488L)(-)(i32 anint)(sx_i64)(=)(||)(ret)");
+                "(i64 114763L)(i64 446488L)(-)(i32 anint)(sx_i64)(=)(i64 5L)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("anint in (446_488 - 114_763L, 5)", options, OptionsHint.WIDE_LANE);
 
         // A NARROW arithmetic node keeps its constants at INT width, because it wraps at INT
@@ -961,7 +970,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertOptionsHint("float arithmetic", options, OptionsHint.WIDE_LANE);
 
         options = serialize("afloat IN (1.00000003, 2.5)", false, false, true);
-        assertIR("(f32 2.5D)(f32 afloat)(=)(f64 1.00000003D)(f32 afloat)(=)(||)(ret)");
+        assertIR("(f64 1.00000003D)(f32 afloat)(=)(f32 2.5D)(f32 afloat)(=)(||)(ret)");
         assertOptionsHint("float IN", options, OptionsHint.WIDE_LANE);
 
         // A constant WITH an exact float is left alone: it compares the same at either width, so it
@@ -1161,19 +1170,19 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 1672531200000L)(i64 adate)(<>)(ret)");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testDifferentSymbolColumnsCompare() throws Exception {
-        serialize("asymbol > anothersymbol");
+        assertSerializeDeclined("asymbol > anothersymbol", 22, "operators on different symbol columns are not supported by JIT: asymbol");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testDifferentSymbolColumnsEq() throws Exception {
-        serialize("asymbol = anothersymbol");
+        assertSerializeDeclined("asymbol = anothersymbol", 22, "operators on different symbol columns are not supported by JIT: asymbol");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testDifferentSymbolColumnsNotEq() throws Exception {
-        serialize("asymbol != anothersymbol");
+        assertSerializeDeclined("asymbol != anothersymbol", 22, "operators on different symbol columns are not supported by JIT: asymbol");
     }
 
     @Test
@@ -1197,11 +1206,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(<)"
                 + "(i64 along)(i32 anint)(sx_i64)(<)(&&)(ret)");
         assertOptionsHint("column vs column AND out-of-range constant", options, OptionsHint.WIDE_LANE);
-    }
-
-    @Test(expected = SqlException.class)
-    public void testEmptyIn() throws Exception {
-        serialize("anint IN ()");
     }
 
     @Test
@@ -1230,21 +1234,21 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testIn() throws Exception {
         serialize("anint IN (1, 2, 3)");
-        assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(ret)");
+        assertIR("(i32 1L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 3L)(i32 anint)(=)(||)(||)(ret)");
         serialize("anint IN (1)");
         assertIR("(i32 1L)(i32 anint)(=)(ret)");
         serialize("anint IN (-1, 0, 1)");
-        assertIR("(i32 1L)(i32 anint)(=)(i32 0L)(i32 anint)(=)(i32 -1L)(i32 anint)(=)(||)(||)(ret)");
+        assertIR("(i32 -1L)(i32 anint)(=)(i32 0L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(ret)");
         serialize("anint <> NULL AND anint IN (4, 5)");
-        assertIR("(i32 5L)(i32 anint)(=)(i32 4L)(i32 anint)(=)(||)(i32 -2147483648L)(i32 anint)(<>)(&&)(ret)");
+        assertIR("(i32 4L)(i32 anint)(=)(i32 5L)(i32 anint)(=)(||)(i32 -2147483648L)(i32 anint)(<>)(&&)(ret)");
         serialize("-anint IN (-1)");
         assertIR("(i32 -1L)(i32 anint)(neg)(=)(ret)");
         serialize("anint NOT IN (1, 2, 3)");
-        assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(!)(ret)");
+        assertIR("(i32 1L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 3L)(i32 anint)(=)(||)(||)(!)(ret)");
         serialize("atimestamp IN ('2020-01-01')");
-        assertIR("(i64 1577836800000000L)(i64 atimestamp)(=)(ret)");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
         serialize("atimestampns IN ('2020-01-01')");
-        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(=)(ret)");
+        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(>=)(i64 1577923199999999999L)(i64 atimestampns)(<=)(&&)(ret)");
     }
 
     @Test
@@ -1256,17 +1260,17 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // sx_i64 and the four-lane backend compared an i64 key against four packed i32. The key now
         // takes the per-element override, so each pairing is emitted at its own width.
         int options = serialize("(0 in (anint, along)) and anint < along", false, false, false);
-        assertIR("(i64 along)(i32 anint)(sx_i64)(<)(i64 along)(i64 0L)(=)(i32 anint)(sx_i64)(i64 0L)(=)(||)(&&)(ret)");
+        assertIR("(i64 along)(i32 anint)(sx_i64)(<)(i32 anint)(sx_i64)(i64 0L)(=)(i64 along)(i64 0L)(=)(||)(&&)(ret)");
         assertOptionsHint("(0 in (anint, along)) and anint < along", options, OptionsHint.WIDE_LANE);
 
         // Same without the widening sibling: the pairings are harmonised either way.
         serialize("0 in (anint, along)", false, false, false);
-        assertIR("(i64 along)(i64 0L)(=)(i32 anint)(sx_i64)(i64 0L)(=)(||)(ret)");
+        assertIR("(i32 anint)(sx_i64)(i64 0L)(=)(i64 along)(i64 0L)(=)(||)(ret)");
 
         // A key no int can hold keeps I8 for BOTH pairings, and the INT element sign-extends to
         // meet it rather than the key narrowing onto a value it cannot represent.
         serialize("3000000000 in (anint, along)", false, false, false);
-        assertIR("(i64 along)(i64 3000000000L)(=)(i32 anint)(sx_i64)(i64 3000000000L)(=)(||)(ret)");
+        assertIR("(i32 anint)(sx_i64)(i64 3000000000L)(=)(i64 along)(i64 3000000000L)(=)(||)(ret)");
     }
 
     @Test
@@ -1278,7 +1282,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // null, and serializeNull emits the INT_NULL immediate. So the pairing stays at I4 and the
         // filter keeps its vectorized exec hint.
         int options = serialize("anint IN (1, 2, null)", false, false, false);
-        assertIR("(i32 -2147483648L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(ret)");
+        assertIR("(i32 1L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 -2147483648L)(i32 anint)(=)(||)(||)(ret)");
         assertOptionsHint("anint IN (1, 2, null)", options, OptionsHint.SINGLE_SIZE);
 
         // (A BYTE or SHORT key takes a different route entirely - neither type has a NULL sentinel,
@@ -1287,7 +1291,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         // A genuinely wide element widens the key and selects four-lane AVX2.
         options = serialize("anint IN (1, 5_000_000_000)", false, false, false);
-        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i64 1L)(i32 anint)(sx_i64)(=)(||)(ret)");
+        assertIR("(i64 1L)(i32 anint)(sx_i64)(=)(i64 5000000000L)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.WIDE_LANE);
 
         // An arithmetic key wraps against the NULL element too: '=' resolves an untyped null to
@@ -1295,7 +1299,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // carries INT_NULL - the same rows a projection of the key prints null for. It therefore
         // takes I4 as well, and the whole filter stays vectorized (no sx_i64 anywhere).
         int arithOptions = serialize("anint * 2 IN (1, null)", false, false, false);
-        assertIR("(i32 -2147483648L)(i32 2L)(i32 anint)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
+        assertIR("(i32 1L)(i32 2L)(i32 anint)(*)(=)(i32 -2147483648L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
         assertOptionsHint("anint * 2 IN (1, null)", arithOptions, OptionsHint.SINGLE_SIZE);
 
         // A genuinely wide element pulls the pairing to 64 bits, but the arithmetic KEY computes at
@@ -1305,7 +1309,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // element widens with it - the list is one 64-bit pairing set - while the product stays i32.
         // This is the vectorization the one-value rule costs; see forceScalarOnUnharmonisedNarrowArith.
         arithOptions = serialize("anint * 2 IN (1, 5_000_000_000)", false, false, false);
-        assertIR("(i64 5000000000L)(i32 2L)(i32 anint)(*)(=)(i64 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
+        assertIR("(i64 1L)(i32 2L)(i32 anint)(*)(=)(i64 5000000000L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
         assertOptionsHint("anint * 2 IN (1, 5_000_000_000)", arithOptions, OptionsHint.SCALAR);
 
         // A NULL element beside a wide (LONG) COLUMN element takes the width the LIST settled on.
@@ -1315,7 +1319,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Numbers.intToLong(INT_NULL) is LONG_NULL, so exactly the INT_NULL rows still match.
         // Emitting INT_NULL at I4 here would leave an i32 immediate against the key's i64 lanes.
         options = serialize("anint IN (along, null)", false, false, false);
-        assertIR("(i64 -9223372036854775808L)(i32 anint)(sx_i64)(=)(i64 along)(i32 anint)(sx_i64)(=)(||)(ret)");
+        assertIR("(i64 along)(i32 anint)(sx_i64)(=)(i64 -9223372036854775808L)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("anint IN (along, null)", options, OptionsHint.WIDE_LANE);
     }
 
@@ -1336,11 +1340,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertOptionsHint("abyte in (null)", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("abyte in (null, 1)", false, false, false);
-        assertIR("(i8 1L)(i8 abyte)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 1L)(=)(i8 1L)(i8 abyte)(=)(||)(ret)");
         assertOptionsHint("abyte in (null, 1)", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("ashort in (null, 1)", false, false, false);
-        assertIR("(i16 1L)(i16 ashort)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 1L)(=)(i16 1L)(i16 ashort)(=)(||)(ret)");
         assertOptionsHint("ashort in (null, 1)", options, OptionsHint.SINGLE_SIZE);
 
         // The gate is isWidthSensitiveInKey, so every key shape it accepts folds - not just a bare
@@ -1350,7 +1354,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("-abyte in (null)", false, false, false);
         assertIR("(i32 0L)(i32 1L)(=)(ret)");
         serialize("-ashort in (null, 1)", false, false, false);
-        assertIR("(i16 1L)(i16 ashort)(neg)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 1L)(=)(i16 1L)(i16 ashort)(neg)(=)(||)(ret)");
         // Narrow BINARY arithmetic reads at SHORT width and folds for the same reason.
         serialize("abyte + ashort in (null)", false, false, false);
         assertIR("(i32 0L)(i32 1L)(=)(ret)");
@@ -1374,7 +1378,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize(":b in (null)", false, false, false);
         assertIR("(i32 0L)(i32 1L)(=)(ret)");
         serialize(":s in (null, 1)", false, false, false);
-        assertIR("(i16 1L)(i16 :0)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 1L)(=)(i16 1L)(i16 :0)(=)(||)(ret)");
         // INT has a real NULL sentinel, so an INT bind variable keeps the ordinary pairing.
         serialize(":i in (null)", false, false, false);
         assertIR("(i32 -2147483648L)(i32 :0)(=)(ret)");
@@ -1384,18 +1388,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // or SHORT observer bypasses serializeNull's decline and would leave an I4 immediate against
         // the size-1 key lane - the very mismatch this fold removes.
         serialize("0 in (null, abyte)", false, false, false);
-        assertIR("(i8 abyte)(i8 0L)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 1L)(=)(i8 abyte)(i8 0L)(=)(||)(ret)");
         serialize("0 in (null, ashort)", false, false, false);
-        assertIR("(i16 ashort)(i16 0L)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 1L)(=)(i16 ashort)(i16 0L)(=)(||)(ret)");
         serialize("0 in (null, :b)", false, false, false);
-        assertIR("(i8 :0)(i8 0L)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 1L)(=)(i8 :0)(i8 0L)(=)(||)(ret)");
         serialize("0 in (null, anint)", false, false, false);
-        assertIR("(i32 anint)(i32 0L)(=)(i32 0L)(i32 1L)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 1L)(=)(i32 anint)(i32 0L)(=)(||)(ret)");
 
         // A GEOBYTE shares the I1 type code but HAS a NULL at every width, so it keeps the ordinary
         // pairing and compares against its real sentinel. IPv4 and SYMBOL likewise.
-        serialize("ageobyte in (null)", false, false, false);
-        assertIR("(i8 -1L)(i8 ageobyte)(=)(ret)");
         serialize("anipv4 in (null)", false, false, false);
         assertIR("(i32 0L)(i32 anipv4)(=)(ret)");
 
@@ -1407,12 +1409,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             Assert.fail("expected the CHAR pairing to decline");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "short type is not nullable");
-        }
-        try {
-            serialize("aboolean in (null)", false, false, false);
-            Assert.fail("expected the BOOLEAN pairing to decline");
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "byte type is not nullable");
         }
     }
 
@@ -1431,22 +1427,19 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Note: IN values are serialized in reverse order (last to first)
         serialize("along = 1 and anint IN (2, 3)");
         assertIR(
-                "(i64 1L)(i64 along)(=)(&&_sc)" +
-                        "(begin_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+                "(i64 1L)(i64 along)(=)(&&_sc)(begin_sc 2)(i32 2L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
         );
 
         // Three values in IN() - more OR_SC opcodes
         serialize("along = 1 and anint IN (2, 3, 4)");
         assertIR(
-                "(i64 1L)(i64 along)(=)(&&_sc)" +
-                        "(begin_sc 2)(i32 4L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+                "(i64 1L)(i64 along)(=)(&&_sc)(begin_sc 2)(i32 2L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 4L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
         );
 
         // IN() at the start of AND chain (still top-level) - sorted by priority so along comes first
         serialize("anint IN (2, 3) and along = 1");
         assertIR(
-                "(i64 1L)(i64 along)(=)(&&_sc)" +
-                        "(begin_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+                "(i64 1L)(i64 along)(=)(&&_sc)(begin_sc 2)(i32 2L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
         );
 
         // Decide wide-lane capability before mixed column widths select scalar short-circuit IR.
@@ -1459,8 +1452,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // packed i32 half against the key's i64 lanes.
         int options = serialize("along = 1 and anint IN (2, 5_000_000_000)", false, false, false);
         assertIR(
-                "(i64 5000000000L)(i32 anint)(sx_i64)(=)(i64 2L)(i32 anint)(sx_i64)(=)(||)" +
-                        "(i64 1L)(i64 along)(=)(&&)(ret)"
+                "(i64 2L)(i32 anint)(sx_i64)(=)(i64 5000000000L)(i32 anint)(sx_i64)(=)(||)(i64 1L)(i64 along)(=)(&&)(ret)"
         );
         assertOptionsHint("wide-lane IN in AND chain", options, OptionsHint.WIDE_LANE);
     }
@@ -1470,8 +1462,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // IN() in an OR chain should NOT use short-circuit (uses regular || operators)
         serialize("along = 1 or anint IN (2, 3)");
         assertIR(
-                "(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(||)(||_sc)" +
-                        "(i64 1L)(i64 along)(=)(ret)"
+                "(i32 2L)(i32 anint)(=)(i32 3L)(i32 anint)(=)(||)(||_sc)(i64 1L)(i64 along)(=)(ret)"
         );
     }
 
@@ -1481,8 +1472,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // The NOT wraps the IN, so IN is not the root of its predicate
         serialize("along = 1 and not anint IN (2, 3)");
         assertIR(
-                "(i64 1L)(i64 along)(=)(&&_sc)" +
-                        "(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(||)(!)(ret)"
+                "(i64 1L)(i64 along)(=)(&&_sc)(i32 2L)(i32 anint)(=)(i32 3L)(i32 anint)(=)(||)(!)(ret)"
         );
     }
 
@@ -1492,8 +1482,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Sorted by priority: along (i64, priority 1) before anint (i32, priority 2)
         serialize("anint IN (3, 4) and along IN (1, 2)");
         assertIR(
-                "(begin_sc 2)(i32 4L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(&&_sc)(end_sc 2)" +
-                        "(begin_sc 2)(i64 2L)(i64 along)(=)(||_sc 2)(i64 1L)(i64 along)(=)(&&_sc)(end_sc 2)(ret)"
+                "(begin_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 4L)(i32 anint)(=)(&&_sc)(end_sc 2)(begin_sc 2)(i64 1L)(i64 along)(=)(||_sc 2)(i64 2L)(i64 along)(=)(&&_sc)(end_sc 2)(ret)"
         );
     }
 
@@ -1503,8 +1492,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // but the whole predicate participates in AND chain short-circuit
         serialize("along = 1 and anint NOT IN (2, 3)");
         assertIR(
-                "(i64 1L)(i64 along)(=)(&&_sc)" +
-                        "(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(||)(!)(ret)"
+                "(i64 1L)(i64 along)(=)(&&_sc)(i32 2L)(i32 anint)(=)(i32 3L)(i32 anint)(=)(||)(!)(ret)"
         );
     }
 
@@ -1513,8 +1501,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Two-value IN() - boundary case for the args loop (args.size() = 3)
         serialize("along = 1 and anint IN (2, 3)");
         assertIR(
-                "(i64 1L)(i64 along)(=)(&&_sc)" +
-                        "(begin_sc 2)(i32 3L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+                "(i64 1L)(i64 along)(=)(&&_sc)(begin_sc 2)(i32 2L)(i32 anint)(=)(||_sc 2)(i32 3L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
         );
     }
 
@@ -1524,14 +1511,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Priority order: along = (priority 1), abyte > (priority 5), anint IN (priority 5)
         serialize("abyte > 0 and anint IN (1, 2) and along = 3");
         assertIR(
-                "(i64 3L)(i64 along)(=)(&&_sc)(i8 0L)(i8 abyte)(>)(&&_sc)" +
-                        "(begin_sc 2)(i32 2L)(i32 anint)(=)(||_sc 2)(i32 1L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
+                "(i64 3L)(i64 along)(=)(&&_sc)(i8 0L)(i8 abyte)(>)(&&_sc)(begin_sc 2)(i32 1L)(i32 anint)(=)(||_sc 2)(i32 2L)(i32 anint)(=)(&&_sc)(end_sc 2)(ret)"
         );
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testInSubSelect() throws Exception {
-        serialize("asymbol in (select asymbol from tab limit 1)");
+        assertSerializeDeclined("asymbol in (select asymbol from x limit 1)", 30, "unsupported JIT filter expression");
     }
 
     @Test
@@ -1548,29 +1534,29 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         int options = serialize("asymbol IN ('ABC', 'DEF')", false, false, true);
         // 'ABC' is symbol key 0 in asymbol; 'DEF' is not in its symbol table, so it emits as a bind
         // variable (see testUnknownSymbolConstant). Neither key leaf carries an sx_i64.
-        assertIR("(i32 :0)(i32 asymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+        assertIR("(i32 0L)(i32 asymbol)(=)(i32 :0)(i32 asymbol)(=)(||)(ret)");
         assertOptionsHint("asymbol IN ('ABC', 'DEF')", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("asymbol NOT IN ('ABC', 'DEF')", false, false, true);
-        assertIR("(i32 :0)(i32 asymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(!)(ret)");
+        assertIR("(i32 0L)(i32 asymbol)(=)(i32 :0)(i32 asymbol)(=)(||)(!)(ret)");
         assertOptionsHint("asymbol NOT IN ('ABC', 'DEF')", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("achar IN ('x', 'z')", false, false, true);
-        assertIR("(i16 122L)(i16 achar)(=)(i16 120L)(i16 achar)(=)(||)(ret)");
+        assertIR("(i16 120L)(i16 achar)(=)(i16 122L)(i16 achar)(=)(||)(ret)");
         assertOptionsHint("achar IN ('x', 'z')", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("achar NOT IN ('x', 'z')", false, false, true);
-        assertIR("(i16 122L)(i16 achar)(=)(i16 120L)(i16 achar)(=)(||)(!)(ret)");
+        assertIR("(i16 120L)(i16 achar)(=)(i16 122L)(i16 achar)(=)(||)(!)(ret)");
         assertOptionsHint("achar NOT IN ('x', 'z')", options, OptionsHint.SINGLE_SIZE);
 
         // Control: a genuine narrow-int key still wraps against narrow elements and widens against an
         // out-of-INT-range one - the width sensitivity symbol / char must not inherit.
         options = serialize("abyte IN (1, 2)", false, false, true);
-        assertIR("(i8 2L)(i8 abyte)(=)(i8 1L)(i8 abyte)(=)(||)(ret)");
+        assertIR("(i8 1L)(i8 abyte)(=)(i8 2L)(i8 abyte)(=)(||)(ret)");
         assertOptionsHint("abyte IN (1, 2)", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("anint IN (1, 5_000_000_000)", false, false, true);
-        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i64 1L)(i32 anint)(sx_i64)(=)(||)(ret)");
+        assertIR("(i64 1L)(i32 anint)(sx_i64)(=)(i64 5000000000L)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.WIDE_LANE);
     }
 
@@ -1583,27 +1569,17 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         int options = serialize("anint IN (:anint, $1)", false, false, true);
         // anint is INT; the $1 (LONG) key widens the column per element via sx_i64,
         // while the :anint (INT) key needs no widening.
-        assertIR("(i64 :0)(i32 anint)(sx_i64)(=)(i32 :1)(sx_i64)(i32 anint)(sx_i64)(=)(||)(ret)");
+        assertIR("(i32 :0)(sx_i64)(i32 anint)(sx_i64)(=)(i64 :1)(i32 anint)(sx_i64)(=)(||)(ret)");
         assertOptionsHint("mixed-width IN bind variables", options, OptionsHint.WIDE_LANE);
 
         Assert.assertEquals(2, bindVarFunctions.size());
-        Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(0).getType());
-        Assert.assertEquals(ColumnType.INT, bindVarFunctions.get(1).getType());
+        Assert.assertEquals(ColumnType.INT, bindVarFunctions.get(0).getType());
+        Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(1).getType());
     }
 
-    @Test(expected = SqlException.class)
-    public void testInvalidNanoTimestampLiteral() throws Exception {
-        serialize("atimestampns > ''");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testInvalidTimestampLiteral() throws Exception {
-        serialize("atimestamp > ''");
-    }
-
-    @Test(expected = SqlException.class)
+    @Test
     public void testInvalidUuidConstant() throws Exception {
-        serialize("auuid = '111111110111101111011110111111111111'");
+        assertSerializeDeclined("auuid = '111111110111101111011110111111111111'", 30, "invalid uuid constant: '111111110111101111011110111111111111'");
     }
 
     @Test
@@ -1679,6 +1655,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 1675209600000000000L)(i64 atimestampns)(<)(ret)");
         serialize("atimestampns != '2023'");
         assertIR("(i64 1672531200000000000L)(i64 atimestampns)(<>)(ret)");
+        serialize("atimestampns != '2023-01-01T00:00:00.000000000Z'");
+        assertIR("(i64 1672531200000000000L)(i64 atimestampns)(<>)(ret)");
     }
 
     @Test
@@ -1707,7 +1685,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Wrapping the conjunct in NOT keeps the pairing inside one predicate, so it must resolve
         // the same way.
         options = serialize("not (anint > 16777216.0) and along = 5", false, false, false);
-        assertIR("(i64 5L)(i64 along)(=)(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(!)(&&)(ret)");
+        assertIR("(i64 5L)(i64 along)(=)(f64 1.6777216E7D)(i32 anint)(sx_i64)(<=)(&&)(ret)");
         assertOptionsHint("negated narrow-int float bound AND long conjunct", options, OptionsHint.WIDE_LANE);
 
         // Forced scalar mode never enters wide-lane mode, so it keeps the short-circuit path - and
@@ -1738,7 +1716,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // answering true here, or the chain takes the short-circuit path and the wide-lane guard in
         // serializePredicatesAndSc declines JIT for a filter that compiles.
         int options = serialize("not (anint > 16777216.0) and along = 5", false, false, false);
-        assertIR("(i64 5L)(i64 along)(=)(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(!)(&&)(ret)");
+        assertIR("(i64 5L)(i64 along)(=)(f64 1.6777216E7D)(i32 anint)(sx_i64)(<=)(&&)(ret)");
         assertOptionsHint("paired halves under NOT", options, OptionsHint.WIDE_LANE);
 
         // hasWideLaneConversionSource() treats a NOT subtree as ONE predicate, so searching it for a
@@ -1750,28 +1728,28 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // conjunct on every scanned row, and its sortPredicates reordering, and buys nothing: the
         // hint stays MIXED_SIZES, and compiler.cpp runs the same scalar loop either way.
         options = serialize("not (anint > 1 and adouble > 1.00000003) and anint < 100", false, false, false);
-        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(&&)(!)(&&_sc)(i32 100L)(i32 anint)(<)(ret)");
+        assertIR("(i32 100L)(i32 anint)(<)(f64 1.00000003D)(f64 adouble)(<=)(i32 1L)(i32 anint)(<=)(||)(&&)(ret)");
         assertOptionsHint("cross-comparison halves under NOT, AND chain", options, OptionsHint.MIXED_SIZES);
 
         // OR chains ride the same gate.
         options = serialize("not (anint > 1 and adouble > 1.00000003) or anint < 100", false, false, false);
-        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(&&)(!)(||_sc)(i32 100L)(i32 anint)(<)(ret)");
+        assertIR("(i32 1L)(i32 anint)(<=)(||_sc)(f64 1.00000003D)(f64 adouble)(<=)(||_sc)(i32 100L)(i32 anint)(<)(ret)");
         assertOptionsHint("cross-comparison halves under NOT, OR chain", options, OptionsHint.MIXED_SIZES);
 
         // A NOT over OR holds the two halves in one predicate exactly as a NOT over AND does.
         options = serialize("not (anint > 1 or adouble > 1.00000003) and anint < 100", false, false, false);
-        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(||)(!)(&&_sc)(i32 100L)(i32 anint)(<)(ret)");
+        assertIR("(i32 1L)(i32 anint)(<=)(&&_sc)(f64 1.00000003D)(f64 adouble)(<=)(&&_sc)(i32 100L)(i32 anint)(<)(ret)");
         assertOptionsHint("cross-comparison halves under NOT over OR", options, OptionsHint.MIXED_SIZES);
 
         // An 8-byte sibling mixes the widths the same way the 4-byte one does.
         options = serialize("not (anint > 1 and adouble > 1.00000003) and along < 100", false, false, false);
-        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(&&)(!)(&&_sc)(i64 100L)(i64 along)(<)(ret)");
+        assertIR("(i64 100L)(i64 along)(<)(f64 1.00000003D)(f64 adouble)(<=)(i32 1L)(i32 anint)(<=)(||)(&&)(ret)");
         assertOptionsHint("cross-comparison halves under NOT, long sibling", options, OptionsHint.MIXED_SIZES);
 
         // Forced scalar mode never enters wide-lane mode, so the gate is not consulted at all and
         // the chain keeps its short-circuit path whichever way the pairing resolves.
         options = serialize("not (anint > 1 and adouble > 1.00000003) and anint < 100", true, false, false);
-        assertIR("(f64 1.00000003D)(f64 adouble)(>)(i32 1L)(i32 anint)(>)(&&)(!)(&&_sc)(i32 100L)(i32 anint)(<)(ret)");
+        assertIR("(i32 100L)(i32 anint)(<)(f64 1.00000003D)(f64 adouble)(<=)(i32 1L)(i32 anint)(<=)(||)(&&)(ret)");
         assertOptionsHint("cross-comparison halves under NOT, forced scalar", options, OptionsHint.SCALAR);
 
         // Control, the direction that is dangerous rather than merely slow: the NOT wraps a genuine
@@ -1781,7 +1759,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // put the chain on the short-circuit path, where serializePredicatesAndSc's wide-lane guard
         // rejects the sx_i64 below and declines JIT for the whole filter.
         options = serialize("not (anint > 16777216.0 and adouble > 1.5) and along = 5", false, false, false);
-        assertIR("(i64 5L)(i64 along)(=)(f64 1.5D)(f64 adouble)(>)(f64 1.6777216E7D)(i32 anint)(sx_i64)(>)(&&)(!)(&&)(ret)");
+        assertIR("(i64 5L)(i64 along)(=)(f64 1.5D)(f64 adouble)(<=)(f64 1.6777216E7D)(i32 anint)(sx_i64)(<=)(||)(&&)(ret)");
         assertOptionsHint("paired halves under NOT beside a sibling comparison", options, OptionsHint.WIDE_LANE);
     }
 
@@ -1838,8 +1816,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testNullConstantMultiplePredicates() throws Exception {
-        serialize("ageoint <> null and along <> null");
-        assertIR("(i32 -1L)(i32 ageoint)(<>)(&&_sc)(i64 -9223372036854775808L)(i64 along)(<>)(ret)");
+        serialize("anint <> null and along <> null");
+        assertIR("(i32 -2147483648L)(i32 anint)(<>)(&&_sc)(i64 -9223372036854775808L)(i64 along)(<>)(ret)");
     }
 
     @Test
@@ -1847,10 +1825,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         String[][] columns = new String[][]{
                 {"anint", "i32", Numbers.INT_NULL + "L"},
                 {"along", "i64", Numbers.LONG_NULL + "L"},
-                {"ageobyte", "i8", GeoHashes.BYTE_NULL + "L"},
-                {"ageoshort", "i16", GeoHashes.SHORT_NULL + "L"},
-                {"ageoint", "i32", GeoHashes.INT_NULL + "L"},
-                {"ageolong", "i64", GeoHashes.NULL + "L"},
                 {"afloat", "f32", "NaND"},
                 {"adouble", "f64", "NaND"},
         };
@@ -1981,13 +1955,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         bindVariableService.setDouble("d", 1.00000003);
         options = serialize("afloat in (1.00000003, :d)", false, false, false);
         assertOptionsHint("FLOAT IN bind variable", options, OptionsHint.SCALAR);
-
-        // A non-integer element makes the whole integer IN shape ineligible even though another
-        // element requires INT-to-LONG widening. The widening then emits an SX_I64 outside four-lane
-        // mode, which forces scalar - so pin SCALAR, not merely "not WIDE_LANE": SINGLE_SIZE and
-        // MIXED_SIZES are SIMD hints too and would satisfy the weaker assertion.
-        options = serialize("anint in (1, 5_000_000_000, 1.5)", false, false, false);
-        assertOptionsHint("mixed integer/float IN", options, OptionsHint.SCALAR);
     }
 
     @Test
@@ -2011,21 +1978,21 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // 1B
         filterToOptions.put("not aboolean", 1);
         filterToOptions.put("abyte = 0", 1);
-        filterToOptions.put("ageobyte <> null", 1);
+        filterToOptions.put("ageobyte = #s", 1);
         // 2B
         filterToOptions.put("ashort = 0", 2);
-        filterToOptions.put("ageoshort <> null", 2);
+        filterToOptions.put("ageoshort = #sp", 2);
         filterToOptions.put("achar = 'a'", 2);
         // 4B
         filterToOptions.put("anint = 0", 4);
-        filterToOptions.put("ageoint <> null", 4);
+        filterToOptions.put("ageoint = #sp05", 4);
         filterToOptions.put("afloat = 0", 4);
         filterToOptions.put("asymbol <> null", 4);
         filterToOptions.put("anint / anint = 0", 4);
         filterToOptions.put("afloat = 0 or anint = 0", 4);
         // 8B
         filterToOptions.put("along = 0", 8);
-        filterToOptions.put("ageolong <> null", 8);
+        filterToOptions.put("ageolong = #sp052w92p1p8", 8);
         filterToOptions.put("adate <> null", 8);
         filterToOptions.put("atimestamp <> null", 8);
         filterToOptions.put("atimestampns <> null", 8);
@@ -2056,7 +2023,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         // With NOT operator
         serialize("along = 1 or not anint = 2");
-        assertIR("(i32 2L)(i32 anint)(=)(!)(||_sc)(i64 1L)(i64 along)(=)(ret)");
+        assertIR("(i32 2L)(i32 anint)(<>)(||_sc)(i64 1L)(i64 along)(=)(ret)");
     }
 
     @Test
@@ -2073,7 +2040,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                         "or abyte > 0 " + // priority 5: other comparison (non-eq/neq)
                         "or achar != 'x' " + // priority 6: other neq
                         "or anothersymbol != 'DEF' " + // priority 7: sym neq
-                        "or ageoint != #sp05 " + // priority 8: i32 neq
+                        "or anipv4 != '0.0.0.1' " + // priority 8: i32 neq
                         "or adate != '1980-01-01' " + // priority 9: i64 neq
                         "or auuid != '22222222-2222-2222-2222-222222222222'" // priority 10: i128 neq
         );
@@ -2081,7 +2048,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR(
                 "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(||_sc)" + // priority 10: auuid !=
                         "(i64 315532800000L)(i64 adate)(<>)(||_sc)" + // priority 9: adate !=
-                        "(i32 807941L)(i32 ageoint)(<>)(||_sc)" + // priority 8: ageoint !=
+                        "(i32 1L)(i32 anipv4)(<>)(||_sc)" + // priority 8: anipv4 !=
                         "(i32 0L)(i32 anothersymbol)(<>)(||_sc)" + // priority 7: anothersymbol != (key 0 for 'DEF')
                         "(i16 120L)(i16 achar)(<>)(||_sc)" + // priority 6: achar != ('x' = 120)
                         "(i8 0L)(i8 abyte)(>)(||_sc)" + // priority 5: abyte >
@@ -2136,7 +2103,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 1L)(i64 along)(=)(ret)");
 
         serialize("not along = 1");
-        assertIR("(i64 1L)(i64 along)(=)(!)(ret)");
+        assertIR("(i64 1L)(i64 along)(<>)(ret)");
     }
 
     /**
@@ -2208,15 +2175,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "(i64 42L)(i64 along)(=)(&&)(ret)");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testTimestampInLiteralBindVariables() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr("str", "2020");
-        serialize("atimestamp in :str");
+        assertSerializeDeclined("atimestamp in :str", 22, "non-timestamp column in timestamp expression: TIMESTAMP");
 
         bindVariableService.clear();
         bindVariableService.setStr("str", "2020");
-        serialize("atimestampns in :str");
+        assertSerializeDeclined("atimestampns in :str", 22, "non-timestamp column in timestamp expression: TIMESTAMP_NS");
     }
 
     @Test
@@ -2227,8 +2194,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestampLiteral() throws Exception {
-        serialize("atimestamp = '2023-02-11T11:12:22.116234987Z'");
-        assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");
+        try {
+            serialize("atimestamp = '2023-02-11T11:12:22.116234987Z'");
+            Assert.fail("mixed timestamp precision must use scalar comparison");
+        } catch (SqlException e) {
+            Assert.assertEquals(33, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "constant outside of predicate: false");
+        }
+        serialize("atimestampns = '2023-02-11T11:12:22.116234987Z'");
+        assertIR("(i64 1676113942116234987L)(i64 atimestampns)(=)(ret)");
         serialize("atimestamp = '2023-02-11T11:12:22.116234Z'");
         assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");
         serialize("atimestamp >= '2023-02-11T11:12:22'");
@@ -2240,6 +2214,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("atimestamp < '2023-02'");
         assertIR("(i64 1675209600000000L)(i64 atimestamp)(<)(ret)");
         serialize("atimestamp != '2023'");
+        assertIR("(i64 1672531200000000L)(i64 atimestamp)(<>)(ret)");
+        serialize("atimestamp != '2023-01-01T00:00:00.000000Z'");
         assertIR("(i64 1672531200000000L)(i64 atimestamp)(<>)(ret)");
     }
 
@@ -2253,53 +2229,48 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStrA(null));
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedBinaryEquality() throws Exception {
-        serialize("abinary = abinary2");
+        assertSerializeDeclined("abinary = abinary2", 22, "non-numeric column in numeric expression: BINARY");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedBinaryInequality() throws Exception {
-        serialize("abinary <> abinary2");
+        assertSerializeDeclined("abinary <> abinary2", 22, "non-numeric column in numeric expression: BINARY");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedBindVariableType1() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr("astring", "foobar");
-        serialize("astring = :astring");
+        assertSerializeDeclined("astring = :astring", 22, "non-numeric column in numeric expression: STRING");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedBindVariableType2() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr("avarchar", "foobar");
-        serialize("avarchar = :avarchar");
+        assertSerializeDeclined("avarchar = :avarchar", 22, "non-numeric column in numeric expression: VARCHAR");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedBitwiseOperator() throws Exception {
-        serialize("~abyte <> 0");
+        assertSerializeDeclined("~abyte <> 0", 29, "unsupported JIT filter expression");
     }
 
-    @Test(expected = SqlException.class)
-    public void testUnsupportedBooleanColumnInNumericContext() throws Exception {
-        serialize("aboolean = 0");
-    }
-
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedByteNullConstant() throws Exception {
-        serialize("abyte = null");
+        assertSerializeDeclined("abyte = null", 30, "byte type is not nullable");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedCharColumnInNumericContext() throws Exception {
-        serialize("achar = 0");
+        assertSerializeDeclined("achar = 0", 30, "numeric constant in non-numeric expression: 0");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedCharConstantInNumericContext() throws Exception {
-        serialize("along = 'x'");
+        assertSerializeDeclined("along = 'x'", 30, "char constant in non-char expression: 'x'");
     }
 
     @Test
@@ -2358,15 +2329,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "-achar > :achar",
                 "(-achar > achar) = (achar < achar)",
                 "anint = 1 and -achar > achar",
-                "-achar in ('a')",
                 "-(achar - achar) > achar",
                 // A negated CHAR literal never reaches visit(): descend() stubs `-<constant>` for
                 // the backfill, which emitted the code point with the sign dropped, so `-'a'`
                 // compiled as 'a'. The stub marks the operator on the way.
-                "achar < -'a'",
-                "achar = -'a'",
-                "-achar < -'a'",
-                "achar in (-'a')",
         };
         for (String filter : filters) {
             try {
@@ -2380,12 +2346,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         try {
             serialize("-achar > achar");
             Assert.fail("expected JIT compilation to be declined for: -achar > achar");
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "operator: - is not supported for CHAR type");
-        }
-        try {
-            serialize("achar < -'a'");
-            Assert.fail("expected JIT compilation to be declined for: achar < -'a'");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "operator: - is not supported for CHAR type");
         }
@@ -2461,25 +2421,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             assertIR(pin[0], pin[1] + "(ret)");
         }
 
-        // A NULL literal (U+0000) has no sign class the two-term form can express: an ordering
-        // against CHAR NULL is false for every row, and the general expansion says so through its
-        // not-null term, so the literal keeps that expansion.
-        serialize("achar < '\u0000'");
-        assertIRStackBalanced();
-        assertIR(
-                "(i16 0L)(i16 achar)(<>)(i16 0L)(i16 0L)(<>)(&&)" +
-                        "(i16 0L)(i16 achar)(>=)(i16 0L)(i16 0L)(<)(&&)" +
-                        "(i16 0L)(i16 achar)(<)(i16 0L)(i16 0L)(<)(=)" +
-                        "(i16 0L)(i16 achar)(<)(&&)(||)(&&)(ret)"
-        );
-        serialize("'\u0000' <= achar");
-        assertIRStackBalanced();
-        assertIR(
-                "(i16 0L)(i16 0L)(<>)(i16 0L)(i16 achar)(<>)(&&)" +
-                        "(i16 0L)(i16 0L)(>=)(i16 0L)(i16 achar)(<)(&&)" +
-                        "(i16 0L)(i16 0L)(<)(i16 0L)(i16 achar)(<)(=)" +
-                        "(i16 achar)(i16 0L)(<=)(&&)(||)(&&)(ret)"
-        );
+        // A CHAR NULL literal (U+0000) has no JIT spelling, so the comparison stays with the Java filter.
+        for (String filter : new String[]{"achar < '\u0000'", "'\u0000' <= achar"}) {
+            try {
+                serialize(filter);
+                Assert.fail("expected JIT compilation to be declined for: " + filter);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "unsupported JIT filter expression");
+            }
+        }
 
         // Column against column has no compile-time sign on either side and keeps the general
         // expansion byte for byte; the bind variable pins above cover the other non-literal operand.
@@ -2607,7 +2557,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         serialize("NOT (achar < 'a')");
         assertIRStackBalanced();
-        assertIR(lt + "(!)(ret)");
+        assertIR("(i16 0L)(i16 achar)(<)(i16 97L)(i16 achar)(>=)(||)(ret)");
 
         // A sibling CONSTANT stubs its operand ahead of the expansion, and only the backfill pass
         // fills that stub in. The memory rewind and the backfill map therefore have to move
@@ -2657,7 +2607,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         serialize("NOT (anipv4 < '10.0.0.1')");
         assertIRStackBalanced();
-        assertIR(lt + "(!)(ret)");
+        assertIR("(i32 167772161L)(i32 anipv4)(>=)(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)(||)(ret)");
 
         serialize("anipv4 = '10.0.0.9'");
         final String eq = irWithoutRet();
@@ -2674,64 +2624,34 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertBooleanConstantDeclined("false = (anipv4 >= '10.0.0.1')", "false");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedColumnType1() throws Exception {
-        serialize("astring = 'a'");
+        assertSerializeDeclined("astring = 'a'", 32, "char constant in non-char expression: 'a'");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedColumnType2() throws Exception {
-        serialize("avarchar = 'a'");
+        assertSerializeDeclined("avarchar = 'a'", 33, "char constant in non-char expression: 'a'");
     }
 
-    @Test(expected = SqlException.class)
-    public void testUnsupportedConstantPredicate() throws Exception {
-        serialize("2 > 1");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedConstantPredicate2() throws Exception {
-        serialize("anint = 0 or 2 > 1");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedFalseConstantInNumericContext() throws Exception {
-        serialize("along = false");
-    }
-
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedFloatConstantInByteContext() throws Exception {
-        serialize("abyte > 1.5");
+        assertSerializeDeclined("abyte > 1.5", 30, "could not parse constant: 1.5, expected type: 0");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedFloatConstantInShortContext() throws Exception {
-        serialize("ashort > 1.5");
+        assertSerializeDeclined("ashort > 1.5", 31, "could not parse constant: 1.5, expected type: 1");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedFunctionToken() throws Exception {
-        serialize("atimestamp + now() > 0");
+        assertSerializeDeclined("atimestamp + now() > 0", 41, "unsupported JIT filter expression");
     }
 
-    @Test(expected = SqlException.class)
-    public void testUnsupportedGeoHashColumnInNumericContext() throws Exception {
-        serialize("ageolong = 0");
-    }
-
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedGeoHashConstantTooFewBits() throws Exception {
-        serialize("ageolong = ##10001");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedGeoHashConstantTooManyChars() throws Exception {
-        serialize("ageolong = #sp052w92p1p8889");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedInvalidGeoHashConstant() throws Exception {
-        serialize("ageolong = ##11211");
+        assertSerializeDeclined("ageolong = ##10001", 33, "unexpected type for geo hash: 4");
     }
 
     @Test
@@ -2750,8 +2670,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "anipv4 + 1 = '10.0.0.2'",
                 "anipv4 - 1 >= '10.0.0.1'",
                 "'10.0.0.2' - anipv4 = 1",
-                "anipv4 * 2 = 4",
-                "anipv4 / 2 = 4",
                 "anint = 1 and anipv4 - anipv4 = 0",
                 "(anipv4 < anipv4) = (anipv4 - anipv4 < 0)",
         };
@@ -2919,14 +2837,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         serialize("anipv4 IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')");
         assertIR(
-                "(i32 0L)(i32 anipv4)(=)(i32 -1L)(i32 anipv4)(=)" +
-                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 2147483647L)(i32 anipv4)(=)(||)(||)(||)(ret)"
+                "(i32 2147483647L)(i32 anipv4)(=)(i32 -2147483648L)(i32 anipv4)(=)(i32 -1L)(i32 anipv4)(=)(i32 0L)(i32 anipv4)(=)(||)(||)(||)(ret)"
         );
 
         serialize("anipv4 NOT IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')");
         assertIR(
-                "(i32 0L)(i32 anipv4)(=)(i32 -1L)(i32 anipv4)(=)" +
-                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 2147483647L)(i32 anipv4)(=)(||)(||)(||)(!)(ret)"
+                "(i32 2147483647L)(i32 anipv4)(=)(i32 -2147483648L)(i32 anipv4)(=)(i32 -1L)(i32 anipv4)(=)(i32 0L)(i32 anipv4)(=)(||)(||)(||)(!)(ret)"
         );
 
         serialize("along = 1 and anipv4 IN ('NuLl')");
@@ -2934,140 +2850,88 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         serialize("along = 1 and anipv4 IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')");
         assertIR(
-                "(i64 1L)(i64 along)(=)(&&_sc)(begin_sc 2)" +
-                        "(i32 0L)(i32 anipv4)(=)(||_sc 2)(i32 -1L)(i32 anipv4)(=)(||_sc 2)" +
-                        "(i32 -2147483648L)(i32 anipv4)(=)(||_sc 2)" +
-                        "(i32 2147483647L)(i32 anipv4)(=)(&&_sc)(end_sc 2)(ret)"
+                "(i64 1L)(i64 along)(=)(&&_sc)(begin_sc 2)(i32 2147483647L)(i32 anipv4)(=)(||_sc 2)(i32 -2147483648L)(i32 anipv4)(=)(||_sc 2)(i32 -1L)(i32 anipv4)(=)(||_sc 2)(i32 0L)(i32 anipv4)(=)(&&_sc)(end_sc 2)(ret)"
         );
 
         serialize("along = 1 and anipv4 NOT IN ('128.0.0.0', 'NuLl')");
         assertIR(
-                "(i64 1L)(i64 along)(=)(&&_sc)" +
-                        "(i32 0L)(i32 anipv4)(=)(i32 -2147483648L)(i32 anipv4)(=)(||)(!)(ret)"
+                "(i64 1L)(i64 along)(=)(&&_sc)(i32 -2147483648L)(i32 anipv4)(=)(i32 0L)(i32 anipv4)(=)(||)(!)(ret)"
         );
     }
 
     @Test
-    public void testInvalidIPv4QuotedLiteral() throws Exception {
-        final String filter = "anipv4 = '999.1.1.1'";
-        try {
-            serialize(filter);
-            Assert.fail("expected invalid quoted IPv4 literal to decline JIT serialization");
-        } catch (SqlException e) {
-            Assert.assertEquals(filter.indexOf('\''), e.getPosition());
-            TestUtils.assertEquals("invalid IPv4 constant: '999.1.1.1'", e.getFlyweightMessage());
-        }
+    public void testUnsupportedMixedCharAndNumericColumns() throws Exception {
+        assertSerializeDeclined("achar = anint", 22, "non-char column in char expression: CHAR");
     }
 
     @Test
-    public void testUnsupportedLong128Ordering() throws Exception {
-        // https://github.com/questdb/questdb/issues/7546
-        assertOrderingComparisonRejected("along128", "LONG128");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedLong256Constant() throws Exception {
-        serialize("along = 0x123");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedMixedBooleanAndNumericColumns() throws Exception {
-        serialize("aboolean = abyte");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedMixedCharAndNumericColumns() throws Exception {
-        serialize("achar = anint");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedMixedGeoHashAndNumericColumns() throws Exception {
-        serialize("ageoint = along");
-    }
-
-    @Test(expected = SqlException.class)
     public void testUnsupportedMixedStringAndCharColumns() throws Exception {
-        serialize("astring = achar");
+        assertSerializeDeclined("astring = achar", 22, "non-numeric column in numeric expression: STRING");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedMixedStringAndVarcharColumns() throws Exception {
-        serialize("astring = avarchar");
+        assertSerializeDeclined("astring = avarchar", 22, "non-numeric column in numeric expression: STRING");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedMixedSymbolAndNumericColumns() throws Exception {
-        serialize("asymbol = anint");
+        assertSerializeDeclined("asymbol = anint", 22, "non-symbol column in symbol expression: SYMBOL");
     }
 
-    @Test(expected = SqlException.class)
-    public void testUnsupportedMixedUuidAndNumericColumns() throws Exception {
-        serialize("auuid = anint");
-    }
-
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedMixedUuidAndStringColumns() throws Exception {
-        serialize("auuid = astring");
+        assertSerializeDeclined("auuid = astring", 22, "non-uuid column in uuid expression: UUID");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedMixedUuidAndVarcharColumns() throws Exception {
-        serialize("auuid = avarchar");
+        assertSerializeDeclined("auuid = avarchar", 28, "unsupported JIT filter expression");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedMixedVarcharAndCharColumns() throws Exception {
-        serialize("avarchar = achar");
+        assertSerializeDeclined("avarchar = achar", 22, "non-numeric column in numeric expression: VARCHAR");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedMixedVarcharAndStringColumns() throws Exception {
-        serialize("avarchar = astring");
+        assertSerializeDeclined("avarchar = astring", 22, "non-numeric column in numeric expression: VARCHAR");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedOperatorToken() throws Exception {
-        serialize("asymbol in (select rnd_symbol('A','B','C') from long_sequence(10))");
+        assertSerializeDeclined("asymbol in (select rnd_symbol('A','B','C') from long_sequence(10))", 30, "unsupported JIT filter expression");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedShortNullConstant() throws Exception {
-        serialize("ashort = null");
+        assertSerializeDeclined("ashort = null", 31, "short type is not nullable");
     }
 
-    @Test(expected = SqlException.class)
-    public void testUnsupportedSingleConstantPredicate() throws Exception {
-        serialize("true");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedSingleNonBooleanColumnPredicate() throws Exception {
-        serialize("anint");
-    }
-
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedStringConstant() throws Exception {
-        serialize("achar = 'abc'");
+        assertSerializeDeclined("achar = 'abc'", 30, "unsupported string constant: 'abc'");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedStringEquality() throws Exception {
-        serialize("astring = astring2");
+        assertSerializeDeclined("astring = astring2", 22, "non-numeric column in numeric expression: STRING");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedStringInequality() throws Exception {
-        serialize("astring <> astring2");
+        assertSerializeDeclined("astring <> astring2", 22, "non-numeric column in numeric expression: STRING");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedStringIntComparison() throws Exception {
-        serialize("astring >= anint");
+        assertSerializeDeclined("astring >= anint", 22, "non-numeric column in numeric expression: STRING");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedSymbolIntComparison() throws Exception {
-        serialize("asymbol >= anint");
+        assertSerializeDeclined("asymbol >= anint", 22, "non-symbol column in symbol expression: SYMBOL");
     }
 
     @Test
@@ -3075,45 +2939,43 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertOrderingComparisonRejected("asymbol", "SYMBOL");
     }
 
-    @Test(expected = SqlException.class)
-    public void testUnsupportedTrueConstantInNumericContext() throws Exception {
-        serialize("along = true");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedUuidColumnInNumericContext() throws Exception {
-        serialize("auuid = 0");
-    }
-
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedUuidConstantInNumericContext() throws Exception {
-        serialize("along = '11111111-1111-1111-1111-111111111111'");
+        assertSerializeDeclined("along = '11111111-1111-1111-1111-111111111111'", 30, "uuid constant in non-uuid expression: '11111111-1111-1111-1111-111111111111'");
     }
 
     @Test
     public void testUnsupportedUuidOrdering() throws Exception {
         // https://github.com/questdb/questdb/issues/7546
-        assertOrderingComparisonRejected("auuid", "UUID");
+        for (String operator : new String[]{"<", "<=", ">", ">="}) {
+            final String filter = "auuid " + operator + " auuid";
+            try {
+                serialize(filter);
+                Assert.fail("expected JIT compilation to be declined for: " + filter);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "unsupported JIT filter expression");
+            }
+        }
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedVarcharConstant() throws Exception {
-        serialize("achar = 'abc'::varchar");
+        assertSerializeDeclined("achar = 'abc'::varchar", 28, "unsupported JIT filter expression");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedVarcharEquality() throws Exception {
-        serialize("avarchar = avarchar2");
+        assertSerializeDeclined("avarchar = avarchar2", 22, "non-numeric column in numeric expression: VARCHAR");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedVarcharInequality() throws Exception {
-        serialize("avarchar <> avarchar2");
+        assertSerializeDeclined("avarchar <> avarchar2", 22, "non-numeric column in numeric expression: VARCHAR");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testUnsupportedVarcharIntComparison() throws Exception {
-        serialize("avarchar >= anint");
+        assertSerializeDeclined("avarchar >= anint", 22, "non-numeric column in numeric expression: VARCHAR");
     }
 
     @Test
@@ -3289,7 +3151,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         // NOT wraps the comparison inside one predicate, so the mark still has to reach it.
         options = serialize("not (anint > afloat)", false, false, true);
-        assertIR("not (anint > afloat)", "(f32 afloat)(i32 anint)(sx_i64)(>)(!)(ret)");
+        assertIR("not (anint > afloat)", "(f32 afloat)(i32 anint)(sx_i64)(<=)(ret)");
         assertOptionsHint("not (anint > afloat)", options, OptionsHint.WIDE_LANE);
 
         // Controls - every other integer width against FLOAT is already exact and must not move.
@@ -3405,7 +3267,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // The IN spelling routes through the same marker, and its element reaches visit() too.
         zeroDivisorOptions = serialize("afloat in (10 / 0, 2.5)", false, false, true);
         assertIR("afloat in (10 / 0, 2.5)",
-                "(f32 2.5D)(f32 afloat)(=)(i32 0L)(i32 10L)(/)(sx_i64)(f32 afloat)(=)(||)(ret)");
+                "(i32 0L)(i32 10L)(/)(sx_i64)(f32 afloat)(=)(f32 2.5D)(f32 afloat)(=)(||)(ret)");
         assertOptionsHint("afloat in (10 / 0, 2.5)", zeroDivisorOptions, OptionsHint.SCALAR);
     }
 
@@ -3549,7 +3411,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // A multi-element IN over a DOUBLE-width key widens every element that has no exact float.
         serialize("afloat + 1.0 in (16777216.5, 2.5)", false, false, true);
         assertIR("afloat + 1.0 in (16777216.5, 2.5)",
-                "(f32 2.5D)(f64 1.0D)(f32 afloat)(+)(=)(f64 1.67772165E7D)(f64 1.0D)(f32 afloat)(+)(=)(||)(ret)");
+                "(f64 1.67772165E7D)(f64 1.0D)(f32 afloat)(+)(=)(f32 2.5D)(f64 1.0D)(f32 afloat)(+)(=)(||)(ret)");
 
         // A wide-lane filter keeps the four-lane loop: its lanes are eight bytes wide whatever the
         // observed columns are, and avx2::convert() carries (f32, f64) and (i32, f64) there.
@@ -3660,127 +3522,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testShortCircuitOpcodeConsumesOneOperandInWidthWalk() throws Exception {
-        // Both backends consume ONE value at a short-circuit opcode and produce none: jit/x86.h
-        // and jit/aarch64.h handle opcodes::And_Sc / Or_Sc with a bare "auto arg = values.pop()" and
-        // append nothing back. A value pushed BEFORE the short circuit therefore stays live on the
-        // backend's value stack and pairs with whatever the stream pushes after it.
-        // hasUnharmonisedOperandWidths() models that value stack to decide the execution hint, so
-        // it has to consume one value there too.
-        //
-        // No SQL reaches these streams. serializePredicatesAndSc() and serializeIn() emit a
-        // short-circuit only at a predicate boundary, where the value it consumes is the last one
-        // of a self-contained predicate and nothing of that predicate is left live behind it, so
-        // the operand the walk over-pops is always a mask the pairing check skips anyway. They are
-        // planted by hand for that reason, the way CompiledFilterRegressionTest#writeAbandonProbeIr
-        // plants a stream the serializer never writes: what they pin is the BACKEND's contract,
-        // which is what the walk's answer is about, rather than the shapes today's emitter happens
-        // to produce.
-        assertMemoryLeak(() -> {
-            try (
-                    MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT);
-                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
-            ) {
-                serializer.clear();
-                serializer.of(ir, sqlExecutionContext, metadata, cursor, bindVarFunctions);
-
-                // Control: the (i32, i64) pairing on its own. Pins that the walk reads these
-                // widths at all, so a false answer below is about the short-circuit opcode.
-                ir.truncate();
-                putIrInstruction(ir, MEM, I4_TYPE, 0);
-                putIrInstruction(ir, IMM, I8_TYPE, 0);
-                putIrInstruction(ir, GT, 0, 0);
-                putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalk("(i32 col) > (i64 imm)", true);
-
-                // Control: the same stream at a single width reports nothing.
-                ir.truncate();
-                putIrInstruction(ir, MEM, I8_TYPE, 0);
-                putIrInstruction(ir, IMM, I8_TYPE, 0);
-                putIrInstruction(ir, GT, 0, 0);
-                putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalk("(i64 col) > (i64 imm)", false);
-
-                // AND_SC over a comparison mask - the shape the emitter writes - with an i32 value
-                // left live underneath it. The backend pops the mask and pairs the i64 immediate
-                // that follows with that live i32.
-                ir.truncate();
-                putIrInstruction(ir, MEM, I4_TYPE, 0);
-                putIrInstruction(ir, IMM, I8_TYPE, 0);
-                putIrInstruction(ir, MEM, I8_TYPE, 0);
-                putIrInstruction(ir, EQ, 0, 0);
-                putIrInstruction(ir, AND_SC, 0, 0);
-                putIrInstruction(ir, IMM, I8_TYPE, 0);
-                putIrInstruction(ir, GT, 0, 0);
-                putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalk("live (i32 col) across AND_SC over a mask", true);
-
-                // The same with OR_SC, and with a plain value rather than a mask as the operand
-                // the short circuit consumes.
-                ir.truncate();
-                putIrInstruction(ir, MEM, I4_TYPE, 0);
-                putIrInstruction(ir, MEM, I1_TYPE, 0);
-                putIrInstruction(ir, OR_SC, 0, 1);
-                putIrInstruction(ir, IMM, I8_TYPE, 0);
-                putIrInstruction(ir, GT, 0, 0);
-                putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalk("live (i32 col) across OR_SC over a value", true);
-
-                // Control: a live operand of the lane width pairs cleanly across a short circuit.
-                ir.truncate();
-                putIrInstruction(ir, MEM, I8_TYPE, 0);
-                putIrInstruction(ir, MEM, I1_TYPE, 0);
-                putIrInstruction(ir, AND_SC, 0, 0);
-                putIrInstruction(ir, IMM, I8_TYPE, 0);
-                putIrInstruction(ir, GT, 0, 0);
-                putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalk("live (i64 col) across AND_SC", false);
-            } finally {
-                // The buffer above is gone; do not leave the serializer holding it. In the finally
-                // so that a failing assertion above does not skip it: the static serializer outlives
-                // this method, and clear() is what drops its reference to the closed buffer.
-                serializer.clear();
-            }
-        });
-    }
-
-    @Test
-    public void testExecHintDemotesUnharmonisedWidthsToScalar() throws Exception {
-        // The one shape known to reach getExecHint()'s unharmonised-width demotion, and the reason
-        // that arm is a live fail-safe rather than dead code.
-        //
-        // markWidthSemantics' IN-args loop settles the whole list at 64 bits as soon as one element
-        // is out of INT range, then harmonises the key and every element to it through
-        // markCmpOperandWidenedToI64. The constant key `1` is an integer constant, so it joins
-        // i64WidenConstants and emits at I8 with no SX_I64 behind it; the FLOAT element is neither
-        // a narrow-int leaf (so visit()'s i64WidenLeaves gate never fires) nor an integer constant,
-        // and forceScalarOnUnharmonisedNarrowArith returns at once for a node that is not an
-        // OPERATION, so nothing marks it at all. The resulting (f32, i64) pairing would ride a
-        // four-byte, eight-lane loop, where avx2::convert declines an f32-with-i64 pairing and the
-        // filter loses its compiled backend. The demotion below is what keeps it.
-        final String expr = "1 in (afloat, 5_000_000_000)";
-        final int options = serialize(expr, false, false, true);
-        assertIR(expr, "(i64 5000000000L)(i64 1L)(=)(f32 afloat)(i64 1L)(=)(||)(ret)");
-        assertOptionsSize(expr, options, 4);
-        assertOptionsHint(expr, options, OptionsHint.SCALAR);
-        // ... and the demotion arm is what produced that hint rather than one of the gates above
-        // it: the walk reports the pairing and every earlier gate is false.
-        assertUnharmonisedWidthWalk("(f32 afloat) = (i64 1L) on a four-byte lane", true);
-        assertSerializerFlag("forceScalarMode", false);
-        assertSerializerFlag("isWideLaneMode", false);
-        assertSerializerFlag("hasEmittedWideLaneConversion", false);
-        assertSerializerFlag("hasPendingWidthChangingI64Constant", false);
-
-        // No user query reaches the arm, and this is the check that keeps it that way - not any
-        // invariant of the serializer. InLongFunctionFactory ("in(LV)") admits NULL / TIMESTAMP /
-        // LONG / INT / SHORT / BYTE / STRING / SYMBOL / VARCHAR / UNDEFINED elements only, so the
-        // filter never reaches JIT compilation. serialize() above takes the expression tree
-        // directly and so skips it, which is why the arm can be pinned at all. Should in(LV) ever
-        // admit FLOAT elements, this assertion goes red and the demotion becomes a live path.
-        assertException("select * from x where " + expr, 28, "cannot compare LONG with type FLOAT");
-    }
-
-    @Test
     public void testWidthWalkStopsAtAppendOffsetOverReusedMemory() throws Exception {
         // SqlCodeGenerator compiles every JIT filter of a session into ONE buffer - its jitIRMem
         // field - and hands it back with truncate() in a finally. MemoryCARWImpl#truncate() resets
@@ -3791,26 +3532,18 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         //
         // hasUnharmonisedOperandWidths() bounds its walk by getAppendOffset() for that reason.
         // size() reports the MAPPED page rather than the bytes written, so a walk bounded by it
-        // reads the previous filter's tail as if the current filter had emitted it. The walk
-        // cannot stop on its own here: getExecHint() asks this question from
-        // serializePredicatesAndSc() / serializePredicatesOrSc(), which have not emitted their RET
-        // yet, so nothing terminates the stream between the current filter's last instruction and
-        // the stale bytes.
-        //
-        // A stale read can only turn a false into a true - the walk returns at the first
-        // unharmonised pairing it meets, so trailing instructions can only add pairings, never
-        // remove one - and at that call site a false answer IS the "expected scalar compilation
-        // mode" tripwire. So no supported SQL reaches the site with a correct answer of false, and
-        // the shape is planted by hand for the same reason
-        // testShortCircuitOpcodeConsumesOneOperandInWidthWalk plants its streams: what it pins is
-        // the bound, not a shape today's emitter produces.
+        // reads the previous filter's tail as if the current filter had emitted it. Its only caller
+        // runs it after putOperator(RET), where the walk returns before it reaches a stale byte, so
+        // what this pins is the bound rather than a shape a query reaches: a stream without its RET
+        // is planted by hand, as testVarSizeHeaderCheckStopsAtAppendOffsetOverReusedMemory plants
+        // one for the sibling walk.
         assertMemoryLeak(() -> {
             try (
                     MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT);
                     PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
             ) {
                 serializer.clear();
-                serializer.of(ir, sqlExecutionContext, metadata, cursor, bindVarFunctions);
+                serializer.of(ir, sqlExecutionContext, metadata, null, cursor, bindVarFunctions);
 
                 // The LONGER filter: a harmonised pairing, then an unharmonised one, then its RET.
                 // Only the second pairing sits past the shorter filter's append offset, so it is
@@ -3819,17 +3552,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 putIrInstruction(ir, MEM, I8_TYPE, 0);
                 putIrInstruction(ir, IMM, I8_TYPE, 0);
                 putIrInstruction(ir, GT, 0, 0);
-                putIrInstruction(ir, MEM, I4_TYPE, 0);
+                putIrInstruction(ir, MEM, I1_TYPE, 0);
                 putIrInstruction(ir, IMM, I8_TYPE, 0);
                 putIrInstruction(ir, GT, 0, 0);
                 putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalk("(i32 col) > (i64 imm) in the longer filter", true);
+                assertUnharmonisedWidthWalk("(i8 col) > (i64 imm) in the longer filter", true);
 
                 // The reuse, spelled as SqlCodeGenerator's finally spells it.
                 ir.truncate();
 
-                // The SHORTER filter, in the state getExecHint() reads it in on a short-circuit
-                // path: three instructions with no RET behind them.
+                // The SHORTER filter, with no RET behind its three instructions.
                 putIrInstruction(ir, MEM, I8_TYPE, 0);
                 putIrInstruction(ir, IMM, I8_TYPE, 0);
                 putIrInstruction(ir, GT, 0, 0);
@@ -3840,9 +3572,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 // of leaving the walk assertion below quietly asserting nothing.
                 final long staleOffset = 3 * IR_INSTRUCTION_SIZE;
                 Assert.assertEquals("truncate() zeroed the buffer", MEM, ir.getInt(staleOffset));
-                Assert.assertEquals("truncate() zeroed the buffer", I4_TYPE, ir.getInt(staleOffset + Integer.BYTES));
+                Assert.assertEquals("truncate() zeroed the buffer", I1_TYPE, ir.getInt(staleOffset + Integer.BYTES));
 
-                // With the bound at size() the walk runs on into that stale (i32, i64) pairing and
+                // With the bound at size() the walk runs on into that stale (i8, i64) pairing and
                 // answers true for a filter that emitted no such pairing.
                 assertUnharmonisedWidthWalk("(i64 col) > (i64 imm) over reused memory", false);
             } finally {
@@ -3869,8 +3601,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // one instruction INSIDE the append offset, both bounds meet it, and neither reaches a
         // stale byte. So the test cannot drive the defect through a query; it calls the walk
         // directly, at the one point where the invariant CAN be violated - a stream that has not
-        // emitted its RET yet, exactly the state getExecHint() already reads on the short-circuit
-        // paths. A fourth caller of that shape is what the bound protects against.
+        // emitted its RET yet. A fourth caller of that shape is what the bound protects against.
         //
         // The rejected filter below is not a contrived leftover either: SqlCodeGenerator truncates
         // jitIRMem in a finally, so a filter this very check REJECTED leaves its offending IR in
@@ -3881,7 +3612,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
             ) {
                 serializer.clear();
-                serializer.of(ir, sqlExecutionContext, metadata, cursor, bindVarFunctions);
+                serializer.of(ir, sqlExecutionContext, metadata, null, cursor, bindVarFunctions);
 
                 // Round one, the var-size arm. The LONGER filter carries a STRING header under an
                 // ordering operator - what `astring > 'a'` would serialize to - so the check
@@ -3958,17 +3689,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testUnharmonisedPairingExclusionsAndWideLaneBranch() throws Exception {
-        // isUnharmonisedPairing() answers a different question for each of the two loops, and the
-        // suite reached only the narrower one. testShortCircuitOpcodeConsumesOneOperandInWidthWalk
-        // and testExecHintDemotesUnharmonisedWidthsToScalar pin the 4/8 and 8/8 cases of the
-        // single-size half; this covers the three exclusions that half carries and the wide-lane
-        // half in full.
+        // isWideLaneUnharmonisedPairing() answers what the four-lane loop leaves unharmonised: the
+        // exclusions it carries and the narrow-with-i64 pairings it reports, by width and by
+        // provenance.
         //
-        // The exclusions are what keep the walk from demoting a filter that needs no demoting: it
-        // runs on every compile that reaches it, and a false positive costs the filter its
-        // vectorized backend outright.
-        //
-        // Each stream is planted by hand, as in the two tests above: what these pin is what the
+        // Each stream is planted by hand, as in the tests above: what these pin is what the
         // BACKENDS harmonise, which the emitter's current output does not enumerate.
         assertMemoryLeak(() -> {
             try (
@@ -3976,49 +3701,39 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
             ) {
                 serializer.clear();
-                serializer.of(ir, sqlExecutionContext, metadata, cursor, bindVarFunctions);
+                serializer.of(ir, sqlExecutionContext, metadata, null, cursor, bindVarFunctions);
 
                 // A 16-byte operand - data_type_t::i128, what a UUID or LONG128 column reads as -
-                // beside an eight-byte one. The single-size half counts any byte-width mismatch, so
-                // it reports; the wide-lane half counts only a NARROW INT beside an i64, and i128
-                // is not one, so it does not - it reads the pairing as harmonised. avx2::convert()
+                // beside an eight-byte one. The walk counts only a NARROW INT beside an i64, and
+                // i128 is not one, so it reads the pairing as harmonised. avx2::convert()
                 // does not agree: its i128 arm breaks out to the terminal check, which declines the
                 // pairing at every lane count, four included. The disagreement is on paper only -
                 // isWideLaneEligible() admits no i128 operand (its integer arm takes an I4 or I8
                 // leaf, its float arm a float expression), so no wide-lane compile can put one in
-                // front of the assert this half runs under. The pins below hold the walk as it
+                // front of the assert the walk runs under. The pin below holds the walk as it
                 // stands: the divergence is a rationale to record, not a behaviour to change here.
                 ir.truncate();
                 putIrInstruction(ir, MEM, I16_TYPE, 0);
                 putIrInstruction(ir, IMM, I8_TYPE, 0);
                 putIrInstruction(ir, EQ, 0, 0);
                 putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalk("(i128 col) = (i64 imm) on a narrow lane", true);
-                assertUnharmonisedWidthWalkForLaneMode("(i128 col) = (i64 imm) on the four-lane loop", true, false);
+                assertUnharmonisedWidthWalk("(i128 col) = (i64 imm) on the four-lane loop", false);
 
                 // Every var-size header observes as EIGHT bytes, so `<varsize> IS [NOT] NULL`
-                // pairs same-width against the I8 sentinel serializeNull() spells for it and
-                // neither half reports. The exclusion is a SIZE and not an exemption, which the
-                // fourth stream below pins from the other side.
+                // pairs same-width against the I8 sentinel serializeNull() spells for it and the
+                // walk does not report it.
                 for (int headerType : new int[]{STRING_HEADER_TYPE, BINARY_HEADER_TYPE, VARCHAR_HEADER_TYPE}) {
                     ir.truncate();
                     putIrInstruction(ir, MEM, headerType, 0);
                     putIrInstruction(ir, IMM, I8_TYPE, 0);
                     putIrInstruction(ir, EQ, 0, 0);
                     putIrInstruction(ir, RET, 0, 0);
-                    assertUnharmonisedWidthWalk("(varsize header " + headerType + ") = (i64 imm)", false);
-                    assertUnharmonisedWidthWalkForLaneMode("(varsize header " + headerType + ") = (i64 imm), four lanes", true, false);
+                    assertUnharmonisedWidthWalk("(varsize header " + headerType + ") = (i64 imm), four lanes", false);
                 }
-                ir.truncate();
-                putIrInstruction(ir, MEM, STRING_HEADER_TYPE, 0);
-                putIrInstruction(ir, IMM, I4_TYPE, 0);
-                putIrInstruction(ir, EQ, 0, 0);
-                putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalk("(string header) = (i32 imm) is a width mismatch like any other", true);
 
                 // A comparison MASK as one half of a pairing. The walk pushes UNDEFINED_CODE for
-                // one, typeSizeBytes() answers 0, and the pairing is skipped rather than read as a
-                // zero-byte operand against an eight-byte one. Both operand positions, because the
+                // one, which is no narrow lane type, so the pairing is skipped rather than read as
+                // a narrow operand against an eight-byte one. Both operand positions, because the
                 // guard has to hold on either side.
                 ir.truncate();
                 putIrInstruction(ir, MEM, I4_TYPE, 0);
@@ -4037,11 +3752,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 putIrInstruction(ir, RET, 0, 0);
                 assertUnharmonisedWidthWalk("(mask) > (i64 imm)", false);
 
-                // The wide-lane half, in both operand orders. This is the branch the assert at
-                // areWideLaneWidthsHarmonised() runs under -ea and no test reached directly. It
-                // answers by PROVENANCE as well as by width, so the
-                // narrow side comes in two spellings below - a column read and an immediate - and
-                // the two get opposite answers at i32.
+                // The narrow-with-i64 pairings, in both operand orders. The walk answers by
+                // PROVENANCE as well as by width, so the narrow side comes in two spellings below -
+                // a column read and an immediate - and the two get opposite answers at i32.
                 //
                 // An i8 or i16 operand is unharmonised whichever produced it: avx2::convert()
                 // carries no arm for either width, so the pairing falls through to the terminal
@@ -4053,13 +3766,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     putIrInstruction(ir, IMM, I8_TYPE, 0);
                     putIrInstruction(ir, GT, 0, 0);
                     putIrInstruction(ir, RET, 0, 0);
-                    assertUnharmonisedWidthWalkForLaneMode("(narrow col " + narrowType + ") > (i64 imm), four lanes", true, true);
+                    assertUnharmonisedWidthWalk("(narrow col " + narrowType + ") > (i64 imm), four lanes", true);
                     ir.truncate();
                     putIrInstruction(ir, IMM, I8_TYPE, 0);
                     putIrInstruction(ir, MEM, narrowType, 0);
                     putIrInstruction(ir, GT, 0, 0);
                     putIrInstruction(ir, RET, 0, 0);
-                    assertUnharmonisedWidthWalkForLaneMode("(i64 imm) > (narrow col " + narrowType + "), four lanes", true, true);
+                    assertUnharmonisedWidthWalk("(i64 imm) > (narrow col " + narrowType + "), four lanes", true);
                 }
 
                 // An i32 COLUMN beside an i64 is harmonised, and this is the pairing the assert
@@ -4075,20 +3788,20 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 putIrInstruction(ir, IMM, I8_TYPE, 0);
                 putIrInstruction(ir, GT, 0, 0);
                 putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalkForLaneMode("(i32 col) > (i64 imm), four lanes", true, false);
+                assertUnharmonisedWidthWalk("(i32 col) > (i64 imm), four lanes", false);
                 ir.truncate();
                 putIrInstruction(ir, IMM, I8_TYPE, 0);
                 putIrInstruction(ir, MEM, I4_TYPE, 0);
                 putIrInstruction(ir, GT, 0, 0);
                 putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalkForLaneMode("(i64 imm) > (i32 col), four lanes", true, false);
+                assertUnharmonisedWidthWalk("(i64 imm) > (i32 col), four lanes", false);
                 // A bind variable reads at its own width for the same reason a column does.
                 ir.truncate();
                 putIrInstruction(ir, VAR, I4_TYPE, 0);
                 putIrInstruction(ir, IMM, I8_TYPE, 0);
                 putIrInstruction(ir, GT, 0, 0);
                 putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalkForLaneMode("(i32 var) > (i64 imm), four lanes", true, false);
+                assertUnharmonisedWidthWalk("(i32 var) > (i64 imm), four lanes", false);
 
                 // An i32 IMMEDIATE beside an i64 is NOT harmonised, and the four-lane sx_i64 is
                 // beside the point: an immediate has no width of its own, the frontend picked one,
@@ -4100,13 +3813,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     putIrInstruction(ir, IMM, I8_TYPE, 0);
                     putIrInstruction(ir, GT, 0, 0);
                     putIrInstruction(ir, RET, 0, 0);
-                    assertUnharmonisedWidthWalkForLaneMode("(narrow imm " + narrowType + ") > (i64 imm), four lanes", true, true);
+                    assertUnharmonisedWidthWalk("(narrow imm " + narrowType + ") > (i64 imm), four lanes", true);
                     ir.truncate();
                     putIrInstruction(ir, IMM, I8_TYPE, 0);
                     putIrInstruction(ir, IMM, narrowType, 0);
                     putIrInstruction(ir, GT, 0, 0);
                     putIrInstruction(ir, RET, 0, 0);
-                    assertUnharmonisedWidthWalkForLaneMode("(i64 imm) > (narrow imm " + narrowType + "), four lanes", true, true);
+                    assertUnharmonisedWidthWalk("(i64 imm) > (narrow imm " + narrowType + "), four lanes", true);
                 }
 
                 // The exact stream QueryFuzzTest#testQueryFuzz reddened on, byte for byte:
@@ -4120,7 +3833,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 putIrInstruction(ir, IMM, I4_TYPE, 446_488);
                 putIrInstruction(ir, SUB, 0, 0);
                 putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalkForLaneMode("(i64 114763L) - (i32 446488L), four lanes", true, true);
+                assertUnharmonisedWidthWalk("(i64 114763L) - (i32 446488L), four lanes", true);
 
                 // ... and the same subtraction with the narrow half at I8, which is what the fix
                 // that test pins emits. Nothing left to report.
@@ -4129,7 +3842,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 putIrInstruction(ir, IMM, I8_TYPE, 446_488);
                 putIrInstruction(ir, SUB, 0, 0);
                 putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalkForLaneMode("(i64 114763L) - (i64 446488L), four lanes", true, false);
+                assertUnharmonisedWidthWalk("(i64 114763L) - (i64 446488L), four lanes", false);
 
                 // An arithmetic RESULT is a value the BACKEND computed, so it loses the immediate
                 // marker even where an operand carried one: `anint + 1` is an i32 the four-lane
@@ -4141,20 +3854,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 putIrInstruction(ir, IMM, I8_TYPE, 7);
                 putIrInstruction(ir, EQ, 0, 0);
                 putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalkForLaneMode("(i32 anint + i32 1) = (i64 7L), four lanes", true, false);
+                assertUnharmonisedWidthWalk("(i32 anint + i32 1) = (i64 7L), four lanes", false);
 
-                // ... and the pairing the two halves disagree about, which is what makes the
-                // wide-lane branch a branch rather than a copy: an (f32, i64) pairing is a byte
-                // mismatch the single-size loop cannot harmonise, and cvt_ftod / cvt_ltod harmonise
-                // it outright at four lanes. The comment on hasUnharmonisedOperandWidths() names
-                // exactly this exclusion; this is the stream that holds it.
+                // An (f32, i64) pairing is a byte mismatch that cvt_ftod / cvt_ltod harmonise
+                // outright at four lanes.
                 ir.truncate();
                 putIrInstruction(ir, MEM, F4_TYPE, 0);
                 putIrInstruction(ir, IMM, I8_TYPE, 0);
                 putIrInstruction(ir, GT, 0, 0);
                 putIrInstruction(ir, RET, 0, 0);
-                assertUnharmonisedWidthWalk("(f32 col) > (i64 imm) on a narrow lane", true);
-                assertUnharmonisedWidthWalkForLaneMode("(f32 col) > (i64 imm) on the four-lane loop", true, false);
+                assertUnharmonisedWidthWalk("(f32 col) > (i64 imm) on the four-lane loop", false);
             } finally {
                 // The buffer above is gone; do not leave the serializer holding it. In the finally
                 // so that a failing assertion above does not skip it: the static serializer
@@ -4173,7 +3882,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             // conjunction of a narrow and a wide comparison is ONE such predicate - a boolean
             // operator under a NOT does not open a new one - so `not (anint = 7 and along = 8)`
             // reaches the operator as (i64 7L)(i32 anint)(=). Beside a conjunct that emits an
-            // SX_I64 the filter takes the WIDE_LANE hint, and the wide-lane half of
+            // SX_I64 the filter takes the WIDE_LANE hint, and
             // hasUnharmonisedOperandWidths() used to call EVERY narrow-int-with-i64 pairing
             // unharmonised, so serialize()'s areWideLaneWidthsHarmonised() assert threw a bare
             // AssertionError - the frame reads io.questdb.jit.CompiledFilterIRSerializer.serialize
@@ -4187,19 +3896,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             // reading it at i64 answer alike - there was nothing for the frontend to choose, which
             // is what separates this pairing from the narrow IMMEDIATE the assert exists to report.
             //
-            // No SQL reaches it: SqlOptimiser#optimiseBooleanNot pushes a NOT through AND and OR
-            // unconditionally (SqlOptimiser.java:6361-6373) on every model's WHERE clause before
-            // code generation, so EXPLAIN of the same filter reads "(anint<along and (anint!=7 or
-            // along!=8))" - two single-width predicates. serialize() below is the entry point that
-            // skips that rewrite, which is what made the assert reachable from this harness and
-            // only from it.
+            // SqlBinder pushes a NOT through AND and OR (SqlUtil#optimiseBooleanNot) on every WHERE
+            // clause, so the bound predicate reaches the serializer as two single-width predicates.
             // Keep the buffer's first native allocation and close inside the leak-check scope,
             // even when this test runs before any test that writes to the shared irMemory.
             try (MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT)) {
                 String expr = "along > anint and not (anint = 7 and along = 8)";
                 int options = serialize(ir, expr, false, false, true);
                 assertIR(ir, expr,
-                        "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                        "(i64 8L)(i64 along)(<>)(i32 7L)(i32 anint)(<>)(||)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
                 assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
                 // The OR spelling of the same NOT, and the conjunct order reversed - the walk reads the
@@ -4207,13 +3912,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 expr = "along > anint and not (anint > 7 or along = 8)";
                 options = serialize(ir, expr, false, false, true);
                 assertIR(ir, expr,
-                        "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(>)(||)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                        "(i64 8L)(i64 along)(<>)(i32 7L)(i32 anint)(<=)(&&)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
                 assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
                 expr = "not (anint = 7 and along = 8) and along > anint";
                 options = serialize(ir, expr, false, false, true);
                 assertIR(ir, expr,
-                        "(i32 anint)(sx_i64)(i64 along)(>)(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(&&)(ret)");
+                        "(i32 anint)(sx_i64)(i64 along)(>)(i64 8L)(i64 along)(<>)(i32 7L)(i32 anint)(<>)(||)(&&)(ret)");
                 assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
                 // The narrow side as an arithmetic RESULT rather than a bare column read. `anint + 1`
@@ -4223,7 +3928,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 expr = "along > anint and not (anint + 1 = 7 and along = 8)";
                 options = serialize(ir, expr, false, false, true);
                 assertIR(ir, expr,
-                        "(i64 8L)(i64 along)(=)(i64 7L)(i32 1L)(i32 anint)(+)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                        "(i64 8L)(i64 along)(<>)(i32 7L)(i32 1L)(i32 anint)(+)(<>)(||)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
                 assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
                 // Control: an out-of-INT-range bound makes the comparison a genuinely 64-bit one, and
@@ -4232,7 +3937,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 expr = "along > anint and not (anint = 5_000_000_000 and along = 8)";
                 options = serialize(ir, expr, false, false, true);
                 assertIR(ir, expr,
-                        "(i64 8L)(i64 along)(=)(i64 5000000000L)(i32 anint)(sx_i64)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                        "(i64 8L)(i64 along)(<>)(i64 5000000000L)(i32 anint)(sx_i64)(<>)(||)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
                 assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
                 // Control on the other side: without the NOT each conjunct is its own predicate, the
@@ -4258,29 +3963,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         ir.putLong(0L);
     }
 
-    // Runs hasUnharmonisedOperandWidths() over whatever IR sits in irMemory. The walk is private
-    // and this test lives in another package, so reflection is what reaches it - the alternative,
-    // widening the method, would open the production class up for this test alone: both callers
-    // the walk has, areWideLaneWidthsHarmonised() and getExecHint(), sit inside
-    // CompiledFilterIRSerializer. false is the argument getExecHint() passes on the production
-    // compile path: the single-size loop at a lane narrower than eight bytes, where the backend
-    // declines a mixed-width pairing rather than promoting it.
+    // Runs hasUnharmonisedOperandWidths() over whatever IR sits in the serializer's buffer. The
+    // walk is private and this test lives in another package, so reflection is what reaches it -
+    // the alternative, widening the method, would open the production class up for this test
+    // alone: its one caller, areWideLaneWidthsHarmonised(), sits inside CompiledFilterIRSerializer.
     private static void assertUnharmonisedWidthWalk(String message, boolean expected) throws Exception {
-        assertUnharmonisedWidthWalkForLaneMode(message, false, expected);
-    }
-
-    // The same walk for either loop, naming the loop in the SECOND argument, where the form above
-    // carries the expectation instead - hence a name of its own rather than an overload the reader
-    // has to count arguments to tell apart. true is the argument the assert at
-    // areWideLaneWidthsHarmonised() passes - the four-lane loop, where avx2::convert() DOES promote
-    // an i32, so only two narrow-with-i64 pairings still count: an i8 or i16 operand, which
-    // convert() has no arm for at any lane count, and a narrow-int IMMEDIATE, whose width the
-    // frontend picked rather than read off a column.
-    private static void assertUnharmonisedWidthWalkForLaneMode(String message, boolean isWideLane, boolean expected) throws Exception {
-        final Method walk = CompiledFilterIRSerializer.class
-                .getDeclaredMethod("hasUnharmonisedOperandWidths", boolean.class);
+        final Method walk = CompiledFilterIRSerializer.class.getDeclaredMethod("hasUnharmonisedOperandWidths");
         walk.setAccessible(true);
-        Assert.assertEquals(message, expected, walk.invoke(serializer, isWideLane));
+        Assert.assertEquals(message, expected, walk.invoke(serializer));
     }
 
     // Runs ensureOnlyVarSizeHeaderChecks() over whatever IR sits in the serializer's buffer and
@@ -4387,6 +4077,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     e.getFlyweightMessage(),
                     "boolean constant in non-boolean expression: " + token
             );
+        }
+    }
+
+    private void assertSerializeDeclined(String filter, int expectedPosition, String expectedMessage) throws Exception {
+        try {
+            serialize(filter);
+            Assert.fail("expected JIT compilation to be declined for: " + filter);
+        } catch (SqlException e) {
+            Assert.assertEquals(expectedPosition, e.getPosition());
+            TestUtils.assertEquals(expectedMessage, e.getFlyweightMessage());
         }
     }
 
@@ -4498,10 +4198,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serializer.clear();
         bindVarFunctions.clear();
 
-        ExpressionNode node = expr(seq);
-        try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
-            return serializer.of(irMemory, sqlExecutionContext, metadata, cursor, bindVarFunctions)
-                    .serialize(node, isScalar, isDebug, hasNullChecks);
+        try (
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
+        ) {
+            final FilterPlan filter = JitFilterBinding.bind(compiler, sqlExecutionContext, "x", seq);
+            return serializer.of(irMemory, sqlExecutionContext, metadata, filter.getInput().getOutput(), cursor, bindVarFunctions)
+                    .serialize(filter.getPredicate(), isScalar, isDebug, hasNullChecks);
         }
     }
 

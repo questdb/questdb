@@ -86,9 +86,26 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         this.partitionBy = partitionBy;
     }
 
+    /**
+     * Whether a model with these intervals reads at most one partition; a model with dynamic intervals never claims it.
+     */
+    public static boolean allIntervalsHitOnePartition(TimestampDriver timestampDriver, int partitionBy, LongList intervals, boolean isStatic) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return true;
+        }
+        if (!isStatic) {
+            return false;
+        }
+        if (intervals.size() == 0) {
+            return true;
+        }
+        final TimestampDriver.TimestampFloorMethod floorMethod = timestampDriver.getPartitionFloorMethod(partitionBy);
+        return floorMethod.floor(intervals.getQuick(0)) == floorMethod.floor(intervals.getLast());
+    }
+
     @Override
     public boolean allIntervalsHitOnePartition() {
-        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(timestampDriver.getPartitionFloorMethod(partitionBy));
+        return allIntervalsHitOnePartition(timestampDriver, partitionBy, intervals, isStatic());
     }
 
     @Override
@@ -158,20 +175,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             }
         }
         return false;
-    }
-
-    @Override
-    public boolean isStableWithinExecution() {
-        if (isStatic()) {
-            return true;
-        }
-        for (int i = 0, n = dynamicRangeList.size(); i < n; i++) {
-            final Function function = dynamicRangeList.getQuick(i);
-            if (function != null && !function.isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return true;
     }
 
     @Override
@@ -306,10 +309,13 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     final int functionType = dynamicFunction.getType();
 
                     if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
-                        long dynamicValue = getTimestamp(dynamicFunction, functionType, sqlExecutionContext, cursorFunctionIndex);
+                        final int valueType = getTimestampType(dynamicFunction, functionType);
+                        final long dynamicValue = getTimestamp(dynamicFunction, functionType, valueType, sqlExecutionContext, cursorFunctionIndex);
                         if (functionType == ColumnType.CURSOR) {
                             cursorFunctionIndex++;
                         }
+                        final long ceil = timestampDriver.ceilFrom(dynamicValue, valueType);
+                        final long floor = timestampDriver.floorFrom(dynamicValue, valueType);
                         long dynamicValue2 = 0;
                         if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
                             // Both ends of BETWEEN are dynamic and different values. Take the next dynamic point.
@@ -318,26 +324,28 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                             dynamicIndex++;
                             dynamicFunction.init(null, sqlExecutionContext);
                             final int functionType2 = dynamicFunction.getType();
-                            dynamicValue2 = hi = getTimestamp(
-                                    dynamicFunction,
-                                    functionType2,
-                                    sqlExecutionContext,
-                                    cursorFunctionIndex
-                            );
+                            final int valueType2 = getTimestampType(dynamicFunction, functionType2);
+                            dynamicValue2 = getTimestamp(dynamicFunction, functionType2, valueType2, sqlExecutionContext, cursorFunctionIndex);
                             if (functionType2 == ColumnType.CURSOR) {
                                 cursorFunctionIndex++;
                             }
-                            lo = dynamicValue;
+                            lo = Math.min(ceil, timestampDriver.ceilFrom(dynamicValue2, valueType2));
+                            hi = Math.max(floor, timestampDriver.floorFrom(dynamicValue2, valueType2));
+                        } else if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {
+                            // The static end of BETWEEN sits in lo and hi, rounded up and down; the dynamic
+                            // end may lie on either side of it.
+                            lo = Math.min(lo, ceil);
+                            hi = Math.max(hi, floor);
                         } else {
                             if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
-                                hi = dynamicValue + adjustment;
+                                hi = (adjustment < 0 ? ceil : floor) + adjustment;
                             }
                             if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
-                                lo = dynamicValue + adjustment;
+                                lo = (adjustment > 0 ? floor : ceil) + adjustment;
                             }
                         }
 
-                        if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
+                        if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL || lo > hi) {
                             // functions evaluated to null
                             if (operation == IntervalOperation.UNION) {
                                 // A NULL/empty bound under UNION is the empty-set identity: it
@@ -365,7 +373,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                             }
                         }
 
-                        if (adjustment > 0 && dynamicValue == Long.MAX_VALUE) {
+                        if (adjustment > 0 && floor == Long.MAX_VALUE) {
                             // a strict bound just past the timestamp domain matches nothing;
                             // the adjustment would wrap around to Long.MIN_VALUE and select every row
                             if (!negated) {
@@ -375,12 +383,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                                 negatedNothing(outIntervals, divider, firstFuncApplied);
                                 continue;
                             }
-                        }
-
-                        if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {
-                            long tempHi = Math.max(hi, lo);
-                            lo = Math.min(hi, lo);
-                            hi = tempHi;
                         }
 
                         // Apply day filter if specified
@@ -464,17 +466,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private boolean allIntervalsHitOnePartition(TimestampDriver.TimestampFloorMethod floorMethod) {
-        if (!isStatic()) {
-            return false;
-        }
-        if (intervals.size() == 0) {
-            return true;
-        }
-
-        return floorMethod.floor(intervals.getQuick(0)) == floorMethod.floor(intervals.getLast());
-    }
-
     private void applyInterval(LongList outIntervals, Interval interval) {
         IntervalUtils.encodeInterval(interval, IntervalOperation.INTERSECT, outIntervals);
         IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
@@ -489,6 +480,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private long getTimestamp(
             Function dynamicFunction,
             int functionType,
+            int valueType,
             SqlExecutionContext sqlExecutionContext,
             int cursorFunctionIndex
     ) throws SqlException {
@@ -496,7 +488,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             final CharSequence value = dynamicFunction.getStrA(null);
             if (value != null) {
                 try {
-                    return timestampDriver.parseFloorLiteral(value);
+                    return ColumnType.getTimestampDriver(valueType).parseFloorLiteral(value);
                 } catch (NumericException e) {
                     return Numbers.LONG_NULL;
                 }
@@ -506,20 +498,28 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             // special case for ts = (<subquery>) and similar cases
             final RecordCursorFactory factory = dynamicFunction.getRecordCursorFactory();
             assert factory != null;
-            final long value = ScalarSubQueryUtils.readTimestamp(
+            return ScalarSubQueryUtils.readTimestamp(
                     factory,
                     sqlExecutionContext,
                     getCursorFunctionPosition(cursorFunctionIndex)
             );
-            return value == Numbers.LONG_NULL
-                    ? Numbers.LONG_NULL
-                    : timestampDriver.from(
-                    value,
-                    ColumnType.getTimestampType(factory.getMetadata().getColumnType(0))
-            );
-        } else {
-            return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
         }
+        return dynamicFunction.getTimestamp(null);
+    }
+
+    /**
+     * The timestamp type of a dynamic bound's value: a sub-query's column type, the precision of a
+     * literal, or the function's own timestamp type.
+     */
+    private int getTimestampType(Function dynamicFunction, int functionType) {
+        if (ColumnType.isString(functionType)) {
+            final CharSequence value = dynamicFunction.getStrA(null);
+            return value == null ? timestampDriver.getTimestampType() : IntervalUtils.literalTimestampType(timestampDriver, value);
+        }
+        if (functionType == ColumnType.CURSOR) {
+            return ColumnType.getTimestampType(dynamicFunction.getRecordCursorFactory().getMetadata().getColumnType(0));
+        }
+        return ColumnType.getTimestampType(functionType);
     }
 
     /**

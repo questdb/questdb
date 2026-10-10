@@ -43,6 +43,17 @@ final class TimestampFloorFunctions {
     private TimestampFloorFunctions() {
     }
 
+    static int invertFloor(Interval io, TimestampDriver timestampDriver, String unit) {
+        return TimestampFloorFunction.invert(io, timestampDriver.getTimestampFloorMethod(unit), TimestampFloorFunction.ceilMethod(timestampDriver, unit));
+    }
+
+    static int invertFloorWithStride(Interval io, TimestampDriver timestampDriver, String unit, int stride) {
+        final TimestampDriver.TimestampFloorWithStrideMethod floor = timestampDriver.getTimestampFloorWithStrideMethod(unit);
+        final char addUnit = TimestampFloorWithStrideFunction.fixedStrideUnitChar(unit);
+        return TimestampFloorWithStrideFunction.invert(io, timestampDriver, floor, addUnit, stride,
+                TimestampFloorWithStrideFunction.isExactlyInvertible(timestampDriver, floor, addUnit, stride));
+    }
+
     static class TimestampFloorFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final Function arg;
         private final TimestampDriver.TimestampCeilMethod ceil;
@@ -54,8 +65,7 @@ final class TimestampFloorFunctions {
             this.arg = arg;
             this.unit = unit;
             this.floor = timestampDriver.getTimestampFloorMethod(unit);
-            final char ceilUnit = ceilUnitChar(unit);
-            this.ceil = ceilUnit == 0 ? null : timestampDriver.getTimestampCeilMethod(ceilUnit);
+            this.ceil = ceilMethod(timestampDriver, unit);
         }
 
         @Override
@@ -76,6 +86,20 @@ final class TimestampFloorFunctions {
 
         @Override
         public int invertTimestampInterval(Interval io) {
+            return invert(io, floor, ceil);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('").val(unit).val("',").val(getArg()).val(')');
+        }
+
+        static TimestampDriver.TimestampCeilMethod ceilMethod(TimestampDriver timestampDriver, CharSequence unit) {
+            final char ceilUnit = ceilUnitChar(unit);
+            return ceilUnit == 0 ? null : timestampDriver.getTimestampCeilMethod(ceilUnit);
+        }
+
+        static int invert(Interval io, TimestampDriver.TimestampFloorMethod floor, TimestampDriver.TimestampCeilMethod ceil) {
             if (ceil == null) {
                 return NONE;
             }
@@ -98,11 +122,6 @@ final class TimestampFloorFunctions {
             }
             io.of(lo, hi);
             return EXACT;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(TimestampFloorFunctionFactory.NAME).val("('").val(unit).val("',").val(getArg()).val(')');
         }
 
         private static char ceilUnitChar(CharSequence unit) {
@@ -152,7 +171,7 @@ final class TimestampFloorFunctions {
             this.stride = stride;
             this.floor = timestampDriver.getTimestampFloorWithStrideMethod(unit);
             this.addUnit = fixedStrideUnitChar(unit);
-            this.isExactlyInvertible = isExactlyInvertible();
+            this.isExactlyInvertible = isExactlyInvertible(timestampDriver, floor, addUnit, stride);
         }
 
         @Override
@@ -173,6 +192,22 @@ final class TimestampFloorFunctions {
 
         @Override
         public int invertTimestampInterval(Interval io) {
+            return invert(io, timestampDriver, floor, addUnit, stride, isExactlyInvertible);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('").val(unit).val("',").val(getArg()).val(')');
+        }
+
+        static int invert(
+                Interval io,
+                TimestampDriver timestampDriver,
+                TimestampDriver.TimestampFloorWithStrideMethod floor,
+                char addUnit,
+                int stride,
+                boolean isExactlyInvertible
+        ) {
             if (!isExactlyInvertible) {
                 return NONE;
             }
@@ -197,11 +232,6 @@ final class TimestampFloorFunctions {
             }
             io.of(lo, hi);
             return EXACT;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(TimestampFloorFunctionFactory.NAME).val("('").val(unit).val("',").val(getArg()).val(')');
         }
 
         private static char fixedStrideUnitChar(CharSequence unit) {
@@ -232,7 +262,7 @@ final class TimestampFloorFunctions {
 
         // EXACT only when add() reproduces the floor's bucket boundaries; a sub-resolution
         // stride (e.g. nanoseconds on a micro column) does not, and must stay a row filter.
-        private boolean isExactlyInvertible() {
+        static boolean isExactlyInvertible(TimestampDriver timestampDriver, TimestampDriver.TimestampFloorWithStrideMethod floor, char addUnit, int stride) {
             if (addUnit == 0) {
                 return false;
             }

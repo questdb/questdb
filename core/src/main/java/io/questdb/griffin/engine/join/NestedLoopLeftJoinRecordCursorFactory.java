@@ -58,7 +58,12 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.filter = filter;
-        this.cursor = new NestedLoopLeftRecordCursor(columnSplit, filter, nullRecord);
+        try {
+            this.cursor = new NestedLoopLeftRecordCursor(columnSplit, filter, nullRecord);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

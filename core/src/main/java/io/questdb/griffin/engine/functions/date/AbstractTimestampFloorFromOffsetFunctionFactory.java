@@ -32,17 +32,20 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -69,12 +72,62 @@ import org.jetbrains.annotations.Nullable;
  * Subclasses provide {@link #getName()} and {@link #isReturnUtc()} to
  * control these two aspects.
  */
-abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements FunctionFactory {
+abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
     private static final long MIN_GAP_MINUTES = 15;
     private static final long MIN_GAP_SECONDS = MIN_GAP_MINUTES * 60;
     private static final long MIN_GAP_MILLIS = MIN_GAP_SECONDS * 1000;
     private static final long MIN_GAP_MICROS = MIN_GAP_MILLIS * 1000;
     private static final long MIN_GAP_NANOS = MIN_GAP_MICROS * 1000;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(3) instanceof ConstantExpression && call.argumentAt(4) instanceof ConstantExpression ? 1 : -1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) throws SqlException {
+        final CharSequence unitStr = arguments.constant(call.argumentAt(0)).getStrA(null);
+        final int unitPos = call.argumentAt(0).getPosition();
+        final int stride = CommonUtils.getStrideMultiple(unitStr, unitPos);
+        final char unit = CommonUtils.getStrideUnit(unitStr, unitPos);
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(call.getDataType());
+        final long effectiveOffset = TimestampFloorFromFunctionFactory.floorOrigin(timestampDriver, arguments.constant(call.argumentAt(2)).getTimestamp(null), call.argumentAt(2).getDataType())
+                + constantOffset(arguments.constant(call.argumentAt(3)).getStrA(null), call.argumentAt(3).getPosition(), timestampDriver);
+        final CharSequence tz = arguments.constant(call.argumentAt(4)).getStrA(null);
+        final TimeZoneRules tzRules = constantZoneRules(tz, call.argumentAt(4).getPosition(), timestampDriver);
+        final long tzOffset = constantZoneOffset(tz, tzRules, timestampDriver);
+        if (tzRules != null && !tzRules.hasFixedOffset()) {
+            return invertFloorNamedTz(io, timestampDriver, tzRules, timestampDriver.getTimestampFloorWithOffsetMethod(unit), unit, stride, effectiveOffset, isReturnUtc());
+        }
+        if (tzOffset == 0) {
+            return TimestampFloorOffsetFunction.invert(io, timestampDriver, unit, stride, effectiveOffset);
+        }
+        return invertFloorFixedTz(io, timestampDriver, timestampDriver.getTimestampFloorWithOffsetMethod(unit), unit, stride, effectiveOffset, tzOffset, isReturnUtc());
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final CharSequence unitStr = args.getQuick(0).getStrA(null);
+        final int unitPos = argPositions.getQuick(0);
+        CommonUtils.getStrideMultiple(unitStr, unitPos);
+        final char unit = CommonUtils.getStrideUnit(unitStr, unitPos);
+        args.getQuick(2).getTimestamp(null);
+        validateUnit(unit, unitPos);
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ResultTypes.timestampAtLeastMicros(args.getQuick(1).getType()));
+        final Function offsetFunc = args.getQuick(3);
+        final int offsetPos = argPositions.getQuick(3);
+        if (offsetFunc.isConstant()) {
+            constantOffset(offsetFunc.getStrA(null), offsetPos, timestampDriver);
+        }
+        zoneRules(args.getQuick(4), argPositions.getQuick(4), timestampDriver);
+        checkOffsetArgument(offsetFunc, offsetPos);
+        return true;
+    }
 
     @Override
     public Function newInstance(
@@ -93,12 +146,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         final Function timestampFunc = args.getQuick(1);
         int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
         TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
-        long from = args.getQuick(2).getTimestamp(null);
-        if (from == Numbers.LONG_NULL) {
-            from = 0;
-        } else {
-            from = timestampDriver.from(from, ColumnType.getTimestampType(args.getQuick(2).getType()));
-        }
+        final long from = TimestampFloorFromFunctionFactory.floorOrigin(timestampDriver, args.getQuick(2).getTimestamp(null), args.getQuick(2).getType());
         final Function offsetFunc = args.getQuick(3);
         final int offsetPos = argPositions.getQuick(3);
         final Function timezoneFunc = args.getQuick(4);
@@ -108,41 +156,17 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         long offset = 0;
         if (offsetFunc.isConstant()) {
             final CharSequence o = offsetFunc.getStrA(null);
-            if (o != null) {
-                final long val = Dates.parseOffset(o);
-                if (val == Numbers.LONG_NULL) {
-                    // bad value for offset
-                    throw SqlException.$(offsetPos, "invalid offset: ").put(o);
-                }
-                offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
-            }
+            offset = constantOffset(o, offsetPos, timestampDriver);
             offsetStr = Chars.toString(o);
         }
+        TimeZoneRules tzRules = zoneRules(timezoneFunc, timezonePos, timestampDriver);
+        checkOffsetArgument(offsetFunc, offsetPos);
 
         if (timezoneFunc.isConstant()) {
             final CharSequence tz = timezoneFunc.getStrA(null);
-            long tzOffset = 0;
-            TimeZoneRules tzRules = null;
-            if (tz != null) {
-                final int hi = tz.length();
-                final long l = Dates.parseOffset(tz, 0, hi);
-                if (l == Long.MIN_VALUE) {
-                    try {
-                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
-                        );
-                    } catch (NumericException e) {
-                        Misc.free(timestampFunc);
-                        throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
-                    }
-
-                    if (tzRules.hasFixedOffset()) {
-                        tzOffset = tzRules.getOffset(0);
-                        tzRules = null;
-                    }
-                } else {
-                    tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
-                }
+            final long tzOffset = constantZoneOffset(tz, tzRules, timestampDriver);
+            if (tzRules != null && tzRules.hasFixedOffset()) {
+                tzRules = null;
             }
 
             final String tzStr = Chars.toString(tz);
@@ -151,32 +175,19 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
                 if (offsetFunc.isConstant()) {
                     return createAllConstFunc(name, returnUtc, timestampFunc, stride, unit, from, offset, offsetStr, tzOffset, tzStr, timestampType);
                 }
-                if (offsetFunc.isRuntimeConstant()) {
-                    return new RuntimeConstOffsetFunction(name, returnUtc, timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzOffset, tzStr, timestampType);
-                }
-                throw SqlException.$(offsetPos, "const or runtime const expected");
+                return new RuntimeConstOffsetFunction(name, returnUtc, timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzOffset, tzStr, timestampType);
             }
 
             if (offsetFunc.isConstant()) {
                 return createAllConstTzFunc(name, returnUtc, timestampFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr, timestampType, timestampDriver);
             }
-            if (offsetFunc.isRuntimeConstant()) {
-                return new RuntimeConstOffsetDstGapAwareFunc(name, returnUtc, timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzRules, tzStr, timestampType);
-            }
-            throw SqlException.$(offsetPos, "const or runtime const expected");
+            return new RuntimeConstOffsetDstGapAwareFunc(name, returnUtc, timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzRules, tzStr, timestampType);
         }
 
-        if (timezoneFunc.isRuntimeConstant()) {
-            if (offsetFunc.isConstant()) {
-                return createRuntimeConstTzFunc(name, returnUtc, timestampFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos, timestampType, timestampDriver);
-            }
-            if (offsetFunc.isRuntimeConstant()) {
-                return new AllRuntimeConstDstGapAwareFunc(name, returnUtc, timestampFunc, stride, unit, from, offsetFunc, offsetPos, timezoneFunc, timezonePos, timestampType);
-            }
-            throw SqlException.$(offsetPos, "const or runtime const expected");
+        if (offsetFunc.isConstant()) {
+            return createRuntimeConstTzFunc(name, returnUtc, timestampFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos, timestampType, timestampDriver);
         }
-
-        throw SqlException.$(timezonePos, "const or runtime const expected");
+        return new AllRuntimeConstDstGapAwareFunc(name, returnUtc, timestampFunc, stride, unit, from, offsetFunc, offsetPos, timezoneFunc, timezonePos, timestampType);
     }
 
     // Returns the width of the floor's buckets when add() steps from one bucket boundary to the
@@ -199,6 +210,24 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             return next - b0;
         }
         return 0;
+    }
+
+    static int invertFloorFixedTz(
+            Interval io,
+            TimestampDriver timestampDriver,
+            TimestampDriver.TimestampFloorWithOffsetMethod floorFunc,
+            char unit,
+            int stride,
+            long effectiveOffset,
+            long tzOffset,
+            boolean returnUtc
+    ) {
+        if (!returnUtc
+                && isFloorExactlyInvertible(timestampDriver, floorFunc, unit, stride, effectiveOffset)
+                && floorPreimageShifted(io, timestampDriver, floorFunc, unit == 'U' ? 'u' : unit, stride, effectiveOffset, tzOffset)) {
+            return MonotonicTimestampFunction.EXACT;
+        }
+        return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
     }
 
     // A named zone is a constant shift where no transition falls in the bound's window, so the
@@ -275,6 +304,54 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             case 'n' -> MIN_GAP_NANOS % stride == 0 || stride % MIN_GAP_NANOS == 0;
             default -> false;
         };
+    }
+
+    /**
+     * Raises the error for an offset argument that is neither constant nor runtime constant.
+     */
+    private static void checkOffsetArgument(Function offsetFunc, int offsetPos) throws SqlException {
+        if (!offsetFunc.isConstant() && !offsetFunc.isRuntimeConstant()) {
+            throw SqlException.$(offsetPos, "const or runtime const expected");
+        }
+    }
+
+    /**
+     * The offset a constant offset argument spells, 0 for NULL; raises the error for an invalid offset.
+     */
+    private static long constantOffset(@Nullable CharSequence o, int offsetPos, TimestampDriver timestampDriver) throws SqlException {
+        if (o == null) {
+            return 0;
+        }
+        final long val = Dates.parseOffset(o);
+        if (val == Numbers.LONG_NULL) {
+            // bad value for offset
+            throw SqlException.$(offsetPos, "invalid offset: ").put(o);
+        }
+        return timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
+    }
+
+    private static long constantZoneOffset(@Nullable CharSequence tz, @Nullable TimeZoneRules tzRules, TimestampDriver timestampDriver) {
+        if (tzRules == null) {
+            return tz == null ? 0 : timestampDriver.fromMinutes(Numbers.decodeLowInt(Dates.parseOffset(tz, 0, tz.length())));
+        }
+        return tzRules.hasFixedOffset() ? tzRules.getOffset(0) : 0;
+    }
+
+    private static @Nullable TimeZoneRules constantZoneRules(@Nullable CharSequence tz, int timezonePos, TimestampDriver timestampDriver) throws SqlException {
+        if (tz == null) {
+            return null;
+        }
+        final int hi = tz.length();
+        if (Dates.parseOffset(tz, 0, hi) != Long.MIN_VALUE) {
+            return null;
+        }
+        try {
+            return DateLocaleFactory.EN_LOCALE.getZoneRules(
+                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
+            );
+        } catch (NumericException e) {
+            throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
+        }
     }
 
     private static @NotNull Function createAllConstFunc(
@@ -540,6 +617,21 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         throw SqlException.position(unitPos).put("unexpected unit");
     }
 
+    /**
+     * The rules of the named time zone a constant time zone argument spells, null for a NULL or fixed-offset
+     * spelling and for a runtime constant; raises the errors for an unknown zone and for an argument that is
+     * neither constant nor runtime constant.
+     */
+    private static @Nullable TimeZoneRules zoneRules(Function timezoneFunc, int timezonePos, TimestampDriver timestampDriver) throws SqlException {
+        if (timezoneFunc.isConstant()) {
+            return constantZoneRules(timezoneFunc.getStrA(null), timezonePos, timestampDriver);
+        }
+        if (timezoneFunc.isRuntimeConstant()) {
+            return null;
+        }
+        throw SqlException.$(timezonePos, "const or runtime const expected");
+    }
+
     abstract String getName();
 
     abstract boolean isReturnUtc();
@@ -699,12 +791,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
         @Override
         public int invertTimestampInterval(Interval io) {
-            if (!returnUtc
-                    && isFloorExactlyInvertible(timestampDriver, floorFunc, unit, stride, effectiveOffset)
-                    && floorPreimageShifted(io, timestampDriver, floorFunc, unit == 'U' ? 'u' : unit, stride, effectiveOffset, tzOffset)) {
-                return MonotonicTimestampFunction.EXACT;
-            }
-            return invertFloorSuperset(io, timestampDriver, unit, stride, effectiveOffset);
+            return invertFloorFixedTz(io, timestampDriver, floorFunc, unit, stride, effectiveOffset, tzOffset, returnUtc);
         }
 
         @Override

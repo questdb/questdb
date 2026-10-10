@@ -53,6 +53,31 @@ import static io.questdb.cairo.ColumnType.decodeArrayElementType;
 public class ArrayCreateFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        final int n = argTypes.size();
+        if (n == 0) {
+            return ColumnType.encodeArrayType(ColumnType.UNDEFINED, 1);
+        }
+        final int type0 = argTypes.getQuick(0);
+        if (!ColumnType.isArray(type0)) {
+            return ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+        }
+        final int nestedDims = ColumnType.decodeWeakArrayDimensionality(type0);
+        if (nestedDims == -1) {
+            return ColumnType.UNDEFINED;
+        }
+        int commonElemType = decodeArrayElementType(type0);
+        for (int i = 1; i < n; i++) {
+            final int typeI = argTypes.getQuick(i);
+            if (!ColumnType.isArray(typeI)) {
+                return ColumnType.UNDEFINED;
+            }
+            commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
+        }
+        return ColumnType.encodeArrayType(ColumnType.tagOf(commonElemType), nestedDims + 1);
+    }
+
+    @Override
     public String getSignature() {
         return "array(V)";
     }

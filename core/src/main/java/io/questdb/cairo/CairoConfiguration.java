@@ -1201,18 +1201,6 @@ public interface CairoConfiguration {
     boolean isCairoMetadataCacheSnapshotOrdered();
 
     /**
-     * Rollback flag for the by-name column emit to UNION siblings in the SQL optimizer's top-down
-     * column propagation. The optimizer matches UNION columns by position; the legacy by-name emit
-     * could prune one branch inconsistently and crash code generation when branch aliases differed.
-     * When {@code true}, restores the legacy by-name behavior. Defaults to {@code false}.
-     *
-     * @return whether to restore the legacy by-name UNION column propagation
-     */
-    default boolean isCairoSqlLegacyUnionColumnPropagation() {
-        return false;
-    }
-
-    /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *
      * @return enable/disable flag for recovering from the checkpoint
@@ -1304,12 +1292,6 @@ public interface CairoConfiguration {
     boolean isQueryTracingEnabled();
 
     boolean isReadOnlyInstance();
-
-    // Test-only seam, with no backing production property: always true in a running server, so
-    // the optimiser always rewrites SELECT DISTINCT to GROUP BY. Tests override it to false in a
-    // CairoConfiguration subclass to keep DISTINCT as a Distinct factory and reach
-    // DistinctTimeSeriesRecordCursorFactory.
-    boolean isSqlDistinctGroupByRewriteEnabled();
 
     boolean isSqlJitDebugEnabled();
 

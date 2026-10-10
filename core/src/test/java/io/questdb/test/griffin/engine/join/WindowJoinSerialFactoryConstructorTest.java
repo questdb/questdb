@@ -56,24 +56,16 @@ import org.junit.Test;
  * Pins the ownership contract of the SERIAL WINDOW JOIN factory constructors, the half
  * {@link AsyncWindowJoinFactoryConstructorTest} already pins for the async ones.
  * <p>
- * The contract both must honour: on a constructor throw the base factories and the join metadata
- * stay the CALLER's, because {@code SqlCodeGenerator}'s catch frees master, slave and the join
- * metadata itself. The serial constructors used to call {@code close()} on failure, which releases
- * those three through {@code _close()} as well - a second release of everything the generator was
- * about to release. It went unnoticed because a double {@code close()} on an
- * {@code AbstractRecordCursorFactory} is a no-op (flag-guarded), but a factory implementing
- * {@code RecordCursorFactory} directly has no such guard: {@code CoveringIndexRecordCursorFactory}
- * frees its partition-frame factory and its functions unguarded, and {@link JoinRecordMetadata} is
- * reference counted, so its count went negative.
- * <p>
- * {@link CountingFactory} reproduces that shape - it implements the interface directly and counts
- * closes - so the assertion below reads 2 against the old behaviour and 1 against the fixed one.
+ * The contract both must honour: a constructor consumes the base factories, the join metadata and
+ * the join filter on entry, so on a throw it releases each of them exactly once and the caller frees
+ * nothing. {@link CountingFactory} implements {@code RecordCursorFactory} directly, without the
+ * flag guard of {@code AbstractRecordCursorFactory}, so a second release shows up as a count of 2.
  */
 public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
 
     @Test
-    public void testFastFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
-        assertConstructorFailureLeavesBasesToCaller(true, true, false);
+    public void testFastFactoryReleasesInputsOnFailure() throws Exception {
+        assertConstructorFailureReleasesInputs(true, true, false);
     }
 
     @Test
@@ -82,11 +74,11 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFastNonVectorizedFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
+    public void testFastNonVectorizedFactoryReleasesInputsOnFailure() throws Exception {
         // allVectorized == false is the normal production shape whenever a join filter survives
         // (SqlCodeGenerator sets allVectorized = joinFilter == null). It builds the keyed
         // WindowJoinFastRecordCursor, whose constructor used to leak its two native maps on a throw.
-        assertConstructorFailureLeavesBasesToCaller(true, false, false);
+        assertConstructorFailureReleasesInputs(true, false, false);
     }
 
     @Test
@@ -95,11 +87,11 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFastNonVectorizedPrevailingFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
+    public void testFastNonVectorizedPrevailingFactoryReleasesInputsOnFailure() throws Exception {
         // include prevailing + a surviving join filter builds
         // WindowJoinWithPrevailingAndJoinFilterFastRecordCursor, which extends
         // WindowJoinFastRecordCursor and inherits its (previously leaking) constructor.
-        assertConstructorFailureLeavesBasesToCaller(true, false, true);
+        assertConstructorFailureReleasesInputs(true, false, true);
     }
 
     @Test
@@ -108,18 +100,18 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFastNonVectorizedPrevailingNoFilterFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
+    public void testFastNonVectorizedPrevailingNoFilterFactoryReleasesInputsOnFailure() throws Exception {
         // include prevailing + NO join filter builds WindowJoinWithPrevailingFastRecordCursor
         // (the joinFilter == null && allVectorized == false shape: an INCLUDE PREVAILING window
         // join over a non-vectorizable aggregate). It allocates a native prevailingCache after
         // super(); the base ctor throw here still leaks the two maps without the guard, and this
         // exercises the subclass's overridden close() with a null prevailingCache.
-        assertConstructorFailureLeavesBasesToCaller(true, false, true, false);
+        assertConstructorFailureReleasesInputs(true, false, true, false);
     }
 
     @Test
-    public void testGeneralFactoryLeavesBaseFactoriesToTheCallerOnFailure() throws Exception {
-        assertConstructorFailureLeavesBasesToCaller(false, false, false);
+    public void testGeneralFactoryReleasesInputsOnFailure() throws Exception {
+        assertConstructorFailureReleasesInputs(false, false, false);
     }
 
     @Test
@@ -127,11 +119,11 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
         assertConstructorSuccessCloses(false, false, false);
     }
 
-    private static void assertConstructorFailureLeavesBasesToCaller(boolean fast, boolean allVectorized, boolean includePrevailing) throws Exception {
-        assertConstructorFailureLeavesBasesToCaller(fast, allVectorized, includePrevailing, true);
+    private static void assertConstructorFailureReleasesInputs(boolean fast, boolean allVectorized, boolean includePrevailing) throws Exception {
+        assertConstructorFailureReleasesInputs(fast, allVectorized, includePrevailing, true);
     }
 
-    private static void assertConstructorFailureLeavesBasesToCaller(boolean fast, boolean allVectorized, boolean includePrevailing, boolean withJoinFilter) throws Exception {
+    private static void assertConstructorFailureReleasesInputs(boolean fast, boolean allVectorized, boolean includePrevailing, boolean withJoinFilter) throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             // getSqlAsOfJoinLookAhead() faults inside the cursor constructor, the last thing both
@@ -141,9 +133,7 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
             final CountingFactory masterFactory = new CountingFactory(baseFactory("master"));
             final CountingFactory slaveFactory = new CountingFactory(baseFactory("slave"));
             final JoinRecordMetadata joinMetadata = new JoinRecordMetadata(engine.getConfiguration(), 0);
-            // The complementary half of the contract: what the ctor DID adopt must still be freed.
-            // It holds native memory, so over-nulling would both leak and fail assertMemoryLeak. A
-            // null filter is the joinFilter == null && allVectorized == false shape (an INCLUDE
+            // A null filter is the joinFilter == null && allVectorized == false shape (an INCLUDE
             // PREVAILING window join over a non-vectorizable aggregate) that builds the keyed
             // WindowJoinWithPrevailingFastRecordCursor.
             final NativeFilter joinFilter = withJoinFilter ? new NativeFilter() : null;
@@ -154,19 +144,11 @@ public class WindowJoinSerialFactoryConstructorTest extends AbstractCairoTest {
             } catch (FaultInjectedException ignore) {
             }
 
-            Assert.assertEquals("the ctor must not close the master it does not own yet", 0, masterFactory.closeCount);
-            Assert.assertEquals("the ctor must not close the slave it does not own yet", 0, slaveFactory.closeCount);
-            if (joinFilter != null) {
-                Assert.assertEquals("the adopted join filter must be closed exactly once", 1, joinFilter.closeCount);
-            }
-
-            // Exactly what SqlCodeGenerator's catch does. It must be the FIRST close of each.
-            Misc.free(masterFactory);
-            Misc.free(slaveFactory);
-            Misc.free(joinMetadata);
-
             Assert.assertEquals("master must be closed exactly once", 1, masterFactory.closeCount);
             Assert.assertEquals("slave must be closed exactly once", 1, slaveFactory.closeCount);
+            if (joinFilter != null) {
+                Assert.assertEquals("the join filter must be closed exactly once", 1, joinFilter.closeCount);
+            }
         });
     }
 

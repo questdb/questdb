@@ -38,7 +38,7 @@ import org.junit.Test;
  * count with {@code Math.max(0L, recordCount)}.
  * <p>
  * Released 9.4.3 answered 3000000000 rows for {@code long_sequence(100_000 * 30_000)}, because
- * {@code FunctionParser.functionToConstant0} folded an overflowing INT expression to a
+ * {@code FunctionResolver.functionToConstant0} folded an overflowing INT expression to a
  * {@code LongConstant} and the factory read the full-width count off it. This revision folds the
  * same expression to an {@code IntConstant}, so the count wraps before the factory ever sees it.
  * These are therefore characterization tests of a deliberate, disclosed divergence from released

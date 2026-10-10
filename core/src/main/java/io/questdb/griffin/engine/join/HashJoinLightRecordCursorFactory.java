@@ -41,21 +41,21 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final boolean isMasterFixed;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private HashJoinRecordCursor cursor;
-    private boolean masterDetermined = false;
     private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public HashJoinLightRecordCursorFactory(
@@ -68,17 +68,19 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink masterSink,
             RecordSink slaveKeySink,
             int columnSplit,
-            JoinContext joinContext,
+            Plannable joinContext,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            boolean isMasterFixed
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.isMasterFixed = isMasterFixed;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
-        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
-                new SymbolTranslatingRecord(configuration, Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
-                        masterSymbolKeyColumnIndices.length) : null;
         try {
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
+                    new SymbolTranslatingRecord(configuration, Math.max(masterFactory.getMetadata().getColumnCount(), slaveFactory.getMetadata().getColumnCount()),
+                            masterSymbolKeyColumnIndices.length) : null;
             this.masterSink = masterSink;
             this.slaveKeySink = slaveKeySink;
             this.cursor = new HashJoinRecordCursor(columnSplit, configuration, joinColumnTypes, valueTypes);
@@ -90,9 +92,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        boolean followOrderBy = masterFactory.followedOrderByAdvice();
-        masterDetermined |= followOrderBy;
-        return followOrderBy;
+        return isMasterFixed && masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -102,7 +102,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         try {
             masterCursor = masterFactory.getCursor(executionContext);
             boolean swapped = false;
-            if (masterFactory.recordCursorSupportsRandomAccess() && !masterDetermined) {
+            if (!isMasterFixed && masterFactory.recordCursorSupportsRandomAccess()) {
                 long masterSize = masterCursor.size();
                 long slaveSize = slaveCursor.size();
 
@@ -129,9 +129,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        int scanDirection = masterFactory.getScanDirection();
-        masterDetermined |= scanDirection != RecordCursorFactory.SCAN_DIRECTION_OTHER;
-        return scanDirection;
+        return isMasterFixed ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override

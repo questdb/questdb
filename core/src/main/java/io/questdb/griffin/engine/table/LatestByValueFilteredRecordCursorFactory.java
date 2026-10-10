@@ -54,12 +54,17 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
             @NotNull IntList columnSizeShifts
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
-        if (filter == null) {
-            this.cursor = new LatestByValueRecordCursor(configuration, metadata, columnIndex, symbolKey);
-        } else {
-            this.cursor = new LatestByValueFilteredRecordCursor(configuration, metadata, columnIndex, symbolKey, filter);
-        }
         this.filter = filter;
+        try {
+            if (filter == null) {
+                this.cursor = new LatestByValueRecordCursor(configuration, metadata, columnIndex, symbolKey);
+            } else {
+                this.cursor = new LatestByValueFilteredRecordCursor(configuration, metadata, columnIndex, symbolKey, filter);
+            }
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

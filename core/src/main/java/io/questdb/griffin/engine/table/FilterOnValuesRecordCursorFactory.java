@@ -39,7 +39,7 @@ import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -86,25 +86,33 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         this.filter = filter;
         this.orderDirection = orderDirection;
         cursorFactories = new ObjList<>(nKeyValues);
-        cursorFactoriesIdx = new int[]{0};
-        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
-        for (int i = 0; i < nKeyValues; i++) {
-            final Function symbol = keyValues.get(i);
-            if (symbol.isConstant()) {
-                addSymbolKey(symbolMapReader.keyOf(symbol.getStrA(null)), symbol, indexDirection);
-            } else {
-                addSymbolKey(SymbolTable.VALUE_NOT_FOUND, symbol, indexDirection);
+        try {
+            cursorFactoriesIdx = new int[]{0};
+            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
+            for (int i = 0; i < nKeyValues; i++) {
+                final Function symbol = keyValues.get(i);
+                if (symbol.isConstant()) {
+                    addSymbolKey(symbolMapReader.keyOf(symbol.getStrA(null)), symbol, indexDirection);
+                } else {
+                    addSymbolKey(SymbolTable.VALUE_NOT_FOUND, symbol, indexDirection);
+                }
             }
+            if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
+                heapCursorUsed = false;
+                rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            } else {
+                heapCursorUsed = true;
+                rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            }
+            cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
+            this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
+        } catch (Throwable th) {
+            for (int i = cursorFactories.size(); i < nKeyValues; i++) {
+                Misc.free(keyValues.getQuick(i), th);
+            }
+            Misc.free(this, th);
+            throw th;
         }
-        if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
-            heapCursorUsed = false;
-            rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-        } else {
-            heapCursorUsed = true;
-            rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-        }
-        cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
-        this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
     }
 
     @Override
@@ -129,7 +137,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnValues");
         if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
-            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
         sink.child(rowCursorFactory);
         sink.child(partitionFrameCursorFactory);
@@ -258,7 +266,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
         // sort values to facilitate duplicate removal (even for heap row cursor)
         // sorting here can produce order of cursorFactories different from one shown by explain command       
-        if (followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING) {
+        if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
             cursorFactories.sort(COMPARATOR);
         } else {
             cursorFactories.sort(COMPARATOR_DESC);

@@ -38,6 +38,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -61,7 +62,7 @@ import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -411,6 +412,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @AfterClass
     public static void tearDownStatic() {
         staticOverrides.reset();
+        inputRoot = null;
+        inputWorkRoot = null;
         forEachNode(QuestDBTestNode::closeCairo);
         circuitBreaker = Misc.free(circuitBreaker);
         nodes.clear();
@@ -924,6 +927,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), engine);
     }
 
+    protected static String planText(RecordCursorFactory factory) {
+        final TextPlanSink planSink = new TextPlanSink();
+        planSink.of(factory, sqlExecutionContext);
+        final StringSink text = new StringSink();
+        for (int i = 1, n = planSink.getLineCount(); i <= n; i++) {
+            text.put(planSink.getLine(i)).put('\n');
+        }
+        return text.toString();
+    }
+
+    protected static String printFactory(RecordCursorFactory factory) throws Exception {
+        final StringSink sink = new StringSink();
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
+        }
+        return sink.toString();
+    }
+
     protected static void printSql(CharSequence sql) throws SqlException {
         printSql(sql, sink);
     }
@@ -1043,6 +1064,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
         SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
     }
 
+    protected void assertCastQuery(String sql, String expectedTypes, String expectedRows) throws Exception {
+        final int jitMode = sqlExecutionContext.getJitMode();
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        try (RecordCursorFactory factory = select(sql)) {
+            final StringSink types = new StringSink();
+            for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
+                if (i > 0) {
+                    types.put(',');
+                }
+                types.put(ColumnType.nameOf(factory.getMetadata().getColumnType(i)));
+            }
+            TestUtils.assertEquals(sql, expectedTypes, types);
+            assertRowsOnly(factory, expectedRows);
+        } finally {
+            sqlExecutionContext.setJitMode(jitMode);
+        }
+    }
+
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
         TestUtils.assertCursor(expected, cursor, metadata, header, sink);
     }
@@ -1072,6 +1111,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
      */
     protected QueryAssertion assertQuery(CharSequence query) {
         return new QueryAssertion(engine, sqlExecutionContext, this::prepareForQueryAssertion, query);
+    }
+
+    protected void assertRowsOnly(RecordCursorFactory factory, String expected) throws Exception {
+        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
+    }
+
+    protected void assertRowsOnly(String sql, String expected) throws Exception {
+        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {

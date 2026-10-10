@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -47,6 +48,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
 public class LtTimestampCursorFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
@@ -82,7 +88,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         Function arg0 = args.getQuick(0);
         int arg0ColType = arg0.getType();
         if (ColumnType.tagOf(arg0ColType) != ColumnType.TIMESTAMP) {
-            throw SqlException.$(argPositions.getQuick(0), "left operand must be a TIMESTAMP, found: ").put(ColumnType.nameOf(args.getQuick(0).getType()));
+            throw ScalarSubQueryUtils.unsupportedOperand(argPositions.getQuick(0), arg0ColType);
         }
         int arg0Type = ColumnType.getTimestampType(arg0ColType);
         int metadataType = metadata.getColumnType(0);
@@ -174,7 +180,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final CharSequence value = cursor.getRecord().getStrA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        epoch = IntervalUtils.parseCeilLiteral(driver, value);
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
@@ -351,7 +357,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        epoch = IntervalUtils.parseCeilLiteral(driver, value == null ? null : value.asAsciiCharSequence());
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }

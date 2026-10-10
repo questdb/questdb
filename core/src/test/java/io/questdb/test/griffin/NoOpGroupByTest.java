@@ -86,8 +86,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .withPlan("""
-                            VirtualRecord
-                              functions: [sym1,avgBid]
+                            SelectedRecord
                                 Async JIT Group By workers: 1
                                   keys: [sym1,sym2]
                                   values: [avg(bid)]

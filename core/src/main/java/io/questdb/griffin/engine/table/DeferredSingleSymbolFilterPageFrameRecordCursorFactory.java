@@ -45,6 +45,7 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends PageFrameRecordCursorFactory {
+    private final boolean isSymbolFunctionOwner;
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
     private boolean convertedToFrame;
@@ -77,6 +78,10 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
                 false
         );
         this.symbolFunc = symbolFunc;
+        // Resolved symbol row factories borrow their function; deferred factories own it.
+        this.isSymbolFunctionOwner = !(rowCursorFactory instanceof FunctionBasedRowCursorFactory functionBased)
+                || rowCursorFactory instanceof SymbolFunctionRowCursorFactory
+                || functionBased.getFunction() != symbolFunc;
         symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.symbolColumnIndex = symbolColumnIndex;
 
@@ -108,7 +113,9 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, symbolFunc);
+        if (isSymbolFunctionOwner) {
+            failure = Misc.freeBestEffort(failure, symbolFunc);
+        }
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -136,6 +143,13 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
             Misc.free(fwdPageFrameCursor);
             throw th;
         }
+    }
+
+    /**
+     * The index of the symbol column whose index this scan reads.
+     */
+    public int getSymbolColumnIndex() {
+        return symbolColumnIndex;
     }
 
     @Override

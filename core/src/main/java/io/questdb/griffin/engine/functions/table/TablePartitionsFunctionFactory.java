@@ -50,6 +50,9 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
+        if (args.getQuick(0).isNullConstant()) {
+            throw SqlException.$(argPos.getQuick(0), "table name cannot be NULL");
+        }
         final TableToken tt;
         int timestampType;
         try {

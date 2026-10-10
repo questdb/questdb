@@ -180,60 +180,63 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestByFilter = latestByFilter;
         this.patternKeys = patternKeys;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
-        // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
-        // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
+        // Defensive copy. The caller passes a POOLED ObjList owned by the compiler.
         // SqlCompilers are pooled and shared across threads/connections, so when another
-        // thread borrows the same compiler and recompiles, models.next() -> IntrinsicModel.clear()
-        // -> keyValueFuncs.clear() nulls the backing array (Arrays.fill BEFORE pos=0). A concurrent
-        // getCursor() on this still-cached factory would then read a stale size() (> 0) and a null
+        // thread borrows the same compiler and recompiles, clearing that list nulls the backing
+        // array (Arrays.fill BEFORE pos=0). A concurrent getCursor() on this still-cached factory would then read a stale size() (> 0) and a null
         // slot in Function.init(...), producing the intermittent NPE in issue #7294. We keep our own
         // list of the same Function instances -- which this factory owns and frees in close() (the
         // pooled model only clears references, never frees) -- to decouple from the model's lifecycle.
         this.keyValueFuncs = keyValueFuncs != null ? new ObjList<>(keyValueFuncs) : null;
-        int[] requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
+        try {
+            int[] requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
 
-        int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
-        // Read the owned defensive copy (this.keyValueFuncs), never the pooled parameter. The two are
-        // content-identical here (compiling thread owns the model exclusively during construction), but
-        // the copy is the reference this factory owns and frees in close(); using it consistently avoids
-        // a refactor hazard if the defensive copy above is ever changed or removed.
-        final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
-        if (keyValueFuncsCopy != null || patternKeys != null) {
-            final int multiKeyCapacity;
-            if (patternKeys != null) {
-                // Pattern path: the matched-key set is not known until getCursor (the adaptive owner
-                // resolves it from the static symbol table at execution time, so it also reflects symbols
-                // added after compile). Leave resolvedKeys null and size the merge with a small growable
-                // default.
-                this.resolvedKeys = null;
-                multiKeyCapacity = 16;
-            } else {
-                this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
-                multiKeyCapacity = keyValueFuncsCopy.size();
-                if (reader != null) {
-                    SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                    for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
-                        Function f = keyValueFuncsCopy.getQuick(i);
-                        int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
-                        resolvedKeys.add(key);
+            int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
+            // Read the owned defensive copy (this.keyValueFuncs), never the pooled parameter. The two are
+            // content-identical here (compiling thread owns the model exclusively during construction), but
+            // the copy is the reference this factory owns and frees in close(); using it consistently avoids
+            // a refactor hazard if the defensive copy above is ever changed or removed.
+            final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
+            if (keyValueFuncsCopy != null || patternKeys != null) {
+                final int multiKeyCapacity;
+                if (patternKeys != null) {
+                    // Pattern path: the matched-key set is not known until getCursor (the adaptive owner
+                    // resolves it from the static symbol table at execution time, so it also reflects symbols
+                    // added after compile). Leave resolvedKeys null and size the merge with a small growable
+                    // default.
+                    this.resolvedKeys = null;
+                    multiKeyCapacity = 16;
+                } else {
+                    this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
+                    multiKeyCapacity = keyValueFuncsCopy.size();
+                    if (reader != null) {
+                        SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
+                        for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
+                            Function f = keyValueFuncsCopy.getQuick(i);
+                            int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
+                            resolvedKeys.add(key);
+                        }
                     }
                 }
+                final MergeObserver mergeObserver = TEST_MERGE_OBSERVER.get();
+                this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
+                this.singleKeyCursor = null;
+                this.multiKeyPageFrameCursor = !latestBy
+                        ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver)
+                        : null;
+                this.singleKeyPageFrameCursor = null;
+            } else {
+                this.resolvedKeys = null;
+                this.singleKeyCursor = new SingleKeyCoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
+                this.multiKeyCursor = null;
+                this.singleKeyPageFrameCursor = !latestBy
+                        ? new SingleKeyCoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
+                        : null;
+                this.multiKeyPageFrameCursor = null;
             }
-            final MergeObserver mergeObserver = TEST_MERGE_OBSERVER.get();
-            this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
-            this.singleKeyCursor = null;
-            this.multiKeyPageFrameCursor = !latestBy
-                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver)
-                    : null;
-            this.singleKeyPageFrameCursor = null;
-        } else {
-            this.resolvedKeys = null;
-            this.singleKeyCursor = new SingleKeyCoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
-            this.multiKeyCursor = null;
-            this.singleKeyPageFrameCursor = !latestBy
-                    ? new SingleKeyCoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
-                    : null;
-            this.multiKeyPageFrameCursor = null;
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
         }
     }
 

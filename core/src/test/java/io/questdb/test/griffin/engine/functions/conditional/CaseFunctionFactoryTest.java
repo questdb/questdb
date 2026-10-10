@@ -1284,6 +1284,54 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashValuesOfOneType() throws Exception {
+        assertQuery("""
+                SELECT x,
+                    CASE WHEN x = 1 THEN g1 ELSE h1 END c1,
+                    CASE WHEN x = 1 THEN g2 ELSE h2 END c2,
+                    CASE WHEN x = 1 THEN g5 ELSE h5 END c5,
+                    CASE WHEN x = 1 THEN g10 ELSE h10 END c10
+                FROM geo ORDER BY x
+                """)
+                .ddl("CREATE TABLE geo (x INT, g1 GEOHASH(1c), h1 GEOHASH(1c), g2 GEOHASH(2c), h2 GEOHASH(2c), "
+                                + "g5 GEOHASH(5c), h5 GEOHASH(5c), g10 GEOHASH(10c), h10 GEOHASH(10c))",
+                        """
+                                INSERT INTO geo VALUES
+                                (1, #u, #v, #u3, #v3, #u33d8, #v33d8, #u33d8b1234, #v33d8b1234),
+                                (2, #u, #v, #u3, #v3, #u33d8, #v33d8, #u33d8b1234, #v33d8b1234)
+                                """)
+                .expectSize()
+                .returns("""
+                        x\tc1\tc2\tc5\tc10
+                        1\tu\tu3\tu33d8\tu33d8b1234
+                        2\tv\tv3\tv33d8\tv33d8b1234
+                        """);
+    }
+
+    @Test
+    public void testGeoHashValuesOfTwoWidths() throws Exception {
+        assertQuery("SELECT x, CASE WHEN x = 1 THEN g1 ELSE g2 END c FROM geo")
+                .ddl("CREATE TABLE geo (x INT, g1 GEOHASH(1c), g2 GEOHASH(2c))")
+                .fails(31, "inconvertible types: GEOHASH(1c) -> GEOHASH(2c)");
+    }
+
+    @Test
+    public void testIntervalValues() throws Exception {
+        assertQuery("""
+                SELECT x, CASE WHEN x = 1
+                    THEN interval('2024-01-01'::timestamp, '2024-01-02'::timestamp)
+                    ELSE interval('2024-02-01'::timestamp, '2024-02-02'::timestamp)
+                END c FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\tc
+                        1\t('2024-01-01T00:00:00.000Z', '2024-01-02T00:00:00.000Z')
+                        2\t('2024-02-01T00:00:00.000Z', '2024-02-02T00:00:00.000Z')
+                        """);
+    }
+
+    @Test
     public void testIPv4ToVarcharCast() throws Exception {
         assertMemoryLeak(() -> {
             execute(

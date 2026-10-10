@@ -80,8 +80,9 @@ public class SimpleTimestampSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        long q = (value - start) / bucket;
-        if (value < 0 && q * bucket != value) {
+        final long delta = value - start;
+        long q = delta / bucket;
+        if (delta < 0 && q * bucket != delta) {
             q = q - 1;
         }
         return start + q * bucket;

@@ -1645,6 +1645,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .noLeakCheck()
                             .expectSize()
                             .timestamp("min")
+                            .noRandomAccess()
                             .returns(replaceTimestampSuffix("""
                                     min
                                     2022-06-01T00:02:52.799000Z

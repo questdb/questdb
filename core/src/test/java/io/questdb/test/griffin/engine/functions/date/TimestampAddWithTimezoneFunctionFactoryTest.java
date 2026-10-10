@@ -267,6 +267,12 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
     }
 
     @Test
+    public void testNullTimezoneConstant() throws Exception {
+        assertQuery("select dateadd('h', 6, 1587275359886758L, null)")
+                .fails(42, "NULL timezone");
+    }
+
+    @Test
     public void testPeriodNullChar() throws Exception {
         assertQuery("select dateadd('\0', 5, 1587275359886758L, 'Europe/Bratislava')")
                 .fails(15, "invalid time period [unit=");

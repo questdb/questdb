@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine;
 
+
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -35,17 +36,16 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.bind.SetOperationBinder;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionSymbolCastRecordCursorFactory;
-import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.IQueryModel;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -57,13 +57,14 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.IntFunction;
+
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.IntFunction;
 
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
@@ -97,7 +98,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    timestamp_sequence(0, 10000) k" +
                         "  from long_sequence(3)" +
                         ") timestamp(k)")
-                .timestamp("k")
                 .noRandomAccess()
                 .returns("""
                         col_k\ta\tk\tcol_k1
@@ -117,7 +117,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    timestamp_sequence(0, 10000) k" +
                         "  from long_sequence(3)" +
                         ") timestamp(k)")
-                .timestamp("k")
                 .noRandomAccess()
                 .returns("""
                         col_k\ta\tk\ta1\tk1
@@ -385,7 +384,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    timestamp_sequence(0, 10000) k" +
                         "  from long_sequence(3)" +
                         ") timestamp(k)")
-                .timestamp("k")
                 .noRandomAccess()
                 .returns("""
                         klong1\tklong2\ta\tk\ta1\tk1
@@ -2120,10 +2118,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT 'm' -1")
-                    .fails(0, "inconvertible value: m [CHAR -> INT]");
+                    .fails(11, "inconvertible value: m [CHAR -> INT]");
 
             assertQuery("select ~'m'")
-                    .fails(0, "inconvertible value: m [CHAR -> INT]");
+                    .fails(7, "inconvertible value: m [CHAR -> INT]");
         });
 
         assertMemoryLeak(() -> {
@@ -7449,10 +7447,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort
                               keys: [min]
-                                Sample By
-                                  keys: [timestamp]
-                                  values: [min(x)]
-                                    SelectedRecord
+                                SelectedRecord
+                                    Sample By
+                                      keys: [timestamp]
+                                      values: [min(x)]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: test1
@@ -7461,18 +7459,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("select min(x), sym timestamp from test1 sample by 15s align to calendar order by min")
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
-                                Encode sort light
-                                  keys: [min]
+                            Encode sort light
+                              keys: [min]
+                                SelectedRecord
                                     Async Group By workers: 1
                                       keys: [timestamp,timestamp1]
-                                      keyFunctions: [timestamp_floor_utc('15s',timestamp1)]
+                                      keyFunctions: [timestamp_floor_utc('15s',timestamp)]
                                       values: [min(x)]
                                       filter: null
-                                        SelectedRecord
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: test1
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: test1
                             """);
 
             assertQuery("select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s align to first observation order by min")
@@ -8354,12 +8351,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testUnionCastMatrix() {
-        final int[][] expected = SqlCodeGenerator.expectedUnionCastMatrix();
+        final int[][] expected = SetOperationCasts.expectedUnionCastMatrix();
         printExpectedUnionCastMatrix(expected);
 
         Assert.assertTrue(expectedUnionCastMatrixIsSymmetrical(expected));
 
-        final int[][] actual = SqlCodeGenerator.actualUnionCastMatrix();
+        final int[][] actual = SetOperationCasts.actualUnionCastMatrix();
         Assert.assertEquals(expected.length, actual.length);
 
         for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
@@ -8378,8 +8375,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(
                         "typeA: " + typeA + ", typeB: " + typeB,
-                        SqlCodeGenerator.getUnionCastType(typeA, typeB),
-                        SqlCodeGenerator.getUnionCastType(typeB, typeA)
+                        SetOperationCasts.getUnionCastType(typeA, typeB),
+                        SetOperationCasts.getUnionCastType(typeB, typeA)
                 );
             }
         }
@@ -9171,7 +9168,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 // The projection must stay off every parallel path: a worker that cloned or
                 // snapshotted it would read a half-built, non-thread-safe dictionary.
                 Assert.assertFalse(projection.supportsPageFrameCursor());
-                Assert.assertFalse(projection.supportsFilterStealing());
                 Assert.assertFalse(projection.supportsTimeFrameCursor());
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -9344,27 +9340,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVirtualColumnRejectsNonTimestampModelTimestampIndex() throws Exception {
+    public void testVirtualColumnOrderedByCastTimestampKeepsNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final String query = "SELECT x + 1 AS ts FROM long_sequence(1)";
-                final ExecutionModel executionModel = compiler.generateExecutionModel(query, sqlExecutionContext);
-                Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
-
-                final IQueryModel model = (IQueryModel) executionModel;
-                model.setTimestampColumnIndex(0);
-
-                RecordCursorFactory factory = null;
-                try {
-                    factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
-                    Assert.fail("expected timestamp validation to reject non-TIMESTAMP column");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is required but not provided");
-                    Assert.assertEquals(9, e.getPosition());
-                } finally {
-                    Misc.free(factory);
-                }
-            }
+            execute("CREATE TABLE vc_ts (ts TIMESTAMP, v LONG) TIMESTAMP(ts)");
+            execute("INSERT INTO vc_ts VALUES (1, 10), (2, 20)");
+            assertQuery("SELECT ts::LONG AS t, v FROM vc_ts ORDER BY t")
+                    .expectSize()
+                    .returns("t\tv\n1\t10\n2\t20\n");
         });
     }
 
@@ -9504,10 +9486,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
      * Should not fail any more.
      */
     @Test
-    public void testWithinClauseWithFilterFails() throws Exception {
+    public void testWithinClauseWithFilterAppliesBeforeLatest() throws Exception {
         configOverrideUseWithinLatestByOptimisation();
 
-        assertQuery("select * from tab where geo within(#zz) and x > 0 latest on ts partition by sym")
+        assertQuery("select * from tab where geo within(#z) and x > 0 latest on ts partition by sym")
                 .ddl("create table tab as " +
                         "(" +
                         " select  x, rnd_symbol('a', 'b') sym, rnd_geohash(10) geo, x::timestamp ts " +
@@ -9517,8 +9499,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         x\tsym\tgeo\tts
+                        10\ta\tzb\t1970-01-01T00:00:00.000010Z
                         19\tb\tz2\t1970-01-01T00:00:00.000019Z
-                        20\ta\trk\t1970-01-01T00:00:00.000020Z
                         """);
     }
 
@@ -10169,7 +10151,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             final RecordCursorFactory base = projection.getBaseFactory();
             Assert.assertNotNull(sql + " projection must expose its base", base);
             Assert.assertFalse(sql + " base claims page frames", base.supportsPageFrameCursor());
-            Assert.assertFalse(sql + " base claims filter stealing", base.supportsFilterStealing());
             Assert.assertFalse(sql + " base claims time frames", base.supportsTimeFrameCursor());
         }
     }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -41,14 +42,29 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class InStrFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "in(Sv)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        if (args.size() == 1) {
+            return false;
+        }
+        isConstantList(args, argPositions);
+        return true;
     }
 
     @Override
@@ -61,6 +77,7 @@ public class InStrFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final int n = args.size();
         if (n == 1) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
             return BooleanConstant.FALSE;
         }
 
@@ -75,8 +92,33 @@ public class InStrFunctionFactory implements FunctionFactory {
                         sqlExecutionContext
                 )
         );
+        if (isConstantList(args, argPositions)) {
+            final CharSequenceHashSet set = new CharSequenceHashSet();
+            parseToString(args, argPositions, set);
+
+            final Function arg = args.getQuick(0);
+            if (arg.isConstant()) {
+                return BooleanConstant.of(set.contains(arg.getStrA(null)));
+            }
+            return new ConstFunc(arg, set);
+        }
+        final IntList positions = new IntList();
+        positions.addAll(argPositions);
+        return new RuntimeConstFunc(new ObjList<>(args), positions);
+    }
+
+    @Override
+    public boolean variadicTypeSupportUndefinedBindVariables(int argCount) {
+        return argCount > 2;
+    }
+
+    /**
+     * Whether every IN-list element is a constant rather than a runtime constant; raises the error for an element
+     * that does not compare with STRING or is neither.
+     */
+    private static boolean isConstantList(ObjList<Function> args, IntList argPositions) throws SqlException {
         boolean allConst = true;
-        for (int i = 1; i < n; i++) {
+        for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.NULL:
@@ -100,25 +142,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                 }
             }
         }
-
-        if (allConst) {
-            final CharSequenceHashSet set = new CharSequenceHashSet();
-            parseToString(args, argPositions, set);
-
-            final Function arg = args.getQuick(0);
-            if (arg.isConstant()) {
-                return BooleanConstant.of(set.contains(arg.getStrA(null)));
-            }
-            return new ConstFunc(arg, set);
-        }
-        final IntList positions = new IntList();
-        positions.addAll(argPositions);
-        return new RuntimeConstFunc(new ObjList<>(args), positions);
-    }
-
-    @Override
-    public boolean variadicTypeSupportUndefinedBindVariables(ObjList<Function> args) {
-        return args.size() > 2;
+        return allConst;
     }
 
     private static void parseToString(ObjList<Function> args, IntList argPositions, CharSequenceHashSet set) throws SqlException {
