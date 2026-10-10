@@ -31,7 +31,6 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -82,7 +81,7 @@ import java.util.List;
  * CONSISTENT count=<n> watermark=<w>       — SYNC/NOSYNC path, all bars hold.
  * DURABLE ...                              — adaptive W=0, full committed history survived.
  * RPO_OK ...                               — adaptive W>0, every acked txn survived (RPO<=W).
- * PRECONDITION_NOT_MET ...                  — the mat-view cell did not reach an actual repair.
+ * PRECONDITION_NOT_MET ...                  — the mat-view cell did not reach a base rollback.
  * DURABILITY_FAILURE ...                   — an acked txn was lost, or a suspend never cleared (exit 3).
  * LOUD_FAILURE: <msg>                      — CairoException on open/query (detected torn state, exit 1).
  * SILENT_CORRUPTION ...                    — wrong value / gap / torn commit boundary (exit 2, SERIOUS).
@@ -399,10 +398,10 @@ public class CrashVerifier {
         System.out.println("watermark rows=" + rowsWatermark
                 + " C=" + committedSeqTxn + " Wm=" + localDurableSeqTxn
                 + " (C=committed seqTxn, Wm=durable-ack frontier, captured pre-cut)");
-        final boolean matViewRepairRequired = CrashIngestWriter.MAT_VIEW && hasRpoWindow && W > 0;
-        final boolean matViewDurabilityGapCaptured = !matViewRepairRequired
+        final boolean matViewRollbackRequired = CrashIngestWriter.MAT_VIEW && hasRpoWindow && W > 0;
+        final boolean matViewDurabilityGapCaptured = !matViewRollbackRequired
                 || localDurableSeqTxn < committedSeqTxn;
-        if (matViewRepairRequired) {
+        if (matViewRollbackRequired) {
             System.out.println("MAT_VIEW_DURABILITY_GAP "
                     + (matViewDurabilityGapCaptured ? "captured" : "not-captured")
                     + " C=" + committedSeqTxn + " Wm=" + localDurableSeqTxn);
@@ -458,9 +457,6 @@ public class CrashVerifier {
         final boolean suspended;
         final long lastTxn;
         final String resolvedDir;
-        final boolean[] matViewRepairPlanned = new boolean[CrashIngestWriter.MV_VARIANTS.length];
-        int matViewRepairsPlanned = 0;
-        int matViewRepairsCompleted = 0;
         try (CairoEngine engine = new CairoEngine(cfg)) {
             // load() swaps the default NO-OP mat view / live view stores for the
             // real ones. Without it matViewStateStore stays NoOpMatViewStateStore,
@@ -498,22 +494,6 @@ public class CrashVerifier {
                 // cannot touch, so a fresh engine must rebuild it from the RECOVERED
                 // on-disk _mv.s before the view can be read as the crash left it.
                 engine.hydrateMatViewStateStore();
-                // Observe startup's decision BEFORE running the queued work. Wm < C only proves that
-                // a base txn was at risk; even F < C only proves that the base rolled back. The repair
-                // path is genuinely exercised only when persisted view state is ahead of that recovered
-                // base and hydration arms the surgical range repair.
-                for (int mvi = 0; mvi < CrashIngestWriter.MV_VARIANTS.length; mvi++) {
-                    final String mvName = CrashIngestWriter.MV_VARIANTS[mvi][0];
-                    final MatViewState state = engine.getMatViewStateStore().getViewState(
-                            engine.verifyTableName(mvName));
-                    if (state != null && state.isRepairPending()) {
-                        matViewRepairPlanned[mvi] = true;
-                        matViewRepairsPlanned++;
-                        System.out.println("  MV startup repair [" + mvName + "] range="
-                                + state.getRepairRangeLo() + ".." + state.getRepairRangeHi());
-                    }
-                }
-                putResult("matViewRepairsPlanned", matViewRepairsPlanned);
                 // Drive the refresh to quiescence first, as
                 // AdaptiveMatViewLazyGapCrashSweepTest's drainWalAndMatViewQueues
                 // does: the view legitimately LAGS while refresh is async, so
@@ -525,16 +505,14 @@ public class CrashVerifier {
                                 engine.verifyTableName(CrashIngestWriter.MV_VARIANTS[mvi][0]));
                     }
                     // run() == false means "nothing refreshed THIS pass", NOT "the queue is
-                    // empty". Stopping at the first false leaves queued tasks unprocessed --
-                    // which is exactly why an enqueued RANGE_REFRESH (the surgical repair)
-                    // never executed and the view stayed stranded. Drain a bounded number of
-                    // passes instead.
+                    // empty". Stopping at the first false leaves queued tasks unprocessed, so
+                    // drain a bounded number of passes instead.
                     for (int i = 0; i < 200; i++) {
                         mvRefresh.run();
                     }
                     // The refresh commits to the VIEW's WAL; the view TABLE only shows it once
                     // that WAL is applied. Draining only BEFORE the refresh reads the view table
-                    // as it stood before the repair landed -- the same "measured before the work
+                    // as it stood before the refresh landed -- the same "measured before the work
                     // finished" error as sampling the base count ahead of the refresh drain.
                     drainWalQueue(engine);
                 } catch (Throwable t) {
@@ -571,8 +549,8 @@ public class CrashVerifier {
                     // a stale snapshot, not a phantom. A fresh replay of the same
                     // boundary showed the healthy shape (base 470000, view 469000).
                     final long baseNow = bitCheckRows(engine, ctx, SYMBOLS);
-                    // EVERY view type, not just the immediate one. The surgical repair runs from the
-                    // load path and is type-agnostic BY CONSTRUCTION -- which is worth nothing until
+                    // EVERY view type, not just the immediate one. Startup's handling of a view ahead
+                    // of its base is type-agnostic BY CONSTRUCTION -- which is worth nothing until
                     // each type has actually been crashed and checked. A view may legitimately LAG,
                     // or be EMPTY (a manual/deferred view that never refreshed); what it must never
                     // do is LEAD the base while reporting itself usable.
@@ -598,16 +576,6 @@ public class CrashVerifier {
                             }
                         }
                         final boolean valid = Chars.equalsIgnoreCase(st, "valid");
-                        final MatViewState state = engine.getMatViewStateStore().getViewState(
-                                engine.verifyTableName(mvName));
-                        final boolean repairStillPending = state != null && state.isRepairPending();
-                        if (matViewRepairPlanned[mvi]
-                                && total != Long.MIN_VALUE
-                                && !repairStillPending
-                                && valid
-                                && total <= baseNow) {
-                            matViewRepairsCompleted++;
-                        }
                         final String verdict;
                         if (total == Long.MIN_VALUE) {
                             verdict = "EMPTY";
@@ -623,20 +591,11 @@ public class CrashVerifier {
                         }
                         System.out.println("  MV " + mvName + " [" + CrashIngestWriter.MV_VARIANTS[mvi][1]
                                 + "] total=" + (total == Long.MIN_VALUE ? "null" : total)
-                                + " base=" + baseNow + " status=" + st
-                                + (matViewRepairPlanned[mvi] ? " repairPending=" + repairStillPending : "")
-                                + " -> " + verdict);
+                                + " base=" + baseNow + " status=" + st + " -> " + verdict);
                     }
-                    putResult("matViewRepairsCompleted", matViewRepairsCompleted);
                     if (anyPhantom) {
                         System.out.println("SILENT_CORRUPTION matview leads base while reporting valid (see MV lines)");
                         System.exit(2);
-                    }
-                    if (matViewRepairsCompleted != matViewRepairsPlanned) {
-                        System.out.println("DURABILITY_FAILURE mat-view startup repair did not complete"
-                                + " [planned=" + matViewRepairsPlanned
-                                + ", completed=" + matViewRepairsCompleted + "]");
-                        System.exit(3);
                     }
 
                 } catch (SqlException e) {
@@ -795,36 +754,26 @@ public class CrashVerifier {
                         "DURABILITY_FAILURE F=%d < Wm=%d — an ACKED (durable) txn was lost (RPO contract broken)%n",
                         F, localDurableSeqTxn);
                 System.exit(3);
-            } else if (matViewRepairRequired && !matViewDurabilityGapCaptured) {
+            } else if (matViewRollbackRequired && !matViewDurabilityGapCaptured) {
                 // This boundary passed the base durability oracle but carried no at-risk base txn.
                 // Keep it distinct from RPO_OK so the sweep cannot call an all-skipped experiment green.
                 System.out.printf(
                         "PRECONDITION_NOT_MET mat-view needs Wm < C, got Wm=%d C=%d; no base txn was at risk%n",
                         localDurableSeqTxn, committedSeqTxn);
-            } else if (matViewRepairRequired && F >= committedSeqTxn) {
+            } else if (matViewRollbackRequired && F >= committedSeqTxn) {
                 // A captured tracker gap is not enough: unrelated later flushes can make the at-risk
                 // WAL durable without advancing the old Wm sample. No recovered rollback means no view
                 // can be stranded ahead of the base by this crash image.
                 System.out.printf(
                         "PRECONDITION_NOT_MET mat-view needs recovered F < C, got F=%d C=%d with Wm=%d; the base did not roll back%n",
                         F, committedSeqTxn, localDurableSeqTxn);
-            } else if (matViewRepairRequired && matViewRepairsPlanned == 0) {
-                // Even a real base rollback is not enough if the replay cut predates the corresponding
-                // view refresh. Hydration is the production decision point: no repair-pending state means
-                // no persisted view was ahead of the recovered base at this boundary.
-                System.out.printf(
-                        "PRECONDITION_NOT_MET mat-view startup planned no surgical repair after rollback [F=%d C=%d Wm=%d]%n",
-                        F, committedSeqTxn, localDurableSeqTxn);
             } else {
                 // Any un-flushed loss is bounded to (Wm, C] (RPO <= W); C may legally exceed F when the
                 // cut landed within the window. Report the observed at-risk loss.
                 final long lost = Math.max(0, committedSeqTxn - F);
                 System.out.printf(
-                        "RPO_OK F=%d >= Wm=%d (every acked txn survived); at-risk txns lost=%d in (Wm=%d, C=%d] (RPO<=W=%d)%s%n",
-                        F, localDurableSeqTxn, lost, localDurableSeqTxn, committedSeqTxn, W,
-                        matViewRepairRequired
-                                ? "; mat-view startup repairs completed=" + matViewRepairsCompleted
-                                : "");
+                        "RPO_OK F=%d >= Wm=%d (every acked txn survived); at-risk txns lost=%d in (Wm=%d, C=%d] (RPO<=W=%d)%n",
+                        F, localDurableSeqTxn, lost, localDurableSeqTxn, committedSeqTxn, W);
             }
         }
     }

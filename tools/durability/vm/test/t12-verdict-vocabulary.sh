@@ -164,7 +164,7 @@ fault_is() {  # TOKEN yes|no
 
 pass_is DURABLE            yes
 pass_is RPO_OK             yes
-# A single boundary that does not complete the startup repair is a legitimate skip.
+# A single boundary that does not reach an RPO rollback is a legitimate skip.
 # run-flush-sweep.sh adds a failing NOT_EVALUATED suite case if every mat-view boundary returns it.
 pass_is PRECONDITION_NOT_MET yes
 # NO_COMMIT passes deliberately: the cut landed before anything was committed, a legitimate

@@ -1055,11 +1055,11 @@ stages:
               # red every night for something already known and nobody reads it again.
               #
               # rewrite-mat-view is dimension 15, documented in tools/durability/vm/README.md.
-              # It verifies the startup repair for a view refreshed past the base's recovered
-              # RPO frontier. The cell disables durable epochs so they cannot advance Wm through
-              # the pending base txn. A boundary counts only if it captures Wm<C, actually recovers
-              # with F<C, and startup arms and completes a surgical view repair; otherwise the
-              # verifier reports PRECONDITION_NOT_MET. An all-skipped sweep fails as NOT_EVALUATED.
+              # It verifies that a view refreshed past the base's recovered RPO frontier never
+              # reports valid after the crash. The cell disables durable epochs so they cannot
+              # advance Wm through the pending base txn. A boundary counts only if it captures
+              # Wm<C and actually recovers with F<C; otherwise the verifier reports
+              # PRECONDITION_NOT_MET. An all-skipped sweep fails as NOT_EVALUATED.
               #
               # rewrite-mat-view-control runs the same WAL + mat-view workload at adaptive W=0.
               # Every commit is durable before acknowledgement, so Wm==C and no rollback can leave

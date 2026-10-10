@@ -407,8 +407,8 @@ for n in $points; do
             && [ "$WINDOW" -gt 0 ]; then
         case "$v" in
             PRECONDITION_NOT_MET) mat_view_precondition_misses=$((mat_view_precondition_misses + 1)) ;;
-            # For this cell CrashVerifier emits RPO_OK only after observing F < C, seeing startup
-            # arm at least one surgical repair, and driving every armed repair to completion.
+            # For this cell CrashVerifier emits RPO_OK only after observing Wm < C and F < C, and
+            # checking that no view leads the recovered base while reporting valid.
             RPO_OK)               mat_view_repairs_evaluated=$((mat_view_repairs_evaluated + 1)) ;;
         esac
     fi
@@ -465,9 +465,9 @@ if [ -n "$failed_points" ] && [ "${QDB_SWEEP_DENSIFY:-true}" = "true" ]; then
 fi
 
 # The W>0 mat-view cell is meaningful only when at least one sampled boundary captures Wm < C,
-# actually recovers with F < C, and makes startup arm and complete a surgical view repair.
-# Individual boundaries that stop short are legitimate skips; a whole sweep of them is a setup
-# fault, not evidence that the repair works. Publish one explicit suite-level error instead of
+# and actually recovers with F < C. Individual boundaries that stop short are legitimate skips; a
+# whole sweep of them is a setup fault, not evidence that the view check holds. Publish one
+# explicit suite-level error instead of
 # letting an all-skipped mat-view experiment report green.
 if [ "${QDB_MAT_VIEW:-false}" = true ] \
         && [ "$(echo "$MODE" | tr 'A-Z' 'a-z')" = adaptive ] \
@@ -475,7 +475,7 @@ if [ "${QDB_MAT_VIEW:-false}" = true ] \
     junit_property mat_view_repairs_evaluated "$mat_view_repairs_evaluated"
     junit_property mat_view_precondition_misses "$mat_view_precondition_misses"
     if [ "$fails" -eq 0 ] && [ "$mat_view_repairs_evaluated" -eq 0 ]; then
-        precondition_error="NOT_EVALUATED: none of $checked sampled mat-view boundaries completed startup repair after an actual RPO rollback"
+        precondition_error="NOT_EVALUATED: none of $checked sampled mat-view boundaries reached an actual RPO rollback"
         junit_case "$JUNIT_CLASS" "mat-view-rpo-precondition" NOT_EVALUATED 0 "$precondition_error"
         echo "  $precondition_error"
         fails=$((fails + 1))

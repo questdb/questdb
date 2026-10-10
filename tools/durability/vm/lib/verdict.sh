@@ -8,9 +8,9 @@
 #   DURABLE             every committed txn survived (W=0, or no loss at W>0)
 #   RPO_OK              every ACKED txn survived; loss confined to (Wm, C]
 #   PRECONDITION_NOT_MET
-#                       this boundary did not reach the mat-view repair: no captured durability
-#                       gap, no actual base rollback, or no persisted view ahead of the recovered
-#                       base. A boundary-level skip; the sweep fails as NOT_EVALUATED if every
+#                       this boundary did not reach the mat-view check: no captured durability
+#                       gap, or no actual base rollback. A boundary-level skip; the sweep fails as
+#                       NOT_EVALUATED if every
 #                       sampled boundary has this result.
 #   DURABILITY_FAILURE  an acked txn was lost, or a suspend never cleared
 #   SILENT_CORRUPTION   wrong value, gap, or torn commit boundary — the worst
