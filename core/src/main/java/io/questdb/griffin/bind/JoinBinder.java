@@ -896,7 +896,9 @@ final class JoinBinder implements Mutable {
             final boolean isBarrier = slave.getJoinType().isBarrier();
             ExpressionNode onCriteria = occurrence.getJoinCriteria();
             if (hasBarriers && !isBarrier && isPostJoinFilterReference(onCriteria, join, i)) {
-                collectJoinConditions(selectPostJoinFilterTerms(onCriteria, join, i, true), join, -1, true, hasNonEquiNullingJoin);
+                final ExpressionNode postJoinFilter = selectPostJoinFilterTerms(onCriteria, join, i, true);
+                rejectMasterNullingForwardReference(postJoinFilter, join, i);
+                collectJoinConditions(postJoinFilter, join, -1, true, hasNonEquiNullingJoin);
                 onCriteria = selectPostJoinFilterTerms(onCriteria, join, i, false);
             }
             if (slave.getJoinType() == JoinKind.SPLICE) {
@@ -1205,6 +1207,19 @@ final class JoinBinder implements Mutable {
             last = Math.max(last, lastJoinReferenceSource(expression.args.getQuick(i), join));
         }
         return last;
+    }
+
+    /**
+     * Rejects the forward references of an INNER ON clause that become a post-join filter when a RIGHT, FULL or
+     * SPLICE join follows the clause's input: the filter runs over that join's output and drops the rows it
+     * preserves with the input NULL-extended.
+     */
+    private void rejectMasterNullingForwardReference(ExpressionNode filter, JoinPlan join, int origin) throws SqlException {
+        for (int i = origin + 1, n = join.getInputs().size(); i < n; i++) {
+            if (join.getInputs().getQuick(i).getJoinType().isMasterNulling()) {
+                throw forwardJoinReference(findForwardJoinReference(filter, join, origin));
+            }
+        }
     }
 
     /**

@@ -2404,6 +2404,73 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardInnerOnReferenceBeforeRightOrFullJoinIsRejected() throws Exception {
+        // #7701
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (1, 1), (2, 3)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 2), (3, 1)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 4), (2, 2), (4, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 1), (2, 9)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (1, 1), (3, 3)");
+            final String sql1 = "SELECT * FROM f0 LEFT JOIN f1 ON b1 < b2 JOIN f2 ON b2 < b1 LEFT JOIN f3 ON a3 >= a1 RIGHT JOIN f4 ON b4 = b0";
+            assertExceptionNoLeakCheck(sql1, sql1.indexOf("b2 JOIN"), "join condition references a table joined later [column=b2]");
+            final String sql2 = "SELECT * FROM f0 JOIN f1 ON a1 < a3 CROSS JOIN f2 RIGHT JOIN f3 ON b3 = b0";
+            assertExceptionNoLeakCheck(sql2, sql2.indexOf("a3 CROSS"), "join condition references a table joined later [column=a3]");
+            final String sql3 = "SELECT * FROM f0 JOIN f1 ON a1 = a3 RIGHT JOIN f2 ON b2 = b0 JOIN f3 ON b3 = a2";
+            assertExceptionNoLeakCheck(sql3, sql3.indexOf("a3 RIGHT"), "join condition references a table joined later [column=a3]");
+            final String sql4 = "SELECT * FROM f0 JOIN f1 ON a1 = a3 FULL JOIN f2 ON b2 = b0 JOIN f3 ON b3 = a2";
+            assertExceptionNoLeakCheck(sql4, sql4.indexOf("a3 FULL"), "join condition references a table joined later [column=a3]");
+            final String sql5 = "SELECT * FROM f0 JOIN f1 ON b1 = b4 JOIN f2 ON a2 = a0 RIGHT JOIN f4 ON b4 = b0";
+            assertExceptionNoLeakCheck(sql5, sql5.indexOf("b4 JOIN"), "join condition references a table joined later [column=b4]");
+            final String sql6 = "SELECT * FROM f0 JOIN f1 ON b1 < b4 CROSS JOIN f2 FULL JOIN f4 ON b4 = b0";
+            assertExceptionNoLeakCheck(sql6, sql6.indexOf("b4 CROSS"), "join condition references a table joined later [column=b4]");
+            final String sql7 = "SELECT * FROM f0 JOIN f1 ON a1 < a3 LEFT JOIN f2 ON a2 = a0 JOIN f3 ON b3 = b0 RIGHT JOIN f4 ON b4 = b0";
+            assertExceptionNoLeakCheck(sql7, sql7.indexOf("a3 LEFT"), "join condition references a table joined later [column=a3]");
+        });
+    }
+
+    @Test
+    public void testForwardInnerOnReferenceWithoutRightOrFullJoinSpan() throws Exception {
+        // #7701
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (1, 1), (2, 3)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 2), (3, 1)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 4), (2, 2), (4, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 1), (2, 9)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (1, 1), (3, 3)");
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 = a2 JOIN f2 ON a2 = a0 ORDER BY a0")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2
+                            1\t1\t1\t2\t1\t4
+                            """);
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 = a2 JOIN f2 ON a2 = a0 RIGHT JOIN f4 ON b4 = b0 ORDER BY a4")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta4\tb4
+                            1\t1\t1\t2\t1\t4\t1\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t3\t3
+                            """);
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 = a3 LEFT JOIN f2 ON a2 = a0 JOIN f3 ON b3 = b0 ORDER BY a0")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            1\t1\t1\t2\t1\t4\t1\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testForwardOnReferenceInInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             createForwardOnReferenceTables();
@@ -2951,6 +3018,40 @@ public class JoinTest extends AbstractCairoTest {
                         "select * from trades where symbol in (select s.symbol from src s asof join ref r on (symbol))"
                 ).withCompiler(compiler).noLeakCheck().timestamp("ts").returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testInnerJoinKeysSharingColumnNamesAfterCrossJoin() throws Exception {
+        // #7716
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT)");
+            execute("CREATE TABLE tc (k INT)");
+            execute("CREATE TABLE td (k INT, x INT)");
+            execute("CREATE TABLE te (k INT, x INT)");
+            execute("INSERT INTO ta VALUES (1), (2)");
+            execute("INSERT INTO tc VALUES (1), (2)");
+            execute("INSERT INTO td VALUES (1, 1), (2, 2), (1, 2)");
+            execute("INSERT INTO te VALUES (1, 1), (2, 1), (2, 2)");
+            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
+            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
+            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            assertQuery("SELECT * FROM ta a CROSS JOIN tc c JOIN td d ON d.k = c.k AND d.x = a.x JOIN te e ON e.k = c.k AND e.x = a.x ORDER BY a.x")
+                    .noLeakCheck()
+                    .returns("""
+                            x\tk\tk1\tx1\tk2\tx2
+                            1\t1\t1\t1\t1\t1
+                            2\t2\t2\t2\t2\t2
+                            """);
+            assertQuery("SELECT a.id, r.id, b.id FROM a, o r, b WHERE a.x = b.k AND b.x = r.k ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1\tid2
+                            10\t1\t20
+                            """);
         });
     }
 
@@ -8523,6 +8624,126 @@ public class JoinTest extends AbstractCairoTest {
                 bindVariableService.setStr("sym", "s2");
                 assertQuery(bind).noLeakCheck().noRandomAccess().returns(empty);
             }
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnReadingCrossJoinedTables() throws Exception {
+        // #7700
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, id INT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE c (k INT, id INT)");
+            execute("INSERT INTO c VALUES (1, 10), (3, 30)");
+            execute("CREATE TABLE d (k INT, id INT)");
+            execute("INSERT INTO d VALUES (1, 100), (2, 200), (3, 300)");
+            assertQuery("SELECT * FROM a CROSS JOIN c LEFT JOIN d ON d.k = c.k AND d.k = a.k ORDER BY a.id, c.id")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t10\t1\t100
+                            1\t1\t3\t30\tnull\tnull
+                            2\t2\t1\t10\tnull\tnull
+                            2\t2\t3\t30\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM a CROSS JOIN c LEFT JOIN d ON d.k = a.k AND d.k = c.k ORDER BY a.id, c.id")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t10\t1\t100
+                            1\t1\t3\t30\tnull\tnull
+                            2\t2\t1\t10\tnull\tnull
+                            2\t2\t3\t30\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM a, c LEFT JOIN d ON d.k = c.k AND d.k = a.k ORDER BY a.id, c.id")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t10\t1\t100
+                            1\t1\t3\t30\tnull\tnull
+                            2\t2\t1\t10\tnull\tnull
+                            2\t2\t3\t30\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM a JOIN c ON c.id > a.id LEFT JOIN d ON d.k = c.k AND d.k = a.k ORDER BY a.id, c.id")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t10\t1\t100
+                            1\t1\t3\t30\tnull\tnull
+                            2\t2\t1\t10\tnull\tnull
+                            2\t2\t3\t30\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM a CROSS JOIN c RIGHT JOIN d ON d.k = c.k AND d.k = a.k ORDER BY d.id")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t10\t1\t100
+                            null\tnull\tnull\tnull\t2\t200
+                            null\tnull\tnull\tnull\t3\t300
+                            """);
+            assertQuery("SELECT * FROM a CROSS JOIN c FULL JOIN d ON d.k = c.k AND d.k = a.k ORDER BY d.id, a.id, c.id")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t3\t30\tnull\tnull
+                            2\t2\t1\t10\tnull\tnull
+                            2\t2\t3\t30\tnull\tnull
+                            1\t1\t1\t10\t1\t100
+                            null\tnull\tnull\tnull\t2\t200
+                            null\tnull\tnull\tnull\t3\t300
+                            """);
+            assertQuery("SELECT * FROM a CROSS JOIN c LEFT JOIN d ON d.k = c.k AND d.k + 0 = a.k ORDER BY a.id, c.id")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t10\t1\t100
+                            1\t1\t3\t30\tnull\tnull
+                            2\t2\t1\t10\tnull\tnull
+                            2\t2\t3\t30\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM (SELECT a.k ak, a.id aid, c.k ck, c.id cid FROM a CROSS JOIN c) t LEFT JOIN d ON d.k = t.ck AND d.k = t.ak ORDER BY t.aid, t.cid")
+                    .noLeakCheck()
+                    .returns("""
+                            ak\taid\tck\tcid\tk\tid
+                            1\t1\t1\t10\t1\t100
+                            1\t1\t3\t30\tnull\tnull
+                            2\t2\t1\t10\tnull\tnull
+                            2\t2\t3\t30\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnReadingCrossJoinedTablesNonKey() throws Exception {
+        // #7700
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("CREATE TABLE p (id INT)");
+            execute("INSERT INTO p VALUES (1), (2)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
+            execute("CREATE TABLE b (id INT, k INT)");
+            execute("INSERT INTO b VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 JOIN f2 ON b2 = a0 LEFT JOIN f3 ON a3 = a0 AND b3 >= a1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            """);
+            assertQuery("SELECT a.id, r.id, b.id FROM a CROSS JOIN p r CROSS JOIN c LEFT JOIN b ON a.x = b.k AND b.id > r.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1\tid2
+                            10\t1\tnull
+                            10\t2\tnull
+                            11\t1\t2
+                            11\t2\tnull
+                            """);
         });
     }
 

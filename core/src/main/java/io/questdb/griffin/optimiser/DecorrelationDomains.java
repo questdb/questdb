@@ -43,6 +43,7 @@ import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.optimiser.DecorrelationContext.OUTER_REF_PREFIX;
 import static io.questdb.griffin.optimiser.DecorrelationContext.appendMissingColumns;
+import static io.questdb.griffin.optimiser.DecorrelationContext.isNullingStep;
 import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
 
 /**
@@ -120,7 +121,8 @@ final class DecorrelationDomains implements Mutable {
     /**
      * A domain: the distinct values of the outer columns {@link #domainOuterIds} holds, read from a copy of
      * the master input that defines them, or of the master prefix when they come from several inputs or from a
-     * decorrelated step. Maps each outer column to its domain column.
+     * decorrelated step, or when a step of the prefix can NULL-extend them. The prefix then reaches the last such
+     * step. Maps each outer column to its domain column.
      */
     AggregatePlan buildDomain(int position) {
         int firstInput = Integer.MAX_VALUE;
@@ -130,9 +132,20 @@ final class DecorrelationDomains implements Mutable {
             firstInput = Math.min(firstInput, input);
             lastInput = Math.max(lastInput, input);
         }
+        int prefixCount = lastInput + 1;
+        boolean isNulled = false;
+        for (int i = 0, n = domainOuterIds.size(); i < n; i++) {
+            final int input = ctx.masterInput(domainOuterIds.getQuick(i));
+            for (int step = input; step < ctx.masterLimit; step++) {
+                if (isNullingStep(ctx.master, step, input)) {
+                    isNulled = true;
+                    prefixCount = Math.max(prefixCount, step + 1);
+                }
+            }
+        }
         final JoinInput last = ctx.master.getInputs().getQuick(lastInput);
-        final boolean isPrefix = firstInput != lastInput || last.getInput() == null || decorrelatedSteps.indexOf(last) > -1;
-        final LogicalPlan original = isPrefix ? prefix(lastInput + 1, position) : last.getInput();
+        final boolean isPrefix = isNulled || firstInput != lastInput || last.getInput() == null || decorrelatedSteps.indexOf(last) > -1;
+        final LogicalPlan original = isPrefix ? prefix(prefixCount, position) : last.getInput();
         final LogicalPlan source = ctx.copier.copy(original);
         final AggregatePlan domain = ctx.planNodes.aggregates.next().of(source, position);
         domain.setExplicitGrouping(true);

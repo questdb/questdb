@@ -35,6 +35,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -153,6 +154,15 @@ final class DecorrelationContext implements Mutable {
                         source.getColumnQualifier(i));
             }
         }
+    }
+
+    /**
+     * True when step {@code step} of the join can emit the columns of input {@code index} as NULL: the input's
+     * own step null-extends it, or a later step null-extends its master.
+     */
+    static boolean isNullingStep(JoinPlan join, int step, int index) {
+        final JoinKind type = join.getInputs().getQuick(step).getJoinType();
+        return step == index ? type.isSlaveNulling() : step > index && type.isMasterNulling();
     }
 
     static boolean isTrue(BoundExpression condition) {

@@ -53,6 +53,13 @@ public enum JoinKind {
     }
 
     /**
+     * True when the step can emit rows whose own columns are NULL-extended.
+     */
+    public boolean isSlaveNulling() {
+        return this == LEFT_OUTER || this == FULL_OUTER || this == ASOF || this == LT || this == SPLICE;
+    }
+
+    /**
      * True when the step matches rows by designated timestamp.
      */
     public boolean isTemporal() {

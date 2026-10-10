@@ -39,6 +39,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
+import static io.questdb.griffin.optimiser.DecorrelationContext.isNullingStep;
 import static io.questdb.griffin.optimiser.DecorrelationContext.isTrue;
 import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
 
@@ -86,10 +87,11 @@ final class CorrelationKeys implements Mutable {
         }
     }
 
-    private void collectEquality(ColumnExpression column, OuterColumnExpression outer, OutputSchema input, int base) {
+    private void collectEquality(ColumnExpression column, OuterColumnExpression outer, OutputSchema input, JoinPlan source, int base) {
         final int outerId = outer.getColumnId();
         if (ctx.masterOuterIds.contains(outerId) && pairIndex(droppedEqualities, outerId) < 0 && ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size()) < 0
-                && input.getColumnIndexById(column.getColumnId()) > -1 && column.getDataType() == outer.getDataType()) {
+                && input.getColumnIndexById(column.getColumnId()) > -1 && column.getDataType() == outer.getDataType()
+                && !isNulledPerOuterRow(source, column.getColumnId())) {
             droppedEqualities.add(outerId);
             droppedEqualities.add(column.getColumnId());
         }
@@ -135,6 +137,30 @@ final class CorrelationKeys implements Mutable {
         return false;
     }
 
+    /**
+     * True when a step of the source join that can emit the column as NULL matches depending on the outer row:
+     * its ON condition reads an outer column, or it is a deferred nullable input. The column then reads NULL for
+     * other rows per outer row, so it cannot carry the outer column.
+     */
+    private boolean isNulledPerOuterRow(JoinPlan source, int columnId) {
+        if (source == null) {
+            return false;
+        }
+        final ObjList<JoinInput> inputs = source.getInputs();
+        int index = 0;
+        while (index < inputs.size() && inputs.getQuick(index).getSourceOutput().getColumnIndexById(columnId) < 0) {
+            index++;
+        }
+        for (int i = Math.max(index, 1), n = inputs.size(); i < n; i++) {
+            final JoinInput step = inputs.getQuick(i);
+            if (isNullingStep(source, i, index)
+                    && (step.getOnResidual() != null && LogicalPlans.hasOuterColumn(step.getOnResidual()) || deferredInputs.indexOf(step) > -1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static boolean hasOuterCondition(JoinInput input) {
         return switch (input.getJoinType()) {
             case CROSS -> input.getPostJoinFilter() != null && LogicalPlans.hasOuterColumn(input.getPostJoinFilter());
@@ -155,13 +181,17 @@ final class CorrelationKeys implements Mutable {
         step.setKeyFilter(step.getKeyFilter() == null ? equality : ctx.context.getRewriter().combineConjunction(step.getKeyFilter(), equality, position));
     }
 
-    void collectEqualities(BoundExpression predicate, OutputSchema input, int base) {
+    /**
+     * Records the equalities of the predicate between an outer column and a column of its input that can carry
+     * it; {@code source} is the block's source join, or null.
+     */
+    void collectEqualities(BoundExpression predicate, OutputSchema input, JoinPlan source, int base) {
         if (!(predicate instanceof FunctionExpression call)) {
             return;
         }
         if (call.isAnd()) {
-            collectEqualities(call.argumentAt(0), input, base);
-            collectEqualities(call.argumentAt(1), input, base);
+            collectEqualities(call.argumentAt(0), input, source, base);
+            collectEqualities(call.argumentAt(1), input, source, base);
             return;
         }
         if (call.getArgumentCount() != 2 || !"=".equals(call.getName())) {
@@ -170,9 +200,9 @@ final class CorrelationKeys implements Mutable {
         final BoundExpression left = call.argumentAt(0);
         final BoundExpression right = call.argumentAt(1);
         if (left instanceof ColumnExpression column && right instanceof OuterColumnExpression outer) {
-            collectEquality(column, outer, input, base);
+            collectEquality(column, outer, input, source, base);
         } else if (right instanceof ColumnExpression column && left instanceof OuterColumnExpression outer) {
-            collectEquality(column, outer, input, base);
+            collectEquality(column, outer, input, source, base);
         }
     }
 
