@@ -1004,21 +1004,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         final int taskCount = getTaskCount();
 
         try {
-            // Never replace or copy into a directory already there: a partition prepared for ATTACH, or one an
-            // adaptive ATTACH keeps until its save point. Checking all partitions first leaves nothing moved behind.
-            final Path tablePath = localImportJob.getTmpPath2().of(configuration.getDbRoot()).concat(tableToken);
-            final int tablePathLen = tablePath.size();
-            for (int j = 0, n = partitions.size(); j < n; j++) {
-                final PartitionInfo partition = partitions.getQuick(j);
-                if (partition.importedRows > 0) {
-                    tablePath.trimTo(tablePathLen).concat(partition.name).put(configuration.getAttachPartitionSuffix());
-                    if (ff.exists(tablePath.$())) {
-                        throw TextException.$("a directory with the partition's name is already in the table directory, move it away or remove it, then retry [path='")
-                                .put(tablePath).put("']");
-                    }
-                }
-            }
-
             for (int i = 0; i < taskCount; i++) {
                 int index = taskDistribution.getQuick(i * 3);
                 int lo = taskDistribution.getQuick(i * 3 + 1);

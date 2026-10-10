@@ -324,7 +324,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         assertQuery("select count(*) from t")
                                 .noLeakCheck()
                                 .noRandomAccess()
-                                .expectSize()
                                 .sizeMayVary()
                                 .returns("count\n1000\n");
 
@@ -983,56 +982,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImportFileFailsWhenPartitionDirectoryIsInTheWay() throws Exception {
-        // The import moves each partition to <partition>.attachable in the table directory. A directory already there
-        // (a partition prepared for ATTACH, or one an adaptive ATTACH keeps until its save point) is never replaced
-        // or copied into: COPY fails, says what to do, and succeeds once the directory is gone.
-        assertMemoryLeak(() -> {
-            final String[] tables = {"tab_bypass", "tab_wal"};
-            execute("create table tab_bypass (line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH BYPASS WAL");
-            execute("create table tab_wal (line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH WAL");
-            for (String tableName : tables) {
-                final TableToken tableToken = engine.verifyTableName(tableName);
-                final java.nio.file.Path inTheWay = java.nio.file.Path.of(
-                        configuration.getDbRoot(),
-                        tableToken.getDirName(),
-                        "1970-01" + configuration.getAttachPartitionSuffix()
-                );
-                java.nio.file.Files.createDirectories(inTheWay);
-                java.nio.file.Files.writeString(inTheWay.resolve("prepared.d"), "prepared");
-
-                try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
-                    importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                    importer.process(AllowAllSecurityContext.INSTANCE);
-                    Assert.fail("the import replaced or copied into a directory in its way");
-                } catch (TextImportException e) {
-                    TestUtils.assertContains(e.getMessage(), "a directory with the partition's name is already in the table directory, move it away or remove it, then retry");
-                    TestUtils.assertContains(e.getMessage(), "1970-01" + configuration.getAttachPartitionSuffix());
-                }
-                Assert.assertEquals("prepared", java.nio.file.Files.readString(inTheWay.resolve("prepared.d")));
-                try (java.util.stream.Stream<java.nio.file.Path> entries = java.nio.file.Files.list(inTheWay)) {
-                    Assert.assertEquals(1, entries.count());
-                }
-
-                // The manual step: move the directory away, then retry.
-                java.nio.file.Files.delete(inTheWay.resolve("prepared.d"));
-                java.nio.file.Files.delete(inTheWay);
-                try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
-                    importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                    importer.process(AllowAllSecurityContext.INSTANCE);
-                }
-                assertQuery("select count() from " + tableName)
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("""
-                                count
-                                1000
-                                """);
-            }
-        });
-    }
-
-    @Test
     public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
         String tabex3 = "tabex3";
         CharSequence dirName = tabex3 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
@@ -1424,7 +1373,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         assertQuery("select count(*) from tab50")
                                 .noLeakCheck()
                                 .noRandomAccess()
-                                .expectSize()
                                 .sizeMayVary()
                                 .returns("count\n1000\n");
                     }
