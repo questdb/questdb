@@ -576,7 +576,7 @@ class WalEventWriter implements Closeable {
      * get a sequencer record ahead of its _event entry.
      */
     void syncBeforeSequencing(int commitMode) {
-        if (hasUnflushedRecords && commitMode == CommitMode.ADAPTIVE) {
+        if (hasUnflushedRecords && CommitMode.isPowerLossDurable(commitMode)) {
             sync(commitMode);
             if (hasUnflushedRecords) {
                 // A group window leaves sync() at MS_ASYNC.

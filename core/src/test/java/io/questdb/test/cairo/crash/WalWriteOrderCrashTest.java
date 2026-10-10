@@ -91,10 +91,7 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
         final List<Object[]> params = new ArrayList<>();
         for (Object[] mode : modes) {
             for (String path : paths) {
-                // Base SYNC flushes no event file before it sequences a SQL, TRUNCATE or custom event.
-                if (!"sync".equals(mode[0]) || path.equals("insert") || path.equals("add column") || path.startsWith("alter view")) {
-                    params.add(new Object[]{mode[0], mode[1], path});
-                }
+                params.add(new Object[]{mode[0], mode[1], path});
             }
         }
         return params;
