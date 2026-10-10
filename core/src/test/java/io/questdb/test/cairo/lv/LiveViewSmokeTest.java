@@ -8540,6 +8540,404 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFlushLeadPartialApplyOfAKeptLeadLeavesTheRestageToTheNextDrain() throws Exception {
+        // The shape of testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot, with the
+        // same two test-side settings for an apply that stops part-way. Two held cycles leave two
+        // blocks of the view's WAL pending, and the next drain keeps its row from readers over them.
+        // The cadence flush due in that turn commits the kept row, and its apply spends its time
+        // quota after one transaction: it lands the oldest pending block and leaves two. The flush
+        // restages nothing. A restage would stage the table below the blocks still pending, which
+        // reads already return from disk, and with a base that commits no faster than the cadence
+        // every drain would pay for one. The tier stays stale and the slot unstamped instead. The
+        // next drain finds the tier stale, flushes its row, drives the apply again, which now lands
+        // every block, and restages the slot behind them.
+        final DriftingMicrosClock clock = new DriftingMicrosClock();
+        testMicrosClock = clock;
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+            final String partialRows = """
+                    ts\tx\trn
+                    2026-04-01T00:00:00.000000Z\t1\t1
+                    2026-04-01T00:00:01.000000Z\t2\t2
+                    """;
+            final String expected = partialRows + """
+                    2026-04-01T00:00:02.000000Z\t3\t3
+                    2026-04-01T00:00:03.000000Z\t4\t4
+                    2026-04-01T00:00:04.000000Z\t5\t5
+                    """;
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // Baseline clean flush: the apply lands, so the slot and the disk agree.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+
+                // Two held cycles: the cadence flush of the second row lands nothing, and the third
+                // row's drain finds the tier stale, flushes its row and restages the slot.
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                }
+                Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
+                        2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertFalse("the restage must clear the tier-stale marking", instance.isTierStale());
+
+                // The writer is free, and a fresh base commit is queued before the job runs again, so
+                // the turn drains it over the pending blocks and runs the cadence flush due.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:03.000000Z', 4)");
+                drainWalQueue();
+                final long appliedBefore = tracker.getWriterTxn();
+                clock.startDrifting();
+                try {
+                    Assert.assertTrue("the queued base commit must give the job work", job.run());
+                } finally {
+                    clock.stopDrifting();
+                }
+                Assert.assertEquals("the exhausted quota must stop the flush's inline apply after"
+                        + " exactly one transaction", appliedBefore + 1, tracker.getWriterTxn());
+                Assert.assertEquals("the second backlog block and the flush's own block must stay"
+                        + " committed but unapplied", appliedBefore + 3, tracker.getSeqTxn());
+                Assert.assertEquals("the flush must land the kept lead in the view's WAL", 0, instance.getLeadRowCount());
+                Assert.assertTrue("a flush that left a block pending must leave the tier stale", instance.isTierStale());
+                Assert.assertEquals("a flush that left a block pending must not restage the slot",
+                        Numbers.LONG_NULL, tier.getSlot(tier.getPublishedIdx()).lvSeqTxn());
+                assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(partialRows);
+
+                // The next drain finds the tier stale. It flushes its row, and the apply behind it,
+                // with the clock frozen again, lands every block. The restage behind the apply
+                // stamps the slot with the table's applied seqTxn.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:04.000000Z', 5)");
+                drainWalQueue();
+                final long lvSeqTxnBefore = tracker.getSeqTxn();
+                Assert.assertTrue("the queued base commit must give the job work", job.run());
+                Assert.assertEquals("the drain onto the stale tier must commit its row",
+                        lvSeqTxnBefore + 1, tracker.getSeqTxn());
+                Assert.assertEquals("the drain's apply must catch the LV table up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+                Assert.assertFalse("the restage must clear the tier-stale marking", instance.isTierStale());
+                Assert.assertEquals("the restage must stamp the slot with the table's applied seqTxn",
+                        tracker.getWriterTxn(), tier.getSlot(tier.getPublishedIdx()).lvSeqTxn());
+                assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+                driveRefreshToQuiescence(job);
+            }
+
+            assertNoRefreshFaults("lv");
+            // The oracle: the view's own SELECT recomputed from the base table. Both sides project
+            // the timestamp to VARCHAR, as in the siblings above.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushLeadUnappliedBacklogKeepsLaterDrainsFromReaders() throws Exception {
+        // The two held cycles of testFlushLeadMultiCycleUnappliedBacklogDoesNotStrandStaleTierRows
+        // leave the view's WAL two blocks ahead of its table, and the second cycle's rebuild
+        // restages the published slot from the table as it stands and clears the tier-stale
+        // marking. Base commits then drain within the same FLUSH EVERY interval and the next one,
+        // while the writer is still held.
+        //
+        // Those drains must not publish their rows as a lead readers can see. The slot carries the
+        // table's applied seqTxn, so a read passes the fence and serves the table, the slot and the
+        // lead on top: the newest rows, and none of the pending blocks' rows below them, whose
+        // running count the newest rows' rn already includes. A consumer polling past the newest
+        // row it has seen would skip the pending rows for good. The drains keep their rows from
+        // readers instead, so every read returns the table as it stands. They keep pace with the
+        // base and commit nothing to the view's WAL. Two turns per interval commit, as they did
+        // before such drains were kept from readers: the cadence flush, which restages nothing
+        // while its apply lands nothing, and the first drain behind it, which finds the tier stale,
+        // flushes its row and restages the slot. The first cadence flush after the writer is free
+        // lands the backlog with the kept rows.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken baseToken = engine.verifyTableName("base");
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+            final String appliedRow = """
+                    ts\tx\trn
+                    2026-04-01T00:00:00.000000Z\t1\t1
+                    """;
+            final String expected = appliedRow + """
+                    2026-04-01T00:00:01.000000Z\t2\t2
+                    2026-04-01T00:00:02.000000Z\t3\t3
+                    2026-04-01T00:00:03.000000Z\t4\t4
+                    2026-04-01T00:00:04.000000Z\t5\t5
+                    2026-04-01T00:00:05.000000Z\t6\t6
+                    2026-04-01T00:00:06.000000Z\t7\t7
+                    2026-04-01T00:00:07.000000Z\t8\t8
+                    """;
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // Baseline clean flush: the apply lands, so the slot and the disk agree.
+                setCurrentMicros(currentMicros + 1_000_000);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(appliedRow);
+                final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    // The cadence flush of the second row lands nothing, so it takes the slot out of
+                    // the read path and marks the tier stale.
+                    setCurrentMicros(currentMicros + 1_000_000);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
+                    drainWalQueue();
+                    Assert.assertTrue(job.run());
+                    Assert.assertTrue("a flush that landed nothing must mark the tier stale", instance.isTierStale());
+                    // The third row's drain finds the tier stale, flushes its row to the view's WAL
+                    // behind the pending block and restages the slot from the table as it stands.
+                    setCurrentMicros(currentMicros + 100_000);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
+                    drainWalQueue();
+                    Assert.assertTrue(job.run());
+                    Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
+                            2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                    Assert.assertFalse("the restage must clear the tier-stale marking", instance.isTierStale());
+                    Assert.assertEquals(0, instance.getLeadRowCount());
+                    assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(appliedRow);
+
+                    // The fourth and fifth rows drain within the interval, onto the restaged slot.
+                    final long lvSeqTxn = tracker.getSeqTxn();
+                    for (int x = 4; x <= 5; x++) {
+                        setCurrentMicros(currentMicros + 100_000);
+                        execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:0" + (x - 1) + ".000000Z', " + x + ")");
+                        drainWalQueue();
+                        Assert.assertTrue(job.run());
+                        Assert.assertEquals("the drain must keep pace with the base [x=" + x + ']',
+                                engine.getTableSequencerAPI().lastTxn(baseToken), instance.getRefreshedUpToSeqTxn());
+                        Assert.assertEquals("the drain must commit nothing to the view's WAL [x=" + x + ']',
+                                lvSeqTxn, tracker.getSeqTxn());
+                        Assert.assertEquals("the drain must count its row in the un-flushed lead [x=" + x + ']',
+                                x - 3, instance.getLeadRowCount());
+                        assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(appliedRow);
+                        Assert.assertEquals(
+                                "the drain must keep its row from readers in an unstamped slot [x=" + x + ']',
+                                Numbers.LONG_NULL,
+                                tier.getSlot(tier.getPublishedIdx()).lvSeqTxn()
+                        );
+                    }
+
+                    // The next interval's first drain joins the kept lead, and the cadence flush due
+                    // then commits its three rows in one block, which the held writer leaves
+                    // pending as well. The flush restages nothing: it leaves the tier stale and the
+                    // slot unstamped.
+                    setCurrentMicros(currentMicros + 1_000_000);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:05.000000Z', 6)");
+                    drainWalQueue();
+                    Assert.assertTrue(job.run());
+                    Assert.assertEquals("one cadence flush per interval must commit the kept lead",
+                            lvSeqTxn + 1, tracker.getSeqTxn());
+                    Assert.assertEquals(3L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                    Assert.assertEquals(0, instance.getLeadRowCount());
+                    Assert.assertTrue("a flush that landed nothing must leave the tier stale", instance.isTierStale());
+                    Assert.assertEquals("a flush that landed nothing must not restage the slot",
+                            Numbers.LONG_NULL, tier.getSlot(tier.getPublishedIdx()).lvSeqTxn());
+                    assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(appliedRow);
+
+                    // The seventh row drains within that interval onto the stale tier: it flushes its
+                    // row behind the pending blocks and restages the slot from the table as it stands.
+                    setCurrentMicros(currentMicros + 100_000);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:06.000000Z', 7)");
+                    drainWalQueue();
+                    Assert.assertTrue(job.run());
+                    Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(baseToken), instance.getRefreshedUpToSeqTxn());
+                    Assert.assertEquals("the drain onto the stale tier must commit its row",
+                            lvSeqTxn + 2, tracker.getSeqTxn());
+                    Assert.assertEquals(4L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                    Assert.assertEquals(0, instance.getLeadRowCount());
+                    Assert.assertFalse("the restage must clear the tier-stale marking", instance.isTierStale());
+                    Assert.assertEquals("the restage must stamp the slot with the table's applied seqTxn",
+                            tracker.getWriterTxn(), tier.getSlot(tier.getPublishedIdx()).lvSeqTxn());
+                    assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(appliedRow);
+
+                    // The eighth row drains within that interval and keeps its row from readers
+                    // again, with no commit of its own.
+                    setCurrentMicros(currentMicros + 100_000);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:07.000000Z', 8)");
+                    drainWalQueue();
+                    Assert.assertTrue(job.run());
+                    Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(baseToken), instance.getRefreshedUpToSeqTxn());
+                    Assert.assertEquals(lvSeqTxn + 2, tracker.getSeqTxn());
+                    Assert.assertEquals(1, instance.getLeadRowCount());
+                    assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(appliedRow);
+                    Assert.assertEquals(Numbers.LONG_NULL, tier.getSlot(tier.getPublishedIdx()).lvSeqTxn());
+                }
+                Assert.assertFalse("a busy writer must not suspend the LV table",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+
+                // The writer is free, and nothing flushes before the interval ends: reads still
+                // return the table as it stands.
+                job.run();
+                assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(appliedRow);
+
+                // The next cadence flush lands the backlog with the kept row and restages the slot.
+                setCurrentMicros(currentMicros + 1_000_000);
+                Assert.assertTrue(job.run());
+                Assert.assertEquals("the flush must catch the LV table up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+                assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+                driveRefreshToQuiescence(job);
+            }
+
+            assertNoRefreshFaults("lv");
+            // The oracle: the view's own SELECT recomputed from the base table. Both sides project
+            // the timestamp to VARCHAR, as in the siblings above.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushLeadUnappliedBacklogUnderSparseBaseCommitsRestagesTheSlotEveryOtherDrain() throws Exception {
+        // The view's inline apply keeps landing nothing while the base commits no faster than the
+        // view's FLUSH EVERY, so every drain finds the cadence flush due. A drain over a pending
+        // block keeps its rows from readers, and the cadence flush in the same turn commits them to
+        // the view's WAL, where the held writer leaves them. That flush must not restage the slot:
+        // the restage would stage the table as it stands, below the pending blocks, which reads
+        // already return from disk, and every drain would pay for one. The flush leaves the tier
+        // stale and the slot unstamped instead. The next drain finds the tier stale, flushes its row
+        // behind the pending blocks and restages the slot. So the view commits once per drain and
+        // restages the slot once per two drains, as it did before such drains were kept from
+        // readers. Reads return the table as it stands at every step. Once the writer is free, the
+        // scan's apply retry lands the backlog on a quiet base, ahead of any cadence flush.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken baseToken = engine.verifyTableName("base");
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+            final String appliedRow = """
+                    ts\tx\trn
+                    2026-04-01T00:00:00.000000Z\t1\t1
+                    """;
+            final String expected = appliedRow + """
+                    2026-04-01T00:00:01.000000Z\t2\t2
+                    2026-04-01T00:00:02.000000Z\t3\t3
+                    2026-04-01T00:00:03.000000Z\t4\t4
+                    2026-04-01T00:00:04.000000Z\t5\t5
+                    2026-04-01T00:00:05.000000Z\t6\t6
+                    """;
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // Baseline clean flush: the apply lands, so the slot and the disk agree.
+                setCurrentMicros(currentMicros + 1_000_000);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(appliedRow);
+                final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    // One base commit per interval. Each even row's turn runs the cadence flush: the
+                    // second row's of a lead readers can see, every later one's of a lead kept from
+                    // readers. Each odd row's turn drains onto the tier that flush left stale.
+                    for (int x = 2; x <= 6; x++) {
+                        setCurrentMicros(currentMicros + 1_000_000);
+                        final long lvSeqTxnBefore = tracker.getSeqTxn();
+                        final long lastFlushUsBefore = instance.getLastFlushTimeUs();
+                        execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:0" + (x - 1) + ".000000Z', " + x + ")");
+                        drainWalQueue();
+                        Assert.assertTrue(job.run());
+                        Assert.assertEquals("the drain must keep pace with the base [x=" + x + ']',
+                                engine.getTableSequencerAPI().lastTxn(baseToken), instance.getRefreshedUpToSeqTxn());
+                        Assert.assertEquals("the turn must commit its row to the view's WAL once [x=" + x + ']',
+                                lvSeqTxnBefore + 1, tracker.getSeqTxn());
+                        Assert.assertEquals("the held writer must leave every block pending [x=" + x + ']',
+                                x - 1, tracker.getSeqTxn() - tracker.getWriterTxn());
+                        Assert.assertEquals(0, instance.getLeadRowCount());
+                        assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(appliedRow);
+                        final long slotLvSeqTxn = tier.getSlot(tier.getPublishedIdx()).lvSeqTxn();
+                        if (x % 2 == 0) {
+                            Assert.assertNotEquals("the turn must run the cadence flush [x=" + x + ']',
+                                    lastFlushUsBefore, instance.getLastFlushTimeUs());
+                            Assert.assertTrue("a flush that landed nothing must leave the tier stale [x=" + x + ']',
+                                    instance.isTierStale());
+                            Assert.assertEquals("a flush that landed nothing must not restage the slot [x=" + x + ']',
+                                    Numbers.LONG_NULL, slotLvSeqTxn);
+                        } else {
+                            Assert.assertEquals("a drain onto the stale tier runs no cadence flush [x=" + x + ']',
+                                    lastFlushUsBefore, instance.getLastFlushTimeUs());
+                            Assert.assertFalse("the drain onto the stale tier must restage the slot [x=" + x + ']',
+                                    instance.isTierStale());
+                            Assert.assertEquals("the restage must stamp the slot with the table's applied seqTxn [x=" + x + ']',
+                                    tracker.getWriterTxn(), slotLvSeqTxn);
+                        }
+                    }
+                }
+                Assert.assertFalse("a busy writer must not suspend the LV table",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+
+                // The base stays quiet and the clock stays put, so no drain and no cadence flush
+                // runs. The scan's apply retry lands the backlog and rebuilds the slot.
+                Assert.assertTrue("the scan must retry the pending apply", drainJob(job));
+                Assert.assertEquals("the retry must catch the LV table up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+                Assert.assertFalse(instance.isTierStale());
+                Assert.assertEquals(tracker.getWriterTxn(), tier.getSlot(tier.getPublishedIdx()).lvSeqTxn());
+                assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+                driveRefreshToQuiescence(job);
+            }
+
+            assertNoRefreshFaults("lv");
+            // The oracle: the view's own SELECT recomputed from the base table. Both sides project
+            // the timestamp to VARCHAR, as in the siblings above.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testSeedResumeWaitsForPendingApplyBeforeReadingFloor() throws Exception {
         // Regression for the seed-resume floor: the resume path calls the void applyWalDirect to
         // fold a committed-but-unapplied seed block into the on-disk row count it derives the

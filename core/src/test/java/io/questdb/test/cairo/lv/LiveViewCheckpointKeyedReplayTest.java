@@ -849,6 +849,88 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyedRepairOverARootAnotherKeyTiedLaterKeepsTheTieRow() throws Exception {
+        // A keyed repair re-versions every root of its closed segment with its own keys'
+        // state over the old root, and stamps each with the count of every row at or below
+        // it. acct-1's 00:48:50 row ties the root sealed at 00:48:50 in the next commit, so
+        // that root holds acct-1 at 3.0 where the group says 4.0, and the guard a resume
+        // applies is what keeps a resume off it. Re-stamped by the acct-4 repair, the root
+        // passed that guard, the late acct-1 row resumed from it, and every acct-1 sum from
+        // 01:00 on came out one short, durably.
+        assertKeyedRepairNearARootTie(true, true, true, 0);
+    }
+
+    @Test
+    public void testAKeyedRepairOverARootAnotherKeyTiedLaterKeepsTheTieRowWithTheKeyedReplayOff() throws Exception {
+        // The same burst with the keyed route switched off: the closed day reads whole.
+        assertKeyedRepairNearARootTie(true, true, false, 0);
+    }
+
+    @Test
+    public void testAKeyedRepairOverARootAnotherKeyTiedLaterKeepsTheTieRowWithoutAKeyIndex() throws Exception {
+        // The same burst over an unindexed key, which leaves the keyed route no posting
+        // index to follow: the closed day reads whole.
+        assertKeyedRepairNearARootTie(true, false, true, 0);
+    }
+
+    @Test
+    public void testAKeyedRepairOverARootThatCoversItsTimestampGroupStaysKeyed() throws Exception {
+        // The same burst with acct-1's second row one second past the root rather than on
+        // it. The root covers its group, so the closed day keeps the keyed read the pricing
+        // chose for it.
+        assertKeyedRepairNearARootTie(false, true, true, 1);
+    }
+
+    @Test
+    public void testAKeyedRepairOverASeededRootAnotherKeyTiedLaterKeepsTheTieRow() throws Exception {
+        // The seeded shape, with acct-9 tying the newest seeded root, 2026-01-04T01:01:20, in
+        // a commit that also carries a later row. The one-row cadence seals above that row,
+        // so the tied root is no longer the head when the acct-2 correction re-versions it,
+        // and the live-view table's row count is the only evidence of the tie. A restart
+        // between the repair and the late acct-9 row puts the roots on disk in front of the
+        // resume.
+        armKeyedReplay();
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(4, 1, 1, 20, "acct-9") + ", " + row(4, 2, "acct-3"), job);
+                // Closes January 4.
+                commit(row(5, 1, "acct-1"), job);
+                // Below every row of January 4, on an account the tie does not involve.
+                commit(row(4, 0, 30, 0, "acct-2"), job);
+                Assert.assertEquals(
+                        "the pricing must pick the keyed read for January 4",
+                        1,
+                        job.keyedScanCheaperCountForTest()
+                );
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                assertRestoredFromTimeline("lv");
+                driveRefreshToQuiescence(job);
+                // Ties the head, which sends the next late row through the union range: it
+                // resumes from the newest root below it rather than replaying the day.
+                commit(row(5, 1, "acct-5"), job);
+                // Above the tied root, on the account that tied it.
+                commit(row(4, 1, 30, 0, "acct-9"), job);
+
+                assertQuery("SELECT created_at, cumulative_sum FROM lv WHERE account_id = 'acct-9'")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .returns("""
+                                created_at\tcumulative_sum
+                                2026-01-04T01:01:20.000000Z\t1.0
+                                2026-01-04T01:30:00.000000Z\t2.0
+                                """);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
     public void testAKeyedRepairWhoseStoredRowsFailToCloseAfterItsCommitRetiresTheTimeline() throws Exception {
         // The keyed replay's unwind closes the merge's stored rows after the replacement has
         // committed. A close that fails there skips the publication tail, so the splice that
@@ -1689,6 +1771,86 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                         "a deduplicating base must keep every closed segment on the whole-segment read",
                         0,
                         job.keyedReplaySegmentCountForTest()
+                );
+            }
+        });
+    }
+
+    /**
+     * Seven commits to an anchored view over a daily-partitioned base, each settled before
+     * the next, under default settings otherwise. The 295 acct-9 rows are what make the
+     * pricing pick the keyed read for January 3 once it closes, and the acct-7 row tying the
+     * head is what sends the last late row through the union range, which resumes from the
+     * newest root below it rather than replaying the day.
+     *
+     * @param isTied               whether acct-1's second row lands on the root sealed at
+     *                             00:48:50 or one second past it
+     * @param expectedKeyedRepairs how many closed segments the acct-4 correction reads by key
+     */
+    private void assertKeyedRepairNearARootTie(
+            boolean isTied,
+            boolean isKeyIndexed,
+            boolean isKeyedReplayEnabled,
+            long expectedKeyedRepairs
+    ) throws Exception {
+        if (!isKeyedReplayEnabled) {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED, "false");
+        }
+        final String acct1SecondTs = isTied ? "2026-01-03T00:48:50.000000Z" : "2026-01-03T00:48:51.000000Z";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL" + (isKeyIndexed ? " INDEX" : "")
+                    + ", amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum FROM tx
+                    WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')
+                    """);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // The first root seals at 00:48:50.
+                commit("""
+                        ('2026-01-03T00:26:24.000000Z', 'acct-4', 2.0),
+                        ('2026-01-03T00:32:37.000000Z', 'acct-1', 3.0),
+                        ('2026-01-03T00:48:50.000000Z', 'acct-0', 3.0)""", job);
+                commit("('" + acct1SecondTs + "', 'acct-1', 1.0), ('2026-01-03T01:36:32.000000Z', 'acct-1', 1.0)", job);
+                final StringBuilder filler = new StringBuilder();
+                for (int minute = 0; minute < 295; minute++) {
+                    if (minute > 0) {
+                        filler.append(", ");
+                    }
+                    filler.append("('2026-01-03T")
+                            .append(String.format("%02d:%02d", 5 + minute / 60, minute % 60))
+                            .append(":00.000000Z', 'acct-9', 1.0)");
+                }
+                commit(filler.toString(), job);
+                // Closes January 3.
+                commit("('2026-01-04T01:00:00.000000Z', 'acct-0', 1.0)", job);
+                // Below the root, on an account the tie does not involve.
+                commit("('2026-01-03T00:32:37.000000Z', 'acct-4', 3.0)", job);
+                Assert.assertEquals(
+                        "the pricing must pick the keyed read for January 3 whenever the key is indexed",
+                        isKeyIndexed ? 1 : 0,
+                        job.keyedScanCheaperCountForTest()
+                );
+                final long keyedRepairs = job.keyedReplaySegmentCountForTest();
+                // Ties the head.
+                commit("('2026-01-04T01:00:00.000000Z', 'acct-7', 1.0)", job);
+                // Above the root, on the account that tied it.
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 1.0)", job);
+
+                assertQuery("SELECT created_at, cumulative_sum FROM lv WHERE account_id = 'acct-1'")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .returns("created_at\tcumulative_sum\n"
+                                + "2026-01-03T00:32:37.000000Z\t3.0\n"
+                                + acct1SecondTs + "\t4.0\n"
+                                + "2026-01-03T01:00:00.000000Z\t5.0\n"
+                                + "2026-01-03T01:36:32.000000Z\t6.0\n");
+                assertViewMatchesRecompute();
+                Assert.assertEquals(
+                        "a root that covers its timestamp group keeps the keyed read, and only such a root",
+                        expectedKeyedRepairs,
+                        keyedRepairs
                 );
             }
         });

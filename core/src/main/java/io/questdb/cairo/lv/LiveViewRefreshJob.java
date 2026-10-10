@@ -321,6 +321,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // order, grown on demand and never cleared. They own nothing (ownsBase=false), so a
     // flush unbinds rather than frees them and the next one rebinds through of().
     private final ObjList<LiveViewSymbolTable> flushSymbolResolverPool = new ObjList<>();
+    // Scratch a lead drain fills for finishLeadRefresh when its rows are kept from readers: the
+    // LV table's committed symbol count per output column, indexed by column and filled for
+    // SYMBOL columns only, which caps the symbol horizon the lead's slot is stamped with.
+    private final IntList leadSymbolHorizonCaps = new IntList();
     // Wall clock this worker has spent applying live-view WAL, in nanoseconds. The apply
     // is the half of a refresh that writes into live-view partitions already on disk, and
     // a repair whose replacement range reaches a closed partition rewrites the whole of
@@ -358,6 +362,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Reusable counter for the skip a resumed localized repair takes over the rows of
     // its resume group that a prior turn already folded.
     private final RecordCursor.Counter repairSkipCounter = new RecordCursor.Counter();
+    // Scratch for restageInMemoryTierFromDisk: the committed symbol count per output column
+    // of the LV table reader the restage stages from, indexed by column and filled for SYMBOL
+    // columns only. Caps the restaged slot's symbol horizons.
+    private final IntList restagedSymbolCounts = new IntList();
     // Reusable holder for the values the seed resume reads out of the timeline's
     // newest root. One instance per worker; mutated only on the refresh-worker
     // thread between restore calls. Avoids a per-call allocation on the resume.
@@ -591,6 +599,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Sticky until cleared; always false in production.
     @TestOnly
     private boolean isForwardCommitDedupCollapseSimulatedForTest;
+    // Test-only: when armed, a lead drain whose symbol-id rewind left the stranded ids in place
+    // still publishes its rows as a lead over them that readers can see, which is what every
+    // such lead drain did before drainBaseWal sent it straight to disk or kept its rows from
+    // readers. The flush that lands that lead then finds its ids out of step with the view's
+    // table. That check stays as the backstop for a production route no test drives
+    // deterministically: a value the view's pooled WAL writer kept through a rollback and
+    // commits ahead of the lead's. A drain while the view's own WAL holds a block the inline
+    // apply has not landed, whose rewind rewindStrandedSymbolIds would skip, keeps its rows from
+    // readers instead (drainBaseWal). So the tests of the backstop reach it this way. Sticky
+    // until cleared; always false in production.
+    @TestOnly
+    private boolean isStrandedIdLeadSimulatedForTest;
     // Test-only: when armed, refreshInstance runs this action after every guard it evaluates
     // before the refresh latch and before it takes the latch. That interval is the window a
     // peer worker's turn can use to stop the view (a refused rebuild) after this turn has
@@ -1434,6 +1454,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateForwardCommitDedupCollapseForTest(boolean simulate) {
         this.isForwardCommitDedupCollapseSimulatedForTest = simulate;
+    }
+
+    /**
+     * Test-only: has a lead drain whose symbol-id rewind left the stranded ids in place
+     * publish its rows as a lead over them that readers can see, instead of sending them
+     * straight to disk or keeping them from readers, so the flush that lands them finds its
+     * ids out of step with the view's table. That is the state the flush's in-step check and
+     * the stale-tier rewind gate behind it guard against. Production reaches it through a
+     * route no test drives deterministically: a value the view's pooled WAL writer kept
+     * through a rollback. A drain while the view's own WAL holds a block the inline apply has
+     * not landed, whose rewind {@link #rewindStrandedSymbolIds(LiveViewInstance, TableReader)}
+     * would skip, keeps its rows from readers instead ({@link #drainBaseWal}). Production never
+     * calls this.
+     */
+    @TestOnly
+    public void setSimulateStrandedIdLeadForTest(boolean simulate) {
+        this.isStrandedIdLeadSimulatedForTest = simulate;
     }
 
     /**
@@ -3719,6 +3756,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // of them can retire a base row, and a ROWS repair discovers its affected key
         // domain by looking for those rows. See DrainResult.o3ChangeInsertOnly.
         boolean changeInsertOnly = true;
+        // Whether this drain's rows stay out of the read path until a flush lands them; see the
+        // stranded symbol ids below.
+        boolean isLeadKeptFromReaders = false;
         boolean o3Detected = false;
         long o3LateRowTs = Numbers.LONG_NULL;
         long o3SeqTxn = Numbers.LONG_NULL;
@@ -3755,19 +3795,98 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // reallocating every turn.
                 QuietCloseable segmentRelease = walSegmentRelease
         ) {
+            // Whether this drain goes straight to disk past stranded symbol ids; see below.
+            boolean isStrandedIdDiskRoute = false;
+            // A lead drain keeps its rows from readers while the view's WAL holds a block its table
+            // has not applied. An inline apply that landed nothing (a busy writer, a memory-pressure
+            // back-off, a failure that suspended the table) leaves such a block behind, and a
+            // restage behind it stamps the slot with the table's applied seqTxn, below the block. A
+            // lead published on that stamp passes the read fence, so a read serves the table, the
+            // slot and the lead, and none of the pending block's rows between them: later rows
+            // without the earlier ones, with running totals that count rows the read does not show.
+            // Kept, the lead leaves every read on the table as it stands, a prefix of the view's
+            // output, until the cadence flush lands the block with the lead and restages the slot
+            // (refreshInstance). A drain that joins a lead kept from readers, for this reason or
+            // over stranded symbol ids (below), keeps its rows from readers too. Neither kind
+            // attempts the symbol-id rewind below: none can run under a lead, and one with a block
+            // pending would stand down anyway. The check reads the two seqTxns of the view's WAL
+            // tracker.
+            // See LiveViewRuntimeRestoreTest.testAReaderPinnedOnALeadTheTableNeverCommitsShowsNoDrainAboveAFlushThatLandedNothing,
+            // testAReaderPinnedOnALeadTheTableNeverCommitsShowsNoDrainAboveADrainToDiskThatLandedNothing
+            // and LiveViewSmokeTest.testFlushLeadUnappliedBacklogKeepsLaterDrainsFromReaders.
+            if (walWriter == null
+                    && populateTier
+                    && (isPublishedLeadKeptFromReaders(instance) || !isLiveViewWalFullyApplied(instance))) {
+                isLeadKeptFromReaders = true;
+            }
             if (internSymbols) {
                 // Take back ids a discarded pass left above the committed count before
                 // this pass interns past them. Only a drain that starts with an empty lead
                 // may: a lead's own ids sit above the committed count legitimately.
-                if (isSymbolRewindCandidate(instance)) {
-                    rewindStrandedSymbolIds(instance, committedSymbolReader);
+                //
+                // A lead drain (no walWriter) whose rewind left the stranded ids in place
+                // must not publish this pass's rows as a lead readers can see. The pass
+                // interns them above the stranded ids, so the lead's slot would be stamped
+                // with a symbol horizon past those ids too, and a read of it would list each
+                // value the view's table has since committed, or this pass interned again,
+                // under a stranded key as well as its own: a keyed WINDOW JOIN from the view
+                // maps the base's key for such a value to the last of those keys, which no
+                // row carries, and finds no match for the rows that carry the other. A
+                // disk-subset drain publishes only ids its in-step check proved committed, so
+                // it needs neither of the two answers below.
+                //
+                // Only a reader pinning a slot whose horizon reaches past the committed
+                // counts refuses the rewind (LiveViewInMemoryTier.tryRewindSymbolCache): in
+                // practice a slot that still holds a lead published before the recovery,
+                // until the table commits as many values as that lead lists. The first
+                // such drain marks the tier stale, which sends its rows straight to disk
+                // (finishLeadRefresh); the rebuild behind them stages a slot that stops its
+                // horizon at the committed counts and retries the rewind, which that commit
+                // usually lets through. A further drain goes to disk at once while these
+                // drains converge on the pinned slot's horizon - the last one committed
+                // values toward it, or stopped on the turn budget before the cursor reached
+                // the last base commit a pinned lead can cover - so the table commits what
+                // the pinned lead lists at the view's normal rate.
+                //
+                // Otherwise sending every drain to disk would make each pay an LV commit and
+                // an IN MEMORY restage for as long as the pin lasts, which may be for good
+                // when the table never commits a value the pinned lead lists. So the drain
+                // keeps its rows from readers instead: it drains as a lead always does, at the
+                // view's normal rate, and finishLeadRefresh publishes the lead unstamped,
+                // which routes every read to disk. Later drains join that lead until the
+                // cadence flush lands it, and the restage behind that flush retries the rewind
+                // (refreshInstance). A pin that keeps refusing it then costs one restage per
+                // FLUSH EVERY interval on top of the flush the view makes anyway, and reads
+                // trail the base by up to an interval, as a coupled view's do; the drains do
+                // not fall behind the base however long the pin lasts.
+                // See LiveViewRuntimeRestoreTest.testAReaderPinnedAcrossARestoredHandOffKeepsEachAccountUnderOneSymbolKey,
+                // testAReaderPinnedAcrossARestoredHandOffLeavesLaterDrainsInTheUnflushedLead,
+                // testAReaderPinnedOnALeadTheRetryHasNotCommittedSendsDrainsToDiskBackToBackWhileTheyConverge,
+                // testAReaderPinnedOnALeadTheTableNeverCommitsKeepsLaterDrainsFromReadersUntilTheCadenceFlush
+                // and testAReaderPinnedOnALeadTheTableNeverCommitsKeepsTheViewWithinAFlushIntervalOfTheBase.
+                if (!isLeadKeptFromReaders
+                        && isSymbolRewindCandidate(instance)
+                        && rewindStrandedSymbolIds(instance, committedSymbolReader)
+                        && walWriter == null
+                        && !isStrandedIdLeadSimulatedForTest) {
+                    if (tryRouteStrandedIdDrainToDisk(instance, committedSymbolReader)) {
+                        isStrandedIdDiskRoute = true;
+                    } else {
+                        isLeadKeptFromReaders = true;
+                    }
                 }
                 // Re-anchor each SYMBOL column's next-new-id to the committed symbol
                 // count, so a flush (or O3) that advanced the count moves new-id
-                // assignment past it while a within-window advance is preserved.
+                // assignment past it while a within-window advance is preserved. A lead
+                // kept from readers stops its slot's symbol horizon at the same counts, so a
+                // reader that pins the slot holds no rewind up (see finishLeadRefresh).
                 for (int si = 0, sn = stagingSymbolColumnIndexes.size(); si < sn; si++) {
                     final int c = stagingSymbolColumnIndexes.getQuick(si);
-                    symbolCache.anchor(c, committedSymbolReader.getSymbolMapReader(c).getSymbolCount());
+                    final int committedCount = committedSymbolReader.getSymbolMapReader(c).getSymbolCount();
+                    symbolCache.anchor(c, committedCount);
+                    if (isLeadKeptFromReaders) {
+                        leadSymbolHorizonCaps.extendAndSet(c, committedCount);
+                    }
                 }
             }
             while (txnCursor.hasNext()) {
@@ -3784,6 +3903,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (turnCommitsProcessed > 0
                         && (turnCommitsProcessed >= turnMaxCommits
                         || engine.getConfiguration().getMicrosecondClock().getTicks() - turnStartUs >= turnMaxDurationUs)) {
+                    if (isStrandedIdDiskRoute) {
+                        // The drain leaves commits it was asked for, so the next one may go to
+                        // disk at once while the cursor stands below the last base commit a
+                        // pinned lead can cover (tryRouteStrandedIdDrainToDisk).
+                        instance.getInMemoryTier().setStrandedIdDiskRouteBudgetStopped();
+                    }
                     break;
                 }
                 // Snapshot the prior value: advanceTo is claimed before this commit's type is
@@ -4105,6 +4230,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         drainResult.advanceTo = advanceTo;
         drainResult.appendedRows = appendedRows;
         drainResult.batchMaxTs = batchMaxTs;
+        drainResult.isLeadKeptFromReaders = isLeadKeptFromReaders;
         drainResult.o3ChangeInsertOnly = changeInsertOnly;
         drainResult.o3ChangeMaxTs = changeMaxTsKnown ? changeMaxTs : Numbers.LONG_NULL;
         drainResult.o3Detected = o3Detected;
@@ -4349,7 +4475,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // instead: the seam lands at the IN MEMORY window's lower edge
                     // with the overlap present, and rebuildInMemoryTier clears the
                     // stale marking (or defers to the next cycle if both slots stay
-                    // pinned).
+                    // pinned). A lead drain whose symbol-id rewind a reader's pin refused
+                    // marks the tier stale as well - the first such drain of a FLUSH EVERY
+                    // interval, and each one while such drains converge on the pinned slot's
+                    // horizon (drainBaseWal): a lead published now would sit above the stranded
+                    // ids and expose them to reads, so it goes to disk, and the rebuild retries
+                    // the rewind.
                     //
                     // instance.leadRowCount is 0 here (both tierStale setters zero it), so
                     // flushLead materialises exactly this cycle's staging rows, not the
@@ -4372,12 +4503,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // current version, since nothing has applied since the last flush):
                 // the overlap agrees with disk row-for-row and the lead sits on
                 // top. A later flush re-stamps the slot once the lead lands on disk.
-                long lastFlushedLvSeqTxn = engine.getTableSequencerAPI()
-                        .getTxnTracker(instance.getLiveViewToken())
-                        .getWriterTxn();
+                //
+                // A lead kept from readers goes unstamped instead: no disk snapshot
+                // matches an unstamped slot, so every read of the view runs disk-only
+                // and serves none of the lead's rows, nor resolves a symbol id through
+                // the slot. Its rows sit above a block of the view's WAL the table has
+                // not applied, whose rows a read through the slot would skip, or carry
+                // ids interned past ones a reader's pin keeps stranded, which a read
+                // through the slot would expose (drainBaseWal).
+                // The cadence flush lands the lead and restages the slot from the
+                // table (refreshInstance). The slot's symbol horizon stops at the
+                // committed counts, as a restaged slot's does, so a reader that pins it
+                // meanwhile, reading disk-only, holds no symbol-id rewind up.
+                final boolean isLeadKeptFromReaders = drainResult.isLeadKeptFromReaders;
+                final long slotLvSeqTxn = isLeadKeptFromReaders
+                        ? Numbers.LONG_NULL
+                        : engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
                 boolean published;
                 try {
-                    published = publishToInMemoryTier(instance, stagingMaxTs, lastFlushedLvSeqTxn, appendedRows, true);
+                    published = publishToInMemoryTier(
+                            instance,
+                            stagingMaxTs,
+                            slotLvSeqTxn,
+                            appendedRows,
+                            true,
+                            isLeadKeptFromReaders ? leadSymbolHorizonCaps : null
+                    );
                 } catch (Throwable t) {
                     // A publish error (e.g. a copy/swap failure mid-publish) left
                     // the lead out of the tier. The publish's own catch already
@@ -4436,6 +4587,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
         final long priorLead = instance.getLeadRowCount();
         final long flushRows = priorLead + stagingRowsToInclude;
+        // Read before the commit, which zeroes the lead.
+        final boolean isLeadKeptFromReaders = isPublishedLeadKeptFromReaders(instance);
         if (flushRows == 0 || tier == null) {
             // Nothing to materialise (only non-data / filtered base commits walked,
             // or no tier). Advance the watermarks anyway so base WAL retention
@@ -4639,6 +4792,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // one transaction was outstanding, and it is the one committed above.
             instance.setTierStale(true);
             restampSlot(instance, Numbers.LONG_NULL, 0);
+            isSlotSubsetOfDisk = false;
+        } else if (isLeadKeptFromReaders) {
+            // The apply landed exactly this flush's block, but the lead was kept from readers
+            // (drainBaseWal). A lead kept over a block the table had not applied never gets here:
+            // the apply lands that older block first. One kept past symbol ids a reader's pin kept
+            // stranded carries ids the table committed to other values. The slot is already
+            // unstamped, and reads run disk-only. The stale marking keeps the next lead publish
+            // off it; the cadence flush that lands such a lead restages the slot right behind it
+            // (refreshInstance). No re-stamp here, which would raise the slot's symbol horizon
+            // past the committed counts again.
+            instance.setTierStale(true);
             isSlotSubsetOfDisk = false;
         } else if (hasSymbols && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
             // The apply landed exactly this flush's block, but the lead's symbol ids are
@@ -5303,16 +5467,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Reports whether the live view's table holds every block its own WAL has already
-     * committed, from disk truth: the sequencer log's last committed seqTxn against the
-     * applied seqTxn the LV table records in its {@code _txn}.
+     * committed.
      * <p>
-     * Deliberately does not consult the {@link SeqTxnTracker}. That tracker is memory-only
-     * and both of its txns default to {@code UNINITIALIZED_TXN}, so on a restart path -
-     * where nothing has initialised it yet - a tracker comparison answers "fully applied"
-     * for a view that has applied nothing, which is the wrong way to be wrong here.
+     * An initialised {@link SeqTxnTracker} answers from memory: a commit to the view's WAL
+     * advances its seqTxn and an apply its writerTxn, so it compares the two. A cold tracker
+     * holds {@code UNINITIALIZED_TXN} in its writerTxn - nothing has initialised it since a
+     * restart, or {@link CairoEngine#notifyWalTxnRepublisher} reset it - and can hold it in
+     * its seqTxn too, so comparing could answer "fully applied" for a view that has applied
+     * nothing. A cold tracker reads disk truth instead: the sequencer log's last committed
+     * seqTxn against the applied seqTxn the LV table records in its {@code _txn}.
      * <p>
-     * Fails closed: any read failure reports {@code false}. The caller clamps a base-WAL
-     * purge floor on the answer, so "cannot tell" has to mean "do not release".
+     * Fails closed: any read failure reports {@code false}, and every caller takes
+     * {@code false} as the safe answer. The restart reconcile defers the restore rather than
+     * release the base-WAL purge floor, a runtime restore declines, a disk-subset publish
+     * leaves the slot unstamped, a lead drain keeps its rows from readers, and the cadence
+     * flush of a lead kept from readers restages nothing.
      */
     private boolean isLiveViewWalFullyApplied(LiveViewInstance instance) {
         final TableToken token = instance.getLiveViewToken();
@@ -5348,6 +5517,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$(t).I$();
             return false;
         }
+    }
+
+    /**
+     * Reports whether the view's un-flushed lead is kept from readers: a lead drain whose rows
+     * sit above a block of the view's WAL the table has not applied, or carry symbol ids
+     * interned past ones a reader's pin keeps stranded, published it unstamped
+     * ({@link #drainBaseWal}, {@link #finishLeadRefresh}), so every read runs disk-only until
+     * the cadence flush lands it. Only such a publish leaves the published slot unstamped under
+     * a lead with the tier not stale: every other path that unstamps the slot marks the tier
+     * stale first, and a stale tier takes no lead publish until a restage stamps the slot
+     * again. The worker is the slot's only writer, so its stamp reads without the sentinel.
+     */
+    private boolean isPublishedLeadKeptFromReaders(LiveViewInstance instance) {
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        return tier != null
+                && instance.getLeadRowCount() > 0
+                && !instance.isTierStale()
+                && tier.getSlot(tier.getPublishedIdx()).lvSeqTxn() == Numbers.LONG_NULL;
     }
 
     /**
@@ -5398,7 +5585,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * in-step check un-stamped - and its fence can still pass, so a rewind must wait for the
      * rebuild that replaces it. A disk-subset publish whose apply left its block pending
      * marks the tier stale too ({@link #publishSubsetToInMemoryTier}): that block owns the
-     * ids above the committed count until it lands.
+     * ids above the committed count until it lands. So does a lead drain whose rewind a
+     * reader's pin refused ({@link #drainBaseWal}): the stale tier sends its rows straight
+     * to disk, and the rebuild behind them stages a slot that carries no stranded id.
      * <p>
      * The lead has to be gone from both places that count it: the instance and the
      * published slot. An out-of-order hand-off zeroes the instance's count ahead of its
@@ -7754,13 +7943,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // reaches this branch. It fires only for a view that is non-capable at runtime
             // (e.g. a restored view whose function lost snapshot support); the resync
             // keeps its bookkeeping correct if so.
+            //
+            // A lead kept from readers is current too, though its slot is unstamped
+            // (isPublishedLeadKeptFromReaders): only that publish leaves an unstamped slot
+            // with a lead and the tier not stale, since every other unstamping zeroes the
+            // slot's lead count or marks the tier stale.
             final LiveViewInMemoryTier ncTier = instance.getInMemoryTier();
             if (ncTier != null) {
                 final LiveViewInMemoryBuffer ncSlot = ncTier.getSlot(ncTier.getPublishedIdx());
                 final long lvAppliedSeqTxn = engine.getTableSequencerAPI()
                         .getTxnTracker(instance.getLiveViewToken())
                         .getWriterTxn();
-                if (ncSlot.lvSeqTxn() == lvAppliedSeqTxn) {
+                final boolean isSlotLeadKeptFromReaders = ncSlot.lvSeqTxn() == Numbers.LONG_NULL
+                        && ncSlot.leadRowCount() > 0
+                        && !instance.isTierStale();
+                if (ncSlot.lvSeqTxn() == lvAppliedSeqTxn || isSlotLeadKeptFromReaders) {
                     instance.setLeadRowCount(ncSlot.leadRowCount());
                 }
             }
@@ -8111,8 +8308,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             applyAheadMinTs = aheadBounds[0];
             // An unclassifiable ahead range already denies every anchor through the
             // retire floor; deny the convergence boundary on the same terms, since
-            // nothing then says how far up those un-examined seqTxns reach.
-            effectiveChangeMaxTs = applyAheadMinTs == Numbers.LONG_NULL
+            // nothing then says how far up those un-examined seqTxns reach. A caller
+            // that handed over no ceiling keeps none: its walk crossed a non-data or
+            // structural commit, or it re-materialises commits it never walked, and
+            // LONG_NULL is Long.MIN_VALUE, so the max would turn that unknown ceiling
+            // into the ahead range's own maximum - which can sit below the very rows
+            // that triggered the repair.
+            effectiveChangeMaxTs = applyAheadMinTs == Numbers.LONG_NULL || effectiveChangeMaxTs == Numbers.LONG_NULL
                     ? Numbers.LONG_NULL
                     : Math.max(effectiveChangeMaxTs, aheadBounds[1]);
             effectiveInsertOnly &= applyAheadInsertOnly;
@@ -9784,9 +9986,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                            && localized
                                            && finiteHighBound);
             if (isKeyedRoute && !isColdKeyedRoute && !resuming) {
-                storedRowCursor = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive());
-                if (storedRowCursor == null) {
+                // The keys outside Q keep the old root's entry, yet the position the freeze
+                // stamps counts every row at or below the boundary. Both describe the same
+                // row set only while the old root covers its own timestamp group. A row of
+                // another key that tied the boundary in a later commit is in the count and
+                // not in that key's entry, and the new position would hide the shortfall
+                // from the guard that refuses to resume from such a root, so a later resume
+                // would skip the tie row for good. The whole segment's read re-freezes every
+                // boundary from the base, tie rows included. A covering root keeps the keyed
+                // route.
+                timelineAnchors.of(instance);
+                if (isTimelineSpliceable && !timelineAnchors.isEveryTimestampGroupCovered(
+                        plan.getRetireLowTs(),
+                        timelineHighTsExclusive,
+                        engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries()
+                )) {
+                    declineStoredRows(instance, "a root the repair re-versions no longer covers its timestamp group");
                     isKeyedRoute = false;
+                } else {
+                    storedRowCursor = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive());
+                    if (storedRowCursor == null) {
+                        isKeyedRoute = false;
+                    }
                 }
             }
             // The timeline range splice this repair publishes instead of retiring
@@ -13504,6 +13725,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Both the fast path and the slow path's one-slot-pinned fallback route through here, so a
      * reader pinning only the non-published slot defers compaction by a cycle instead of forcing
      * the caller to flush.
+     *
+     * @param symbolHorizonCaps the cap on the symbol horizon the slot is re-stamped with, on
+     *                          success and failure alike; see {@link #publishToInMemoryTier}
      */
     private boolean tryAppendStagingInPlace(
             LiveViewInMemoryTier tier,
@@ -13512,7 +13736,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean dropRetained,
             long lvSeqTxn,
             long newLeadRowCount,
-            boolean leadMode
+            boolean leadMode,
+            @Nullable IntList symbolHorizonCaps
     ) {
         LiveViewInMemoryBuffer acquired = tier.tryAcquireWrite(publishedIdx);
         if (acquired == null) {
@@ -13534,11 +13759,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // have completed, and appendStaging rewinds any partially-advanced var-size append
             // cursors on failure, so the slot is byte-identical to its pre-append state. The
             // writer sentinel (rc = -1) keeps readers spinning until release. Drop the sentinel
-            // and let the flush-retry budget tick.
-            tier.releaseWriteWithoutPublish(publishedIdx);
+            // and let the flush-retry budget tick. The re-stamp keeps the caps: the slot may be
+            // the one a restage capped, still stamped and readable.
+            tier.releaseWriteWithoutPublish(publishedIdx, symbolHorizonCaps);
             throw t;
         }
-        tier.releaseWriteWithoutPublish(publishedIdx);
+        tier.releaseWriteWithoutPublish(publishedIdx, symbolHorizonCaps);
         if (leadMode) {
             instance.setLeadRowCount(newLeadRowCount);
         }
@@ -14803,7 +15029,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             rebuildInMemoryTier(instance);
             return;
         }
-        publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false);
+        publishToInMemoryTier(instance, stagingMaxTs, lvAppliedSeqTxn, appendedRows, false, null);
     }
 
     /**
@@ -14851,8 +15077,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * a later cycle appends over the gap. In lead mode the lead has
      * nowhere durable to live, so it returns {@code false} and the caller flushes
      * the lead straight to disk.
+     *
+     * @param symbolHorizonCaps the cap on the symbol horizon the published slot is stamped
+     *                          with, per output column, as {@link LiveViewInMemoryTier#publishSwap(int, IntList)}
+     *                          takes it; {@code null} stamps the cache's whole band
      */
-    private boolean publishToInMemoryTier(LiveViewInstance instance, long stagingMaxTs, long lvSeqTxn, long appendedRows, boolean leadMode) {
+    private boolean publishToInMemoryTier(
+            LiveViewInstance instance,
+            long stagingMaxTs,
+            long lvSeqTxn,
+            long appendedRows,
+            boolean leadMode,
+            @Nullable IntList symbolHorizonCaps
+    ) {
         LiveViewInMemoryTier tier = instance.getInMemoryTier();
         if (tier == null) {
             return true;
@@ -14887,7 +15124,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // and made the view fall behind.
         long growthBudget = engine.getConfiguration().getLiveViewInMemoryBufferGrowthBytes();
         if (!isCompactionWorthwhile(pubSlot, stagingMaxTs, instance, growthBudget)
-                && tryAppendStagingInPlace(tier, instance, publishedIdx, dropRetained, lvSeqTxn, newLeadRowCount, leadMode)) {
+                && tryAppendStagingInPlace(tier, instance, publishedIdx, dropRetained, lvSeqTxn, newLeadRowCount, leadMode, symbolHorizonCaps)) {
             return true;
         }
 
@@ -14903,7 +15140,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // slave) pins exactly ONE slot, and giving up here degrades the view to a disk
             // flush every cycle for as long as that cursor lives. The stall accounting below
             // is for BOTH slots pinned, which is what this method's contract already states.
-            if (tryAppendStagingInPlace(tier, instance, publishedIdx, dropRetained, lvSeqTxn, newLeadRowCount, leadMode)) {
+            if (tryAppendStagingInPlace(tier, instance, publishedIdx, dropRetained, lvSeqTxn, newLeadRowCount, leadMode, symbolHorizonCaps)) {
                 return true;
             }
             // Both slots reader-pinned. Record the start of the stall streak; a
@@ -15016,7 +15253,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             writeSlot.setSeamTs(writeSeamTs);
             writeSlot.setLvSeqTxn(lvSeqTxn);
             writeSlot.setLeadRowCount(newLeadRowCount);
-            tier.publishSwap(writeIdx);
+            tier.publishSwap(writeIdx, symbolHorizonCaps);
             if (leadMode) {
                 instance.setLeadRowCount(newLeadRowCount);
             }
@@ -15032,7 +15269,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // setRowCount runs only on the success path) and silently regress
             // queries that previously saw N rows to seeing 0 rows. Propagate
             // the failure so the flush-retry budget ticks.
-            tier.releaseWriteWithoutPublish(writeIdx);
+            tier.releaseWriteWithoutPublish(writeIdx, symbolHorizonCaps);
             throw t;
         }
         return true;
@@ -15358,6 +15595,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // INTERVAL) never allocates the tier.
             return;
         }
+        // Record where the refresh cursor stands before anything below can throw. The tier
+        // keeps the highest such cursor, S_pin, which tryRouteStrandedIdDrainToDisk reads as
+        // a bound on the base commits any lead a reader may still pin was built from. Every
+        // recovery that discards an un-flushed lead rebuilds the tier here before it moves the
+        // cursor back to the flushed point. An out-of-order hand-off whose repair parks moves
+        // it back first, and no drain runs until that repair has moved it past every commit
+        // the lead covered - unless the parked repair is discarded later, on a fault during
+        // its turn or a runtime change under it. Then no rebuild records S_pin for the lead
+        // the hand-off dropped, drains run below that lead's top, and S_pin can stand below
+        // it. That errs the safe way: a drain that stops on its turn budget between S_pin and
+        // that top does not count as converging, so such a deferral keeps its drains from
+        // readers unless the last drain to disk shrank the symbol horizon deficit. A rebuild
+        // that discards nothing records a cursor the view only drains on from: no drain
+        // stands below it until a recovery moves the cursor back, and that recovery records
+        // its own.
+        tier.setStrandedIdLeadSeqTxn(Math.max(tier.getStrandedIdLeadSeqTxn(), instance.getRefreshedUpToSeqTxn()));
         // The O3 replay re-sequenced the on-disk symbol ids; the failed in-order
         // drain's window intern entries are now stale. Drop them. The rebuilt slot
         // stores disk-resolved committed ids that the overlay reads via the disk
@@ -15369,12 +15622,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // but never lowers it, and every caller here discarded a pass whose interned
         // ids may sit above that count: a timeline restore commits none of them, and a
         // replay can commit fewer values than the pass interned. Take those ids back
-        // now, while the published slot is the disk subset just staged. When a reader
-        // pins a slot the rewind waits for the next drain that starts with an empty lead,
-        // and each flush in between checks that its ids are in step with disk before it
-        // re-stamps the slot. That check compares values, so it also catches what the
-        // rewind cannot see: a value the discarded pass appended to the view's WAL writer,
-        // which the pooled writer kept through its rollback and commits first.
+        // now, while the published slot is the disk subset just staged. Its horizon stops
+        // at the committed counts, so a reader pinning it does not hold the rewind up; one
+        // pinning a slot whose horizon reaches past them - a lead published before the
+        // recovery - does, and the rewind waits for the next drain that starts with an
+        // empty lead. No read lists a stranded id meanwhile, and a lead drain whose rewind
+        // is refused again sends its rows straight to disk, or keeps them from readers,
+        // rather than publish them over those ids where a read can see them (drainBaseWal).
+        // Each flush that does publish checks that its ids are in step with disk before
+        // it re-stamps the slot. That check compares values, so it also catches what the
+        // rewind cannot see: a value the discarded pass appended to the view's WAL
+        // writer, which the pooled writer kept through its rollback and commits first.
         if (isSymbolRewindCandidate(instance)) {
             rewindStrandedSymbolIds(instance);
         }
@@ -15407,15 +15665,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * has not applied yet owns ids above the applied count, so a rewind then would give
      * its values' ids to other values; the flush paths that rebuild the tier with such a
      * block pending (the tier-stale lead flush, {@link #retryPendingLiveViewApply}) reach
-     * here and must stop. The rewind itself runs only while no reader pins either slot
+     * here and must stop. The rewind itself runs only while no reader pins a slot whose
+     * symbol horizon reaches past the committed counts
      * ({@link LiveViewInMemoryTier#tryRewindSymbolCache}); otherwise it is retried later,
      * at {@link #rebuildInMemoryTier} or at a drain that starts with an empty lead.
      * <p>
      * A failure is logged and swallowed, never propagated: the recovery and drain paths
-     * that call this must not fail over a rewind, which a later attempt can still complete,
-     * and the flush-time in-step check keeps reads correct until it does.
+     * that call this must not fail over a rewind, which a later attempt can still complete.
+     * Reads stay correct until it does: a slot staged from the table stops its symbol
+     * horizon at the committed counts ({@link #restageInMemoryTierFromDisk}), and a lead
+     * drain told the rewind did not happen publishes no lead over the stranded ids.
+     *
+     * @return true when the rewind found ids to take back and did not take them: a reader
+     * pins a slot whose horizon reaches them, or the attempt failed. The stranded ids then
+     * stay in the cache, and a lead published over them would expose them to reads (see
+     * {@link #drainBaseWal})
      */
-    private void rewindStrandedSymbolIds(LiveViewInstance instance, TableReader lvReader) {
+    private boolean rewindStrandedSymbolIds(LiveViewInstance instance, TableReader lvReader) {
         final String viewName = instance.getDefinition().getViewName();
         try {
             final LiveViewSymbolCache cache = instance.getInMemoryTier().getSymbolCache();
@@ -15429,27 +15695,117 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 hasStrandedIds |= cache.hasStrandedIds(col, committedCount);
             }
             if (!hasStrandedIds) {
-                return;
+                return false;
             }
             // Disk truth rather than the tracker, which a restart leaves uninitialised: the
             // reader must already hold every committed block for its counts to be the ids
             // every flush assigned.
             final long committedSeqTxn = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
             if (lvReader.getSeqTxn() < committedSeqTxn) {
-                return;
+                return false;
             }
             if (instance.getInMemoryTier().tryRewindSymbolCache(counts)) {
                 LOG.info().$("live view rewound symbol ids no flush committed [view=").$(viewName).I$();
-            } else {
-                // Debug, not info: a drain that starts with an empty lead retries every turn
-                // until no reader pins the tier.
-                LOG.debug().$("live view symbol id rewind deferred, a reader pins the in-mem tier [view=")
-                        .$(viewName).I$();
+                return false;
             }
+            // Debug, not info: a drain that starts with an empty lead retries every turn
+            // until no reader pins a slot whose horizon reaches the stranded ids.
+            LOG.debug().$("live view symbol id rewind deferred, a reader pins the in-mem tier [view=")
+                    .$(viewName).I$();
         } catch (Throwable t) {
             LOG.error().$("live view could not rewind its symbol ids [view=").$(viewName)
                     .$(", error=").$(t).I$();
         }
+        return true;
+    }
+
+    /**
+     * Decides what a lead drain does with its rows when the symbol-id rewind left stranded
+     * ids in the cache, so that a lead published now would list them to readers. Returns
+     * {@code true} after marking the tier stale, which sends this drain's rows straight to the
+     * LV table and rebuilds the slot behind them ({@link #finishLeadRefresh}); {@code false}
+     * when the drain keeps its rows from readers instead: it drains as any lead drain does,
+     * {@link #finishLeadRefresh} publishes the lead unstamped, so reads run disk-only, and the
+     * cadence flush lands the lead and restages the slot ({@link #refreshInstance}).
+     * <p>
+     * Each drain sent to disk costs an LV commit and a restage of the IN MEMORY window. The rewind
+     * waits until the LV table has committed as many values per SYMBOL column as a reader's
+     * pinned slot lists. The drains converge on that while the last one either brought the
+     * table closer to it, or stopped on its turn budget ({@link #drainBaseWal}) with the
+     * refresh cursor still below S_pin, the tier's
+     * {@link LiveViewInMemoryTier#getStrandedIdLeadSeqTxn() lead seqTxn}. The symbol horizon
+     * deficit measures the first: how far the committed counts {@code lvReader} reports stand
+     * below the higher of the two slots' horizons, summed over the SYMBOL columns, which the
+     * last drain must have shrunk since it started. S_pin bounds the second: the highest
+     * cursor {@link #rebuildInMemoryTier} has found. A recovery that discards an un-flushed
+     * lead rebuilds the tier before any drain runs below the commits that lead covered, so no
+     * lead a reader can still pin was built from a base commit above S_pin, and below S_pin a
+     * drain stopped on its budget may still leave commits that derive what the pinned lead
+     * lists. The bound fails for an out-of-order hand-off whose parked repair is discarded
+     * later, on a fault during its turn or a runtime change under it. Then no rebuild records
+     * S_pin for the lead the hand-off dropped, drains run below that lead's top, and S_pin can
+     * stand below it. That errs the safe way: a drain that stops on its turn budget between
+     * S_pin and that top does not count as converging, so such a deferral keeps its drains
+     * from readers unless the last drain to disk shrank the symbol horizon deficit. While the
+     * drains converge, the next one goes at once, so the table commits what the pinned lead
+     * lists at the view's normal rate. Otherwise a drain goes to disk at most once per FLUSH
+     * EVERY interval, timed on the tier ({@link LiveViewInMemoryTier#getStrandedIdDiskRouteUs}),
+     * and in practice only the first drain of a deferral does - none went within the interval.
+     * The cadence flush that lands a lead kept from readers stands as its interval's drain to
+     * disk. Every other drain keeps its rows from readers with no LV commit or restage of its
+     * own, for as long as a pin lasts on a slot whose values the table does not commit again: the
+     * view then pays one restage per FLUSH EVERY interval on top of the flush it makes anyway,
+     * and its drains keep pace with the base, so neither its durable output nor the base WAL
+     * it lets go of falls more than about an interval behind.
+     * <p>
+     * The drains that go at once are bounded however long a pin lasts and however fast the
+     * base commits. Let S_start be the cursor when the deferral starts.
+     * <ul>
+     *   <li>The slot a pin holds the rewind up on keeps its horizon, and the rebuild behind
+     *   each drain stages the other from the table, which stops its horizon at the committed
+     *   counts. So the deficit never grows while the pin lasts, and a shrinking deficit lets
+     *   through at most as many drains as the deficit the deferral started with.</li>
+     *   <li>A drain stopped on its turn budget moved the cursor forward by up to
+     *   {@code turn.max.commits} base commits, and by at least one unless a recovery's replay
+     *   used up the turn's budget before it. Only one that leaves the cursor below S_pin lets
+     *   the next through. So the budget lets through at most about S_pin - S_start drains,
+     *   ceil((S_pin - S_start) / turn.max.commits) when the commit count stops them, and none
+     *   once the cursor has reached S_pin, where a deficit that stays is a value the table
+     *   does not commit again.</li>
+     * </ul>
+     * Outside the parked-repair case above, S_pin is where the cursor stood when the recovery
+     * discarded the lead, so it can stand above the last commit a pinned lead was built from,
+     * by the commits the view drained into its lead after the reader pinned that slot: no more
+     * than the discarded lead covered, and the drains below S_pin derive that lead again.
+     */
+    private boolean tryRouteStrandedIdDrainToDisk(LiveViewInstance instance, TableReader lvReader) {
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        final LiveViewSymbolCache cache = tier.getSymbolCache();
+        // The worker is the only thread that stamps a slot's horizon, so the horizons read
+        // without the writer sentinel.
+        final LiveViewInMemoryBuffer slot0 = tier.getSlot(0);
+        final LiveViewInMemoryBuffer slot1 = tier.getSlot(1);
+        long deficit = 0;
+        for (int i = 0, n = cache.symbolColumnCount(); i < n; i++) {
+            final int col = cache.symbolColumnIndexAt(i);
+            final int horizon = Math.max(slot0.newSymbolMaxId(col), slot1.newSymbolMaxId(col));
+            deficit += Math.max(0, horizon - lvReader.getSymbolMapReader(col).getSymbolCount());
+        }
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        final long lastRouteUs = tier.getStrandedIdDiskRouteUs();
+        final boolean isConverging = (tier.isStrandedIdDiskRouteBudgetStopped()
+                && instance.getRefreshedUpToSeqTxn() < tier.getStrandedIdLeadSeqTxn())
+                || deficit < tier.getStrandedIdDiskRouteDeficit();
+        if (lastRouteUs != Numbers.LONG_NULL
+                && !isConverging
+                && nowUs - lastRouteUs < instance.getDefinition().getFlushEveryMicros()) {
+            LOG.debug().$("live view drain kept from readers, a reader pins symbol ids no flush committed [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            return false;
+        }
+        tier.setStrandedIdDiskRoute(nowUs, deficit);
+        instance.setTierStale(true);
+        return true;
     }
 
     /**
@@ -15509,10 +15865,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // The reader's getSeqTxn() is the same coordinate a query's disk reader
         // reports, so stamping the slot with it makes the fence pass for an
         // immediately-following cursor (no intervening apply).
+        //
+        // The staged rows carry only ids the table committed, so the slot's symbol horizons
+        // stop at the reader's committed counts: a read of the slot then sees no lead band at
+        // all. The cache can hold ids at or above those counts that no staged row carries -
+        // the ids of a pass a recovery discarded, which a pinned reader keeps the rewind
+        // below from taking back - and the table may since have committed the same values at
+        // its own ids. A horizon over the cache's whole band would list each such value under
+        // two keys, and a keyed WINDOW JOIN from the view, which maps every key its symbol
+        // table lists, would match the rows that carry the committed key against nothing.
+        // See LiveViewRuntimeRestoreTest.testAReaderPinnedAcrossARestoredHandOffKeepsEachAccountUnderOneSymbolKey.
         final long lvSeqTxn;
+        final IntList horizonCaps = restagedSymbolCounts;
+        horizonCaps.clear();
         try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
             lvSeqTxn = lvReader.getSeqTxn();
             stageInMemoryWindowFromDisk(instance, lvReader);
+            final LiveViewSymbolCache cache = tier.getSymbolCache();
+            for (int i = 0, n = cache.symbolColumnCount(); i < n; i++) {
+                final int col = cache.symbolColumnIndexAt(i);
+                horizonCaps.extendAndSet(col, lvReader.getSymbolMapReader(col).getSymbolCount());
+            }
         }
 
         int publishedIdx = tier.getPublishedIdx();
@@ -15524,10 +15897,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             try {
                 fillSlotFromStaging(acquired, lvSeqTxn);
             } catch (Throwable t) {
-                tier.releaseWriteWithoutPublish(publishedIdx);
+                tier.releaseWriteWithoutPublish(publishedIdx, horizonCaps);
                 throw t;
             }
-            tier.releaseWriteWithoutPublish(publishedIdx);
+            tier.releaseWriteWithoutPublish(publishedIdx, horizonCaps);
             // Published slot now mirrors the disk tail; any prior stale-row marking
             // is resolved.
             instance.setTierStale(false);
@@ -15554,9 +15927,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         try {
             fillSlotFromStaging(writeSlot, lvSeqTxn);
-            tier.publishSwap(writeIdx);
+            tier.publishSwap(writeIdx, horizonCaps);
         } catch (Throwable t) {
-            tier.releaseWriteWithoutPublish(writeIdx);
+            tier.releaseWriteWithoutPublish(writeIdx, horizonCaps);
             throw t;
         }
         // Published a fresh disk-staged slot; the stale marking (if any) is resolved.
@@ -17283,8 +17656,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // and this is skipped.
                     if (flushDue && instance.getRefreshedUpToSeqTxn() > instance.getLastProcessedSeqTxn()) {
                         attempted = true;
+                        // Read before the flush, which zeroes the lead.
+                        final boolean isLeadKeptFromReaders = isPublishedLeadKeptFromReaders(instance);
                         flushLead(instance, getWindowFactory(instance), instance.getRefreshedUpToSeqTxn(), 0);
-                        instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
+                        final long flushedUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+                        instance.setLastFlushTimeUs(flushedUs);
+                        // The flush of a lead kept from readers (drainBaseWal) leaves the tier stale.
+                        // When its apply left the view's table holding every block the view's WAL
+                        // committed, restage the slot from the table now, which retries the
+                        // rewind, rather than leave the next drain to flush its own rows straight to
+                        // disk first. A lead kept past symbol ids a reader's pin keeps stranded
+                        // carries ids the table committed to other values. This flush and restage
+                        // stand as the interval's drain to disk (tryRouteStrandedIdDrainToDisk): the
+                        // next drain keeps its rows from readers again unless the flush brought the
+                        // table closer to the pinned slot's horizon.
+                        //
+                        // A flush whose apply landed nothing, or stopped with a block still pending,
+                        // restages nothing and records no drain to disk. It left the slot unstamped,
+                        // so reads return the table as it stands, and the next lead drain takes the
+                        // stale branch of finishLeadRefresh, which flushes its rows, drives the apply
+                        // again and restages the slot behind them. While a block stays pending, the
+                        // drains after that keep their rows from readers (drainBaseWal). A restage
+                        // here would stage that same table, below the pending block, for the next
+                        // drain to keep its rows from readers over anyway. With the base committing
+                        // at most once per FLUSH EVERY interval, every drain finds this flush due,
+                        // so each drain would pay for a restage.
+                        // See LiveViewRuntimeRestoreTest.testAReaderPinnedOnALeadTheTableNeverCommitsKeepsTheViewWithinAFlushIntervalOfTheBase,
+                        // testAReaderPinnedOnALeadTheTableNeverCommitsShowsNoDrainAboveAFlushThatLandedNothing
+                        // and LiveViewSmokeTest.testFlushLeadUnappliedBacklogUnderSparseBaseCommitsRestagesTheSlotEveryOtherDrain.
+                        if (isLeadKeptFromReaders && isLiveViewWalFullyApplied(instance)) {
+                            rebuildInMemoryTier(instance);
+                            final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                            tier.setStrandedIdDiskRoute(flushedUs, tier.getStrandedIdDiskRouteDeficit());
+                        }
                     }
                 } else {
                     long lastSeqTxn = instance.getLastProcessedSeqTxn();
@@ -17814,6 +18218,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         public long appendedRows;
         // Max output timestamp across the pass, in base-table units (LONG_NULL if none).
         public long batchMaxTs;
+        // True when a lead drain's rows must stay out of the read path until a flush lands them.
+        // The view's WAL holds a block its table has not applied, whose rows a slot that serves
+        // the drain's would skip (see drainBaseWal). Or a reader's pin keeps stranded symbol ids
+        // in the cache, and the drain interned its own values past them, so a slot that serves
+        // its rows would list a value under two keys: the drain that last went to disk over those
+        // ids did so within the current FLUSH EVERY interval without converging on the pinned
+        // slot's horizon (see tryRouteStrandedIdDrainToDisk). Or the published lead was already
+        // kept from readers. finishLeadRefresh then publishes the lead unstamped, which routes
+        // reads to disk.
+        public boolean isLeadKeptFromReaders;
         // Highest designated timestamp any commit this pass walked touched - inserted
         // rows plus the top of a REPLACE_RANGE delete band - or LONG_NULL when the
         // pass walked something whose reach cannot be read off the commit metadata (a
@@ -17846,6 +18260,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             advanceTo = -1;
             appendedRows = 0;
             batchMaxTs = Numbers.LONG_NULL;
+            isLeadKeptFromReaders = false;
             o3FromSeqTxn = Numbers.LONG_NULL;
             o3ChangeInsertOnly = false;
             o3ChangeMaxTs = Numbers.LONG_NULL;
@@ -17978,6 +18393,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * takes the rebuild it would take for a change below every boundary.
      */
     private final class TimelineAnchorSource implements LiveViewCheckpointRepairPlan.AnchorSource {
+        // The boundary isEveryTimestampGroupCovered is vetting, reused across the walk.
+        private final LiveViewCheckpointTimelineEntry coverageProbe = new LiveViewCheckpointTimelineEntry();
         private LiveViewInstance instance;
 
         @Override
@@ -18016,6 +18433,72 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 LOG.info().$("live view checkpoint timeline holds no resume anchor [view=")
                         .$(instance.getDefinition().getViewName())
                         .$(", ceilTs=").$ts(ceilTs)
+                        .$(", reason=").$(t).I$();
+                return false;
+            }
+        }
+
+        /**
+         * Whether every logical boundary in {@code [lowTsInclusive, highTsExclusive)}
+         * still covers its own timestamp group, each vetted exactly as
+         * {@link #findAnchorBelow} vets a resume candidate.
+         * <p>
+         * A closed segment's keyed repair asks this before it takes its route. It
+         * re-versions each of those boundaries with only its own keys' state over the
+         * old root, and stamps the position of every row at or below the boundary. Over
+         * a root that under-covers its group, that pairs another key's entry, short of
+         * the tie rows, with a position that counts them, and the guard a later resume
+         * applies can no longer see the gap.
+         * <p>
+         * The walk stops at the first boundary that fails, and after
+         * {@code maxBoundaries}: a repair crossing more boundaries than that declines its
+         * splice and re-versions none of them, which leaves nothing for the check to
+         * protect.
+         *
+         * @param maxBoundaries the most boundaries the repair's splice re-versions
+         * @return false when a boundary no longer covers its group, or when the timeline
+         * could not be read. Either way the caller reads the segment whole, which costs
+         * the keyed route and nothing else
+         */
+        boolean isEveryTimestampGroupCovered(long lowTsInclusive, long highTsExclusive, int maxBoundaries) {
+            if (maxBoundaries <= 0) {
+                return true;
+            }
+            long ceiling = highTsExclusive;
+            int boundaries = 0;
+            try (Path checkpointsDir = new Path()) {
+                checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                final LiveViewCheckpointTimelineStoreReader reader =
+                        borrowCheckpointTimelineStoreReader(checkpointsDir);
+                try {
+                    while (true) {
+                        final long lvRowPosition = reader.predecessorLvRowPosition(ceiling, coverageProbe);
+                        if (lvRowPosition == Numbers.LONG_NULL || coverageProbe.maxTimestamp < lowTsInclusive) {
+                            return true;
+                        }
+                        if (++boundaries > maxBoundaries) {
+                            return true;
+                        }
+                        if (!coversOwnTimestampGroup(coverageProbe, lvRowPosition)) {
+                            LOG.info().$("live view repair boundary no longer covers its timestamp group [view=")
+                                    .$(instance.getDefinition().getViewName())
+                                    .$(", boundaryMaxTs=").$ts(coverageProbe.maxTimestamp)
+                                    .$(", boundaryCheckpointId=").$(coverageProbe.checkpointId)
+                                    .$(", lvRowPosition=").$(lvRowPosition).I$();
+                            return false;
+                        }
+                        ceiling = coverageProbe.maxTimestamp;
+                    }
+                } finally {
+                    reader.detach();
+                }
+            } catch (Throwable t) {
+                LOG.info().$("live view could not vet the boundaries a keyed repair re-versions [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", lowTsInclusive=").$ts(lowTsInclusive)
+                        .$(", highTsExclusive=").$ts(highTsExclusive)
                         .$(", reason=").$(t).I$();
                 return false;
             }

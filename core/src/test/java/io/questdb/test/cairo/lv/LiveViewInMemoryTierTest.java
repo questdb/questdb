@@ -961,8 +961,8 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 TestUtils.assertContains(thrown.getMessage(), "out of bounds for list size");
                 Assert.assertFalse("the first column must have rewound before the throw", cache.hasStrandedIds(firstCol, 0));
 
-                // Re-acquirable means the sentinel is gone. Asserting it this way before any
-                // acquireRead keeps a regression a failure instead of a hang.
+                // Re-acquirable means the sentinel is gone. Asserting it this way rather than
+                // through acquireRead keeps a regression a failure instead of a hang.
                 for (int slotIdx = 0; slotIdx < 2; slotIdx++) {
                     Assert.assertNotNull(
                             "slot " + slotIdx + " must drop its sentinel even when the rewind throws",
@@ -970,9 +970,6 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                     );
                     tier.releaseWriteWithoutPublish(slotIdx);
                 }
-                final int pin = tier.acquireRead();
-                Assert.assertEquals(tier.getPublishedIdx(), pin);
-                tier.releaseRead(pin);
             }
         });
     }
@@ -1008,8 +1005,8 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                 }
                 Assert.assertFalse("the rewind must have completed ahead of the releases", cache.hasStrandedIds(col, committedCount));
 
-                // Re-acquirable means the sentinel is gone. Asserting it this way before any
-                // acquireRead keeps a regression a failure instead of a hang.
+                // Re-acquirable means the sentinel is gone. Asserting it this way rather than
+                // through acquireRead keeps a regression a failure instead of a hang.
                 for (int slotIdx = 0; slotIdx < 2; slotIdx++) {
                     Assert.assertNotNull(
                             "slot " + slotIdx + " must drop its sentinel even when the other slot's release throws",
@@ -1017,9 +1014,6 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                     );
                     tier.releaseWriteWithoutPublish(slotIdx);
                 }
-                final int pin = tier.acquireRead();
-                Assert.assertEquals(tier.getPublishedIdx(), pin);
-                tier.releaseRead(pin);
             }
         });
     }

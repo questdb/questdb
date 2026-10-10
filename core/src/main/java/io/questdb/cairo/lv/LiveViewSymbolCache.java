@@ -71,7 +71,8 @@ import io.questdb.std.str.DirectString;
  * the next new value would be assigned an id the flush's apply gives to another value.
  * {@link #rewind} takes that band back. Because readers resolve ids without a lock,
  * it runs only through {@link LiveViewInMemoryTier#tryRewindSymbolCache}, which proves
- * no reader pins either slot. A rewind alone does not restore the equality, though: the
+ * that no reader pins a slot whose symbol horizon reaches the band. A rewind alone does
+ * not restore the equality, though: the
  * view's WAL writer goes back to its pool after a rollback still holding the values the
  * discarded pass appended, and its next commit assigns those first, in whatever order
  * the next pass meets its new values. So after every apply that lands slot rows on disk,
@@ -513,8 +514,12 @@ public class LiveViewSymbolCache implements QuietCloseable {
      * <p>
      * Writer-side only, and only through {@link LiveViewInMemoryTier#tryRewindSymbolCache}:
      * a re-bound id is safe only while no reader can resolve it. The tier holds the writer
-     * sentinel on both slots for the duration, then re-stamps their horizons at or below
-     * {@code committedCount}. The caller also guarantees that nothing still owns the band:
+     * sentinel for the duration on every slot whose horizon exceeds {@code committedCount},
+     * then re-stamps those horizons at or below it; a slot a reader pins through the rewind
+     * already stops its horizon at or below it, and its readers resolve no id this touches:
+     * the reverse index is a concurrent map, and this re-points or removes an entry without
+     * changing a chain node, while the {@code id -> string} store clears only ids at or
+     * above {@code committedCount}. The caller also guarantees that nothing still owns the band:
      * no un-flushed lead, no un-applied LV WAL block, and a published slot whose rows carry
      * only committed ids. Clearing the window map is safe for the same reason - with no
      * lead, no window entry needs to be found again.

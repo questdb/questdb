@@ -144,9 +144,12 @@ final class ConcurrentCharSequenceList implements Mutable {
      * forgotten it. The caller must prove that no reader can resolve an id at or above
      * {@code newSize}, because the next assignment re-binds it.
      * {@link LiveViewInMemoryTier#tryRewindSymbolCache} does that by holding the writer
-     * sentinel on both slots, and re-stamps both horizons at or below {@code newSize}
-     * before either slot can be pinned again. A truncation below the store's origin drops
-     * every page, so the next assignment fixes a new origin, as after {@link #clear()}.
+     * sentinel on every slot whose horizon exceeds {@code newSize}, and re-stamps those
+     * horizons at or below {@code newSize} before such a slot can be pinned again. A slot a
+     * reader pins through the truncation already stops its horizon at or below
+     * {@code newSize}, so its readers resolve no id this takes back. A truncation below the
+     * store's origin drops every page, so the next assignment fixes a new origin, as after
+     * {@link #clear()}.
      */
     void truncate(int newSize) {
         if (newSize >= size) {

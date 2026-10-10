@@ -28,6 +28,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -60,8 +61,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </ul>
  * Both paths use the same CAS primitive and release through one of the two
  * complementary methods; there is no fast-path-specific API. A symbol-cache
- * rewind ({@link #tryRewindSymbolCache}) takes the sentinel on both slots at
- * once, which proves that no reader pins either.
+ * rewind ({@link #tryRewindSymbolCache}) takes the sentinel on every slot whose
+ * symbol horizon reaches the band it takes back, which proves that no reader
+ * pins such a slot; a pinned slot whose horizon stops below the band does not
+ * hold the rewind up.
  * <p>
  * Refcounts live in a 16-byte off-heap region (one long per slot) so all CAS
  * traffic uses {@link Os#compareAndSwap(long, long, long)} — no
@@ -126,8 +129,31 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     // and nothing else can drive that branch deterministically.
     @TestOnly
     private volatile RuntimeException failNextSymbolHorizonStamp;
+    // Whether the drain strandedIdDiskRouteUs records stopped on its turn budget.
+    private boolean isStrandedIdDiskRouteBudgetStopped;
     private volatile int publishedIdx;
     private long refCountsAddr;
+    // The symbol horizon deficit the drain strandedIdDiskRouteUs records started from.
+    private long strandedIdDiskRouteDeficit;
+    // When the refresh worker last sent a lead drain's rows straight to the LV table because
+    // tryRewindSymbolCache could not take the stranded symbol ids back, or flushed a lead it
+    // kept from readers and restaged the slot behind it, or LONG_NULL. The worker lets the next
+    // such drain follow at once while these drains converge on the horizon a reader's pin holds
+    // the rewind up at - the last one stopped on its turn budget below strandedIdLeadSeqTxn, or
+    // the deficit below that horizon fell since it started - and otherwise allows one per FLUSH
+    // EVERY interval and keeps the rows of the rest from readers until the cadence flush lands
+    // them. This field, strandedIdDiskRouteDeficit, isStrandedIdDiskRouteBudgetStopped and
+    // strandedIdLeadSeqTxn are read and written only by the refresh worker under the view's
+    // refresh latch.
+    private long strandedIdDiskRouteUs = Numbers.LONG_NULL;
+    // The highest base seqTxn the view's refresh cursor stood at when the worker rebuilt this
+    // tier, or LONG_NULL. Every recovery that discards an un-flushed lead rebuilds the tier
+    // before any drain runs below the commits that lead covered, so no lead a reader can still
+    // pin was built from a base commit above it - unless an out-of-order hand-off's parked
+    // repair is discarded later, on a fault during its turn or a runtime change under it. No
+    // rebuild then records the lead the hand-off dropped, so this can stand below that lead's
+    // top; see getStrandedIdLeadSeqTxn.
+    private long strandedIdLeadSeqTxn = Numbers.LONG_NULL;
 
     public LiveViewInMemoryTier(IntList columnTypes, int timestampColumnIndex, long pageSize) {
         this(columnTypes, timestampColumnIndex, pageSize, null);
@@ -301,6 +327,42 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     }
 
     /**
+     * The symbol horizon deficit the last lead drain the refresh worker sent straight to the
+     * LV table started from; meaningful once {@link #getStrandedIdDiskRouteUs} is set.
+     * Refresh-worker only, under the view's refresh latch; see {@link #setStrandedIdDiskRoute}.
+     */
+    public long getStrandedIdDiskRouteDeficit() {
+        return strandedIdDiskRouteDeficit;
+    }
+
+    /**
+     * When the refresh worker last sent a lead drain straight to the LV table because
+     * {@link #tryRewindSymbolCache} left stranded symbol ids in the cache, or flushed a lead it
+     * kept from readers and restaged the slot behind it, or {@link Numbers#LONG_NULL} when it
+     * never has.
+     * Refresh-worker only, under the view's refresh latch; see {@link #setStrandedIdDiskRoute}.
+     */
+    public long getStrandedIdDiskRouteUs() {
+        return strandedIdDiskRouteUs;
+    }
+
+    /**
+     * The highest base seqTxn the view's refresh cursor stood at when the refresh worker
+     * rebuilt this tier, or {@link Numbers#LONG_NULL} when it never has. No lead a reader can
+     * still pin was built from a base commit above it, unless an out-of-order hand-off's
+     * parked repair is discarded later, on a fault during its turn or a runtime change under
+     * it. Then no rebuild records the lead the hand-off dropped, and this can stand below that
+     * lead's top. That errs the safe way: a drain that stops on its turn budget between this
+     * and that top does not count as converging, so the refresh worker keeps the drains of
+     * such a deferral from readers unless the last route shrank the symbol horizon deficit.
+     * Refresh-worker only, under the view's refresh latch; see
+     * {@link #setStrandedIdLeadSeqTxn}.
+     */
+    public long getStrandedIdLeadSeqTxn() {
+        return strandedIdLeadSeqTxn;
+    }
+
+    /**
      * Returns the tier's eager-interning symbol cache. Holds the lead's
      * {@code id -> string} mapping (read by cursors) plus the refresh worker's
      * window intern state. Never null; {@link LiveViewSymbolCache#hasSymbolColumns()}
@@ -308,6 +370,15 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      */
     public LiveViewSymbolCache getSymbolCache() {
         return symbolCache;
+    }
+
+    /**
+     * Whether the last lead drain the refresh worker sent straight to the LV table stopped on
+     * its turn budget, with base commits it was asked for still to drain. Refresh-worker only,
+     * under the view's refresh latch; see {@link #setStrandedIdDiskRouteBudgetStopped}.
+     */
+    public boolean isStrandedIdDiskRouteBudgetStopped() {
+        return isStrandedIdDiskRouteBudgetStopped;
     }
 
     /**
@@ -325,6 +396,38 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      * but redundant.
      */
     public void publishSwap(int newPublishedIdx) {
+        publishSwap(newPublishedIdx, null);
+    }
+
+    /**
+     * As {@link #publishSwap(int)}, but stamps each SYMBOL column's symbol horizon no higher
+     * than {@code symbolHorizonCaps} holds for it. A caller passes the LV table's committed
+     * symbol counts for either of two kinds of slot:
+     * <ul>
+     *   <li>A slot that carries only committed ids - a slot staged from the table - so a
+     *     reader of the slot sees no lead band at all. The cache can hold ids at or above the
+     *     committed count that the slot's rows do not carry: the ids of a pass a recovery
+     *     discarded, which a reader pinning a slot keeps {@link #tryRewindSymbolCache} from
+     *     taking back. A horizon over them would expose those ids next to the committed ids
+     *     the table gave the same values, and a reader enumerating the slot's symbol table
+     *     would find one value under two keys.</li>
+     *   <li>An unstamped slot that holds a lead kept from readers, whose rows can carry ids at
+     *     or above the cap: the lead's drain interned its values past the stranded ids a
+     *     reader's pin keeps in the cache, or past the ids of a block of the view's WAL the
+     *     table has not applied. The caller leaves the slot's {@code lvSeqTxn} at
+     *     {@link Numbers#LONG_NULL}, so the read fence ({@code LiveViewRouting.isFenced}) never
+     *     passes for it, no read routes through it, and none reaches those ids. The cap keeps a
+     *     reader that pins the slot meanwhile, reading disk-only, from holding a symbol-id
+     *     rewind up. See {@code LiveViewRefreshJob.finishLeadRefresh} and
+     *     {@code LiveViewRefreshJob.drainBaseWal}.</li>
+     * </ul>
+     * A capped slot whose rows carry ids at or above the cap must stay unstamped: stamping it
+     * would let a read through the slot reach ids past the slot's horizon.
+     *
+     * @param symbolHorizonCaps the cap per output column, indexed by column; only SYMBOL
+     *                          columns are read. {@code null} stamps the cache's whole band
+     */
+    public void publishSwap(int newPublishedIdx, @Nullable IntList symbolHorizonCaps) {
         RuntimeException injected = failNextPublishSwap;
         if (injected != null) {
             // Single-shot: clear so a subsequent publishSwap on the same tier
@@ -342,7 +445,7 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         // must leave publishedIdx alone (the slot never becomes visible) and the
         // sentinel held, because the caller's catch releases it through that
         // method - which now drops the sentinel whatever the stamp does.
-        stampSymbolHorizon(newPublishedIdx);
+        stampSymbolHorizon(newPublishedIdx, symbolHorizonCaps);
         publishedIdx = newPublishedIdx;
         releaseWriterSentinel(newPublishedIdx, "publishSwap");
     }
@@ -392,6 +495,20 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      * </ul>
      */
     public void releaseWriteWithoutPublish(int slotIdx) {
+        releaseWriteWithoutPublish(slotIdx, null);
+    }
+
+    /**
+     * As {@link #releaseWriteWithoutPublish(int)}, but stamps each SYMBOL column's symbol
+     * horizon no higher than {@code symbolHorizonCaps} holds for it, for a slot that carries
+     * only committed ids or for an unstamped slot that holds a lead kept from readers. A capped
+     * slot whose rows carry ids at or above the cap must stay unstamped. See
+     * {@link #publishSwap(int, IntList)}.
+     *
+     * @param symbolHorizonCaps the cap per output column, indexed by column; only SYMBOL
+     *                          columns are read. {@code null} stamps the cache's whole band
+     */
+    public void releaseWriteWithoutPublish(int slotIdx, @Nullable IntList symbolHorizonCaps) {
         // The fast-path success branch makes the in-place-appended rows reader-
         // visible here (publishedIdx unchanged); the error / both-pinned-skip
         // branches release a slot no reader will see. Stamping the symbol horizon
@@ -404,7 +521,7 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         // reader of this view would then spin on it - so the sentinel drops even
         // when the stamp cannot complete, and the failure propagates on its own.
         try {
-            stampSymbolHorizon(slotIdx);
+            stampSymbolHorizon(slotIdx, symbolHorizonCaps);
         } finally {
             releaseWriterSentinel(slotIdx, "releaseWriteWithoutPublish");
         }
@@ -445,6 +562,43 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     }
 
     /**
+     * Records a lead drain the refresh worker sends straight to the LV table because the
+     * symbol-id rewind left stranded ids in the cache (a reader's pin refused
+     * {@link #tryRewindSymbolCache}, or the attempt failed): {@code routeUs}, when it was
+     * decided, and {@code deficit}, the symbol horizon deficit it started from. The cadence
+     * flush of a lead the worker kept from readers, for that reason or over a block of the
+     * view's WAL the table had not applied, restages the slot as such a drain does once its
+     * apply leaves no block of that WAL unapplied, and then records itself here too, with the
+     * deficit of the drain to disk before it. Clears the turn-budget mark of the drain before
+     * it. The worker reads the three to tell whether the next such drain may follow at once or
+     * keeps its rows from readers until the next cadence flush. Refresh-worker only, under the
+     * view's refresh latch; readers never touch them.
+     */
+    public void setStrandedIdDiskRoute(long routeUs, long deficit) {
+        this.strandedIdDiskRouteUs = routeUs;
+        this.strandedIdDiskRouteDeficit = deficit;
+        this.isStrandedIdDiskRouteBudgetStopped = false;
+    }
+
+    /**
+     * Marks the drain {@link #setStrandedIdDiskRoute} last recorded as stopped on its turn
+     * budget, with base commits it was asked for still to drain. Refresh-worker only, under
+     * the view's refresh latch.
+     */
+    public void setStrandedIdDiskRouteBudgetStopped() {
+        this.isStrandedIdDiskRouteBudgetStopped = true;
+    }
+
+    /**
+     * Records the highest base seqTxn the view's refresh cursor stood at when the refresh
+     * worker rebuilt this tier. The worker passes the highest it has seen, so the value never
+     * falls. Refresh-worker only, under the view's refresh latch; readers never touch it.
+     */
+    public void setStrandedIdLeadSeqTxn(long seqTxn) {
+        this.strandedIdLeadSeqTxn = seqTxn;
+    }
+
+    /**
      * Attempts to take the writer sentinel on the requested slot via a
      * {@code 0 -> -1} CAS. Returns the slot's buffer on success, or
      * {@code null} on failure (some reader has the slot pinned). The caller
@@ -469,38 +623,73 @@ public class LiveViewInMemoryTier implements QuietCloseable {
 
     /**
      * Rewinds every SYMBOL column of the symbol cache to the LV table's committed symbol
-     * count ({@link LiveViewSymbolCache#rewind}), provided no reader pins either slot.
-     * Returns {@code false}, having changed nothing, when a reader pins one; the caller
-     * retries on a later cycle.
+     * count ({@link LiveViewSymbolCache#rewind}), provided no reader can resolve an id the
+     * rewind takes back. Returns {@code false}, having changed nothing, when one can: a
+     * reader pins a slot whose symbol horizon exceeds the committed count of some SYMBOL
+     * column. The caller retries on a later cycle.
      * <p>
-     * A rewind re-binds ids, and a reader resolves ids lock-free against its pinned slot,
-     * so the only safe moment is one with no pin anywhere. The writer sentinel on both
-     * slots proves that: each {@code 0 -> -1} CAS succeeds only on an unpinned slot, and
-     * while it is held a new reader spins instead of pinning. Releasing both through
-     * {@link #releaseWriteWithoutPublish} then re-stamps both horizons from the rewound
-     * cache before either slot can be pinned again, so no later reader of either slot can
-     * reach the re-bound band - not through {@code keyOf}, which the horizon bounds, nor
-     * through the symbol count.
+     * A rewind forgets the ids at and above the committed count and lets the next intern
+     * re-bind them, while a reader resolves ids lock-free against its pinned slot. That
+     * reader reaches the cache only below the slot's horizon ({@link LiveViewSymbolTable}):
+     * every id it resolves - one a row of the slot carries, or one it enumerates - is below
+     * the larger of its disk table's symbol count and the horizon, the overlay goes to the
+     * cache for an id only when the disk table holds no value for it, and
+     * {@code newSymbolKeyOf} stops at the horizon. So each slot goes one of two ways:
+     * <ul>
+     *   <li>Its writer sentinel's {@code 0 -> -1} CAS succeeds: no reader pins it, and while
+     *   the sentinel is held a new reader spins instead of pinning. Releasing it through
+     *   {@link #releaseWriteWithoutPublish} re-stamps its horizon from the rewound cache
+     *   before the slot can be pinned again, so no later reader of it can reach the
+     *   re-bound band - not through {@code keyOf}, which the horizon bounds, nor through the
+     *   symbol count.</li>
+     *   <li>The CAS fails because a reader pins it. The rewind goes ahead only when the
+     *   slot's horizon is at or below the committed count of every SYMBOL column, and leaves
+     *   that horizon as it is: every id its readers can resolve through the cache sits
+     *   below the band the rewind takes back, and below everything the next intern re-binds.
+     *   A slot staged from the LV table stops its horizon at the committed counts, so after
+     *   a recovery the slot that holds the rewind up is in practice one that still holds a
+     *   lead published before it, and only until the table commits as many values as that
+     *   lead lists.</li>
+     * </ul>
+     * The horizon check stays true for the whole rewind. Only the refresh worker stamps a
+     * horizon, always under the slot's writer sentinel, and the worker is the thread running
+     * this method, so a horizon this method reads holds still until it returns, whichever
+     * reader pins the slot in the meantime. A slot whose horizon exceeds a committed count
+     * is either held under this method's sentinel, so no reader can pin it mid-rewind, or
+     * makes it return before it changes anything. What a pinned reader still reads is safe
+     * under the concurrent rewind and the interns after it, which write only at or above the
+     * committed count (see {@link LiveViewSymbolCache#rewind}): the reverse index is a
+     * concurrent map whose chain nodes keep their ids, and the {@code id -> string} store
+     * publishes its page index through a volatile reference and writes no element below
+     * the committed count.
      * <p>
-     * The non-published slot cannot hand its rows to a reader either: a reader pins only
-     * the published slot, and the writer refills the other one before it publishes it.
+     * The non-published slot cannot hand a reader an id the rewind takes back either. A new
+     * reader pins only the published slot, and the writer refills the other one before it
+     * publishes it. A reader that pinned the other slot while it was still published can
+     * keep that pin through the rewind, but the rewind then goes ahead only when the slot's
+     * horizon is at or below every committed count, as the second case above sets out, so
+     * that reader resolves no id in the band the rewind takes back.
      * The published slot keeps its rows, so the caller must guarantee they carry no id the
      * rewind takes back - a slot staged from disk, or one re-stamped after an in-step flush.
      *
      * @param committedCounts the LV table's committed symbol count per output column,
      *                        indexed by column; only SYMBOL columns are read
      * @return {@code true} when the cache was rewound, {@code false} when a reader pins a
-     * slot
+     * slot whose horizon reaches the band
      */
     public boolean tryRewindSymbolCache(IntList committedCounts) {
         final int publishedIdx = this.publishedIdx;
-        if (tryAcquireWrite(publishedIdx) == null) {
+        final boolean isPublishedHeld = tryAcquireWrite(publishedIdx) != null;
+        if (!isPublishedHeld && isSymbolHorizonAbove(publishedIdx, committedCounts)) {
             return false;
         }
         final int otherIdx = 1 - publishedIdx;
-        if (tryAcquireWrite(otherIdx) == null) {
-            // Nothing changed, so there is no horizon to re-stamp.
-            releaseWriterSentinel(publishedIdx, "tryRewindSymbolCache");
+        final boolean isOtherHeld = tryAcquireWrite(otherIdx) != null;
+        if (!isOtherHeld && isSymbolHorizonAbove(otherIdx, committedCounts)) {
+            if (isPublishedHeld) {
+                // Nothing changed, so there is no horizon to re-stamp.
+                releaseWriterSentinel(publishedIdx, "tryRewindSymbolCache");
+            }
             return false;
         }
         try {
@@ -509,13 +698,18 @@ public class LiveViewInMemoryTier implements QuietCloseable {
                 symbolCache.rewind(col, committedCounts.getQuick(col));
             }
         } finally {
-            // Re-stamps both horizons even when a rewind threw part-way: a column left
+            // Re-stamps every held horizon even when a rewind threw part-way: a column left
             // half-rewound has re-bound nothing yet, and the horizons it gets are the
-            // store sizes it still has.
+            // store sizes it still has. A pinned slot keeps its horizon, which the check
+            // above put below every band the rewind can take back.
             try {
-                releaseWriteWithoutPublish(otherIdx);
+                if (isOtherHeld) {
+                    releaseWriteWithoutPublish(otherIdx);
+                }
             } finally {
-                releaseWriteWithoutPublish(publishedIdx);
+                if (isPublishedHeld) {
+                    releaseWriteWithoutPublish(publishedIdx);
+                }
             }
         }
         return true;
@@ -540,6 +734,23 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         if (refCountsAddr != 0) {
             refCountsAddr = Unsafe.free(refCountsAddr, REFCOUNTS_BYTES, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
         }
+    }
+
+    /**
+     * Reports whether {@code slotIdx}'s stamped symbol horizon exceeds {@code committedCounts}
+     * for any SYMBOL column, i.e. whether a reader of the slot may resolve an id at or above a
+     * committed count through the cache. Writer-side only: the caller is the refresh worker,
+     * the only thread that stamps a horizon, so the horizons it reads here hold still.
+     */
+    private boolean isSymbolHorizonAbove(int slotIdx, IntList committedCounts) {
+        final LiveViewInMemoryBuffer slot = slots[slotIdx];
+        for (int i = 0, n = symbolCache.symbolColumnCount(); i < n; i++) {
+            final int col = symbolCache.symbolColumnIndexAt(i);
+            if (slot.newSymbolMaxId(col) > committedCounts.getQuick(col)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void releasePerSlotRc(int slotIdx) {
@@ -597,8 +808,15 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      * per-column prune argument is unchanged by the split: {@code pruneReverseIndex}
      * touches only {@code col}'s own state, so no column's horizon can influence
      * another's reclaimed band.
+     * <p>
+     * {@code symbolHorizonCaps}, when not null, lowers each column's horizon to at most
+     * its cap. Either the slot carries no id at or above the cap, or the slot is unstamped - a
+     * lead kept from readers - and no read routes through it to the ids it carries at or
+     * above the cap (see {@link #publishSwap(int, IntList)}). A lower horizon only keeps more
+     * of the reverse index reachable, so the prune stays correct with it. The caller fills the
+     * caps for every SYMBOL column, so reading them keeps the stamp pass from failing.
      */
-    private void stampSymbolHorizon(int slotIdx) {
+    private void stampSymbolHorizon(int slotIdx, @Nullable IntList symbolHorizonCaps) {
         final LiveViewInMemoryBuffer slot = slots[slotIdx];
         final LiveViewInMemoryBuffer other = slots[1 - slotIdx];
         // Every close path takes the refresh latch first, which the refresh worker
@@ -610,7 +828,8 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         final int n = symbolCache.symbolColumnCount();
         for (int i = 0; i < n; i++) {
             final int col = symbolCache.symbolColumnIndexAt(i);
-            slot.setNewSymbolMaxId(col, symbolCache.newSymbolMaxIdExclusive(col));
+            final int horizon = symbolCache.newSymbolMaxIdExclusive(col);
+            slot.setNewSymbolMaxId(col, symbolHorizonCaps != null ? Math.min(horizon, symbolHorizonCaps.getQuick(col)) : horizon);
         }
         final RuntimeException injected = failNextSymbolHorizonStamp;
         if (injected != null) {
