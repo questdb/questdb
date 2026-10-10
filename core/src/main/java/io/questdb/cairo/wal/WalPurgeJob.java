@@ -709,6 +709,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return safeToPurgeTxn;
     }
 
+    // A live view's idle save point is taken by its refresh worker, which skips a stub, dropped or invalid view.
+    // Such a view would never consume the request and would take a slot of the per-pass cap every interval. A stub
+    // and an invalid view stay so until DROP, which removes what they hold.
+    private boolean isLiveViewRefreshable() {
+        if (!configuration.isLiveViewRefreshEnabled()) {
+            return false;
+        }
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
+        return instance != null && !instance.isStub() && !instance.isDropped() && !instance.isInvalid();
+    }
+
     /**
      * The oldest cut recovery could rewind this table to from the save points on disk, or {@link Long#MAX_VALUE}
      * when there is none: the lowest seqTxn a valid generation header names. Read from the files rather than from
@@ -770,6 +781,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 || ((otherPinnedEpochTxn < 0 || otherPinnedEpochTxn == pinnedEpochTxn)
                 && tracker.getDurableEpochSeqTxn() >= tracker.getWriterTxn()
                 && tracker.getCommittedTxn() <= pinnedEpochTxn)) {
+            return;
+        }
+        if (tableToken.isLiveView() && !isLiveViewRefreshable()) {
             return;
         }
         final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000L;

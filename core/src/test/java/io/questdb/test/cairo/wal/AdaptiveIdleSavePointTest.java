@@ -671,6 +671,49 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidLiveViewTakesNoIdleRequest() throws Exception {
+        // An invalid live view's refresh worker never takes its save point, so the request would stay pending and take
+        // a slot of the per-pass cap every interval. The purge job does not ask it.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
+            try (LiveViewRefreshJob refreshJob = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
+                        + "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+                final TableToken lv = engine.verifyTableName("lv");
+                for (int i = 0; i < 3; i++) {
+                    tick(INTERVAL_MS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:0" + i + ":00.000000Z', " + (i + 1) + ")");
+                    drainWalQueue();
+                    runJob(refreshJob);
+                    tick(INTERVAL_MS);
+                    runJob(refreshJob);
+                    engine.releaseInactive();
+                }
+                final SeqTxnTracker tracker = tracker(lv);
+                Assert.assertNotEquals("two save points apart", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                engine.getLiveViewRegistry().getViewInstance("lv").markInvalid("test", 0);
+                int asked = 0;
+                for (int i = 0; i < 4; i++) {
+                    tick(INTERVAL_MS);
+                    drainPurgeJob();
+                    if (tracker.isIdleEpochRequested()) {
+                        asked++;
+                    }
+                    runJob(refreshJob);
+                    engine.releaseInactive();
+                }
+                Assert.assertEquals("requests to the invalid live view over four intervals", 0, asked);
+                execute("DROP LIVE VIEW lv");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testNoIdleSavePointOnReplica() throws Exception {
         assertNoIdleSavePoint("adaptive", INTERVAL_MS, true);
     }

@@ -252,12 +252,15 @@ public class SeqTxnTracker {
     }
 
     /**
-     * Wall-clock ms of the last save point (adaptive cadence gate); 0 if none yet.
+     * Wall-clock ms at which the WAL purge job last asked for an idle save point; 0 once a save point publishes.
      */
     public long getIdleEpochRequestTs() {
         return idleEpochRequestTs;
     }
 
+    /**
+     * Wall-clock ms of the last save point (adaptive cadence gate); 0 if none yet.
+     */
     public long getLastEpochTs() {
         return lastEpochTs;
     }
