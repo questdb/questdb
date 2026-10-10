@@ -2465,6 +2465,13 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertSegmentLocked(tableName, 1, 1);
 
                 drainWalQueue();
+                if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                    // The WAL purge keeps the WAL above the older of the two save points, which recovery falls back
+                    // to; one more save point at the applied cut moves the older one past segment 0.
+                    try (TableWriter writer = getWriter(tableToken)) {
+                        writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                    }
+                }
                 drainPurgeJob();
 
                 // Segment 0 was purged since writer moved to segment 1

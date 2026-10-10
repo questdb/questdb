@@ -27,7 +27,9 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mv.ForwardingMatViewStateStore;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
@@ -3416,6 +3418,13 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             drainMatViewQueue(engine);
             drainWalQueue();
             engine.releaseInactive();
+            if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                // The WAL purge keeps the WAL above the older of the two save points, which recovery falls back
+                // to; one more save point at the applied cut moves the older one past the base WAL.
+                try (TableWriter writer = getWriter(baseToken)) {
+                    writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                }
+            }
             try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
                 purgeJob.drain(0);
             }

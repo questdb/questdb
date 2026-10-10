@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -18964,6 +18965,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:40.000000Z', 40)");
             drainWalQueue();
             engine.releaseInactive();
+            if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                // The base table's own WAL purge floor is the older of its two save points (seqTxn 1 here), which
+                // would hide the view's floor; one more save point at the applied cut lifts it above the view's.
+                try (TableWriter writer = getWriter("base")) {
+                    writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                }
+            }
             drainPurgeJob();
 
             // The ring's oldest entry does not retain segments 0 or 1. Segment 2

@@ -580,11 +580,18 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 main1.getEngine().releaseAllWriters();
                 main1.getEngine().releaseAllWalWriters();
                 main1.getEngine().releaseAllViewWalWriters();
+                TableToken token = main1.getEngine().getTableTokenIfExists("price_1h");
+                if (main1.getEngine().getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                    // The purge floor is the older of the two save points, which recovery falls back to; one more
+                    // save point at the applied cut moves the older one past the WAL.
+                    try (TableWriter writer = main1.getEngine().getWriter(token, "test")) {
+                        writer.advanceDurableEpoch(main1.getEngine().getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                    }
+                }
                 try (WalPurgeJob purgeJob = new WalPurgeJob(main1.getEngine())) {
                     purgeJob.drain(0);
                 }
                 // assert that WAL files are removed
-                TableToken token = main1.getEngine().getTableTokenIfExists("price_1h");
                 try (Path path = new Path()) {
                     CairoConfiguration configuration = main1.getEngine().getConfiguration();
                     path.of(configuration.getDbRoot()).concat(token).concat(WAL_NAME_BASE).put(1);

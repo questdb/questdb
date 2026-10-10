@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
@@ -158,6 +160,13 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     .returns("count\n" +
                             expectedTxnCount + "\n");
 
+            if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                // Sequencer parts are purged against the older of the two save points, which recovery falls back
+                // to; one more save point at the applied cut moves the older one past them.
+                try (TableWriter writer = getWriter("chunk_seq")) {
+                    writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                }
+            }
             drainPurgeJob();
 
             assertQuery("select count(*) from wal_transactions('chunk_seq')")

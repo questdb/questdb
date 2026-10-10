@@ -48,12 +48,14 @@ import java.util.List;
 
 /**
  * Proves that recovery seeds the adaptive WAL purge floor from the restored epoch cut, so a fully applied
- * {@code walN} directory a crash leaves behind (a reboot orphan) goes on the first purge after recovery and
- * cannot accumulate across restarts. Two restart models mint the same orphan, with a power loss in an
+ * {@code walN} directory a crash leaves behind (a reboot orphan) goes on the first purge after the next save point
+ * and cannot accumulate across restarts. Two restart models mint the same orphan, with a power loss in an
  * uncommitted WAL tail followed by in-process recovery:
  * <ul>
- *   <li>Model A, the in-process {@code resetForReboot}: a purge right after recovery reclaims the orphan (A1),
- *       and it stays reclaimed after more ingest and a new durable epoch (A2).</li>
+ *   <li>Model A, the in-process {@code resetForReboot}: a purge after recovery and one more save point reclaims
+ *       the orphan (A1), and it stays reclaimed after more ingest and a new durable epoch (A2). The purge floor is
+ *       the older of the two save points, which recovery falls back to, so the orphan goes once one more save
+ *       point overwrites that generation.</li>
  *   <li>Model B, a new {@link CairoEngine} on the same db root, whose start runs recovery as a restarted
  *       process does: the seeded floor equals Model A's, and the same two purges reclaim the orphan (B1, B2).</li>
  * </ul>
@@ -91,19 +93,21 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                                 + "restored epoch cut, not leave it at 0; got " + aFloorAfterRecover,
                         aFloorAfterRecover > 0L);
 
-                // A1: a purge right after recovery, with no ingest, reclaims the orphan.
+                // A1: one more save point, with no ingest, then a purge reclaims the orphan.
+                takeSavePoint(engine, ta);
                 forceWalPurge(engine);
                 final List<String> aQuiescentPurge = listWalDirs(ta);
                 logState("A1 in-process quiescent purge", ta, aQuiescentPurge);
-                Assert.assertTrue("A1: with the floor seeded by recovery, the FIRST quiescent purge already "
-                                + "RECLAIMS the reboot orphan — there is no pre-epoch retention window left "
-                                + "for the soak to observe; got " + aQuiescentPurge,
+                Assert.assertTrue("A1: with the floor seeded by recovery, the first purge after one more save "
+                                + "point RECLAIMS the reboot orphan; got " + aQuiescentPurge,
                         aQuiescentPurge.isEmpty());
 
                 // A2: resume ingest, which takes a new durable epoch, then purge: the orphan stays reclaimed.
                 resumeIngest(engine, ta, recoveredA);
                 Assert.assertTrue("A2: resumed ingest must advance the purge floor past the orphan",
                         durableEpoch(engine, ta) > 0L);
+                // The older save point still needs the resumed ingest's WAL; one more save point frees it.
+                takeSavePoint(engine, ta);
                 forceWalPurge(engine);
                 final List<String> aAfterIngest = listWalDirs(ta);
                 logState("A2 in-process +ingest+epoch+purge", ta, aAfterIngest);
@@ -138,20 +142,23 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
                                     + "restored epoch cut exactly like the in-process reset",
                             aFloorAfterRecover, bFreshFloorAfterBoot);
 
-                    // B1: a purge right after the start, with no ingest, reclaims the orphan, as in A1.
+                    // B1: one more save point after the start, with no ingest, then a purge reclaims the orphan,
+                    // as in A1.
+                    takeSavePoint(restarted, rtb);
                     forceWalPurge(restarted);
                     bFreshQuiescentPurge = listWalDirs(tb);
                     LOG.info().$("[EXP] B1 fresh-engine quiescent purge: wals=").$(bFreshQuiescentPurge.toString()).I$();
                     Assert.assertTrue("B1 (DECISIVE): a fresh-process restart RECLAIMS the orphan on the first "
-                                    + "quiescent purge, identical to the in-process reset — reboot orphans are "
-                                    + "not retained and cannot accumulate across restarts; got "
-                                    + bFreshQuiescentPurge,
+                                    + "purge after one more save point, identical to the in-process reset — reboot "
+                                    + "orphans cannot accumulate across restarts; got " + bFreshQuiescentPurge,
                             bFreshQuiescentPurge.isEmpty());
 
                     // B2: resume ingest on the restarted engine, then purge: the orphan stays reclaimed.
                     resumeIngest(restarted, rtb, recoveredB);
                     Assert.assertTrue("B2: resumed ingest on the rebooted engine must advance the floor",
                             durableEpoch(restarted, rtb) > 0L);
+                    // The older save point still needs the resumed ingest's WAL; one more save point frees it.
+                    takeSavePoint(restarted, rtb);
                     forceWalPurge(restarted);
                     bFreshAfterIngest = listWalDirs(tb);
                     LOG.info().$("[EXP] B2 fresh-engine +ingest+epoch+purge: wals=").$(bFreshAfterIngest.toString()).I$();
@@ -300,6 +307,12 @@ public class AdaptiveRebootOrphanReclaimCrashTest extends AbstractAdaptiveCrashS
             }
         } catch (SqlException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private void takeSavePoint(CairoEngine eng, TableToken tt) {
+        try (TableWriter writer = eng.getWriter(tt, "test")) {
+            writer.advanceDurableEpoch(eng.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
         }
     }
 

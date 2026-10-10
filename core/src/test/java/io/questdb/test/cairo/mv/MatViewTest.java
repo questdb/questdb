@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
@@ -1068,6 +1069,7 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -2619,6 +2621,7 @@ public class MatViewTest extends AbstractCairoTest {
             // writer to flush a durable epoch (as prod eviction does) before asserting the now-consumed
             // base WAL is reclaimed.
             engine.releaseInactive();
+            takeSavePointIfAdaptive(baseTableToken);
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2706,6 +2709,7 @@ public class MatViewTest extends AbstractCairoTest {
             // writer to flush a durable epoch (as prod eviction does) before asserting the now-consumed
             // base WAL is reclaimed.
             engine.releaseInactive();
+            takeSavePointIfAdaptive(baseTableToken);
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2771,6 +2775,7 @@ public class MatViewTest extends AbstractCairoTest {
                 // the applied tail -- exactly as an idle writer's eviction does in production -- before
                 // asserting the now-superseded base WAL is reclaimed.
                 engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6725,6 +6730,7 @@ public class MatViewTest extends AbstractCairoTest {
                 // the applied tail -- exactly as an idle writer's eviction does in production -- before
                 // asserting the now-superseded base WAL is reclaimed.
                 engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6850,6 +6856,7 @@ public class MatViewTest extends AbstractCairoTest {
                 // the applied tail -- exactly as an idle writer's eviction does in production -- before
                 // asserting the now-superseded base WAL is reclaimed.
                 engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -10312,6 +10319,16 @@ public class MatViewTest extends AbstractCairoTest {
                 throw new OutOfMemoryError(message);
             }
         };
+    }
+
+    // The WAL purge keeps the WAL above the older of the two save points, which recovery falls back to; one more
+    // save point at the applied cut moves the older one past the WAL the test expects purged.
+    private static void takeSavePointIfAdaptive(TableToken tableToken) {
+        if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+            }
+        }
     }
 
     /**
