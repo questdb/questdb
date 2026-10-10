@@ -190,18 +190,29 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         writer.rollbackConditionally(loRow);
 
         long lo = Math.max(loRow, columnTop);
-        int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
-        for (int i = 0; i < bufferCount; i++) {
+        // Loop on the row cursor, not on a precomputed buffer count: a SHORT read
+        // (0 <= read < bytesToRead) advances `lo` by less than one buffer, and a
+        // fixed iteration count would then leave the tail of [loRow, hiRow)
+        // unindexed while setMaxValue below still claims the whole range. That
+        // used to be repaired by the next commit's full reseal; the covered
+        // append path (TableWriter#sealPostingIndexForPartition) now treats
+        // maxValue as the authority for where the next append starts, so the gap
+        // would be permanent and silent.
+        while (lo < hiRow) {
             long fileOffset = (lo - columnTop) * 4;
             long bytesToRead = Math.min(bufferSize, (hiRow - lo) * 4);
             long read = ff.read(dataColumnFd, buffer, bytesToRead, fileOffset);
-            if (read == -1) {
+            if (read < 4) {
+                // -1 is an error; 0 (or a partial int) means the column file is
+                // shorter than the partition claims - both leave rows unindexed,
+                // and neither can be made progress on by looping again.
                 throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)
                         .put(", fileOffset=").put(fileOffset)
                         .put(", bytesToRead=").put(bytesToRead)
+                        .put(", read=").put(read)
                         .put(']');
             }
-            long pHi = buffer + read;
+            long pHi = buffer + (read & ~3L);
             for (long p = buffer; p < pHi; p += 4, lo++) {
                 writer.add(TableUtils.toIndexKey(Unsafe.getInt(p)), lo);
             }
