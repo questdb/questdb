@@ -792,7 +792,16 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 // FROM-TO may apply to align to calendar queries, fixing the lower bound.
                 if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
                     long from = sampleFromFunc.getTimestamp(null);
-                    sampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) : 0);
+                    if (from != Long.MIN_VALUE) {
+                        final long fromTimestamp = timestampDriver.from(from, sampleFromFuncType);
+                        if (fixedOffset != Long.MIN_VALUE) {
+                            sampler.setLocalAnchor(fromTimestamp + fixedOffset);
+                        } else {
+                            sampler.setStart(fromTimestamp);
+                        }
+                    } else {
+                        sampler.setStart(0);
+                    }
                 } else {
                     sampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
                 }
