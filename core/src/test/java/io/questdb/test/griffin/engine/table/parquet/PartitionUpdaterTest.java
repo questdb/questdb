@@ -132,6 +132,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         0L,
                         0.01,
                         0.0,
+                        false, // failOnInvalidUtf16
                         -1, // no _pm fd
                         0L,
                         0L,
@@ -217,7 +218,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 int readerFd = Files.detach(ff.openRONoCache(path.$()));
                 int writerFd = Files.detach(ff.openRW(path.$(), opts));
                 updater.of(path.$(), readerFd, parquetDataSize0, writerFd, parquetDataSize0,
-                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, parquetDataSize0, parquetDataSize0, 0L, -1);
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, false, parquetMetaFd, parquetDataSize0, parquetDataSize0, 0L, -1L);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
                 updater.updateFileMetadata();
@@ -242,7 +243,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 readerFd = Files.detach(ff.openRONoCache(path.$()));
                 writerFd = Files.detach(ff.openRW(path.$(), opts));
                 updater.of(path.$(), readerFd, committedParquetSize, writerFd, committedParquetSize,
-                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, committedHead, committedHead, committedParquetSize, -1L);
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, false, parquetMetaFd, committedHead, committedHead, committedParquetSize, -1L);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
                 updater.updateFileMetadata();
@@ -358,6 +359,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         0L,
                         0.01,
                         0.0,
+                        false, // failOnInvalidUtf16
                         -1, // no _pm fd
                         0L,
                         0L,
@@ -418,7 +420,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 int readerFd = Files.detach(ff.openRONoCache(path.$()));
                 int writerFd = Files.detach(ff.openRW(path.$(), opts));
                 updater.of(path.$(), readerFd, parquetDataSize0, writerFd, parquetDataSize0,
-                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, parquetDataSize0, parquetDataSize0, 0L, -1L);
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, false, parquetMetaFd, parquetDataSize0, parquetDataSize0, 0L, -1L);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
                 updater.updateFileMetadata();
@@ -459,7 +461,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 readerFd = Files.detach(ff.openRONoCache(path.$()));
                 writerFd = Files.detach(ff.openRW(path.$(), opts));
                 updater.of(path.$(), readerFd, parquetDataSize1, writerFd, parquetDataSize1,
-                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, parquetMetaFd, committedHead, physicalWithDeadTail, parquetDataSize1, -1L);
+                        1, 0L, false, false, 0L, 0L, 0.01, 0.0, false, parquetMetaFd, committedHead, physicalWithDeadTail, parquetDataSize1, -1L);
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
                 updater.updateFileMetadata();
@@ -550,6 +552,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         0L,
                         0.01,
                         0.0,
+                        false, // failOnInvalidUtf16
                         parquetMetaFd,
                         parquetPartitionSize,
                         parquetPartitionSize,
