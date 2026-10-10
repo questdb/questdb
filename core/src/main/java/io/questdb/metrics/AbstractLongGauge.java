@@ -48,6 +48,11 @@ abstract class AbstractLongGauge implements LongGauge {
         PrometheusFormatUtils.appendNewLine(sink);
     }
 
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        visitor.visitLong(name, MetricType.LONG_GAUGE, getValue());
+    }
+
     private void appendMetricName(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.put(name);

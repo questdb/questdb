@@ -22,48 +22,37 @@
  *
  ******************************************************************************/
 
-
 package io.questdb.metrics;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
-import org.jetbrains.annotations.NotNull;
+/**
+ * Receives a point-in-time, typed view of metrics. Label values are supplied separately so
+ * consumers can flatten them without parsing Prometheus text.
+ */
+public interface MetricSnapshotVisitor {
 
-import java.util.concurrent.atomic.LongAdder;
-
-public class CounterImpl implements Counter {
-    private final LongAdder counter;
-    private final CharSequence name;
-
-    public CounterImpl(CharSequence name) {
-        this.name = name;
-        this.counter = new LongAdder();
+    default boolean isReapDroppedTableMetricsEnabled() {
+        return false;
     }
 
-    @Override
-    public void add(long value) {
-        counter.add(value);
+    default boolean isVirtualMetricsEnabled() {
+        return true;
     }
 
-    @Override
-    public long getValue() {
-        return counter.sum();
+    default void visitDouble(CharSequence name, double value) {
     }
 
-    @Override
-    public void reset() {
-        counter.reset();
+    default void visitLong(CharSequence name, MetricType type, long value) {
     }
 
-    @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        PrometheusFormatUtils.appendCounterType(name, sink);
-        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
-        PrometheusFormatUtils.appendNewLine(sink);
+    default void visitLong(CharSequence name, MetricType type, CharSequence labelValue0, long value) {
     }
 
-    @Override
-    public void snapshot(MetricSnapshotVisitor visitor) {
-        visitor.visitLong(name, MetricType.COUNTER, counter.longValue());
+    default void visitLong(
+            CharSequence name,
+            MetricType type,
+            CharSequence labelValue0,
+            CharSequence labelValue1,
+            long value
+    ) {
     }
 }
