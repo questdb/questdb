@@ -252,6 +252,30 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastCharNullGeoHashTab() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (c CHAR)");
+            execute("INSERT INTO src VALUES ('u'), (NULL)");
+            execute("CREATE TABLE dst (g1 GEOHASH(1c), g2 GEOHASH(3b))");
+            // a NULL CHAR becomes a NULL geohash, as CAST(c AS GEOHASH(1c)) already gives
+            execute("INSERT INTO dst SELECT c, c FROM src");
+            final String expected = """
+                    g1\tg2
+                    u\t110
+                    \t
+                    """;
+            assertQuery("dst")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT CAST(c AS GEOHASH(1c)) g1, CAST(c AS GEOHASH(3b)) g2 FROM src")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testCastCharShortFunc() throws Exception {
         assertMemoryLeak(() -> assertCharFunc(
                 "short",
@@ -446,6 +470,34 @@ public class InsertCastTest extends AbstractCairoTest {
                         3
                         """
         ));
+    }
+
+    @Test
+    public void testCastCharToGeoByteBindNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (a GEOHASH(1c), b GEOHASH(3b))");
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    InsertOperation insert = compiler.compile("INSERT INTO y VALUES ($1, $2)", sqlExecutionContext).popInsertOperation()
+            ) {
+                bindVariableService.setChar(0, 'u');
+                bindVariableService.setChar(1, 'u');
+                insert.execute(sqlExecutionContext);
+
+                // CHAR 0 is the CHAR NULL
+                bindVariableService.setChar(0, (char) 0);
+                bindVariableService.setChar(1, (char) 0);
+                insert.execute(sqlExecutionContext);
+            }
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            u\t110
+                            \t
+                            """);
+        });
     }
 
     @Test
