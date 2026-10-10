@@ -222,7 +222,9 @@ valid but unpinned until the next save point; a loss through it needs the curren
 partition purge in between.
 
 After the column flush a save point makes six sync calls on Linux: `msync` and `fsync` of `_cv`, the same of `_txn`,
-and two `fsync` of the generation file (sections, then header).
+and two `fsync` of the generation file (sections, then header). In all, a save point of a 4-column table makes 47
+system calls (168 at 64 columns, 552 at 256) and takes 19 ms, nearly all of it the `syncfs`; it barely grows with
+width or partitions (22 ms at 1,000 partitions or at 256 columns).
 
 ## 7. Enrolment and exit
 
@@ -261,7 +263,8 @@ read by nothing and not deleted.
 (views skipped), in every mode and role:
 
 1. If neither generation file exists, the table is not enrolled: nothing to do. That is two existence checks per
-   WAL table, the whole cost of a start for a table without a save point.
+   WAL table, the whole cost of a start for a table without a save point: about 2 µs per table, 2.2 ms per 1,000
+   tables.
 2. If `cairo.adaptive.recovery.roll.forward.enabled` is false, refuse.
 3. Repair an interrupted `_meta` swap (the `_todo_` file), as the writer would.
 4. Delete unpublished generation files. If none is left, the table is not enrolled.
@@ -291,7 +294,8 @@ read by nothing and not deleted.
     database root and each volume after the loop over the tables, before `recover()` returns; elsewhere each
     header gets its own `fsyncDurable`. A failed open, write or flush fails the start (`could not open read-write
     [file=...]`, `could not rewrite adaptive save point header [path=...]`), and a failed flush stops the engine;
-    the next start writes the headers again.
+    the next start writes the headers again. On Linux, 1,000 tables take 244 ms at an `adaptive` start, of which
+    the `syncfs` is 51 ms and the rest the reads and rewrites of the headers.
 11. Delete a generation rejected in step 9 if the failure was a definite mismatch (a read error never deletes
     anything), logged as critical (`removing adaptive save point that failed its content checks [...]`), and sync
     the directory.
@@ -356,7 +360,8 @@ an interval that is not negative, outside plain views, suspended tables and a fe
 - the two pins differ, or the newest save point's seqTxn is below the applied seqTxn, or the txn the writer last
   committed is past the newest pin (`SeqTxnTracker.committedTxn`, which a database-root WAL table writer publishes
   each time it is released, so a commit without a WAL transaction counts too; a COPY staging writer publishes
-  nothing). Equal pins mean equal save points, since every `_txn` write moves the txn, so the check reads no file;
+  nothing; the publish is a map lookup and a volatile store, within the noise of an apply pass). Equal pins mean equal
+  save points, since every `_txn` write moves the txn, so the check reads no file;
 - and the table has taken no save point for one interval (`getLastEpochTs`), and the job has not asked for one in
   the last interval (`getIdleEpochRequestTs`, so a request that cannot be taken is asked again one interval later).
 
@@ -369,10 +374,12 @@ For a live view the job only sets the request, since the apply job drops a live 
 when the view's refresh worker can take it (`isLiveViewRefreshable`: refresh workers on, a real, live, valid view).
 A pass asks at most `WalPurgeJob.IDLE_SAVE_POINT_REQUESTS_PER_PASS` (16) tables; a pass that reaches the cap makes
 the next one start after the last table it asked, so every eligible table is asked within about two rounds of
-tables / 16 passes. Both generations then stand on the current state, the WAL floor rises to it, and the purge
-queued after the save point (`partitionPurgeOwedTxn`) frees the versions; the column purge and the posting purge
-retry until the pins move. The writer's close (section 5) covers only what changed since the newest save point,
-which leaves the two generations apart; the idle save point is the purge job's, not the writer pool's.
+tables / 16 passes: after a restart with 1,000 such tables, 63 passes over about 31 minutes at the defaults, each
+with about 0.3 s of apply work (about 20 ms per save point). Both generations then stand on the current state, the WAL
+floor rises to it, and the purge queued after the save point (`partitionPurgeOwedTxn`) frees the versions; the column
+purge and the posting purge retry until the pins move. The writer's close (section 5) covers only what changed since the
+newest save point, which leaves the two generations apart; the idle save point is the purge job's, not the writer
+pool's.
 
 **The partition purge after a restart.** After a failed flush and a restart, the page cache can hold a `_txn` (in
 `sync`) or a save point header (in `adaptive`) that the device never got, and a purge that trusts it can remove the
@@ -486,7 +493,11 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   (`fsyncTableRoot`), and the second is `fsyncTableFiles`. A data sync failure anywhere in the import, a failed
   `_txn` flush in the writer's attach included, reaches the import's catch unwrapped in `sync` and `adaptive`: the
   clean-up drops a created table or truncates an existing one (best effort), then the engine stops. In `nosync`,
-  `async` and for a non-WAL table in `adaptive` nothing is flushed. What a power loss can still leave (an attach
+  `async` and for a non-WAL table in `adaptive` nothing is flushed. In `sync` the import also flushes each
+  partition directory it creates in its work directory, and that directory's parent, and the attach flushes the
+  partition and table directories: about 60 directory `fsync` for 30 partitions. A 5-million-row import takes
+  2.52 s in `sync` against 2.36 s in the base release (+6.7%, of which the two `syncfs` are 31 ms) and 1.83 s in
+  `adaptive` (two `syncfs`, 30 ms); `nosync` is unchanged. What a power loss can still leave (an attach
   whose rename did not reach the disk, partitions attached before it) and the manual steps are in guide section
   11.6. A WAL table COPY creates gets no sequencer, in every mode, a base issue (guide section 7.6), so after a
   restart it cannot be written, altered or dropped.
@@ -530,17 +541,20 @@ bytes.
   does the same at the end of its current batch, or before its next one, on its own thread, so the removal never
   races a save point being written. A table that fails for another reason is logged and left to its writer; a
   failed flush stops the engine. The switch logs `cleared adaptive save points on becoming a replica [tables=...,
-  busy=..., failed=...]`.
+  busy=..., failed=...]`. On Linux each enrolled table costs one `syncfs` and two `fsync`, about 19 ms with the
+  writer open and the removal: about 19 s for 1,000 tables before the replica loop starts. One `syncfs` for every
+  table, then the removals, would bring that near the writer opens alone; that batching is left for later.
 - **Promote** (`EntCairoEngine.fsyncReplicaStateForPromote`, on every promote path). On an `adaptive` instance, before
   the apply job is set on the tables, one flush makes what the replica applied lazily durable
   (`DurableEpochManifest.fsyncTables`: one `syncfs` of the database root and of each volume on Linux; elsewhere the
   tables one by one, each file flushed, a failure logged per table). Each table then enrols at its writer's first
-  batch with a whole-table flush. A batch that began on the replica and is still running at the promotion keeps
-  applying lazily after that flush, and the promotion's notification for its busy table can be dropped, so
-  `ApplyWal2TableJob` reconciles the writer again at the end of every batch, while it still holds the writer. Outside
-  `adaptive` that call is one field compare, and in steady state one volatile read; it skips a distressed writer,
-  one a DROP TABLE destroyed included. If such a straddling batch fails, the writer is distressed and not
-  reconciled, so the rows it applied after the promotion flush have no flush and no save point until the table is
+  batch with a whole-table flush. On Linux the promote flush took 41 ms for 200 tables, and each table's first save
+  point after it about 34 ms, once (35 ms against 0.8 ms for its next apply). A batch that began on the replica and is
+  still running at the promotion keeps applying lazily after that flush, and the promotion's notification for its busy
+  table can be dropped, so `ApplyWal2TableJob` reconciles the writer again at the end of every batch, while it still
+  holds the writer. Outside `adaptive` that call is one field compare, and in steady state one volatile read; it skips a
+  distressed writer, one a DROP TABLE destroyed included. If such a straddling batch fails, the writer is distressed and
+  not reconciled, so the rows it applied after the promotion flush have no flush and no save point until the table is
   resumed or the server restarts; a power loss in between can lose them (very unlikely; no cheap safe fix, since a
   writer the job stopped trusting must not publish a save point).
 - **The uploader waits for the durable frontier.** In `adaptive` and `sync` mode the uploader ships a sequencer
@@ -558,6 +572,10 @@ bytes.
   commit notified during the flush could ship the older records of a table the flush has not reached; a commit made
   meanwhile is shipped by the startup scan (`triggerUploadMissed`) right after the install. A dropped table's log is
   flushed the same way, from part 0 where `syncfs` is not filesystem-wide. A data sync failure stops the engine.
+  On Linux, 1,000 tables take 37-109 ms in `adaptive` and 21-23 ms in `sync` when every table has one new commit
+  (the `syncfs` is 90-98% of it), 2-8 ms when none has. Outside Linux, flushing every kept part costs about +50%
+  over the open part and the header alone (1,000 busy tables: 10.0 s against 6.6 s, measured on Linux with that
+  path forced).
 - **The V1 log on a replica.** The downloader is the only writer of a replica's V1 sequencer log. A Java open leaves
   records past the published tail alone (the downloader wrote them and has not published them yet); a torn tail is
   still cut.
@@ -565,7 +583,8 @@ bytes.
   and the first `adaptive` writer enrols it. In every mode, each restored table is flushed before its commit marker
   (one `syncfs` on Linux; every file and directory of the table elsewhere, files only on Windows), because a resumed
   restore skips a table whose marker matches and nothing else flushes a table without a save point; the root is
-  synced once more before the trigger file goes.
+  synced once more before the trigger file goes. On Linux that is about 11 ms per table in every mode: 200 small
+  tables restore in 5.3-5.6 s against 3.2-3.3 s with the flushes turned off.
 - **Default mode.** Without an explicit `cairo.commit.mode`, Enterprise runs `nosync` when replication is configured.
 - **Durable acknowledgements.** The `local` tier is served only on an `adaptive` primary; the `replicated` tier
   follows the upload frontier.
@@ -603,6 +622,10 @@ change reads as unverified, never as torn, and a released binary ignores the new
 A torn `_txn` or `_cv` live area makes a reader stay on the previous transaction (`_txn live area is torn, reader
 cannot advance past the previous transaction [...]`) and a writer refuse to build on it, rather than read wrong data.
 Under `adaptive`, recovery restores these files from the save point before anything reads them.
+
+The `_txn` and `_cv` checks ask the file's length when a reader maps an area or a mapping grows
+(`TxReader.unsafeMapArea`, `ColumnVersionReader`): three more `fstat` of `_txn` and one of `_cv` on a table's first
+reader open, about 9 µs in every mode, and none per query or per commit.
 
 ## 14. Files and formats
 

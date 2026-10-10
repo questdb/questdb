@@ -268,7 +268,8 @@ Found while this mode was built, not yet filed:
 
 ### 8.1 What changes in `nosync`, `async` and `sync`
 
-- **Torn-file detection** runs in every mode (section 2): it costs nanoseconds per commit and no system call.
+- **Torn-file detection** runs in every mode (section 2): it costs nanoseconds per commit and no system call, and
+  about 9 µs on the first reader of each table (four more file size checks).
 - **Held-back transactions** are applied again from the WAL after a restart instead of being read from `_txn`, in
   every mode. Before, a crash at the wrong moment could lose or duplicate those rows
   ([#7804](https://github.com/questdb/questdb/issues/7804)).
@@ -289,11 +290,13 @@ Found while this mode was built, not yet filed:
   next write, or in `adaptive` its idle save point (section 9) if its two save points differ. Before, a purge after a
   failed flush and a restart could remove the version the table on the disk still named.
 - **A QuestDB Enterprise backup restore** flushes each restored table before it marks the table as restored, in
-  every mode. Before, a restore resumed after a power loss could skip a table whose files never reached the disk.
+  every mode, about 11 ms per table (section 9). Before, a restore resumed after a power loss could skip a table
+  whose files never reached the disk.
 - **A parallel COPY in `sync`** flushes the imported partitions and symbol files before it attaches them, and the
   table again after the attach, before it reports the import finished; a failed flush stops the server (section
   11.2). Before, a power loss soon after COPY returned could lose a table the COPY created, or leave an existing
-  table whose `_txn` named partitions or symbol values that never reached the disk.
+  table whose `_txn` named partitions or symbol values that never reached the disk. The flushes make a
+  5-million-row import 6.7% slower (section 9).
 - **REBASE WAL's seed transactions** no longer set the table's minimum timestamp to 1970 when the apply takes them
   in one block with the first insert after them, in every mode
   ([#7842](https://github.com/questdb/questdb/issues/7842)). Before, that happened when the apply job lost a race,
@@ -305,50 +308,65 @@ Found while this mode was built, not yet filed:
 - **A partition conversion keeps the new partition** once its `_txn` is written, even when the flush of that `_txn`
   fails, and in `sync` a writer open flushes `_txn` again before it removes old partition versions. Before, a
   restart could find the partition missing (CONVERT PARTITION) or its rows gone (the Parquet partition switch).
-- `nosync` and `async` otherwise behave and cost as before.
+- **A start** checks each WAL table for a save point, in every mode: two file checks, about 2 µs per table (2.2 ms
+  per 1,000 tables).
+- `nosync` and `async` otherwise behave and cost as before (section 9).
 
 ## 9. What it costs
 
-Measured per step on one Linux machine (ext4 on NVMe, 24 cores), base release against this version, in one process
-with the apply run on the test thread. The final end-to-end measurement is pending; the figures marked "before the
-clean-up" were taken before the detection files were removed and may have changed since. Other file systems, other
-devices, macOS and Windows (where a save point flushes file by file) can differ widely.
+Measured on one Linux machine (AMD Ryzen 9 7900, ext4 on a Samsung 990 PRO NVMe disk), in one process with the
+apply run on the calling thread, against the release this change starts from. Each figure is the median of three
+runs; "as before" means within the spread of runs of the unchanged release. Other file systems, other devices,
+macOS and Windows (where a save point flushes file by file) can differ widely.
 
-| Mode | Per commit | Per apply pass | Per save point | At start | Per schema change |
+| Mode | One commit | One apply pass | One save point | At start | One schema change |
 |---|---|---|---|---|---|
-| `nosync` | no system call, as before; +0.7 µs of CPU before the clean-up, not attributed | the same system calls as before | none | clean start: two file checks per WAL table | the same system calls as before |
-| `async` | the same system calls as before | the same system calls as before | none | as `nosync` | the same system calls as before |
-| `sync` | as before (12.1 ms for one row); with a version 2 sequencer log, one more `msync` to write the record before the header that names it | as before | none | as `nosync` | four more `fsync` (the schema file swap made durable, about +13 ms); a few more `fsync` for ALTER COLUMN TYPE and partition conversions, which could lose data on a power loss before |
-| `adaptive`, window 0 | 6.7 ms for one row, 12 ms for 100,000 rows (`sync`: 12.1 and 38.8 ms) | about 1.9 times a `nosync` pass (192 against 101 µs before the clean-up), with the same system calls as `nosync` | 40-46 ms, nearly all of it one `syncfs`; at the defaults at most once a minute per table, about 0.07% of one core | clean: about 15 ms for 20 tables (9 ms before), measured before the header flush, which adds one `syncfs` per start on Linux; after a crash: the restore and the replay, about 66 ms per table with 20 commits to replay | as `sync`, plus a save point after ALTER COLUMN TYPE, partition conversions, ATTACH and DETACH |
-| `adaptive`, window 50 ms | 5.6 ms for one row; 15,000 rows/s for single-row commits from one writer (`sync`: 5,750) | as window 0 | as window 0 | as window 0 | as window 0 |
+| `nosync` (default) | as before: no system call, 4.5 µs for one row | as before: 101 µs for one row, the same system calls | none | about 2 µs more per WAL table (two file checks), and about 9 µs more for the first reader of each table | as before |
+| `async` | as before: 8 µs for one row | as before | none | as `nosync` | as before |
+| `sync` | as before: 12.1 ms for one row, 38.8 ms for 100,000 rows; with a version 2 sequencer log, one more `msync` to write the record before the header that names it | as before: 11.6 ms | none | as `nosync` | about 12 ms more (four `fsync` that make the `_meta` swap durable): 32 ms to add a column, 26-28 ms to rename, drop or change a type; a few more `fsync` for ALTER COLUMN TYPE and partition conversions, which could lose data on a power loss before |
+| `adaptive`, window 0 | 6.6 ms for one row, 30.5 ms for 100,000 rows (`sync`: 12.1 and 38.8 ms) | 127 µs for one row, the same system calls as `nosync` | 19-24 ms, nearly all of it one `syncfs`; at most once a minute per table by default (about 0.03% of one core) | clean: 28 ms for 20 tables (`nosync` 9 ms), 0.24 s for 1,000 tables, of which one `syncfs` of 51 ms; after a crash: about 34 ms per table with 20 commits to replay | 25-30 ms; ALTER COLUMN TYPE 48 ms, because it takes a save point, as partition conversions, ATTACH and DETACH do |
+| `adaptive`, window 50 ms | 5.2 ms for one row, 28.7 ms for 100,000 rows | 141 µs | as window 0 | as window 0 | as window 0 |
+
+Steady ingestion, 100-row commits from one writer: `nosync` 5.2 million rows/s, `async` 3.9 million, `sync` 5,800,
+`adaptive` 13,000 (window 0) and 16,500 (window 50 ms).
 
 More detail:
 
-- **Steady ingestion.** On Linux, adaptive no longer waits for each WAL page to be written back when it moves to
-  the next page; the commit's own flush writes it. Two million rows took 36% less time at window 0 and 48% less at
-  50 ms.
+- **A commit of many rows.** The 100,000 rows of a 30.5 ms `adaptive` commit are written into the WAL in 5.9 ms
+  (51 ms in `sync`), so writing and committing them takes 36 ms against 90 ms in `sync`. On Linux, adaptive does not
+  wait for each WAL page to be written back when it moves to the next page; the commit's own flush writes it.
 - **The save point** costs about the same whatever the table's width or partition count: the fixed flushes
-  dominate. After the column flush it makes six sync calls (two `msync` and four `fsync`), down from twelve in
-  earlier builds. `syncfs` flushes the whole file system, so its cost also depends on other dirty data on the same
-  file system.
-- **Start after a crash.** Each table restored costs its restore plus the replay of the WAL after its save point.
-  A table with POSTING indexes also checks each partition's index files: about 0.4 s per 10,000 partitions, only
-  after a crash. A table whose apply had held transactions back applies them again from the WAL: 25-100 ms per
-  table at the largest held-back size, once.
-- **A conversion to non-WAL** flushes the table once after its replay, in every mode (one `syncfs` on Linux), when
-  the table had WAL left to apply or a save point. It runs at the start that carries out the conversion, once.
+  dominate. 19 ms at 4 columns and one partition, 22 ms at 1,000 partitions or at 256 columns, 24 ms after a
+  100,000-row commit. At 4 columns it makes 47 system calls, among them four `fsync`, six or seven `msync`, five
+  `sync_file_range` and one `syncfs`; 168 at 64 columns and 552 at 256. `syncfs` flushes the whole file system, so
+  its cost also depends on other dirty data on the same file system.
+- **Start after a crash.** Each table restored costs its restore plus the replay of the WAL after its save point:
+  about 34 ms per table with 20 commits to replay. A table with POSTING indexes also checks each partition's index
+  files: about 0.4 s per 10,000 partitions, only after a crash. A table whose apply had held transactions back
+  applies them again from the WAL: 25-100 ms per table at the largest held-back size, once.
+- **The first reader of a table**, in every mode, asks the size of `_txn` three more times and of `_cv` once, to
+  detect a torn file (section 2): about 9 µs per table after a start. It recurs only when `_txn` or `_cv` grows past
+  what the reader has mapped, never per query.
+- **A conversion to non-WAL** replays the table's WAL first and flushes it once (one `syncfs` on Linux), in every
+  mode, when the table had WAL left to apply or a save point. A 2-million-row table converts in 33 ms with 200,000
+  rows left to replay (11 ms of it the flush) and in 29 ms in `adaptive` (5 ms flush). With nothing left to apply,
+  `nosync` pays nothing. It runs at the start that carries out the conversion, once.
 - **DETACH PARTITION**, in every mode, links the partition one more time (into its temporary name, then into
   `.detached`) and removes one more directory. In `sync` it also flushes every file of the detached copy and three
   directories. Not measured; DETACH is a rare statement.
 - **An `adaptive` start** rewrites the header of each table's current save point and makes it durable before
-  anything relies on it. On Linux that is one write per table and one `syncfs` per start: 1,000 tables took 151 ms
-  against 137 ms with no flush at all. Elsewhere it is one `fsync` per table (5-8 ms each, measured on Linux with that path forced).
+  anything relies on it. On Linux that is one write per table and one `syncfs` per start: 1,000 tables took 244 ms,
+  of which the `syncfs` 51 ms. Elsewhere it is one `fsync` per table (5-8 ms each, measured on Linux with that path
+  forced).
 - **A parallel COPY** in `sync`, and into a WAL table it creates in `adaptive`, flushes twice before COPY returns:
   the imported partitions and symbol files before the attach, then `_txn` and the renamed directories after it. On
-  Linux that is two `syncfs` per COPY. Elsewhere it is every file of the imported partitions, the table's root files
-  and directories, before and after the attach (45-50 flushes for three partitions of four columns). COPY into
-  an existing WAL table in `adaptive` pays for one save point instead. `nosync`, `async` and a non-WAL table in
-  `adaptive`: no flush.
+  Linux that is two `syncfs` per COPY. In `sync` the import also flushes each partition directory it creates, and
+  that directory's parent, as it writes the partition. A 5-million-row import (258 MB of CSV, 30 partitions, four
+  workers) takes 2.52 s in `sync` (2.36 s before; the two `syncfs` take 31 ms, the directory `fsync` the rest) and
+  1.83 s in `adaptive` (the two `syncfs` take 30 ms); `nosync` is unchanged (1.3 s). Elsewhere it is every file of
+  the imported partitions, the table's root files and directories, before and after the attach (45-50 flushes for
+  three partitions of four columns). COPY into an existing WAL table in `adaptive` pays for one save point instead.
+  `nosync`, `async` and a non-WAL table in `adaptive`: no flush.
 - **Disk.** Because a start can fall back to the older of the two save points, the WAL, the superseded partition
   versions and the superseded column and index files wait one save point longer before they are removed: one minute
   at the defaults, but with a negative `cairo.adaptive.epoch.interval` that can be days. The WAL purge job reads the
@@ -358,32 +376,42 @@ More detail:
   pass), once. Both save points then stand on the same state, and the purges free what the older one kept: its WAL,
   superseded and dropped partition versions, superseded column and index files. A change made without a WAL
   transaction (on QuestDB Enterprise, a storage policy step) counts as a change. Live views take theirs from their
-  refresh worker. The cost is one save point per table each time it goes idle (two when its last write had no save
-  point of its own; the first is the one its writer's close would take anyway), none while it stays idle and none
-  extra on a busy table; the save point finds nothing of the table left to flush. The WAL purge job asks at most 16
-  tables per pass, so after a restart with many tables written shortly before it, the extra save points spread over
-  passes (about 30 minutes for 1,000 tables at the defaults); every idle table is asked within about two rounds of
-  tables / 16 passes, however many tables keep going idle. A table whose idle save point cannot be taken is asked
-  again one interval later. With a negative interval there is no idle save point.
+  refresh worker. The cost is one save point per table each time it goes idle, about 20 ms (two when its last write
+  had no save point of its own; the first is the one its writer's close would take anyway), none while it stays
+  idle and none extra on a busy table; the save point finds nothing of the table left to flush. The WAL purge job
+  asks at most 16 tables per pass, so after a restart with many tables written shortly before it, the extra save
+  points spread over passes: 1,000 tables are all done after about 31 minutes at the defaults, at about 0.3 s of
+  apply work per pass. Every idle table is asked within about two rounds of tables / 16 passes, however many tables
+  keep going idle. A table whose idle save point cannot be taken is asked again one interval later. With a negative
+  interval there is no idle save point.
 - **Space freed by DROP PARTITION and TTL** comes back once neither save point names the dropped partition: at the
   table's next save point after the drop's own one, which on a table that gets no further write is its idle save
   point. `VACUUM TABLE` alone does not free it earlier, because a start could still fall back to the save point
   that names it.
+- **Outside Linux** a save point, the start's header flush and the COPY flush call `fsync` per file instead of one
+  `syncfs`, which costs more with many files; only the figures marked "measured on Linux with that path forced"
+  show how much.
 - **Enterprise.** The uploader flushes every table's sequencer log once when it starts (boot and promotion, in
   `adaptive` and `sync`), before it listens for commits; a commit made meanwhile is uploaded once the flush is done.
-  On Linux that is one `syncfs`: 1,000 tables in 0.1-0.2 s, against 5-6 s with a flush per table. Elsewhere each table
+  On Linux that is one `syncfs` plus a read of each table's last transaction: for 1,000 tables 37-109 ms in
+  `adaptive` and 21-23 ms in `sync` when every table has one new commit, 2-8 ms when none has. Elsewhere each table
   flushes its log with every version 2 log part it still keeps: one more flush per kept closed part (5,000
-  transactions each by default), about +50% on the start flush in the typical case (1,000 busy tables: 10-12 s against
-  about 7 s, measured on Linux with that path forced). A table that kept a long backlog it could not upload pays one
-  flush per 5,000 kept transactions at that start. The role switch and the restore add flushes that are not measured
-  yet:
+  transactions each by default), about +50% on the start flush in the typical case (1,000 busy tables: 10.0 s
+  against 6.6 s, measured on Linux with that path forced). A table that kept a long backlog it could not upload pays
+  one flush per 5,000 kept transactions at that start. The role switch and the restore add flushes too:
   - a demotion opens the writer of each enrolled table (when none is pooled) and flushes the table before it removes
-    its save point: one `syncfs` per table on Linux;
+    its save point: one `syncfs` and two `fsync` per table on Linux, about 19 ms per table, so about 19 s for 1,000
+    enrolled tables before the instance starts replicating;
   - a promotion of an `adaptive` instance flushes once what the replica applied (one `syncfs` of the database root
-    and of each volume on Linux, a flush of every table file elsewhere); with access control enabled, the promotion
-    also opens every WAL table's writer, and each table takes its first save point there, one whole-table flush each;
+    and of each volume on Linux, 41 ms for 200 tables; a flush of every table file elsewhere); each table then takes
+    its first save point at its next write, about 34 ms once per table; with access control enabled, the promotion
+    opens every WAL table's writer, so each table takes that save point there;
   - a backup restore flushes each restored table before it marks it restored, in every mode: one `syncfs` per table
-    on Linux, every file and directory of the table elsewhere;
+    on Linux, every file and directory of the table elsewhere. 200 small tables restore in 5.3-5.6 s against
+    3.2-3.3 s with the flushes turned off, about 11 ms per table, the same in every mode; only on a start that
+    restores a backup;
+  - a table registered on a primary or at point-in-time recovery takes a save point in `adaptive`: about 18 ms more
+    per table (48 against 30 ms); the other modes skip it;
   - the check at the end of each apply batch that a role switch did not happen during it adds no system call while
     the role stays the same.
 
