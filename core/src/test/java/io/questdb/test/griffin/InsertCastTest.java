@@ -2043,4 +2043,59 @@ public class InsertCastTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(expected);
     }
+    @Test
+    public void testFloatJustAboveIntRangeIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f (v FLOAT)");
+            execute("CREATE TABLE i (v INT)");
+            // as a FLOAT, 2147483647.0 rounds up to 2^31, one above the largest INT
+            execute("INSERT INTO f VALUES (2147483647.0)");
+            assertException("INSERT INTO i SELECT v FROM f", 0, "inconvertible value");
+        });
+    }
+    @Test
+    public void testFloatJustAboveLongRangeIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f (v FLOAT)");
+            execute("CREATE TABLE l (v LONG)");
+            // as a FLOAT, 9223372036854775807.0 rounds up to 2^63, one above the largest LONG
+            execute("INSERT INTO f VALUES (9223372036854775807.0)");
+            assertException("INSERT INTO l SELECT v FROM f", 0, "inconvertible value");
+        });
+    }
+    @Test
+    public void testDoubleJustAboveLongRangeIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE d (v DOUBLE)");
+            execute("CREATE TABLE l (v LONG)");
+            // as a DOUBLE, 9223372036854775807.0 rounds up to 2^63, one above the largest LONG
+            execute("INSERT INTO d VALUES (9223372036854775807.0)");
+            assertException("INSERT INTO l SELECT v FROM d", 0, "inconvertible value");
+        });
+    }
+    @Test
+    public void testFloatAndDoubleWithinRangeAreAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f (v FLOAT)");
+            execute("CREATE TABLE d (v DOUBLE)");
+            execute("CREATE TABLE i (v INT)");
+            execute("CREATE TABLE l (v LONG)");
+            execute("INSERT INTO f VALUES (100.5), (-100.5)");
+            execute("INSERT INTO d VALUES (100.5), (-100.5)");
+            execute("INSERT INTO i SELECT v FROM f");
+            execute("INSERT INTO l SELECT v FROM d");
+            assertQuery("v\n100\n-100\n", "SELECT v FROM i", null, true);
+            assertQuery("v\n100\n-100\n", "SELECT v FROM l", null, true);
+        });
+    }
+    @Test
+    public void testFloatAndDoubleMinBoundaryRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f (v FLOAT)");
+            execute("CREATE TABLE i (v INT)");
+            // -2147483647.0 as FLOAT rounds to -2147483648.0 (Integer.MIN_VALUE, QuestDB INT_NULL), must be refused
+            execute("INSERT INTO f VALUES (-2147483647.0)");
+            assertException("INSERT INTO i SELECT v FROM f", 0, "inconvertible value");
+        });
+    }
 }
