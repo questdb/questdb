@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
@@ -74,6 +75,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -452,6 +454,241 @@ public class TableWriterTest extends AbstractCairoTest {
                 return (!Utf8s.containsAscii(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
                         && (!Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0)
                         && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK : Files.FILES_RENAME_ERR_OTHER;
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnFsyncsMetadataRenamesInSyncMode() throws Exception {
+        if (Os.isWindows()) {
+            return;
+        }
+
+        MetadataDirectorySyncFacade ff = new MetadataDirectorySyncFacade();
+        create(ff, PartitionBy.DAY, 10);
+
+        try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
+            @Override
+            public int getCommitMode() {
+                return CommitMode.SYNC;
+            }
+
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        }, PRODUCT)) {
+            ff.activate();
+            writer.addColumn("durable", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
+        }
+
+        Assert.assertTrue("the metadata swap must complete", ff.swapRenamed);
+        Assert.assertTrue(
+                "the table directory must be opened only after _meta.swp becomes _meta",
+                ff.directoryOpenedAfterSwap
+        );
+        Assert.assertTrue(
+                "the metadata rename directory entry must be durable before _txn publishes its version",
+                ff.directorySynced
+        );
+    }
+
+    @Test
+    public void testMetadataDirectoryFsyncFailureDurablyRollsBackBeforeTxnCommit() throws Exception {
+        if (Os.isWindows()) {
+            return;
+        }
+
+        MetadataDirectorySyncFailingFacade ff = new MetadataDirectorySyncFailingFacade();
+        create(ff, PartitionBy.DAY, 10);
+        DefaultTestCairoConfiguration syncConfiguration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public int getCommitMode() {
+                return CommitMode.SYNC;
+            }
+
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        try (TableWriter writer = newOffPoolWriter(syncConfiguration, PRODUCT)) {
+            ff.activate();
+            try {
+                writer.addColumn("not_committed", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
+                Assert.fail("metadata publication must fail when its directory fsync fails");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "test metadata directory fsync failure");
+            }
+            Assert.assertFalse(
+                    "a successful rollback should keep the writer usable",
+                    writer.isDistressed()
+            );
+        }
+
+        Assert.assertTrue("the pre-transaction directory fsync must be attempted", ff.failedPublishSync);
+        Assert.assertTrue(
+                "the rollback rename must be synced before _todo_ can be cleared",
+                ff.rollbackSynced
+        );
+        try (TableWriter writer = newOffPoolWriter(syncConfiguration, PRODUCT)) {
+            Assert.assertEquals(
+                    "the failed metadata change must not survive reopen",
+                    -1,
+                    writer.getMetadata().getColumnIndexQuiet("not_committed")
+            );
+        }
+    }
+
+    @Test
+    public void testRecoverCommittedMetadataFromSwapAfterLostRenames() throws Exception {
+        assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 10);
+            java.nio.file.Path tableDir = java.nio.file.Path.of(root, PRODUCT_FS);
+            java.nio.file.Path meta = tableDir.resolve(TableUtils.META_FILE_NAME);
+            java.nio.file.Path swap = tableDir.resolve(TableUtils.META_SWAP_FILE_NAME);
+            java.nio.file.Path previous = tableDir.resolve(TableUtils.META_PREV_FILE_NAME);
+            java.nio.file.Path oldMeta = tableDir.resolve("_meta.issue23.old");
+            java.nio.file.Files.copy(meta, oldMeta);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                writer.addColumn("durable", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
+            }
+
+            // Reconstruct the namespace observed after the power loss: _txn has
+            // committed metadata version 1, while the directory entries recovered
+            // to old _meta version 0 and new _meta.swp version 1, with no prev.
+            java.nio.file.Files.copy(
+                    meta,
+                    swap,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            );
+            java.nio.file.Files.copy(
+                    oldMeta,
+                    meta,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            );
+            java.nio.file.Files.deleteIfExists(previous);
+            java.nio.file.Files.deleteIfExists(oldMeta);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertTrue(
+                        "writer recovery must promote the metadata matching committed _txn",
+                        writer.getMetadata().getColumnIndexQuiet("durable") > -1
+                );
+            }
+            Assert.assertFalse(
+                    "the matching swap must have been consumed",
+                    java.nio.file.Files.exists(swap)
+            );
+
+            try (TableReader reader = newOffPoolReader(configuration, PRODUCT)) {
+                Assert.assertTrue(
+                        "readers must open after recovery instead of timing out on a frozen version mismatch",
+                        reader.getMetadata().getColumnIndexQuiet("durable") > -1
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testCommittedMetadataMismatchRejectsInvalidSwap() throws Exception {
+        assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 10);
+            java.nio.file.Path tableDir = java.nio.file.Path.of(root, PRODUCT_FS);
+            java.nio.file.Path meta = tableDir.resolve(TableUtils.META_FILE_NAME);
+            java.nio.file.Path swap = tableDir.resolve(TableUtils.META_SWAP_FILE_NAME);
+            java.nio.file.Path previous = tableDir.resolve(TableUtils.META_PREV_FILE_NAME);
+            java.nio.file.Path oldMeta = tableDir.resolve("_meta.issue23.old");
+            java.nio.file.Files.copy(meta, oldMeta);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                writer.addColumn("durable", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
+            }
+            java.nio.file.Files.copy(
+                    oldMeta,
+                    meta,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            );
+            java.nio.file.Files.write(swap, new byte[]{1, 2, 3, 4});
+            java.nio.file.Files.deleteIfExists(previous);
+            java.nio.file.Files.deleteIfExists(oldMeta);
+
+            try (TableWriter ignored = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.fail("an invalid swap must not be promoted over mismatched metadata");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "unrecoverable metadata version mismatch");
+            }
+            Assert.assertTrue(
+                    "a rejected recovery candidate must remain available for diagnosis",
+                    java.nio.file.Files.exists(swap)
+            );
+        });
+    }
+
+    @Test
+    public void testRecoverCommittedMetadataFromSwapWhenMetaIsMissing() throws Exception {
+        assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 10);
+            java.nio.file.Path tableDir = java.nio.file.Path.of(root, PRODUCT_FS);
+            java.nio.file.Path meta = tableDir.resolve(TableUtils.META_FILE_NAME);
+            java.nio.file.Path swap = tableDir.resolve(TableUtils.META_SWAP_FILE_NAME);
+            java.nio.file.Path previous = tableDir.resolve(TableUtils.META_PREV_FILE_NAME);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                writer.addColumn("durable", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
+            }
+            java.nio.file.Files.copy(
+                    meta,
+                    swap,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            );
+            java.nio.file.Files.delete(meta);
+            java.nio.file.Files.deleteIfExists(previous);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertTrue(
+                        "a missing _meta must recover from the swap matching committed _txn",
+                        writer.getMetadata().getColumnIndexQuiet("durable") > -1
+                );
+            }
+            Assert.assertFalse(java.nio.file.Files.exists(swap));
+
+            try (TableReader reader = newOffPoolReader(configuration, PRODUCT)) {
+                Assert.assertTrue(reader.getMetadata().getColumnIndexQuiet("durable") > -1);
+            }
+        });
+    }
+
+    @Test
+    public void testRecoverCommittedMetadataFromSwapWhenMetaIsCorrupt() throws Exception {
+        assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 10);
+            java.nio.file.Path tableDir = java.nio.file.Path.of(root, PRODUCT_FS);
+            java.nio.file.Path meta = tableDir.resolve(TableUtils.META_FILE_NAME);
+            java.nio.file.Path swap = tableDir.resolve(TableUtils.META_SWAP_FILE_NAME);
+            java.nio.file.Path previous = tableDir.resolve(TableUtils.META_PREV_FILE_NAME);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                writer.addColumn("durable", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
+            }
+            java.nio.file.Files.copy(
+                    meta,
+                    swap,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            );
+            java.nio.file.Files.write(meta, new byte[]{1, 2, 3, 4});
+            java.nio.file.Files.deleteIfExists(previous);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertTrue(
+                        "a corrupt _meta must recover from the validated matching swap",
+                        writer.getMetadata().getColumnIndexQuiet("durable") > -1
+                );
+            }
+            try (TableReader reader = newOffPoolReader(configuration, PRODUCT)) {
+                Assert.assertTrue(reader.getMetadata().getColumnIndexQuiet("durable") > -1);
             }
         });
     }
@@ -5032,6 +5269,76 @@ public class TableWriterTest extends AbstractCairoTest {
         @Override
         public boolean wasCalled() {
             return active;
+        }
+    }
+
+    private static class MetadataDirectorySyncFacade extends LazyTestFilesFacade {
+        private boolean directoryOpenedAfterSwap;
+        private boolean directorySynced;
+        private long tableDirectoryFd = -1;
+        private boolean swapRenamed;
+
+        @Override
+        public void fsyncAndClose(long fd) {
+            if (active && fd == tableDirectoryFd) {
+                directorySynced = true;
+            }
+            super.fsyncAndClose(fd);
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            long fd = super.openRONoCache(name);
+            if (active && Utf8s.endsWithAscii(name, PRODUCT_FS)) {
+                Assert.assertTrue(
+                        "the table directory cannot be synced before the metadata swap rename",
+                        swapRenamed
+                );
+                directoryOpenedAfterSwap = true;
+                tableDirectoryFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            int result = super.rename(from, to);
+            if (active
+                    && result == Files.FILES_RENAME_OK
+                    && Utf8s.endsWithAscii(from, TableUtils.META_SWAP_FILE_NAME)
+                    && Utf8s.endsWithAscii(to, TableUtils.META_FILE_NAME)) {
+                swapRenamed = true;
+            }
+            return result;
+        }
+    }
+
+    private static class MetadataDirectorySyncFailingFacade extends LazyTestFilesFacade {
+        private boolean failedPublishSync;
+        private boolean rollbackSynced;
+        private long tableDirectoryFd = -1;
+
+        @Override
+        public void fsyncAndClose(long fd) {
+            if (active && fd == tableDirectoryFd) {
+                tableDirectoryFd = -1;
+                if (!failedPublishSync) {
+                    failedPublishSync = true;
+                    super.close(fd);
+                    throw CairoException.critical(0).put("test metadata directory fsync failure");
+                }
+                rollbackSynced = true;
+            }
+            super.fsyncAndClose(fd);
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            long fd = super.openRONoCache(name);
+            if (active && Utf8s.endsWithAscii(name, PRODUCT_FS)) {
+                tableDirectoryFd = fd;
+            }
+            return fd;
         }
     }
 
