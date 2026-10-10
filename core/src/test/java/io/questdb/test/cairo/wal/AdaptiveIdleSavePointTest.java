@@ -26,8 +26,10 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.ObjList;
@@ -227,6 +229,58 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
                     checkOnDisk(failures, change + ", idle for half an interval", tt, left, true);
                     idlePass(INTERVAL_MS / 2, purgeJob);
                     checkOnDisk(failures, change + ", idle for one interval", tt, left, false);
+                }
+                Assert.assertEquals("", failures.toString());
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testIdleTableRemovesVersionLeftByCommitWithoutWalTransaction() throws Exception {
+        // A writer change that moves the table's txn but not its seqTxn (a partition removed, a partition converted
+        // to Parquet, a row committed through the writer itself), made after the idle spell left both save points
+        // on the same state, leaves a 2024-01-01 version that a save point names. It goes at the next idle save
+        // point.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            startClock();
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+                final String[] changes = {"remove partition", "convert partition to parquet", "writer commit"};
+                final StringSink failures = new StringSink();
+                for (int i = 0; i < changes.length; i++) {
+                    final TableToken tt = createDays("t" + i, false);
+                    for (int j = 0; j < 4; j++) {
+                        idlePass(INTERVAL_MS, purgeJob);
+                    }
+                    final SeqTxnTracker tracker = tracker(tt);
+                    Assert.assertEquals(changes[i] + ", idle spell over", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                    final ObjList<String> left = versionDirs(tt);
+                    try (TableWriter writer = getWriter(tt)) {
+                        final long day = MicrosTimestampDriver.floor("2024-01-01");
+                        switch (i) {
+                            case 0 -> Assert.assertTrue(writer.removePartition(day));
+                            case 1 -> {
+                                // As ALTER TABLE CONVERT PARTITION and the cold storage switch do.
+                                Assert.assertTrue(writer.convertPartitionNativeToParquet(day, null, 0.01));
+                                writer.advanceDurableEpochAfter("convert partition");
+                            }
+                            default -> {
+                                final TableWriter.Row row = writer.newRow(day + 3_600_000_000L);
+                                row.putLong(1, 5);
+                                row.append();
+                                writer.commit();
+                            }
+                        }
+                    }
+                    purgeJob.drain(0);
+                    checkOnDisk(failures, changes[i] + ", both save points name it", tt, left, true);
+                    for (int j = 0; j < 2; j++) {
+                        idlePass(INTERVAL_MS, purgeJob);
+                    }
+                    checkOnDisk(failures, changes[i] + ", idle for two intervals", tt, left, false);
                 }
                 Assert.assertEquals("", failures.toString());
             } finally {

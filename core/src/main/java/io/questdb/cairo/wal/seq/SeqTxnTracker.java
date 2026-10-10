@@ -48,6 +48,10 @@ public class SeqTxnTracker {
     private final FiberWalWaitQueue fiberWaiters = new FiberWalWaitQueue();
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
+    // The table's committed _txn txn, published by the table writer each time it is released; -1 until then.
+    // A commit that moves the txn without a WAL transaction (a partition removed or converted by the writer
+    // itself) leaves it above the newest save point's pin, which WalPurgeJob reads for the idle save point.
+    private volatile long committedTxn = -1;
     // The seqTxn of the table's newest durable save point. 0 means none yet, which keeps all WAL of a fresh
     // adaptive table; it advances as save points publish. WalPurgeJob reads it as the purge floor under
     // adaptive, and in any mode while the table holds a save point pin.
@@ -176,6 +180,10 @@ public class SeqTxnTracker {
             return true;
         }
         return false;
+    }
+
+    public long getCommittedTxn() {
+        return committedTxn;
     }
 
     public long getDedupSignalCoveredSeqTxn() {
@@ -414,6 +422,13 @@ public class SeqTxnTracker {
             }
         }
         return result;
+    }
+
+    /**
+     * Records the table's committed _txn txn. Table writer only, when it is released.
+     */
+    public void setCommittedTxn(long committedTxn) {
+        this.committedTxn = committedTxn;
     }
 
     public void setHardSuspended(boolean hardSuspended) {

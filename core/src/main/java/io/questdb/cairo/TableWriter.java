@@ -437,6 +437,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
+    // A writer of a WAL table at the database root publishes its committed txn to the table's tracker when it is
+    // released; a staging writer under the COPY work directory has a _txn of its own and does not.
+    private boolean publishesCommittedTxn;
     private PurgingOperator purgingOperator;
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -566,6 +569,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // holds one until the next restart, and every write through it bypasses the WAL, so a rewind to an
             // anchor would lose those writes. The table enrols at the first open with its WAL token.
             final boolean privateRootWriter = !Chars.equals(root, configuration.getDbRoot());
+            this.publishesCommittedTxn = !privateRootWriter && tableToken.isWal();
             this.adaptiveEnrollmentPending = !privateRootWriter
                     && tableToken.isWal()
                     && metadata.isWalEnabled()
@@ -1695,6 +1699,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void close() {
+        if (publishesCommittedTxn) {
+            // Publish the committed txn for the idle save point request (WalPurgeJob): a commit that moved it
+            // without a WAL transaction is then seen there as well.
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+            if (tracker != null) {
+                tracker.setCommittedTxn(txWriter.getTxn());
+            }
+        }
         if (lifecycleManager.close() && isOpen()) {
             doClose(true);
         }

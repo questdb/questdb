@@ -726,8 +726,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     // that gets no further write, nothing else replaces that save point, so once the table has taken no save point
     // for one interval, ask the apply job for one more at the current state: both generations then stand on it and
     // the queued purges free the rest. Equal pins mean equal save points, since every _txn write moves the txn. A
-    // table whose save points both name its applied state asks nothing, so an idle table asks once per idle spell
-    // (twice when its last write left a tail with no save point). The time gate repeats in the apply job.
+    // table whose save points both name its current state (its applied seqTxn and the txn its writer last
+    // committed, WAL transaction or not) asks nothing, so an idle table asks once per idle spell (twice when its
+    // last write left a tail with no save point). The time gate repeats in the apply job.
     private void requestIdleSavePoint() {
         final long intervalMs = configuration.getAdaptiveEpochIntervalMs();
         if (intervalMs < 0
@@ -745,7 +746,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         final long otherPinnedEpochTxn = tracker.getOtherPinnedEpochTxn();
         if (pinnedEpochTxn < 0
                 || ((otherPinnedEpochTxn < 0 || otherPinnedEpochTxn == pinnedEpochTxn)
-                && tracker.getDurableEpochSeqTxn() >= tracker.getWriterTxn())) {
+                && tracker.getDurableEpochSeqTxn() >= tracker.getWriterTxn()
+                && tracker.getCommittedTxn() <= pinnedEpochTxn)) {
             return;
         }
         final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000L;
