@@ -5055,6 +5055,58 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByTimestampExpressionWithLimit() throws Exception {
+        assertQuery("SELECT dateadd('h', 1, ts) x, count() FROM t SAMPLE BY 1d LIMIT 2")
+                .ddl("""
+                        CREATE TABLE t AS (
+                            SELECT x::INT i, ('k' || (x % 2))::SYMBOL sym,
+                                   timestamp_sequence('2024-01-28', 3_600_000_000) ts
+                            FROM long_sequence(96)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """)
+                .expectSize()
+                .returns("""
+                        x\tcount
+                        2024-01-28T01:00:00.000000Z\t24
+                        2024-01-29T01:00:00.000000Z\t24
+                        """);
+
+        assertQuery("SELECT dateadd('h', 1, ts) x, count() FROM t SAMPLE BY 1d LIMIT -2")
+                .expectSize()
+                .returns("""
+                        x\tcount
+                        2024-01-30T01:00:00.000000Z\t24
+                        2024-01-31T01:00:00.000000Z\t24
+                        """);
+
+        assertQuery("SELECT dateadd('h', 1, ts) x, count() FROM t SAMPLE BY 1d ORDER BY x DESC LIMIT 2")
+                .expectSize()
+                .timestampDesc("x")
+                .returns("""
+                        x\tcount
+                        2024-01-31T01:00:00.000000Z\t24
+                        2024-01-30T01:00:00.000000Z\t24
+                        """);
+
+        assertQuery("SELECT dateadd('h', 1, ts) x, count() FROM t SAMPLE BY 1d LIMIT 1, 3")
+                .expectSize()
+                .returns("""
+                        x\tcount
+                        2024-01-29T01:00:00.000000Z\t24
+                        2024-01-30T01:00:00.000000Z\t24
+                        """);
+
+        assertQuery("SELECT ts, ts AS ts2, count() FROM t SAMPLE BY 1d LIMIT 2")
+                .expectSize()
+                .timestamp("ts2")
+                .returns("""
+                        ts\tts2\tcount
+                        2024-01-28T00:00:00.000000Z\t2024-01-28T00:00:00.000000Z\t24
+                        2024-01-29T00:00:00.000000Z\t2024-01-29T00:00:00.000000Z\t24
+                        """);
+    }
+
+    @Test
     public void testSampleByAlignToFirstObservationFillNoneWithKey() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
