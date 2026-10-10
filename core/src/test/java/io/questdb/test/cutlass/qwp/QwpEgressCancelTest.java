@@ -69,6 +69,7 @@ public class QwpEgressCancelTest extends AbstractQwpBootstrapTest {
     private static final byte STATUS_INTERNAL_ERROR = 0x06;
     private static final byte STATUS_LIMIT_EXCEEDED = 0x0B;
     private static final byte STATUS_PARSE_ERROR = 0x05;
+    private static final byte STATUS_QUERY_TIMEOUT = 0x0E;
     private static final byte STATUS_SECURITY_ERROR = 0x08;
 
     @Before
@@ -303,6 +304,37 @@ public class QwpEgressCancelTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testMapErrorStatusQueryTimeoutLeavesOtherFailuresAlone() {
+        // The opt-in changes how a timeout maps, nothing else: every other failure
+        // of a query that carried a timeout maps exactly as for any other query.
+        Assert.assertEquals(STATUS_CANCELLED,
+                QwpEgressUpgradeProcessor.mapErrorStatus(CairoException.queryCancelled(), true));
+        Assert.assertEquals(STATUS_LIMIT_EXCEEDED,
+                QwpEgressUpgradeProcessor.mapErrorStatus(CairoException.queryDisconnected(-1), true));
+        Assert.assertEquals(STATUS_LIMIT_EXCEEDED, QwpEgressUpgradeProcessor.mapErrorStatus(
+                CairoException.nonCritical().put("oom").setOutOfMemory(true), true));
+        Assert.assertEquals(STATUS_SECURITY_ERROR, QwpEgressUpgradeProcessor.mapErrorStatus(
+                CairoException.authorization().put("denied"), true));
+        Assert.assertEquals(STATUS_INTERNAL_ERROR, QwpEgressUpgradeProcessor.mapErrorStatus(
+                CairoException.nonCritical().put("something broke"), true));
+        Assert.assertEquals(STATUS_PARSE_ERROR, QwpEgressUpgradeProcessor.mapErrorStatus(
+                io.questdb.griffin.SqlException.$(0, "bad sql"), true));
+        Assert.assertEquals(STATUS_INTERNAL_ERROR,
+                QwpEgressUpgradeProcessor.mapErrorStatus(new RuntimeException("boom"), true));
+    }
+
+    @Test
+    public void testMapErrorStatusQueryTimeoutWhenRequested() {
+        // A query that carried its own timeout learns that it ran out of time with
+        // STATUS_QUERY_TIMEOUT; without the opt-in the same failure stays
+        // STATUS_LIMIT_EXCEEDED, the status older clients know.
+        CairoException ce = CairoException.queryTimedOut(-1, 1_500, 1_000);
+        Assert.assertEquals(STATUS_QUERY_TIMEOUT, QwpEgressUpgradeProcessor.mapErrorStatus(ce, true));
+        Assert.assertEquals(STATUS_LIMIT_EXCEEDED, QwpEgressUpgradeProcessor.mapErrorStatus(ce, false));
+        Assert.assertEquals(STATUS_LIMIT_EXCEEDED, QwpEgressUpgradeProcessor.mapErrorStatus(ce));
+    }
+
+    @Test
     public void testMapErrorStatusQwpParseException() {
         // Client-initiated protocol parse errors (bad bind type, truncated frame)
         // must surface as STATUS_PARSE_ERROR, not STATUS_INTERNAL_ERROR.
@@ -315,6 +347,16 @@ public class QwpEgressCancelTest extends AbstractQwpBootstrapTest {
     public void testMapErrorStatusSqlException() {
         io.questdb.griffin.SqlException sx = io.questdb.griffin.SqlException.$(0, "bad sql");
         Assert.assertEquals(STATUS_PARSE_ERROR, QwpEgressUpgradeProcessor.mapErrorStatus(sx));
+    }
+
+    @Test
+    public void testMapErrorStatusSqlTimeoutException() {
+        // A statement that timed out waiting for the table writer. SqlTimeoutException
+        // extends SqlException, but a time limit is not a parse error.
+        io.questdb.griffin.SqlTimeoutException e = io.questdb.griffin.SqlTimeoutException.timeout(
+                "Timeout expired on waiting for the async command execution result");
+        Assert.assertEquals(STATUS_LIMIT_EXCEEDED, QwpEgressUpgradeProcessor.mapErrorStatus(e));
+        Assert.assertEquals(STATUS_QUERY_TIMEOUT, QwpEgressUpgradeProcessor.mapErrorStatus(e, true));
     }
 
     @Test

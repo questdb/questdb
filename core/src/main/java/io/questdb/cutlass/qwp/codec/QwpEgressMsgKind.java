@@ -56,6 +56,18 @@ public final class QwpEgressMsgKind {
      */
     public static final int CAP_QUERY_FLAGS = 0x00000002;
     /**
+     * {@code SERVER_INFO.capabilities} bit: the server honours a per-query
+     * timeout. A client sets {@link #QUERY_FLAG_TIMEOUT} and appends
+     * {@code timeout_ms:varint} after the {@code query_flags} varint; the server
+     * runs the query under that timeout instead of {@code query.timeout} and ends
+     * an over-budget query with a {@code QUERY_ERROR} carrying
+     * {@link io.questdb.cutlass.qwp.protocol.QwpConstants#STATUS_QUERY_TIMEOUT},
+     * leaving the connection open. {@code QwpEgressUpgradeProcessor} implements
+     * the field, so it advertises this bit itself, whatever the
+     * {@link QwpServerInfoProvider} reports.
+     */
+    public static final int CAP_QUERY_TIMEOUT = 0x00000008;
+    /**
      * {@code SERVER_INFO.capabilities} bit advertising that the frame ends with
      * an additional {@code zone_id:u16_len+utf8} field after {@code node_id}.
      * Servers set the bit when the operator has configured a zone; clients use
@@ -88,6 +100,15 @@ public final class QwpEgressMsgKind {
      * sign-extends a flag constant.
      */
     public static final int QUERY_FLAG_RESET_DICT = 0x01;
+    /**
+     * {@code QUERY_REQUEST.query_flags} bit: a {@code timeout_ms:varint} field
+     * follows the {@code query_flags} varint. Flag-gated fields follow the flags
+     * in flag-bit order. The timeout must be positive; it replaces
+     * {@code query.timeout} for this query, and may exceed it, like the
+     * {@code Statement-Timeout} header of {@code /exec}. Clients send it only when
+     * the server advertised {@link #CAP_QUERY_TIMEOUT}.
+     */
+    public static final int QUERY_FLAG_TIMEOUT = 0x02;
     public static final byte QUERY_REQUEST = 0x10;
     /**
      * Reset mask bit: clear the connection-scoped SYMBOL dict.

@@ -213,6 +213,24 @@ public class QwpServerInfoFrameTest {
     }
 
     @Test
+    public void testUpgradeFrameAlwaysAdvertisesQueryTimeout() throws Exception {
+        // The egress processor implements the per-query timeout itself, so the
+        // upgrade frame carries CAP_QUERY_TIMEOUT even when the provider -- the
+        // Enterprise one, say -- reports no capability at all. The client tests the
+        // bit with its own constant, so this also pins the two constants together.
+        QwpServerInfo info = decodeUpgradeFrame(new FixedServerInfoProvider(0), false, (byte) 0, (byte) 0);
+        Assert.assertEquals(
+                QwpEgressMsgKind.CAP_QUERY_TIMEOUT,
+                info.getCapabilities() & QwpEgressMsgKind.CAP_QUERY_TIMEOUT
+        );
+        Assert.assertEquals(
+                "the provider reported nothing else, so nothing else may be set",
+                QwpEgressMsgKind.CAP_QUERY_TIMEOUT,
+                info.getCapabilities()
+        );
+    }
+
+    @Test
     public void testUpgradeFrameClearsCompressionBitWhenNotAdvertised() throws Exception {
         // writeServerInfoFrame rewrites the provider's capability mask. A
         // provider that already reports bit 0x04 must not leave CAP_COMPRESSION
