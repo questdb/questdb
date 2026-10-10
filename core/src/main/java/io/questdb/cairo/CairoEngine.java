@@ -4339,6 +4339,30 @@ public class CairoEngine implements Closeable, WriterSource {
             int tableKind,
             boolean deferRegisterName
     ) {
+        try {
+            return createTableOrViewOrMatViewUnsecure0(securityContext, mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume, tableKind, deferRegisterName);
+        } catch (Throwable th) {
+            // The statement wraps the error without its cause: a failed data sync stops the engine here
+            if (CommitMode.isPowerLossDurable(LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), localDurabilityPolicy))
+                    && CairoException.isDataSyncFailure(th)) {
+                handleDataSyncFailure(th);
+            }
+            throw th;
+        }
+    }
+
+    private TableToken createTableOrViewOrMatViewUnsecure0(
+            SecurityContext securityContext,
+            MemoryMARW mem,
+            @Nullable BlockFileWriter blockFileWriter,
+            Path path,
+            boolean ifNotExists,
+            TableStructure struct,
+            boolean keepLock,
+            boolean inVolume,
+            int tableKind,
+            boolean deferRegisterName
+    ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
         final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);

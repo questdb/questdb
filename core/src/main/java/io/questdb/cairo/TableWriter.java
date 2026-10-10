@@ -411,6 +411,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long noOpRowCount;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private long o3CommitBatchTimestampMin = Long.MAX_VALUE;
+    // The first failed data sync among the current round's O3 and column tasks. A task can run on another thread
+    // and reports through the error counter, so the writer keeps what the engine's fail-stop needs and rethrows it.
+    private volatile int o3DataSyncFailureErrno;
+    private volatile String o3DataSyncFailureOperation;
     private long o3EffectiveLag = 0L;
     private boolean o3FinishInFlight = false;
     private boolean o3InError = false;
@@ -1105,6 +1109,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         try {
             return command.apply(this, contextAllowsAnyStructureChanges);
+        } catch (Throwable th) {
+            // A command run outside the WAL reports to a statement or, from the command queue, only a message to
+            // the thread that sent it: a failed data sync stops the engine here
+            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
+            throw th;
         } finally {
             // Also after a failure: a list command may have changed some partitions before it failed.
             if (enrolledAdaptive
@@ -3256,7 +3268,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public void o3BumpErrorCount(boolean oom) {
+    public void o3BumpErrorCount(Throwable failure) {
+        o3BumpErrorCount(failure, CairoException.isCairoOomError(failure));
+    }
+
+    public void o3BumpErrorCount(Throwable failure, boolean oom) {
+        recordO3DataSyncFailure(failure);
         o3ErrorCount.incrementAndGet();
         if (oom) {
             o3oomObserved = true;
@@ -5891,16 +5908,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (o3ErrorCount.get() > 0) {
             if (lastErrno == O3_ERRNO_FATAL) {
                 distressed = true;
-                throw new CairoError("commit failed with fatal error, see logs for details [table=" +
-                        tableToken.getTableName() + ", tableDir=" + tableToken.getDirName() + "]");
-            } else {
-                throw CairoException.critical(lastErrno)
-                        .setOutOfMemory(o3oomObserved)
-                        .put("commit failed, see logs for details [table=")
-                        .put(tableToken.getTableName())
-                        .put(", tableDir=").put(tableToken.getDirName())
-                        .put(']');
+                // A failed data sync among the tasks is rethrown as one, so the caller stops the engine
+                if (o3DataSyncFailureOperation == null) {
+                    throw new CairoError("commit failed with fatal error, see logs for details [table=" +
+                            tableToken.getTableName() + ", tableDir=" + tableToken.getDirName() + "]");
+                }
             }
+            throw o3TaskFailure(lastErrno)
+                    .setOutOfMemory(o3oomObserved)
+                    .put("commit failed, see logs for details [table=")
+                    .put(tableToken.getTableName())
+                    .put(", tableDir=").put(tableToken.getDirName())
+                    .put(']');
         }
     }
 
@@ -7587,6 +7606,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final RingQueue<ColumnTask> queue = this.messageBus.getColumnTaskQueue();
         o3DoneLatch.reset();
         o3ErrorCount.set(0);
+        o3DataSyncFailureOperation = null;
         lastErrno = 0;
         int queuedCount = 0;
 
@@ -8428,6 +8448,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long long3,
             Throwable e
     ) {
+        recordO3DataSyncFailure(e);
         o3ErrorCount.incrementAndGet();
         LogRecord logRecord = LOG.critical().$(message + " [table=").$(tableToken)
                 .$(", column=").$safe(getColumnNameSafe(columnIndex))
@@ -8459,6 +8480,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
                 .$(", error=").$(e)
                 .I$();
+        // The exception below does not keep the cause, so a failed data sync stops the engine here
+        if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(e)) {
+            engine.handleDataSyncFailure(e);
+        }
         CairoException ex;
         if (e instanceof Sinkable) {
             ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
@@ -10402,6 +10427,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private CairoException o3TaskFailure(int errno) {
+        final String operation = o3DataSyncFailureOperation;
+        return operation != null
+                ? CairoException.dataSyncFailure(o3DataSyncFailureErrno, operation)
+                : CairoException.critical(errno);
+    }
+
     private void o3TimestampSetter(long timestamp) {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
@@ -10984,6 +11016,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long committedDataMaxTimestamp
     ) {
         o3ErrorCount.set(0);
+        o3DataSyncFailureOperation = null;
         o3oomObserved = false;
         lastErrno = 0;
         partitionRemoveCandidates.clear();
@@ -11202,7 +11235,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         try {
                             setAppendPosition(srcDataMax, false);
                         } catch (Throwable e) {
-                            o3BumpErrorCount(CairoException.isCairoOomError(e));
+                            o3BumpErrorCount(e);
                             o3ClockDownPartitionUpdateCount();
                             o3CountDownDoneLatch();
                             throw e;
@@ -11385,9 +11418,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3DoneLatch.await(latchCount);
 
             o3InError = !success || o3ErrorCount.get() > 0;
-            if (success && o3ErrorCount.get() > 0) {
+            // A task's failed data sync is rethrown even when this thread has its own error, so the caller stops
+            // the engine
+            if ((success || o3DataSyncFailureOperation != null) && o3ErrorCount.get() > 0) {
                 //noinspection ThrowFromFinallyBlock
-                throw CairoException.critical(0).put("bulk update failed and will be rolled back").setOutOfMemory(o3oomObserved);
+                throw o3TaskFailure(0).put("bulk update failed and will be rolled back").setOutOfMemory(o3oomObserved);
             }
         }
 
@@ -12225,6 +12260,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final RingQueue<ColumnTask> queue = this.messageBus.getColumnTaskQueue();
         o3DoneLatch.reset();
         o3ErrorCount.set(0);
+        o3DataSyncFailureOperation = null;
         lastErrno = 0;
         int queuedCount = 0;
 
@@ -13867,6 +13903,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return false;
+    }
+
+    private void recordO3DataSyncFailure(Throwable failure) {
+        for (Throwable cursor = failure; cursor != null; cursor = cursor.getCause()) {
+            if (cursor instanceof CairoException e && e.isDataSyncFailure()) {
+                if (o3DataSyncFailureOperation == null) {
+                    o3DataSyncFailureErrno = e.getErrno();
+                    o3DataSyncFailureOperation = e.getDataSyncOperation();
+                }
+                return;
+            }
+        }
     }
 
     private void recoverFromMetaRenameFailure() {
@@ -16783,6 +16831,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void truncate(boolean keepSymbolTables) {
+        try {
+            truncate0(keepSymbolTables);
+        } catch (Throwable th) {
+            // A non-WAL TRUNCATE reports to the statement: a failed data sync stops the engine here
+            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
+            throw th;
+        }
+    }
+
+    private void truncate0(boolean keepSymbolTables) {
         rollback();
 
         boolean hasNonEmptySymbolTables = false;
