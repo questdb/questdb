@@ -2089,8 +2089,36 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnCrossSlavePredicateNotAllowed() throws Exception {
+        // the conjunct compares the right rows of two HORIZON JOINs
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "HORIZON JOIN prices AS p2 ON (t.k = p2.k AND p2.price > p.price) " +
+                    "LIST (0) AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(152, "unsupported HORIZON join expression [expr='p2.price > p.price']");
+        });
+    }
+
+    @Test
     public void testHorizonJoinOnExpressionKeyNotAllowed() throws Exception {
         assertHorizonJoinOnPredicateRejected("t.k = p.k + 0", 76, "t.k = p.k + 0");
+    }
+
+    @Test
+    public void testHorizonJoinOnImpliedPredicateNotAllowed() throws Exception {
+        // the key implies the first conjunct and the ASOF lookup the other two, p.ts <= t.ts because
+        // the only offset is 0, but the check accepts only a conjunct that folds to TRUE at compile time
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND t.k::long = p.k::long", 96, "t.k::long = p.k::long");
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND p.ts <= h.timestamp", 91, "p.ts <= h.timestamp");
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND p.ts <= t.ts", 91, "p.ts <= t.ts");
+        });
     }
 
     @Test
@@ -2131,6 +2159,11 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             2\tnull
                             """);
         });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSlaveComparisonNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND p.price > t.id", 94, "p.price > t.id");
     }
 
     @Test
@@ -2324,6 +2357,88 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnOrOfKeysNotAllowed() throws Exception {
+        // a disjunction is not a key equality, so the whole ON clause is left over
+        assertHorizonJoinOnPredicateRejected("t.k = p.k OR t.id = p.k", 82, "t.k = p.k or t.id = p.k");
+    }
+
+    @Test
+    public void testHorizonJoinOnPredicateNotAllowedWithoutSlaveColumns() throws Exception {
+        // the query reads no right-hand column, so no ON conjunct can change its rows: HORIZON JOIN
+        // keeps every left row. The check still rejects the conjunct.
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, count(*) FROM trades AS t HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tcount
+                            1\t1
+                            2\t1
+                            """);
+            assertQuery("SELECT t.id, count(*) FROM trades AS t HORIZON JOIN prices AS p ON (t.k = p.k AND p.price > 1.5) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(90, "unsupported HORIZON join expression [expr='p.price > 1.5']");
+            assertQuery("SELECT t.id, count(*) FROM trades AS t HORIZON JOIN prices AS p ON (t.k = p.k AND t.id > 1) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(87, "unsupported HORIZON join expression [expr='t.id > 1']");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnPredicateTrueForAllRowsNotAllowed() throws Exception {
+        // every price is positive and the only offset is 0, so each conjunct holds for every row
+        // here, but the check can't rely on the data
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND p.price > 0", 94, "p.price > 0");
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND h.offset = 0", 95, "h.offset = 0");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnRedundantKeyAllowed() throws Exception {
+        // a reversed or repeated key equality is a key, not a leftover conjunct, so the join returns
+        // the rows of ON (t.k = p.k); the NULL key of trade 3 matches the price with a NULL key
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            execute("INSERT INTO prices VALUES (null, 9, 9.0, '1970-01-01T00:00:00.000003Z')");
+            execute("INSERT INTO trades VALUES (3, null, '1970-01-01T00:00:00.000030Z')");
+            for (String onClause : new String[]{
+                    "t.k = p.k",
+                    "p.k = t.k",
+                    "t.k = p.k AND p.k = t.k",
+                    "t.k = p.k AND t.k = p.k"
+            }) {
+                assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tavg
+                                1\t1.0
+                                2\t2.0
+                                3\t9.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnRuntimeConstantNotAllowed() throws Exception {
+        // now() changes when a cached factory runs again, so, like a bind variable, it is not a
+        // compile-time constant
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND now() > '2000-01-01'", 92, "now() > '2000-01-01'");
+    }
+
+    @Test
     public void testHorizonJoinOnSelfJoinMasterSymbolSharedByTwoKeys() throws Exception {
         // In a self-join t.s = p.s and t.s = p.a pair t.s with two slave SYMBOL columns;
         // HORIZON compares both pairs as strings.
@@ -2431,6 +2546,27 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnSlaveFilterNotAllowedMultiSlave() throws Exception {
+        // the filter sits on the last HORIZON JOIN, which builds the multi-slave factory
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "HORIZON JOIN prices AS p2 ON (t.k = p2.k AND p2.price > 1.5) " +
+                    "LIST (0) AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(152, "unsupported HORIZON join expression [expr='p2.price > 1.5']");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveInListNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND p.m IN (1, 2)", 90, "p.m in (1, 2)");
+    }
+
+    @Test
     public void testHorizonJoinOnSlaveSymbolSharedBySymbolAndStringColumns() throws Exception {
         // The slave key copier writes p.s once, so the SYMBOL pair and the STRING pair must
         // both compare strings.
@@ -2497,6 +2633,57 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             1\t1.0
                             2\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSubQueryNotAllowed() throws Exception {
+        // the parser rejects the sub-query before the code generator sees the conjunct
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price) FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k AND p.price > (SELECT min(price) FROM prices)) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(97, "query is not allowed here");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnTautologyNotAllowed() throws Exception {
+        // each conjunct holds for every row, but the check folds only conjuncts that read no column,
+        // so it rejects them; p.price = p.price holds for a NULL price too, because NULL = NULL is TRUE
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND p.k = p.k", 90, "p.k = p.k");
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND t.id = t.id", 91, "t.id = t.id");
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND p.price = p.price", 94, "p.price = p.price");
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND (p.price < 1.5 OR true)", 101, "p.price < 1.5 or true");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnTautologyNotAllowedMultiSlave() throws Exception {
+        // a tautology fails on either HORIZON JOIN of the chain
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k AND p.k = p.k) " +
+                    "HORIZON JOIN prices AS p2 ON (t.k = p2.k) " +
+                    "LIST (0) AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(105, "unsupported HORIZON join expression [expr='p.k = p.k']");
+            assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "HORIZON JOIN prices AS p2 ON (t.k = p2.k AND p2.k = p2.k) " +
+                    "LIST (0) AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(148, "unsupported HORIZON join expression [expr='p2.k = p2.k']");
         });
     }
 
@@ -2805,6 +2992,22 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "WHERE t.qty > 0")
                     .noLeakCheck()
                     .fails(37, "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSlaveRowFilterNotSupported() throws Exception {
+        // a row filter takes away the time frame cursor that HORIZON JOIN needs on its right-hand
+        // side, whether a sub-query or the (table WHERE ...) form carries it; interval filters keep it
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String slave : new String[]{"(SELECT * FROM prices WHERE price > 1.5)", "(prices WHERE m = 3)"}) {
+                assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN " + slave + " AS p ON (t.k = p.k) " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .fails(43, "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+            }
         });
     }
 
@@ -7531,12 +7734,16 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // HORIZON JOIN ON accepts only key equalities between left and right columns
         assertMemoryLeak(() -> {
             createHorizonJoinOnPredicateTables();
-            assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
-                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
-                    "ORDER BY t.id")
-                    .noLeakCheck()
-                    .fails(position, "unsupported HORIZON join expression [expr='" + rejectedExpr + "']");
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck(onClause, position, rejectedExpr);
         });
+    }
+
+    private void assertHorizonJoinOnPredicateRejectedNoLeakCheck(String onClause, int position, String rejectedExpr) throws Exception {
+        assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                "ORDER BY t.id")
+                .noLeakCheck()
+                .fails(position, "unsupported HORIZON join expression [expr='" + rejectedExpr + "']");
     }
 
     private void assertHorizonJoinTypeMismatch(String masterKeyType, String slaveKeyType) throws Exception {
