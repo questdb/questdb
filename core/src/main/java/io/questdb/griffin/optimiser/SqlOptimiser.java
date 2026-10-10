@@ -66,6 +66,7 @@ public final class SqlOptimiser implements Mutable {
     private final AccessPathPlanning accessPathPlanning;
     private final AggregateInputOrder aggregateInputOrder;
     private final OptimiserContext context;
+    private final Decorrelation decorrelation;
     private final OrderPlanning orderPlanning;
     private final ObjList<OptimiserPass> passes = new ObjList<>(10);
     private final ObjList<BoundExpression> tmpConjuncts = new ObjList<>();
@@ -105,7 +106,7 @@ public final class SqlOptimiser implements Mutable {
         final ObjectPool<LimitPlan> limits = planNodes.limits;
         final ObjectPool<ProjectPlan> projects = planNodes.projects;
         final ObjectPool<SortPlan> sorts = planNodes.sorts;
-        final Decorrelation decorrelation = new Decorrelation(context, planNodes, characterStore, tmpExpressions, tmpConjuncts, tmpIndexes, tmpValues,
+        decorrelation = new Decorrelation(context, planNodes, characterStore, tmpExpressions, tmpConjuncts, tmpIndexes, tmpValues,
                 tmpKeys, tmpPlans, tmpSchema, tmpSteps);
         aggregateInputOrder = new AggregateInputOrder();
         final FilterPushdown filterPushdown = new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, projects,
@@ -160,7 +161,16 @@ public final class SqlOptimiser implements Mutable {
         boolean hasDependentSteps = true;
         for (int i = 0, n = passes.size(); i < n; i++) {
             final OptimiserPass pass = passes.getQuick(i);
+            if (verifier != null && pass.removesDependentSteps()) {
+                verifier.recordOuterJoins(plan);
+            }
             plan = pass.apply(plan);
+            if (pass.removesDependentSteps()) {
+                if (verifier != null) {
+                    verifier.verifyDecorrelation(plan, pass.getName());
+                }
+                decorrelation.releaseCarriers();
+            }
             hasDependentSteps &= !pass.removesDependentSteps();
             if (verifier != null) {
                 if (hasDependentSteps) {

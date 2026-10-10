@@ -338,15 +338,14 @@ public class EqCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testErrorUnsupportedLeftOperand() throws Exception {
-        // A VARCHAR/STRING left operand re-routes to =(DC), whose guard rejects a non-DOUBLE/FLOAT
-        // left operand (mirroring the < / > numeric cursor routing). The != form goes through the
-        // same guard.
+        // A VARCHAR/STRING left operand resolves to =(SC), which rejects a non-text scalar sub-query.
+        // The != form goes through the same check.
         assertMemoryLeak(() -> {
             execute("create table t as (select x::varchar v, x::string s from long_sequence(3))");
             assertQuery("select v from t where v = (select 1.0)")
-                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: VARCHAR");
+                    .fails(27, "cannot compare VARCHAR and DOUBLE");
             assertQuery("select s from t where s != (select 1.0)")
-                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: STRING");
+                    .fails(28, "cannot compare STRING and DOUBLE");
         });
     }
 

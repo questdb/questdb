@@ -25,6 +25,7 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.CharacterStoreEntry;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -43,7 +44,6 @@ import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.optimiser.DecorrelationContext.OUTER_REF_PREFIX;
 import static io.questdb.griffin.optimiser.DecorrelationContext.appendMissingColumns;
-import static io.questdb.griffin.optimiser.DecorrelationContext.isNullingStep;
 import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
 
 /**
@@ -137,7 +137,7 @@ final class DecorrelationDomains implements Mutable {
         for (int i = 0, n = domainOuterIds.size(); i < n; i++) {
             final int input = ctx.masterInput(domainOuterIds.getQuick(i));
             for (int step = input; step < ctx.masterLimit; step++) {
-                if (isNullingStep(ctx.master, step, input)) {
+                if (LogicalPlans.isNullingStep(ctx.master, ctx.master.getInputs().getQuick(step), ctx.master.getInputs().getQuick(input))) {
                     isNulled = true;
                     prefixCount = Math.max(prefixCount, step + 1);
                 }

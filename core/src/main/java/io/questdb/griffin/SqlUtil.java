@@ -547,7 +547,7 @@ public class SqlUtil {
         if (quote) {
             keyEntry.put('"');
         }
-        keyEntry.put(base, start, baseLen);
+        keyEntry.put(base, start, Math.min(baseLen, start + maxLength + 1));
         final CharSequence seqKey = keyEntry.toImmutable();
 
         final int truncatedLen = Math.min(baseLen - start + (quote ? 2 : 0), maxLength - (quote ? 1 : 0));

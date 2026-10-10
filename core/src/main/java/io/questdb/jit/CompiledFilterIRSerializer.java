@@ -507,6 +507,16 @@ public class CompiledFilterIRSerializer implements Mutable {
     }
 
     /**
+     * {@code dt IN '<interval>'} on a DATE key: the Java filter reads the text as an interval, which
+     * only the TIMESTAMP interval path serializes.
+     */
+    private static boolean isDateIntervalIn(FunctionExpression call) {
+        return call.getArgumentCount() == 2 && SqlKeywords.isInKeyword(call.getName())
+                && ColumnType.tagOf(call.argumentAt(0).getDataType()) == ColumnType.DATE
+                && ColumnType.isVarcharOrString(call.argumentAt(1).getDataType());
+    }
+
+    /**
      * {@code ts IN '<interval>'}: the right operand is the interval text itself, never re-read
      * through a folded source.
      */
@@ -864,7 +874,7 @@ public class CompiledFilterIRSerializer implements Mutable {
             constantTokens.put(interval, quoted(intervalText));
             return hasJitShape(call.argumentAt(0));
         }
-        if (count >= 2 && !hasJitCompatibleTimestampConstants(call)) {
+        if (isDateIntervalIn(call) || count >= 2 && !hasJitCompatibleTimestampConstants(call)) {
             return false;
         }
         final boolean isUnary = count == 1 && ("-".equals(name) || SqlKeywords.isNotKeyword(name));

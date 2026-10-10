@@ -153,14 +153,35 @@ public class CteScopeTest extends AbstractCairoTest {
         });
     }
 
-    private void assertWith(String sql, String expected) throws Exception {
-        try (
-                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
-        ) {
-            Assert.assertNotNull(compiler.getPlanForTesting());
-            assertResult(factory, expected);
-        }
+    @Test
+    public void testWithSubQueryInExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x SYMBOL, y INT)");
+            execute("INSERT INTO t VALUES ('1', 10), ('2', 20)");
+            execute("CREATE TABLE yt (x SYMBOL)");
+            execute("INSERT INTO yt VALUES ('1')");
+            assertQuery("""
+                    WITH yt AS (SELECT '2'::SYMBOL x)
+                    SELECT * FROM t WHERE x IN (WITH b AS (SELECT x FROM yt) SELECT x FROM b)
+                    """).noLeakCheck().returns("x\ty\n2\t20\n");
+            assertQuery("SELECT * FROM t WHERE x IN (WITH b AS (SELECT x FROM yt) SELECT x FROM b)")
+                    .noLeakCheck()
+                    .returns("x\ty\n1\t10\n");
+            assertQuery("SELECT * FROM t WHERE x NOT IN (WITH b AS (SELECT x FROM yt) SELECT x FROM b)")
+                    .noLeakCheck()
+                    .returns("x\ty\n2\t20\n");
+            assertQuery("""
+                    WITH b AS (SELECT '2'::SYMBOL x)
+                    SELECT * FROM t WHERE x IN (WITH b AS (SELECT x FROM yt) SELECT x FROM b)
+                    """).noLeakCheck().returns("x\ty\n1\t10\n");
+            assertQuery("""
+                    WITH a AS (SELECT '1'::SYMBOL x)
+                    SELECT * FROM t WHERE x IN (DECLARE @v := 1 WITH b AS (SELECT x FROM a) SELECT x FROM b)
+                    """).noLeakCheck().returns("x\ty\n1\t10\n");
+            assertQuery("SELECT * FROM t WHERE y > (WITH b AS (SELECT min(y) m FROM t) SELECT m FROM b)")
+                    .noLeakCheck()
+                    .returns("x\ty\n2\t20\n");
+        });
     }
 
     private void assertExplain(SqlCompilerImpl compiler, String sql, String expected) throws Exception {
@@ -180,6 +201,16 @@ public class CteScopeTest extends AbstractCairoTest {
 
     private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
         assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
+    }
+
+    private void assertWith(String sql, String expected) throws Exception {
+        try (
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            Assert.assertNotNull(compiler.getPlanForTesting());
+            assertResult(factory, expected);
+        }
     }
 
     private void createRows() throws Exception {

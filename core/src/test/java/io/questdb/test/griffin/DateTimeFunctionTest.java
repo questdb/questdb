@@ -95,47 +95,6 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloorCeilTruncationAndOrigin() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            assertQueryRows(
-                    """
-                            SELECT id,timestamp_floor('15m',ts),timestamp_floor('3n',nt),timestamp_ceil('d',ts),
-                                   timestamp_ceil('U',nt),date_trunc('microsecond',ts),date_trunc('nanosecond',nt),
-                                   date_trunc('quarter',nt),date_trunc('week',ts),date_trunc('century',nt),
-                                   timestamp_floor('3h',ts,'2020-02-29T01:00:00.000000Z'),
-                                   timestamp_floor('3U',nt,'2020-02-29T01:00:00.000000001Z'),timestamp_floor('5d',nt,null)
-                            FROM lp_date ORDER BY id
-                            """,
-                    """
-                            id	timestamp_floor	timestamp_floor1	timestamp_ceil	timestamp_ceil1	date_trunc	date_trunc1	date_trunc2	date_trunc3	date_trunc4	timestamp_floor2	timestamp_floor3	timestamp_floor4
-                            1	2020-02-29T23:45:00.000000Z	2020-02-29T23:59:58.123456788Z	2020-03-01T00:00:00.000000Z	2020-02-29T23:59:58.123457000Z	2020-02-29T23:59:58.123456Z	2020-02-29T23:59:58.123456789Z	2020-01-01T00:00:00.000000000Z	2020-02-24T00:00:00.000000Z	2001-01-01T00:00:00.000000000Z	2020-02-29T22:00:00.000000Z	2020-02-29T23:59:58.123455001Z	2020-02-28T00:00:00.000000000Z
-                            2	2021-01-01T00:00:00.000000Z	2021-01-01T00:00:00.000000000Z	2021-01-02T00:00:00.000000Z	2021-01-01T00:00:00.000001000Z	2021-01-01T00:00:00.000001Z	2021-01-01T00:00:00.000000001Z	2021-01-01T00:00:00.000000000Z	2020-12-28T00:00:00.000000Z	2001-01-01T00:00:00.000000000Z	2020-12-31T22:00:00.000000Z	2021-01-01T00:00:00.000000001Z	2020-12-29T00:00:00.000000000Z
-                            3	1969-12-31T23:45:00.000000Z	1969-12-31T23:59:59.999999997Z	1970-01-01T00:00:00.000000Z	1970-01-01T00:00:00.000000000Z	1969-12-31T23:59:59.999999Z	1969-12-31T23:59:59.999999999Z	1969-10-01T00:00:00.000000000Z	1969-12-29T00:00:00.000000Z	1901-01-01T00:00:00.000000000Z	2020-02-29T01:00:00.000000Z	2020-02-29T01:00:00.000000001Z	1969-12-27T00:00:00.000000000Z
-                            4											\t
-                            """
-            );
-            assertQueryRows(
-                    "SELECT id FROM lp_date WHERE timestamp_floor('d',ts)='2020-02-29T00:00:00.000000Z' ORDER BY id",
-                    """
-                            id
-                            1
-                            """
-            );
-            assertQueryRows(
-                    "SELECT date_trunc('month',ts) bucket,count() FROM lp_date GROUP BY 1 ORDER BY bucket",
-                    """
-                            bucket	count
-                            	1
-                            1969-12-01T00:00:00.000000Z	1
-                            2020-02-01T00:00:00.000000Z	1
-                            2021-01-01T00:00:00.000000Z	1
-                            """
-            );
-        });
-    }
-
-    @Test
     public void testDateAddUsesConstantAndRuntimeArguments() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -333,6 +292,47 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloorCeilTruncationAndOrigin() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertQueryRows(
+                    """
+                            SELECT id,timestamp_floor('15m',ts),timestamp_floor('3n',nt),timestamp_ceil('d',ts),
+                                   timestamp_ceil('U',nt),date_trunc('microsecond',ts),date_trunc('nanosecond',nt),
+                                   date_trunc('quarter',nt),date_trunc('week',ts),date_trunc('century',nt),
+                                   timestamp_floor('3h',ts,'2020-02-29T01:00:00.000000Z'),
+                                   timestamp_floor('3U',nt,'2020-02-29T01:00:00.000000001Z'),timestamp_floor('5d',nt,null)
+                            FROM lp_date ORDER BY id
+                            """,
+                    """
+                            id	timestamp_floor	timestamp_floor1	timestamp_ceil	timestamp_ceil1	date_trunc	date_trunc1	date_trunc2	date_trunc3	date_trunc4	timestamp_floor2	timestamp_floor3	timestamp_floor4
+                            1	2020-02-29T23:45:00.000000Z	2020-02-29T23:59:58.123456788Z	2020-03-01T00:00:00.000000Z	2020-02-29T23:59:58.123457000Z	2020-02-29T23:59:58.123456Z	2020-02-29T23:59:58.123456789Z	2020-01-01T00:00:00.000000000Z	2020-02-24T00:00:00.000000Z	2001-01-01T00:00:00.000000000Z	2020-02-29T22:00:00.000000Z	2020-02-29T23:59:58.123455001Z	2020-02-28T00:00:00.000000000Z
+                            2	2021-01-01T00:00:00.000000Z	2021-01-01T00:00:00.000000000Z	2021-01-02T00:00:00.000000Z	2021-01-01T00:00:00.000001000Z	2021-01-01T00:00:00.000001Z	2021-01-01T00:00:00.000000001Z	2021-01-01T00:00:00.000000000Z	2020-12-28T00:00:00.000000Z	2001-01-01T00:00:00.000000000Z	2020-12-31T22:00:00.000000Z	2021-01-01T00:00:00.000000001Z	2020-12-29T00:00:00.000000000Z
+                            3	1969-12-31T23:45:00.000000Z	1969-12-31T23:59:59.999999997Z	1970-01-01T00:00:00.000000Z	1970-01-01T00:00:00.000000000Z	1969-12-31T23:59:59.999999Z	1969-12-31T23:59:59.999999999Z	1969-10-01T00:00:00.000000000Z	1969-12-29T00:00:00.000000Z	1901-01-01T00:00:00.000000000Z	2020-02-29T01:00:00.000000Z	2020-02-29T01:00:00.000000001Z	1969-12-27T00:00:00.000000000Z
+                            4											\t
+                            """
+            );
+            assertQueryRows(
+                    "SELECT id FROM lp_date WHERE timestamp_floor('d',ts)='2020-02-29T00:00:00.000000Z' ORDER BY id",
+                    """
+                            id
+                            1
+                            """
+            );
+            assertQueryRows(
+                    "SELECT date_trunc('month',ts) bucket,count() FROM lp_date GROUP BY 1 ORDER BY bucket",
+                    """
+                            bucket	count
+                            	1
+                            1969-12-01T00:00:00.000000Z	1
+                            2020-02-01T00:00:00.000000Z	1
+                            2021-01-01T00:00:00.000000Z	1
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFormattingFactorySurvivesCompilerResetAndFailure() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -361,97 +361,6 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             }
             try (RecordCursorFactory factory = retained) {
                 assertResult(factory, expected);
-            }
-        });
-    }
-
-    @Test
-    public void testTimezoneConversionKeepsConstantRuntimeAndRowArguments() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            {
-                final String function = "to_utc";
-                assertQueryRows(
-                        "SELECT id," + function + "(ts,'Europe/Berlin')," + function + "(nt,'+02:30') FROM lp_date ORDER BY id",
-                        """
-                                id	to_utc	to_utc1
-                                1	2020-02-29T22:59:58.123456Z	2020-02-29T21:29:58.123456789Z
-                                2	2020-12-31T23:00:00.000001Z	2020-12-31T21:30:00.000000001Z
-                                3	1969-12-31T22:59:59.999999Z	1969-12-31T21:29:59.999999999Z
-                                4	294247-01-10T03:07:26.775808Z	2262-04-11T21:17:16.854775808Z
-                                """
-                );
-                assertQueryRows(
-                        "SELECT id," + function + "(ts,CASE WHEN id=1 THEN 'Europe/Berlin' ELSE '+02:30' END),"
-                                + function + "(nt,text) FROM lp_date ORDER BY id",
-                        """
-                                id	to_utc	to_utc1
-                                1	2020-02-29T22:59:58.123456Z	2020-02-29T03:39:58.123456789Z
-                                2	2020-12-31T21:30:00.000001Z	2020-12-31T03:39:00.000000001Z
-                                3	1969-12-31T21:29:59.999999Z	1969-12-31T23:59:59.999999999Z
-                                4	294247-01-10T01:30:54.775808Z\t
-                                """
-                );
-                bindVariableService.setStr(0, "Pacific/Chatham");
-                assertQueryRows(
-                        "SELECT id," + function + "(ts,$1)," + function + "(nt,$1) FROM lp_date ORDER BY id",
-                        """
-                                id	to_utc	to_utc1
-                                1	2020-02-29T10:14:58.123456Z	2020-02-29T10:14:58.123456789Z
-                                2	2020-12-31T10:15:00.000001Z	2020-12-31T10:15:00.000000001Z
-                                3	1969-12-31T11:14:59.999999Z	1969-12-31T11:14:59.999999999Z
-                                4	294247-01-09T15:47:06.775808Z	2262-04-11T11:33:28.854775808Z
-                                """
-                );
-                assertQueryRows(
-                        "SELECT " + function + "('2024-01-15T12:00:00.000000123Z'::timestamp_ns,'Europe/Berlin') FROM lp_date LIMIT 1",
-                        """
-                                to_utc
-                                2024-01-15T11:00:00.000000123Z
-                                """
-                );
-            }
-            {
-                final String function = "to_timezone";
-                assertQueryRows(
-                        "SELECT id," + function + "(ts,'Europe/Berlin')," + function + "(nt,'+02:30') FROM lp_date ORDER BY id",
-                        """
-                                id	to_timezone	to_timezone1
-                                1	2020-03-01T00:59:58.123456Z	2020-03-01T02:29:58.123456789Z
-                                2	2021-01-01T01:00:00.000001Z	2021-01-01T02:30:00.000000001Z
-                                3	1970-01-01T00:59:59.999999Z	1970-01-01T02:29:59.999999999Z
-                                4	-290308-01-01T20:52:33.224192Z	1677-01-01T02:42:43.145224192Z
-                                """
-                );
-                assertQueryRows(
-                        "SELECT id," + function + "(ts,CASE WHEN id=1 THEN 'Europe/Berlin' ELSE '+02:30' END),"
-                                + function + "(nt,text) FROM lp_date ORDER BY id",
-                        """
-                                id	to_timezone	to_timezone1
-                                1	2020-03-01T00:59:58.123456Z	2020-03-01T20:19:58.123456789Z
-                                2	2021-01-01T02:30:00.000001Z	2021-01-01T20:21:00.000000001Z
-                                3	1970-01-01T02:29:59.999999Z	1969-12-31T23:59:59.999999999Z
-                                4	-290308-01-01T22:29:05.224192Z\t
-                                """
-                );
-                bindVariableService.setStr(0, "Pacific/Chatham");
-                assertQueryRows(
-                        "SELECT id," + function + "(ts,$1)," + function + "(nt,$1) FROM lp_date ORDER BY id",
-                        """
-                                id	to_timezone	to_timezone1
-                                1	2020-03-01T13:44:58.123456Z	2020-03-01T13:44:58.123456789Z
-                                2	2021-01-01T13:45:00.000001Z	2021-01-01T13:45:00.000000001Z
-                                3	1970-01-01T12:44:59.999999Z	1970-01-01T12:44:59.999999999Z
-                                4	-290308-01-01T08:12:53.224192Z	1677-01-01T12:26:31.145224192Z
-                                """
-                );
-                assertQueryRows(
-                        "SELECT " + function + "('2024-01-15T12:00:00.000000123Z'::timestamp_ns,'Europe/Berlin') FROM lp_date LIMIT 1",
-                        """
-                                to_timezone
-                                2024-01-15T13:00:00.000000123Z
-                                """
-                );
             }
         });
     }
@@ -627,6 +536,97 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTimezoneConversionKeepsConstantRuntimeAndRowArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            {
+                final String function = "to_utc";
+                assertQueryRows(
+                        "SELECT id," + function + "(ts,'Europe/Berlin')," + function + "(nt,'+02:30') FROM lp_date ORDER BY id",
+                        """
+                                id	to_utc	to_utc1
+                                1	2020-02-29T22:59:58.123456Z	2020-02-29T21:29:58.123456789Z
+                                2	2020-12-31T23:00:00.000001Z	2020-12-31T21:30:00.000000001Z
+                                3	1969-12-31T22:59:59.999999Z	1969-12-31T21:29:59.999999999Z
+                                4	\t
+                                """
+                );
+                assertQueryRows(
+                        "SELECT id," + function + "(ts,CASE WHEN id=1 THEN 'Europe/Berlin' ELSE '+02:30' END),"
+                                + function + "(nt,text) FROM lp_date ORDER BY id",
+                        """
+                                id	to_utc	to_utc1
+                                1	2020-02-29T22:59:58.123456Z	2020-02-29T03:39:58.123456789Z
+                                2	2020-12-31T21:30:00.000001Z	2020-12-31T03:39:00.000000001Z
+                                3	1969-12-31T21:29:59.999999Z	1969-12-31T23:59:59.999999999Z
+                                4	\t
+                                """
+                );
+                bindVariableService.setStr(0, "Pacific/Chatham");
+                assertQueryRows(
+                        "SELECT id," + function + "(ts,$1)," + function + "(nt,$1) FROM lp_date ORDER BY id",
+                        """
+                                id	to_utc	to_utc1
+                                1	2020-02-29T10:14:58.123456Z	2020-02-29T10:14:58.123456789Z
+                                2	2020-12-31T10:15:00.000001Z	2020-12-31T10:15:00.000000001Z
+                                3	1969-12-31T11:14:59.999999Z	1969-12-31T11:14:59.999999999Z
+                                4	\t
+                                """
+                );
+                assertQueryRows(
+                        "SELECT " + function + "('2024-01-15T12:00:00.000000123Z'::timestamp_ns,'Europe/Berlin') FROM lp_date LIMIT 1",
+                        """
+                                to_utc
+                                2024-01-15T11:00:00.000000123Z
+                                """
+                );
+            }
+            {
+                final String function = "to_timezone";
+                assertQueryRows(
+                        "SELECT id," + function + "(ts,'Europe/Berlin')," + function + "(nt,'+02:30') FROM lp_date ORDER BY id",
+                        """
+                                id	to_timezone	to_timezone1
+                                1	2020-03-01T00:59:58.123456Z	2020-03-01T02:29:58.123456789Z
+                                2	2021-01-01T01:00:00.000001Z	2021-01-01T02:30:00.000000001Z
+                                3	1970-01-01T00:59:59.999999Z	1970-01-01T02:29:59.999999999Z
+                                4	\t
+                                """
+                );
+                assertQueryRows(
+                        "SELECT id," + function + "(ts,CASE WHEN id=1 THEN 'Europe/Berlin' ELSE '+02:30' END),"
+                                + function + "(nt,text) FROM lp_date ORDER BY id",
+                        """
+                                id	to_timezone	to_timezone1
+                                1	2020-03-01T00:59:58.123456Z	2020-03-01T20:19:58.123456789Z
+                                2	2021-01-01T02:30:00.000001Z	2021-01-01T20:21:00.000000001Z
+                                3	1970-01-01T02:29:59.999999Z	1969-12-31T23:59:59.999999999Z
+                                4	\t
+                                """
+                );
+                bindVariableService.setStr(0, "Pacific/Chatham");
+                assertQueryRows(
+                        "SELECT id," + function + "(ts,$1)," + function + "(nt,$1) FROM lp_date ORDER BY id",
+                        """
+                                id	to_timezone	to_timezone1
+                                1	2020-03-01T13:44:58.123456Z	2020-03-01T13:44:58.123456789Z
+                                2	2021-01-01T13:45:00.000001Z	2021-01-01T13:45:00.000000001Z
+                                3	1970-01-01T12:44:59.999999Z	1970-01-01T12:44:59.999999999Z
+                                4	\t
+                                """
+                );
+                assertQueryRows(
+                        "SELECT " + function + "('2024-01-15T12:00:00.000000123Z'::timestamp_ns,'Europe/Berlin') FROM lp_date LIMIT 1",
+                        """
+                                to_timezone
+                                2024-01-15T13:00:00.000000123Z
+                                """
+                );
+            }
+        });
+    }
+
     private static void assertFails(SqlCompilerImpl compiler, String sql, int position, String message) throws Exception {
         try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             Assert.fail(sql);
@@ -641,6 +641,10 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = compiler.compile("SELECT year(ts) FROM lp_date", sqlExecutionContext).getRecordCursorFactory()) {
             Assert.assertNotNull(factory);
         }
+    }
+
+    private void assertQueryRows(String sql, String expected) throws Exception {
+        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
@@ -658,7 +662,4 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                 """);
     }
 
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
 }

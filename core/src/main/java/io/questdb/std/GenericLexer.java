@@ -142,9 +142,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
     @Override
     public void clear() {
         of(null, 0, 0);
-
-        stashedNumbers.clear();
-        stashedStrings.clear();
     }
 
     public final void defineSymbol(String token) {
@@ -172,6 +169,11 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
 
     public int getPosition() {
         return _pos;
+    }
+
+    @TestOnly
+    public int getStashSize() {
+        return stashedNumbers.size() + stashedStrings.size();
     }
 
     public int getTokenHi() {
@@ -350,6 +352,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
         this.unparsed.clear();
         this.unparsedPosition.clear();
         this.last = null;
+        this.stashedNumbers.clear();
+        this.stashedStrings.clear();
     }
 
     public CharSequence peek() {
@@ -357,10 +361,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
     }
 
     public void restart() {
+        restartAt(_start);
+    }
+
+    /**
+     * Restarts the lexer at {@code position}, the start of the statement that {@link #restart()} returns to.
+     */
+    public void restartAt(int position) {
+        if (position < 0 || position > _len) {
+            throw new IndexOutOfBoundsException();
+        }
         this.csPool.clear();
         this.csPairPool.clear();
         this.csTriplePool.clear();
-        this._pos = this._start;
+        this._start = position;
+        this._pos = position;
         this.next = null;
         this.unparsed.clear();
         this.unparsedPosition.clear();

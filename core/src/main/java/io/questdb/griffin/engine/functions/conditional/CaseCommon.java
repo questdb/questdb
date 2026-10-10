@@ -157,6 +157,9 @@ public class CaseCommon {
         if (ColumnType.isArray(commonType) && ColumnType.isArray(valueType)) {
             return commonType == valueType ? commonType : UNDEFINED;
         }
+        if (commonType == valueType && (ColumnType.isGeoHash(commonType) || ColumnType.isInterval(commonType))) {
+            return commonType;
+        }
         if (ColumnType.isDecimal(commonType) || ColumnType.isDecimal(valueType)) {
             if (commonType == valueType) {
                 return commonType;
@@ -352,6 +355,7 @@ public class CaseCommon {
         constructors.extendAndSet(DECIMAL128, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(DECIMAL256, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new VarcharCaseFunction(picker, args));
+        constructors.extendAndSet(INTERVAL, (position, picker, args, returnType) -> new IntervalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(NULL, (position, picker, args, returnType) -> new NullCaseFunction(args));
         constructors.setPos(NULL + 1);
     }

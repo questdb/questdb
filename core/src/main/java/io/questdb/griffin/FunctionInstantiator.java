@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
+import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
@@ -543,7 +544,11 @@ public final class FunctionInstantiator implements Mutable {
                 return new ScalarSubQueryBoundRefFunction(sharedBoundHolders.getQuick(shared));
             }
             final Function function = instantiateSubquery(cursor, executionContext);
-            return cursor.isBoolean() ? BooleanSubQueryFunction.maybeWrap(function, cursor.getPosition()) : function;
+            if (cursor.isBoolean()) {
+                return BooleanSubQueryFunction.maybeWrap(function, cursor.getPosition());
+            }
+            return ColumnType.isTimestamp(cursor.getDataType())
+                    ? new ScalarSubQueryTimestampFunction(function, cursor.getPosition(), cursor.getDataType()) : function;
         }
         if (expression instanceof BindVariableExpression parameter) {
             final Function function = resolver.createBindVariable(parameter.getPosition(), parameter.getName(), executionContext);
@@ -587,7 +592,7 @@ public final class FunctionInstantiator implements Mutable {
                 return function;
             }
             if (ColumnType.isArray(function.getType()) && function.isConstant()) {
-                function = resolver.functionToConstant(function);
+                function = resolver.functionToConstant(function, call.getPosition());
             }
             try {
                 // CAST can type an empty array without retaining a cast node.

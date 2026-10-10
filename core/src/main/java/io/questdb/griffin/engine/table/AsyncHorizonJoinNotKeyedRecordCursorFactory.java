@@ -59,6 +59,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -105,8 +106,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             int valueCount,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
-            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable ObjectFactory<RecordSink> masterAsOfJoinMapSinkFactory,
+            @Nullable ObjectFactory<RecordSink> slaveAsOfJoinMapSinkFactory,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -144,8 +145,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     offsets,
                     valueCount,
                     asOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClass,
-                    slaveAsOfJoinMapSinkClass,
+                    masterAsOfJoinMapSinkFactory,
+                    slaveAsOfJoinMapSinkFactory,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,

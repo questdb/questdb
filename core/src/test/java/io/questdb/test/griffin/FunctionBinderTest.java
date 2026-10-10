@@ -1015,6 +1015,21 @@ public class FunctionBinderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInconvertibleConstantFoldReportsCallPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            assertQuery("SELECT 'a' > 2").noLeakCheck().fails(11, "inconvertible value: a [CHAR -> INT]");
+            assertQuery("SELECT 'a' > (2)").noLeakCheck().fails(11, "inconvertible value: a [CHAR -> INT]");
+            assertQuery("SELECT 'a' + 2").noLeakCheck().fails(11, "inconvertible value: a [CHAR -> INT]");
+            assertQuery("SELECT * FROM k WHERE 'a' > 2").noLeakCheck().fails(26, "inconvertible value: a [CHAR -> INT]");
+            assertQuery("SELECT '1a' > 2").noLeakCheck().fails(12, "inconvertible value: `1a` [STRING -> INT]");
+            assertQuery("SELECT NOT ('a' > 2)").noLeakCheck().fails(16, "inconvertible value: a [CHAR -> INT]");
+            assertQuery("SELECT l FROM k WHERE '2' < l").noLeakCheck().returns("l\n3\n");
+        });
+    }
+
+    @Test
     public void testLongNullComparisonKeepsSelectedSymbolOverload() throws Exception {
         assertMemoryLeak(() -> {
             final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());

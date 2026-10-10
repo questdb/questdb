@@ -92,6 +92,11 @@ public final class BindScope implements Mutable {
     final IntList sourceProjectionIndexes = new IntList();
     final ObjList<ColumnExpression> substitutionColumns = new ObjList<>();
     final ObjList<ExpressionNode> substitutionNodes = new ObjList<>();
+    /**
+     * Models of the SAMPLE BY range bounds that are scalar sub-queries; each binds as a runtime-constant timestamp
+     * of {@link #timestampSubqueryType}. Binding may clone the bound's node, so the model identifies it.
+     */
+    final ObjList<QueryModel> timestampSubqueries = new ObjList<>();
     final TranslatingAliases translatingAliases = new TranslatingAliases();
     final IntHashSet translatingCopyIds = new IntHashSet();
     final ObjList<ExpressionNode> windowAliasCopies = new ObjList<>();
@@ -133,6 +138,7 @@ public final class BindScope implements Mutable {
     int nestedWindowPosition;
     ObjList<ColumnExpression> replacementColumns;
     ObjList<ExpressionNode> replacementNodes;
+    int timestampSubqueryType;
     LogicalPlan windowInput;
     ExpressionNode windowRoot;
 
@@ -175,6 +181,7 @@ public final class BindScope implements Mutable {
         sourceProjectionIndexes.clear();
         substitutionColumns.clear();
         substitutionNodes.clear();
+        timestampSubqueries.clear();
         translatingAliases.clear();
         translatingCopyIds.clear();
         windowAliasCopies.clear();
@@ -213,6 +220,7 @@ public final class BindScope implements Mutable {
         nestedWindowPosition = 0;
         replacementColumns = null;
         replacementNodes = null;
+        timestampSubqueryType = 0;
         windowInput = null;
         windowRoot = null;
     }

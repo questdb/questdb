@@ -63,7 +63,9 @@ public final class InstantiatedIntervalBounds implements IntervalBoundSource {
     public Function instantiateTimestampCursor(CursorExpression cursor, SqlExecutionContext executionContext) throws SqlException {
         final Function function = instantiator.instantiateSubquery(cursor, executionContext);
         try {
-            return new ScalarSubQueryTimestampFunction(function, cursor.getPosition());
+            return ColumnType.isTimestamp(cursor.getDataType())
+                    ? new ScalarSubQueryTimestampFunction(function, cursor.getPosition(), cursor.getDataType())
+                    : new ScalarSubQueryTimestampFunction(function, cursor.getPosition());
         } catch (Throwable th) {
             Misc.free(function, th);
             throw th;

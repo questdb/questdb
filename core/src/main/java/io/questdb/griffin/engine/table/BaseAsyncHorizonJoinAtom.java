@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
@@ -56,6 +55,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -120,8 +120,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
-            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable ObjectFactory<RecordSink> masterAsOfJoinMapSinkFactory,
+            @Nullable ObjectFactory<RecordSink> slaveAsOfJoinMapSinkFactory,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -161,14 +161,14 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
                     0L  // per-worker memory pool budget
             );
             // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types)
-            if (masterAsOfJoinMapSinkClass != null || slaveAsOfJoinMapSinkClass != null) {
-                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
-                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
+            if (asOfJoinKeyTypes != null) {
+                this.ownerMasterAsOfJoinMapSink = masterAsOfJoinMapSinkFactory.newInstance();
+                this.ownerSlaveAsOfJoinMapSink = slaveAsOfJoinMapSinkFactory.newInstance();
                 this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(workerCount);
                 this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
-                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
+                    perWorkerMasterAsOfJoinMapSinks.add(masterAsOfJoinMapSinkFactory.newInstance());
+                    perWorkerSlaveAsOfJoinMapSinks.add(slaveAsOfJoinMapSinkFactory.newInstance());
                 }
             } else {
                 this.ownerMasterAsOfJoinMapSink = null;

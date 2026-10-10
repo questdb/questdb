@@ -113,7 +113,7 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
     @Test
     public void testSwitch() throws Exception {
         assertQuery("select case " +
-                "   when to_timestamp('2022-03-11T22:00:30.555555Z') at time zone 'EST' > 0" +
+                "   when '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'EST' > 0" +
                 "   then 'abc'" +
                 "   else 'cde'" +
                 "end")
@@ -125,7 +125,7 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                         """);
 
         assertQuery("select case " +
-                "   when to_timestamp_ns('2022-03-11T22:00:30.555555555Z') at time zone 'EST' > 0" +
+                "   when '2022-03-11T22:00:30.555555555Z'::timestamp_ns at time zone 'EST' > 0" +
                 "   then 'abc'" +
                 "   else 'cde'" +
                 "end")

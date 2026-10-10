@@ -623,6 +623,7 @@ final class WindowBinder implements Mutable {
         final ExpressionNode copy = ctx.bindingExpressions.next().of(expression.type, expression.token, expression.precedence, expression.position);
         copy.paramCount = expression.paramCount;
         copy.queryModel = expression.queryModel;
+        copy.isQuoted = expression.isQuoted;
         copy.isTimestampOrderInherited = expression.isTimestampOrderInherited;
         copy.windowExpression = expression.windowExpression;
         copy.lhs = replaceWindowReferences(expression.lhs, true);

@@ -72,7 +72,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createRows();
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                assertError(compiler, "DECLARE @values := (1,2,3) SELECT id FROM lp_declare WHERE id IN @values", 27, "unexpected token [@values] - unexpected bind expression - bracket lists are not supported");
+                assertError(compiler, "DECLARE @values := (1,2,3) SELECT id FROM lp_declare WHERE id IN @values", 19, "value list is not allowed here");
                 assertError(compiler, "DECLARE @value := 2 SELECT @missing FROM lp_declare", 27, "tried to use undeclared variable `@missing`");
                 assertError(compiler, "DECLARE @value = 2 SELECT @value", 15, "unexpected token [=] - expected variable assignment operator `:=`");
                 assertError(compiler, "DECLARE @member := (id IN (1,2,3)) SELECT @member FROM lp_declare", 23, "too few arguments for 'in' [found=1,expected=2]");
@@ -226,10 +226,6 @@ public class DeclareMacroTest extends AbstractCairoTest {
         });
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private void assertError(SqlCompilerImpl compiler, String sql, int position, String message) throws Exception {
         try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             Assert.fail("expected parser error");
@@ -239,12 +235,17 @@ public class DeclareMacroTest extends AbstractCairoTest {
         }
     }
 
+    private void assertQueryRows(String sql, String expected) throws Exception {
+        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
+    }
+
+    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
+        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
+    }
+
     private void createRows() throws Exception {
         execute("CREATE TABLE lp_declare (id INT,k INT,i INT,active BOOLEAN)");
         execute("INSERT INTO lp_declare VALUES (1,1,1,true),(2,1,2,false),(3,2,3,true),(4,3,null,true),(5,4,null,false)");
     }
 
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
 }

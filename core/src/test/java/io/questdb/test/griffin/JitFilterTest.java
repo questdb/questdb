@@ -118,6 +118,47 @@ public class JitFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalInJitParityForDateAndTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, dt DATE, tm TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-02T12:00:00.000Z', '2024-01-02T12:00:00.000000Z', '2024-01-02T12:00:00.000000000Z', '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000Z', '2024-01-02T00:00:00.000000Z', '2024-01-02T00:00:00.000000000Z', '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000Z', '2024-01-03T00:00:00.000000Z', '2024-01-03T00:00:00.000000000Z', '2024-01-01T02:00:00.000000Z')
+                    """);
+            final int oldMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode = SqlJitMode.JIT_MODE_DISABLED; mode >= SqlJitMode.JIT_MODE_ENABLED; mode--) {
+                    sqlExecutionContext.setJitMode(mode);
+                    assertQuery("SELECT k FROM x WHERE dt IN ('2024-01-02')").noLeakCheck().returns("k\n1\n2\n");
+                    assertQuery("SELECT k FROM x WHERE dt IN '2024-01-02'").noLeakCheck().returns("k\n1\n2\n");
+                    assertQuery("SELECT k FROM x WHERE dt IN ('2024-01')").noLeakCheck().returns("k\n1\n2\n3\n");
+                    assertQuery("SELECT k FROM x WHERE dt NOT IN ('2024-01-02')").noLeakCheck().returns("k\n3\n");
+                    assertQuery("SELECT k FROM x WHERE dt IN ('2024-01-02', '2024-01-03')").noLeakCheck().returns("k\n2\n3\n");
+                    assertQuery("SELECT k FROM x WHERE dt NOT IN ('2024-01-02', '2024-01-03')").noLeakCheck().returns("k\n1\n");
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(oldMode);
+            }
+            final String[] keys = {"dt", "tm", "tn"};
+            for (String key : keys) {
+                final boolean isOneValueJit = !"dt".equals(key);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02')", isOneValueJit);
+                assertModes("SELECT k FROM x WHERE " + key + " IN '2024-01-02'", isOneValueJit);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01')", isOneValueJit);
+                assertModes("SELECT k FROM x WHERE " + key + " NOT IN ('2024-01-02')", isOneValueJit);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02') AND k > 0", isOneValueJit);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02') OR k < 0", isOneValueJit);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02', '2024-01-03')", true);
+                assertModes("SELECT k FROM x WHERE " + key + " IN ('2024-01-02', '2024-01-03', '2024-01-05')", true);
+                assertModes("SELECT k FROM x WHERE " + key + " NOT IN ('2024-01-02', '2024-01-03')", true);
+                assertModes("SELECT k FROM x WHERE " + key + " NOT IN ('2024-01-02', '2024-01-03', '2024-01-05')", true);
+            }
+        });
+    }
+
+    @Test
     public void testJitFactorySurvivesCompilerResetAndRebindsParameters() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

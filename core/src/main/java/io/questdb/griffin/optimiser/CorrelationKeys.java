@@ -39,7 +39,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.optimiser.DecorrelationContext.isNullingStep;
 import static io.questdb.griffin.optimiser.DecorrelationContext.isTrue;
 import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
 
@@ -53,6 +52,7 @@ final class CorrelationKeys implements Mutable {
     final IntList deferredOuterIds = new IntList();
     final IntList droppedEqualities = new IntList();
     private final DecorrelationContext ctx;
+    private final IntList readOuterIds = new IntList();
 
     CorrelationKeys(DecorrelationContext ctx) {
         this.ctx = ctx;
@@ -64,6 +64,7 @@ final class CorrelationKeys implements Mutable {
         deferredInputs.clear();
         deferredOuterIds.clear();
         droppedEqualities.clear();
+        readOuterIds.clear();
     }
 
     private static int inputOrder(JoinPlan join, int columnId) {
@@ -87,11 +88,47 @@ final class CorrelationKeys implements Mutable {
         }
     }
 
+    /**
+     * True when the column of the source join can carry the outer column: no step that can emit the column as NULL
+     * matches depending on the outer row, and the join orders the column's input no later than the first step whose
+     * condition reads the outer column, or, when a step of the join null-extends its master, the first deferred input
+     * that maps it. A step matches depending on the outer row when its ON condition reads an outer column, it is a
+     * deferred nullable input, or it null-extends its master after a step that reads an outer column. Without a step
+     * that null-extends its master, a deferred input joins after the input that provides its key instead.
+     */
+    private boolean canCarry(JoinPlan source, int columnId, int outerId) {
+        if (source == null) {
+            return true;
+        }
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(source);
+        int position = 0;
+        while (position < steps.size() && steps.getQuick(position).getSourceOutput().getColumnIndexById(columnId) < 0) {
+            position++;
+        }
+        if (position == steps.size()) {
+            return true;
+        }
+        final JoinInput input = steps.getQuick(position);
+        final boolean hasMasterNullingStep = LogicalPlans.lastMasterNullingStep(source) > -1;
+        final int firstRead = hasMasterNullingStep ? firstOuterRead(source, ctx.masterOuterIds, steps.size(), true) : Integer.MAX_VALUE;
+        for (int i = 1, n = steps.size(); i < n; i++) {
+            final JoinInput step = steps.getQuick(i);
+            if (LogicalPlans.isNullingStep(source, step, input)
+                    && (step.getOnResidual() != null && LogicalPlans.hasOuterColumn(step.getOnResidual()) || deferredInputs.indexOf(step) > -1
+                    || step.getJoinType().isMasterNulling() && firstRead < i)) {
+                return false;
+            }
+        }
+        readOuterIds.clear();
+        readOuterIds.add(outerId);
+        return position <= firstOuterRead(source, readOuterIds, steps.size(), hasMasterNullingStep);
+    }
+
     private void collectEquality(ColumnExpression column, OuterColumnExpression outer, OutputSchema input, JoinPlan source, int base) {
         final int outerId = outer.getColumnId();
         if (ctx.masterOuterIds.contains(outerId) && pairIndex(droppedEqualities, outerId) < 0 && ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size()) < 0
                 && input.getColumnIndexById(column.getColumnId()) > -1 && column.getDataType() == outer.getDataType()
-                && !isNulledPerOuterRow(source, column.getColumnId())) {
+                && canCarry(source, column.getColumnId(), outerId)) {
             droppedEqualities.add(outerId);
             droppedEqualities.add(column.getColumnId());
         }
@@ -137,28 +174,18 @@ final class CorrelationKeys implements Mutable {
         return false;
     }
 
-    /**
-     * True when a step of the source join that can emit the column as NULL matches depending on the outer row:
-     * its ON condition reads an outer column, or it is a deferred nullable input. The column then reads NULL for
-     * other rows per outer row, so it cannot carry the outer column.
-     */
-    private boolean isNulledPerOuterRow(JoinPlan source, int columnId) {
-        if (source == null) {
+    private boolean readsOuter(BoundExpression expression, IntList outerIds) {
+        if (expression == null) {
             return false;
         }
-        final ObjList<JoinInput> inputs = source.getInputs();
-        int index = 0;
-        while (index < inputs.size() && inputs.getQuick(index).getSourceOutput().getColumnIndexById(columnId) < 0) {
-            index++;
+        final int base = ctx.tmpColumnIds.size();
+        ctx.outerColumnReads.collect(expression, ctx.tmpColumnIds);
+        boolean isFound = false;
+        for (int i = base, n = ctx.tmpColumnIds.size(); i < n && !isFound; i++) {
+            isFound = outerIds.contains(ctx.tmpColumnIds.getQuick(i));
         }
-        for (int i = Math.max(index, 1), n = inputs.size(); i < n; i++) {
-            final JoinInput step = inputs.getQuick(i);
-            if (isNullingStep(source, i, index)
-                    && (step.getOnResidual() != null && LogicalPlans.hasOuterColumn(step.getOnResidual()) || deferredInputs.indexOf(step) > -1)) {
-                return true;
-            }
-        }
-        return false;
+        ctx.tmpColumnIds.setPos(base);
+        return isFound;
     }
 
     static boolean hasOuterCondition(JoinInput input) {
@@ -273,6 +300,30 @@ final class CorrelationKeys implements Mutable {
         return predicate;
     }
 
+    /**
+     * The ordered position of the first step of the join that reads one of the outer columns: through its ON
+     * condition or key filter, through its post-join filter when the step precedes {@code filterLimit}, or, when
+     * {@code isDeferredRead}, as a deferred input that maps one of them. Integer.MAX_VALUE when no step does.
+     */
+    int firstOuterRead(JoinPlan join, IntList outerIds, int filterLimit, boolean isDeferredRead) {
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+        int first = Integer.MAX_VALUE;
+        for (int i = 0, n = isDeferredRead ? deferredInputs.size() : 0; i < n; i++) {
+            final int position = steps.indexOf(deferredInputs.getQuick(i));
+            if (position > -1 && position < first && outerIds.contains(deferredOuterIds.getQuick(i))) {
+                first = position;
+            }
+        }
+        for (int i = 0, n = Math.min(steps.size(), first); i < n; i++) {
+            final JoinInput step = steps.getQuick(i);
+            if (readsOuter(step.getOnResidual(), outerIds) || readsOuter(step.getKeyFilter(), outerIds)
+                    || i < filterLimit && readsOuter(step.getPostJoinFilter(), outerIds)) {
+                return i;
+            }
+        }
+        return first;
+    }
+
     boolean isEveryOuterColumnEquated(int chainOuterBase, int base) {
         for (int i = chainOuterBase, n = ctx.chainOuterIds.size(); i < n; i++) {
             final int outerId = ctx.chainOuterIds.getQuick(i);
@@ -319,7 +370,7 @@ final class CorrelationKeys implements Mutable {
      * the ON condition, and of the WHERE conjuncts of an input that does not null-extend.
      */
     void keyOuterConditions(JoinPlan join, JoinInput input) {
-        if (input.getJoinType() != JoinKind.LEFT_OUTER) {
+        if (!input.getJoinType().isBarrier()) {
             input.setPostJoinFilter(extractKeys(join, input, input.getPostJoinFilter()));
         }
         if (input.getJoinType() != JoinKind.CROSS) {

@@ -43,6 +43,11 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
     private int subQueryBlockDepth;
 
     @Override
+    public boolean isValueListAllowed() {
+        return subQueryBlockDepth > 0;
+    }
+
+    @Override
     public void onNode(ExpressionNode node) throws SqlException {
 
         if (node.type == ExpressionNode.QUERY && node.queryModel == null) {

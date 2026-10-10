@@ -32,6 +32,7 @@ import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.InvalidColumnException;
+import io.questdb.griffin.AliasBaseSink;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
@@ -40,8 +41,10 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
@@ -107,6 +110,53 @@ public class SqlUtilTest {
         // an ordinary (non-token) base whose raw form is free still returns verbatim, by identity
         CharSequence plain = "plain";
         Assert.assertSame(plain, SqlUtil.createExprColumnAlias(store, plain, aliasMap, seqMap, 64, false));
+    }
+
+    @Test
+    public void testExprColumnAliasBoundedBaseMatchesFullBase() {
+        final Rnd rnd = TestUtils.generateRandom(null);
+        final char[] alphabet = {'a', 'b', '.', '"', ' '};
+        final AliasBaseSink aliasBaseSink = new AliasBaseSink();
+        final StringSink sink = new StringSink();
+        for (int maxLength : new int[]{4, 8, 64}) {
+            final CharacterStore fullStore = new CharacterStore(64, 4);
+            final CharacterStore boundedStore = new CharacterStore(64, 4);
+            final LowerCaseCharSequenceHashSet fullAliases = new LowerCaseCharSequenceHashSet();
+            final LowerCaseCharSequenceHashSet boundedAliases = new LowerCaseCharSequenceHashSet();
+            final LowerCaseCharSequenceIntHashMap fullSequences = new LowerCaseCharSequenceIntHashMap();
+            final LowerCaseCharSequenceIntHashMap boundedSequences = new LowerCaseCharSequenceIntHashMap();
+            for (int i = 0; i < 20_000; i++) {
+                if (i % 64 == 0) {
+                    fullStore.clear();
+                    boundedStore.clear();
+                    fullAliases.clear();
+                    boundedAliases.clear();
+                    fullSequences.clear();
+                    boundedSequences.clear();
+                }
+                sink.clear();
+                if (rnd.nextBoolean()) {
+                    sink.repeat("a", maxLength - 1);
+                }
+                for (int j = 0, n = rnd.nextInt(2 * maxLength + 12); j < n; j++) {
+                    sink.put(alphabet[rnd.nextInt(alphabet.length)]);
+                }
+                final String base = sink.toString();
+                final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, base, 0, 0);
+                final CharSequence expected = SqlUtil.createExprColumnAlias(fullStore, base, fullAliases, fullSequences, maxLength, true);
+                final CharSequence actual = SqlUtil.createExprColumnAlias(
+                        boundedStore,
+                        aliasBaseSink.render(boundedStore, node, maxLength),
+                        boundedAliases,
+                        boundedSequences,
+                        maxLength,
+                        true
+                );
+                TestUtils.assertEquals(base, expected, actual);
+                fullAliases.add(expected);
+                boundedAliases.add(actual);
+            }
+        }
     }
 
     @Test

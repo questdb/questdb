@@ -63,6 +63,10 @@ public final class CursorExpression extends BoundExpression {
         return of(cursor.subquery, ColumnType.BOOLEAN, functionFlags, cursor.getPosition());
     }
 
+    public CursorExpression ofTimestamp(CursorExpression cursor, int timestampType, int functionFlags) {
+        return of(cursor.subquery, timestampType, functionFlags, cursor.getPosition());
+    }
+
     private CursorExpression of(Subquery subquery, int dataType, int functionFlags, int position) {
         configure(dataType, position, functionFlags);
         this.subquery = subquery;

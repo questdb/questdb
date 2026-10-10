@@ -44,6 +44,7 @@ public final class JoinInput implements Mutable {
     public static final int HINT_ASOF_MEMOIZED = 8;
     public static final int HINT_ASOF_MEMOIZED_DRIVEBY = 16;
     public static final int HINT_MARKOUT_HORIZON = 32;
+    private final IntList carrierColumnIds = new IntList();
     private final IntList keyPositions = new IntList();
     private final IntList masterKeyColumnIds = new IntList();
     private final ObjList<CharSequence> masterKeyNames = new ObjList<>();
@@ -85,6 +86,7 @@ public final class JoinInput implements Mutable {
 
     @Override
     public void clear() {
+        carrierColumnIds.clear();
         keyPositions.clear();
         masterKeyColumnIds.clear();
         masterKeyNames.clear();
@@ -118,6 +120,14 @@ public final class JoinInput implements Mutable {
 
     public CharSequence getBindingAlias() {
         return bindingAlias;
+    }
+
+    /**
+     * The columns that stand for outer columns which decorrelation keys the step on or its ON condition reads, master
+     * and slave side alike.
+     */
+    public IntList getCarrierColumnIds() {
+        return carrierColumnIds;
     }
 
     public int getHints() {

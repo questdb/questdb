@@ -309,6 +309,12 @@ final class TemporalJoinBinder {
         }
     }
 
+    private static void validateWindowJoinWhere(ExpressionNode where, ObjList<QueryModel> sources, int first) throws SqlException {
+        for (int i = first, n = sources.size(); i < n; i++) {
+            validateWindowJoinFilter(where, sourceAlias(sources.getQuick(i)));
+        }
+    }
+
     private static CharSequence windowJoinAggregateName(ExpressionNode node, QueryModel model) {
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final QueryColumn column = model.getBottomUpColumns().getQuick(i);
@@ -719,6 +725,10 @@ final class TemporalJoinBinder {
         LogicalPlan master = binder.bindSource(masterModel, executionContext);
         if (where != null) {
             rejectHorizonWhere(where, master.getOutput(), masterAlias);
+        }
+        if (binder.isLatestOverLeadingInput(source)) {
+            master = binder.bindLatestBy(master, where, source, executionContext);
+        } else if (where != null) {
             final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
             final FilterPlan filter = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
             filter.deriveOutput();
@@ -816,6 +826,11 @@ final class TemporalJoinBinder {
             where = null;
         } else {
             master = binder.bindSource(masterModel, executionContext);
+            if (binder.isLatestOverLeadingInput(source)) {
+                validateWindowJoinWhere(where, sources, first);
+                master = binder.bindLatestBy(master, where, source, executionContext);
+                where = null;
+            }
         }
         final WindowJoinPlan plan = ctx.planNodes.windowJoinPlans.next().of(master, source.getModelPosition());
         for (int i = first, n = sources.size(); i < n; i++) {
@@ -833,9 +848,7 @@ final class TemporalJoinBinder {
         }
         boolean isEmpty = false;
         if (where != null) {
-            for (int i = first, n = sources.size(); i < n; i++) {
-                validateWindowJoinFilter(where, sourceAlias(sources.getQuick(i)));
-            }
+            validateWindowJoinWhere(where, sources, first);
             final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
             if (predicate instanceof ConstantExpression constant && constant.getLongValue() == 0) {
                 isEmpty = true;

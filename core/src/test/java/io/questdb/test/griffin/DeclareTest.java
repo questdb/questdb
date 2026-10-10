@@ -218,6 +218,26 @@ public class DeclareTest extends AbstractSqlParserTest {
             ) timestamp (timestamp) PARTITION BY DAY WAL;""";
 
     @Test
+    public void testDeclareCastTargetVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("DECLARE @t := int SELECT 1 :: @t v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n1\n");
+            assertQuery("DECLARE @t := float8 SELECT 1 :: @t v, CAST(2 AS @t) w")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\tw\n1.0\t2.0\n");
+            assertQuery("DECLARE @x := (SELECT 1) SELECT 1 :: @x")
+                    .fails(37, "type definition is expected");
+            assertQuery("DECLARE @t := 1 + 2 SELECT 1 :: @t")
+                    .fails(32, "type definition is expected");
+            assertQuery("DECLARE @t := int SELECT 1 :: @u")
+                    .fails(30, "tried to use undeclared variable `@u`");
+        });
+    }
+
+    @Test
     public void testDeclareCreateAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
@@ -323,6 +343,34 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareOverridableMultiple() throws Exception {
         assertModel("select-virtual 5 5, 10 10 from (long_sequence(1))",
                 "DECLARE OVERRIDABLE @x := 5, OVERRIDABLE @y := 10 SELECT @x, @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareQuotedColumnNamedLikeVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE q (\"@c\" INT, d INT)");
+            execute("INSERT INTO q VALUES (7, 8)");
+            assertQuery("DECLARE @c := 1 SELECT \"@c\" FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("@c\n7\n");
+            assertQuery("DECLARE @x := 7 SELECT \"@c\" FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("@c\n7\n");
+            assertQuery("DECLARE @x := 1 SELECT q.\"@c\" FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("@c\n7\n");
+            assertQuery("DECLARE @x := \"@c\", @y := \"@c\" SELECT @x FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("@c\n7\n");
+            assertQuery("DECLARE @c := 1 SELECT @c FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("1\n1\n");
+        });
     }
 
     @Test
@@ -1185,6 +1233,22 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelfReference() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("DECLARE @x := 1, @x := @x + 1 SELECT @x")
+                    .fails(23, "variable cannot reference itself `@x`");
+            assertQuery("DECLARE @x := @x SELECT @x")
+                    .fails(14, "variable cannot reference itself `@x`");
+            assertQuery("DECLARE @x := @x SELECT 1")
+                    .fails(14, "variable cannot reference itself `@x`");
+            assertQuery("DECLARE @x := 1, @y := abs(@Y) SELECT 1")
+                    .fails(27, "variable cannot reference itself `@Y`");
+            assertQuery("DECLARE @x := @y SELECT 1")
+                    .fails(14, "tried to use undeclared variable `@y`");
+        });
+    }
+
+    @Test
     public void testDeclareVariableAsSubQuery() throws Exception {
         assertQuery("SELECT * FROM (SELECT 1 as y)")
                 .assertsLogicalPlan("""
@@ -1253,7 +1317,7 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DDL);
             assertQuery("DECLARE @symbols := ('ETH-USD', 'BTC-USD') " +
                     "SELECT * FROM trades WHERE @symbols IN @symbols")
-                    .fails(43, "bracket lists");
+                    .fails(20, "value list is not allowed here");
 
         });
     }
@@ -1470,7 +1534,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan(plan);
             assertQuery("declare @ts := ('2024-01-01', '2024-08-23') select timestamp, count() from trades where timestamp IN @ts")
-                    .fails(44, "bracket lists are not supported");
+                    .fails(15, "value list is not allowed here");
         });
     }
 

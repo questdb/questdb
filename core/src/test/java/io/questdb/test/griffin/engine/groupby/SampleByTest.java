@@ -6641,9 +6641,40 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             assertQuery("SELECT count() FROM x SAMPLE BY 1h FROM i")
-                    .fails(0, "argument type mismatch for function `timestamp_floor_utc` at #3 expected: TIMESTAMP, actual: INT at #5 expected: STRING, actual: NULL");
+                    .fails(40, "Invalid column: i");
             assertQuery("SELECT count() FROM x SAMPLE BY 1h FROM ts")
-                    .fails(0, "argument type mismatch for function `timestamp_floor_utc` at #3 expected: TIMESTAMP constant, actual: TIMESTAMP at #5 expected: STRING, actual: NULL");
+                    .fails(40, "Invalid column: ts");
+        });
+    }
+
+    @Test
+    public void testSampleByFromRuntimeConstantWithTimezone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO k VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-01T12:00:00.000000Z'),
+                        (3, '2024-01-02T00:00:00.000000Z')
+                    """);
+            final String from = "SELECT ts, count() c FROM k SAMPLE BY 12h FROM now() - (now() - '2023-12-31T12:00:00'::TIMESTAMP) TO '2024-01-03'";
+            final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            final String unfilled = """
+                    ts\tc
+                    2023-12-31T23:00:00.000000Z\t1
+                    2024-01-01T11:00:00.000000Z\t1
+                    2024-01-01T23:00:00.000000Z\t1
+                    """;
+            assertScalarSubQueryBound(from + berlin, unfilled);
+            assertScalarSubQueryBound(from + " FILL(LINEAR)" + berlin, unfilled);
+            assertScalarSubQueryBound(from + " FILL(NULL)" + berlin, """
+                    ts\tc
+                    2023-12-31T11:00:00.000000Z\tnull
+                    2023-12-31T23:00:00.000000Z\t1
+                    2024-01-01T11:00:00.000000Z\t1
+                    2024-01-01T23:00:00.000000Z\t1
+                    2024-01-02T11:00:00.000000Z\tnull
+                    """);
         });
     }
 
@@ -7336,6 +7367,139 @@ public class SampleByTest extends AbstractCairoTest {
                             2044-01-01T00:00:00.000000Z\tnull
                             2048-01-01T00:00:00.000000Z\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToScalarSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (sym SYMBOL, s SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO k VALUES
+                        ('a', 'a', 1, '2024-01-01T00:00:00.000000Z'),
+                        ('b', 'b', 2, '2024-01-01T12:00:00.000000Z'),
+                        ('a', 'a', 3, '2024-01-02T00:00:00.000000Z')
+                    """);
+            final String unfilled = """
+                    ts\tc
+                    2024-01-01T00:00:00.000000Z\t1
+                    2024-01-01T12:00:00.000000Z\t1
+                    2024-01-02T00:00:00.000000Z\t1
+                    """;
+            final String unfilledBerlin = """
+                    ts\tc
+                    2023-12-31T23:00:00.000000Z\t1
+                    2024-01-01T11:00:00.000000Z\t1
+                    2024-01-01T23:00:00.000000Z\t1
+                    """;
+            final String[][] cases = {
+                    {"", unfilled, unfilledBerlin},
+                    {" FILL(NONE)", unfilled, unfilledBerlin},
+                    {" FILL(LINEAR)", unfilled, unfilledBerlin},
+                    {" FILL(NULL)", """
+                            ts\tc
+                            2023-12-31T12:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T12:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-02T12:00:00.000000Z\tnull
+                            """, """
+                            ts\tc
+                            2023-12-31T11:00:00.000000Z\tnull
+                            2023-12-31T23:00:00.000000Z\t1
+                            2024-01-01T11:00:00.000000Z\t1
+                            2024-01-01T23:00:00.000000Z\t1
+                            2024-01-02T11:00:00.000000Z\tnull
+                            """},
+                    {" FILL(PREV)", """
+                            ts\tc
+                            2023-12-31T12:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T12:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-02T12:00:00.000000Z\t1
+                            """, """
+                            ts\tc
+                            2023-12-31T11:00:00.000000Z\tnull
+                            2023-12-31T23:00:00.000000Z\t1
+                            2024-01-01T11:00:00.000000Z\t1
+                            2024-01-01T23:00:00.000000Z\t1
+                            2024-01-02T11:00:00.000000Z\t1
+                            """},
+                    {" FILL(0)", """
+                            ts\tc
+                            2023-12-31T12:00:00.000000Z\t0
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T12:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-02T12:00:00.000000Z\t0
+                            """, """
+                            ts\tc
+                            2023-12-31T11:00:00.000000Z\t0
+                            2023-12-31T23:00:00.000000Z\t1
+                            2024-01-01T11:00:00.000000Z\t1
+                            2024-01-01T23:00:00.000000Z\t1
+                            2024-01-02T11:00:00.000000Z\t0
+                            """},
+            };
+            final String[] bounds = {
+                    "'2023-12-31T12:00:00' TO '2024-01-03'",
+                    "(SELECT '2023-12-31T12:00:00') TO '2024-01-03'",
+                    "'2023-12-31T12:00:00' TO (SELECT '2024-01-03')",
+                    "(SELECT '2023-12-31T12:00:00'::TIMESTAMP) TO (SELECT '2024-01-03'::DATE)",
+                    "(SELECT '2023-12-31T12:00:00'::VARCHAR) TO (SELECT '2024-01-03T00:00:00.000000000Z'::TIMESTAMP_NS)"
+            };
+            final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            for (String[] c : cases) {
+                for (String bound : bounds) {
+                    final String sql = "SELECT ts, count() c FROM k SAMPLE BY 12h FROM " + bound + c[0];
+                    assertScalarSubQueryBound(sql, c[1]);
+                    assertScalarSubQueryBound(sql + berlin, c[2]);
+                }
+            }
+
+            // a NULL bound, a zero-row sub-query included, keeps no rows, as the NULL constant does, with or without a time zone
+            for (String[] c : cases) {
+                for (String bound : new String[]{
+                        "NULL TO '2024-01-03'",
+                        "(SELECT NULL::TIMESTAMP) TO '2024-01-03'",
+                        "(SELECT ts FROM k WHERE l > 3) TO '2024-01-03'",
+                        "'2023-12-31T12:00:00' TO NULL",
+                        "'2023-12-31T12:00:00' TO (SELECT NULL)"
+                }) {
+                    final String sql = "SELECT ts, count() c FROM k SAMPLE BY 12h FROM " + bound + c[0];
+                    assertScalarSubQueryBound(sql, "ts\tc\n");
+                    assertScalarSubQueryBound(sql + berlin, "ts\tc\n");
+                }
+            }
+
+            assertScalarSubQueryBound("SELECT ts, count() FROM k SAMPLE BY 12h FROM (SELECT '2024-01-01') TO '2024-01-03'", """
+                    ts\tcount
+                    2024-01-01T00:00:00.000000Z\t1
+                    2024-01-01T12:00:00.000000Z\t1
+                    2024-01-02T00:00:00.000000Z\t1
+                    """);
+            assertScalarSubQueryBound("SELECT ts, count() FROM k SAMPLE BY 12h FROM '2024-01-01' TO (SELECT '2024-01-04') FILL(NULL)", """
+                    ts\tcount
+                    2024-01-01T00:00:00.000000Z\t1
+                    2024-01-01T12:00:00.000000Z\t1
+                    2024-01-02T00:00:00.000000Z\t1
+                    2024-01-02T12:00:00.000000Z\tnull
+                    2024-01-03T00:00:00.000000Z\tnull
+                    2024-01-03T12:00:00.000000Z\tnull
+                    """);
+
+            for (String fill : new String[]{"", " FILL(NULL)", " FILL(LINEAR)"}) {
+                assertQuery("SELECT ts, count() FROM k SAMPLE BY 12h FROM (SELECT ts FROM k) TO '2024-01-03'" + fill)
+                        .noLeakCheck()
+                        .fails(46, "scalar sub-query returned more than one row");
+                assertQuery("SELECT ts, count() FROM k SAMPLE BY 12h FROM (SELECT ts, l FROM k) TO '2024-01-03'" + fill)
+                        .noLeakCheck()
+                        .fails(46, "from lower bound must be a constant expression convertible to a TIMESTAMP");
+                assertQuery("SELECT ts, count() FROM k SAMPLE BY 12h FROM '2024-01-01' TO (SELECT true)" + fill)
+                        .noLeakCheck()
+                        .fails(62, "to upper bound must be a constant expression convertible to a TIMESTAMP");
+            }
         });
     }
 
@@ -17849,6 +18013,10 @@ public class SampleByTest extends AbstractCairoTest {
                 "        PageFrame\n" +
                 "            Row forward scan\n" +
                 "            Frame forward scan on: #TABLE#\n";
+    }
+
+    private void assertScalarSubQueryBound(String sql, String expected) throws Exception {
+        assertQuery(sql).noLeakCheck().timestamp("ts").inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void assertSampleByFlavours(String expected, String sql) throws Exception {

@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
+import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
@@ -385,7 +386,8 @@ public class FunctionResolver implements Mutable {
      * Applies the selected overload's argument coercions in place: the constant variadic check, the types of
      * untyped bind variables (a side effect on the bind variable service, in argument order), NULL substitution,
      * the conversion of constant text to TIMESTAMP and DATE, and implicit casts, recorded for
-     * {@link #getImplicitConversion}. Releases the arguments on failure.
+     * {@link #getImplicitConversion}. An operand compared with a scalar sub-query takes no implicit cast. Releases
+     * the arguments on failure.
      */
     public void coerceArguments(
             FunctionFactoryDescriptor candidateDescriptor,
@@ -456,6 +458,10 @@ public class FunctionResolver implements Mutable {
                 }
             }
 
+            boolean hasCursorParameter = false;
+            for (int k = 0; k < candidateSigArgCount; k++) {
+                hasCursorParameter |= FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(k)) == ColumnType.CURSOR;
+            }
             for (int k = 0; k < candidateSigArgCount; k++) {
                 assert args != null;
                 final Function arg = args.getQuick(k);
@@ -510,6 +516,10 @@ public class FunctionResolver implements Mutable {
                     assert argPositions != null;
                     args.setQuick(k, CastByteToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
                     implicitConversions.setQuick(k, CastByteToDecimalFunctionFactory.class);
+                }
+                if (hasCursorParameter && implicitConversions.getQuick(k) != null) {
+                    assert argPositions != null;
+                    throw ScalarSubQueryUtils.unsupportedOperand(argPositions.getQuick(k), arg.getType());
                 }
             }
         } catch (Throwable th) {
@@ -612,6 +622,12 @@ public class FunctionResolver implements Mutable {
                         || columnTag == ColumnType.INTERVAL
                         || columnTag == ColumnType.ARRAY
         ) {
+            if (columnTag == ColumnType.ARRAY && !ColumnType.isSupportedArrayElementType(ColumnType.decodeArrayElementType(columnType))) {
+                throw SqlException.position(position)
+                        .put("unsupported array element type [type=")
+                        .put(ColumnType.nameOf(ColumnType.decodeArrayElementType(columnType)))
+                        .put(']');
+            }
             return Constants.getTypeConstant(columnType);
         }
 
@@ -752,7 +768,7 @@ public class FunctionResolver implements Mutable {
                 throw th;
             }
         }
-        return cast != null && cast.isConstant() ? functionToConstant(cast) : cast;
+        return cast != null && cast.isConstant() ? functionToConstant(cast, position) : cast;
     }
 
     public int enterExecutionRequirementPosition(int position) {
@@ -775,10 +791,17 @@ public class FunctionResolver implements Mutable {
         return false;
     }
 
-    public Function functionToConstant(Function function) {
+    /**
+     * Evaluates a constant function into a constant and closes the function. A conversion error raised by the
+     * evaluation carries {@code position}, the position of the call, unless a nested call already positioned it.
+     */
+    public Function functionToConstant(Function function, int position) {
         Function newFunction;
         try {
             newFunction = functionToConstant0(function);
+        } catch (ImplicitCastException e) {
+            Misc.free(function, e);
+            throw e.getPosition() == 0 ? e.position(position) : e;
         } catch (Throwable th) {
             Misc.free(function, th);
             throw th;

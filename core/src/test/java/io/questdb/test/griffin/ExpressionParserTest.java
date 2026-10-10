@@ -715,6 +715,52 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastTargetMustBeTypeName() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT 1 :: abs(1)").fails(12, "type definition is expected");
+            assertQuery("SELECT 1 :: (1 + 2)").fails(12, "type definition is expected");
+            assertQuery("SELECT 1 :: (1, 2)").fails(12, "type definition is expected");
+            assertQuery("SELECT 1 :: (SELECT 1)").fails(12, "type definition is expected");
+            assertQuery("SELECT 1 :: now()").fails(12, "type definition is expected");
+            assertQuery("SELECT 1 :: 'int'").fails(12, "type definition is expected");
+            assertQuery("SELECT 1 :: 1").fails(12, "type definition is expected");
+            assertQuery("SELECT 1 :: true").fails(12, "type definition is expected");
+            assertQuery("SELECT 1 :: [1]").fails(12, "type definition is expected");
+            assertQuery("SELECT 1 :: x").fails(12, "invalid constant: x");
+            assertQuery("SELECT 1 :: $1").fails(12, "invalid constant: $1");
+        });
+    }
+
+    @Test
+    public void testCastTargetTypeNames() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT 1::geohash(4c) g, 1::decimal(5, 2) d, 1::double precision p, 1::"int" i, 1::float8 f, '1'::numeric::decimal(5, 2) n
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        g\td\tp\ti\tf\tn
+                        0001\t1.00\t1.0\t1\t1.0\t1.00
+                        """));
+    }
+
+    @Test
+    public void testCastToArrayType() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT 1::double[] a, 1::double[][] b, CAST(2 AS double[]) c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            [1.0]\t[[1.0]]\t[2.0]
+                            """);
+            assertQuery("SELECT 1::int[]").fails(10, "unsupported array element type [type=INT]");
+            assertQuery("SELECT CAST(1 AS int[])").fails(17, "unsupported array element type [type=INT]");
+            assertQuery("SELECT null::long[][]").fails(13, "unsupported array element type [type=LONG]");
+        });
+    }
+
+    @Test
     public void testCastTooManyArgs() {
         assertFail(
                 "cast(10,20 as short)",
@@ -1683,6 +1729,47 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 4,
                 "unclosed quoted string?"
         );
+    }
+
+    @Test
+    public void testValueListAcceptedInListPositions() throws SqlException {
+        x("a b c in", "a in (b, c)");
+        x("1 2 f", "f(1, 2)");
+        x("a b c in not", "a not in (b, c)");
+    }
+
+    @Test
+    public void testValueListRejectedInScalarPositions() {
+        assertFail("1 + (2, 3)", 4, "value list is not allowed here");
+        assertFail("1 = (2, 3)", 4, "value list is not allowed here");
+        assertFail("case when (true, false) then 1 end", 10, "value list is not allowed here");
+        assertFail("1 + case when true then 1 else (2, 3) end", 31, "value list is not allowed here");
+        assertFail("v in (1, case when true then 1 else (2, 3) end)", 36, "value list is not allowed here");
+        assertFail("(2, 3) + 1", 0, "value list is not allowed here");
+        assertFail("a[(1, 2)]", 2, "value list is not allowed here");
+        assertFail("(2, 3)", 0, "value list is not allowed here");
+    }
+
+    @Test
+    public void testValueListRejectedInScalarStatements() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (v LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            assertQuery("SELECT 1 + (2, 3)").noLeakCheck().fails(11, "value list is not allowed here");
+            assertQuery("SELECT 1 = (2, 3)").noLeakCheck().fails(11, "value list is not allowed here");
+            assertQuery("SELECT CASE WHEN (true, false) THEN 1 END").noLeakCheck().fails(17, "value list is not allowed here");
+            assertQuery("SELECT CASE WHEN (true, false) THEN 1 ELSE 0 END").noLeakCheck().fails(17, "value list is not allowed here");
+            assertQuery("SELECT 1 + CASE WHEN true THEN 1 ELSE (2, 3) END").noLeakCheck().fails(38, "value list is not allowed here");
+            assertQuery("SELECT v FROM k WHERE v IN (1, CASE WHEN true THEN 1 ELSE (2, 3) END)").noLeakCheck().fails(58, "value list is not allowed here");
+            assertQuery("SELECT 5 - (SELECT 1 = (2, 3))").noLeakCheck().fails(23, "value list is not allowed here");
+            assertQuery("SELECT (2, 3)").noLeakCheck().fails(7, "value list is not allowed here");
+            assertQuery("SELECT v, (v, 3) FROM k").noLeakCheck().fails(10, "value list is not allowed here");
+            assertQuery("SELECT v FROM k WHERE (v, 3)").noLeakCheck().fails(22, "value list is not allowed here");
+            assertQuery("SELECT v FROM k WHERE v IN (1, 3)").noLeakCheck().returns("v\n1\n3\n");
+            execute("CREATE TABLE j (v LONG, w LONG)");
+            execute("INSERT INTO j VALUES (1, 10), (2, 20)");
+            assertQuery("SELECT j.v, j2.w FROM j JOIN j j2 ON (v, w)").noLeakCheck().noRandomAccess().returns("v\tw\n1\t10\n2\t20\n");
+        });
     }
 
     @Test

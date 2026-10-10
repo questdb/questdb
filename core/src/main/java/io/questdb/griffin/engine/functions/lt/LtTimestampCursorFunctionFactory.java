@@ -88,7 +88,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         Function arg0 = args.getQuick(0);
         int arg0ColType = arg0.getType();
         if (ColumnType.tagOf(arg0ColType) != ColumnType.TIMESTAMP) {
-            throw SqlException.$(argPositions.getQuick(0), "left operand must be a TIMESTAMP, found: ").put(ColumnType.nameOf(args.getQuick(0).getType()));
+            throw ScalarSubQueryUtils.unsupportedOperand(argPositions.getQuick(0), arg0ColType);
         }
         int arg0Type = ColumnType.getTimestampType(arg0ColType);
         int metadataType = metadata.getColumnType(0);

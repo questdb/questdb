@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.AliasBaseSink;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -69,6 +70,7 @@ import static io.questdb.griffin.bind.TemporalJoinBinder.windowJoinIndex;
 
 final class PivotBinder implements Mutable {
     private final AggregateBinder aggregateBinder;
+    private final AliasBaseSink aliasBaseSink = new AliasBaseSink();
     private final SqlBinder binder;
     private final CairoConfiguration configuration;
     private final BindContext ctx;
@@ -365,10 +367,9 @@ final class PivotBinder implements Mutable {
 
     private CharSequence pivotAlias(ExpressionNode expression) {
         final BindScope scope = ctx.scope();
-        final CharacterStoreEntry text = ctx.characterStore.newEntry();
-        expression.toSink(text);
-        final CharSequence alias = SqlUtil.createExprColumnAlias(ctx.characterStore, text.toImmutable(), scope.aliases,
-                scope.aliasSequences, configuration.getColumnAliasGeneratedMaxSize(), true);
+        final int maxLength = configuration.getColumnAliasGeneratedMaxSize();
+        final CharSequence alias = SqlUtil.createExprColumnAlias(ctx.characterStore, aliasBaseSink.render(ctx.characterStore, expression, maxLength),
+                scope.aliases, scope.aliasSequences, maxLength, true);
         scope.aliases.add(alias);
         return alias;
     }
@@ -655,7 +656,7 @@ final class PivotBinder implements Mutable {
         } else {
             source = binder.bindSource(input, executionContext);
         }
-        final LatestByPlan latest = input.getLatestBy().size() > 0 ? binder.bindLatestBy(source, input) : null;
+        final LatestByPlan latest = binder.bindSourceLatestBy(source, input);
         if (where != null && !(source instanceof JoinPlan)) {
             final BoundExpression predicate;
             if (userWhere == null) {

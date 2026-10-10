@@ -619,16 +619,21 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	7.0
                             """
             );
+            final String kathmandu = """
+                    ts	sum
+                    2024-01-01T00:15:00.000000Z	4.0
+                    2024-01-01T02:15:00.000000Z	5.0
+                    2024-01-01T03:15:00.000000Z	7.0
+                    """;
             assertQueryRows(
                     "SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY (1+0) h FROM '2024-01-01T06:00:00' TO '2024-01-01T10:00:00'"
                             + " ALIGN TO CALENDAR TIME ZONE 'Asia/Kathmandu'",
-                    """
-                            ts	sum
-                            2023-12-31T23:30:00.000000Z	1.0
-                            2024-01-01T00:30:00.000000Z	3.0
-                            2024-01-01T01:30:00.000000Z	5.0
-                            2024-01-01T03:30:00.000000Z	7.0
-                            """
+                    kathmandu
+            );
+            assertQueryRows(
+                    "SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY 1h FROM '2024-01-01T06:00:00' TO '2024-01-01T10:00:00'"
+                            + " ALIGN TO CALENDAR TIME ZONE 'Asia/Kathmandu'",
+                    kathmandu
             );
         });
     }

@@ -107,6 +107,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.ColumnType.*;
@@ -650,10 +651,14 @@ final class AggregateFactoryGenerator {
             keys.masterSymbolIndexes = masterSymbols.toArray();
             keys.slaveSymbolIndexes = slaveSymbols.toArray();
         }
-        keys.masterSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, masterMetadata, keys.masterColumns, null, null,
-                keys.masterSymbolAsString, keys.masterStringAsVarchar, keys.masterTimestampAsNanos);
-        keys.slaveSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, slaveMetadata, keys.slaveColumns, null, null,
-                keys.slaveSymbolAsString, keys.slaveStringAsVarchar, keys.slaveTimestampAsNanos);
+        final Class<RecordSink> masterSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, masterMetadata,
+                keys.masterColumns, null, null, keys.masterSymbolAsString, keys.masterStringAsVarchar, keys.masterTimestampAsNanos);
+        final Class<RecordSink> slaveSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, slaveMetadata,
+                keys.slaveColumns, null, null, keys.slaveSymbolAsString, keys.slaveStringAsVarchar, keys.slaveTimestampAsNanos);
+        keys.masterSinkFactory = () -> RecordSinkFactory.getInstance(masterSinkClass, masterMetadata, keys.masterColumns, null,
+                null, keys.masterSymbolAsString, keys.masterStringAsVarchar, keys.masterTimestampAsNanos);
+        keys.slaveSinkFactory = () -> RecordSinkFactory.getInstance(slaveSinkClass, slaveMetadata, keys.slaveColumns, null,
+                null, keys.slaveSymbolAsString, keys.slaveStringAsVarchar, keys.slaveTimestampAsNanos);
         return keys;
     }
 
@@ -1139,15 +1144,12 @@ final class AggregateFactoryGenerator {
             if (slaveCount == 1) {
                 final HorizonJoinKeys key = keys.getQuick(0);
                 final RecordCursorFactory slave = slaves.getQuick(0);
-                final RecordMetadata slaveMetadata = slave.getMetadata();
                 final ArrayColumnTypes joinKeyTypes = key == null ? null : key.types;
                 final int[] masterSymbols = key == null ? null : key.masterSymbolIndexes;
                 final int[] slaveSymbols = key == null ? null : key.slaveSymbolIndexes;
                 if (!isParallel) {
-                    final RecordSink masterSink = key == null ? null : RecordSinkFactory.getInstance(key.masterSinkClass, masterMetadata,
-                            key.masterColumns, null, null, key.masterSymbolAsString, key.masterStringAsVarchar, key.masterTimestampAsNanos);
-                    final RecordSink slaveSink = key == null ? null : RecordSinkFactory.getInstance(key.slaveSinkClass, slaveMetadata,
-                            key.slaveColumns, null, null, key.slaveSymbolAsString, key.slaveStringAsVarchar, key.slaveTimestampAsNanos);
+                    final RecordSink masterSink = key == null ? null : key.masterSinkFactory.newInstance();
+                    final RecordSink slaveSink = key == null ? null : key.slaveSinkFactory.newInstance();
                     isAdopted = true;
                     return isKeyed
                             ? new HorizonJoinRecordCursorFactory(configuration, asm, metadata, innerMetadata, master, slave, offsets,
@@ -1159,23 +1161,23 @@ final class AggregateFactoryGenerator {
                 }
                 final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, workerKeyFunctions,
                         compiledFilter, bindVariableMemory, bindVariables, filter, filterColumnIndexes, workerFilters);
-                final Class<RecordSink> masterSinkClass = key == null ? null : key.masterSinkClass;
-                final Class<RecordSink> slaveSinkClass = key == null ? null : key.slaveSinkClass;
+                final ObjectFactory<RecordSink> masterSinkFactory = key == null ? null : key.masterSinkFactory;
+                final ObjectFactory<RecordSink> slaveSinkFactory = key == null ? null : key.slaveSinkFactory;
                 isAdopted = true;
                 return isKeyed
                         ? new AsyncHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), metadata, innerMetadata, master, slave, offsets, masterTimestampIndex,
-                        groupByFunctions, recordFunctions, keyFunctions, keyTypes, valueTypes, joinKeyTypes, masterSinkClass,
-                        slaveSinkClass, masterColumnCount, masterSymbols, slaveSymbols, columnFilter, columnSources, columnIndices,
+                        groupByFunctions, recordFunctions, keyFunctions, keyTypes, valueTypes, joinKeyTypes, masterSinkFactory,
+                        slaveSinkFactory, masterColumnCount, masterSymbols, slaveSymbols, columnFilter, columnSources, columnIndices,
                         resources, workerCount)
                         : new AsyncHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
                         executionContext.getMessageBus(), metadata, innerMetadata, master, slave, offsets, masterTimestampIndex,
-                        groupByFunctions, valueTypes.getColumnCount(), joinKeyTypes, masterSinkClass, slaveSinkClass,
+                        groupByFunctions, valueTypes.getColumnCount(), joinKeyTypes, masterSinkFactory, slaveSinkFactory,
                         masterColumnCount, masterSymbols, slaveSymbols, columnSources, columnIndices, resources, workerCount);
             }
             final ColumnTypes[] joinKeyTypes = new ColumnTypes[slaveCount];
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] masterSinkClasses = new Class[slaveCount];
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] slaveSinkClasses = new Class[slaveCount];
+            final ObjList<ObjectFactory<RecordSink>> masterSinkFactories = new ObjList<>(slaveCount);
+            final ObjList<ObjectFactory<RecordSink>> slaveSinkFactories = new ObjList<>(slaveCount);
             final int masterTimestampType = masterMetadata.getTimestampType();
             slaveStates = new ObjList<>(slaveCount);
             for (int s = 0; s < slaveCount; s++) {
@@ -1185,9 +1187,9 @@ final class AggregateFactoryGenerator {
                 final boolean isScaled = masterTimestampType != slaveTimestampType;
                 if (key != null) {
                     joinKeyTypes[s] = key.types;
-                    masterSinkClasses[s] = key.masterSinkClass;
-                    slaveSinkClasses[s] = key.slaveSinkClass;
                 }
+                masterSinkFactories.add(key == null ? null : key.masterSinkFactory);
+                slaveSinkFactories.add(key == null ? null : key.slaveSinkFactory);
                 slaveStates.add(new HorizonJoinSlaveState(slave,
                         isScaled ? ColumnType.getTimestampDriver(masterTimestampType).toNanosScale() : 1,
                         isScaled ? ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale() : 1,
@@ -1199,10 +1201,10 @@ final class AggregateFactoryGenerator {
                 isAdopted = true;
                 return isKeyed
                         ? new MultiHorizonJoinRecordCursorFactory(configuration, asm, metadata, innerMetadata, master, slaveStates,
-                        masterSinkClasses, slaveSinkClasses, offsets, masterTimestampIndex, groupByFunctions, recordFunctions,
+                        masterSinkFactories, slaveSinkFactories, offsets, masterTimestampIndex, groupByFunctions, recordFunctions,
                         keyFunctions, keyTypes, valueTypes, columnFilter, columnSources, columnIndices)
                         : new MultiHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, metadata, innerMetadata, master, slaveStates,
-                        masterSinkClasses, slaveSinkClasses, offsets, masterTimestampIndex, groupByFunctions,
+                        masterSinkFactories, slaveSinkFactories, offsets, masterTimestampIndex, groupByFunctions,
                         valueTypes.getColumnCount(), columnSources, columnIndices);
             }
             final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, workerKeyFunctions,
@@ -1210,12 +1212,12 @@ final class AggregateFactoryGenerator {
             isAdopted = true;
             return isKeyed
                     ? new AsyncMultiHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
-                    executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes, masterSinkClasses,
-                    slaveSinkClasses, offsets, masterTimestampIndex, groupByFunctions, recordFunctions, keyFunctions, keyTypes,
+                    executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes, masterSinkFactories,
+                    slaveSinkFactories, offsets, masterTimestampIndex, groupByFunctions, recordFunctions, keyFunctions, keyTypes,
                     valueTypes, columnFilter, columnSources, columnIndices, resources, workerCount)
                     : new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
-                    executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes, masterSinkClasses,
-                    slaveSinkClasses, offsets, masterTimestampIndex, groupByFunctions, valueTypes.getColumnCount(), columnSources,
+                    executionContext.getMessageBus(), metadata, innerMetadata, master, slaveStates, joinKeyTypes, masterSinkFactories,
+                    slaveSinkFactories, offsets, masterTimestampIndex, groupByFunctions, valueTypes.getColumnCount(), columnSources,
                     columnIndices, resources, workerCount);
         } catch (Throwable th) {
             if (!isAdopted) {
@@ -1287,9 +1289,9 @@ final class AggregateFactoryGenerator {
         private final BitSet slaveSymbolAsString = new BitSet();
         private final BitSet slaveTimestampAsNanos = new BitSet();
         private final ArrayColumnTypes types = new ArrayColumnTypes();
-        private Class<RecordSink> masterSinkClass;
+        private ObjectFactory<RecordSink> masterSinkFactory;
         private int[] masterSymbolIndexes;
-        private Class<RecordSink> slaveSinkClass;
+        private ObjectFactory<RecordSink> slaveSinkFactory;
         private int[] slaveSymbolIndexes;
     }
 }

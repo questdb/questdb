@@ -35,7 +35,6 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.JoinInput;
-import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -56,6 +55,7 @@ import io.questdb.std.ObjList;
 final class DecorrelationContext implements Mutable {
     static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
     final ObjList<BoundExpression> callArguments;
+    final ObjList<JoinInput> carrierSteps = new ObjList<>();
     final ObjList<LogicalPlan> chain;
     final IntList chainOuterIds = new IntList();
     final CharacterStore characterStore;
@@ -108,6 +108,7 @@ final class DecorrelationContext implements Mutable {
 
     @Override
     public void clear() {
+        releaseCarriers();
         chainOuterIds.clear();
         copier.clear();
         mappedColumnIds.clear();
@@ -147,6 +148,21 @@ final class DecorrelationContext implements Mutable {
         return TreeWalk.CONTINUE;
     }
 
+    private void recordCarriers(JoinInput step, BoundExpression expression) {
+        if (expression == null) {
+            return;
+        }
+        final int base = tmpColumnIds.size();
+        outerColumnReads.collect(expression, tmpColumnIds);
+        for (int i = base, n = tmpColumnIds.size(); i < n; i++) {
+            final int carrierId = substitution.get(tmpColumnIds.getQuick(i));
+            if (carrierId > -1) {
+                addCarrier(step, carrierId);
+            }
+        }
+        tmpColumnIds.setPos(base);
+    }
+
     static void appendMissingColumns(OutputSchema target, OutputSchema source) {
         for (int i = 0, n = source.getColumnCount(); i < n; i++) {
             if (target.getColumnIndexById(source.getColumnId(i)) < 0) {
@@ -154,15 +170,6 @@ final class DecorrelationContext implements Mutable {
                         source.getColumnQualifier(i));
             }
         }
-    }
-
-    /**
-     * True when step {@code step} of the join can emit the columns of input {@code index} as NULL: the input's
-     * own step null-extends it, or a later step null-extends its master.
-     */
-    static boolean isNullingStep(JoinPlan join, int step, int index) {
-        final JoinKind type = join.getInputs().getQuick(step).getJoinType();
-        return step == index ? type.isSlaveNulling() : step > index && type.isMasterNulling();
     }
 
     static boolean isTrue(BoundExpression condition) {
@@ -197,6 +204,20 @@ final class DecorrelationContext implements Mutable {
                             input.getBindingAlias());
                 }
             }
+        }
+    }
+
+    /**
+     * Records a carrier of the step for {@link PlanVerifier}, which reads it right after decorrelation; the step's
+     * carriers stay until {@link #releaseCarriers}.
+     */
+    void addCarrier(JoinInput step, int columnId) {
+        final IntList carriers = step.getCarrierColumnIds();
+        if (carriers.size() == 0) {
+            carrierSteps.add(step);
+        }
+        if (!carriers.contains(columnId)) {
+            carriers.add(columnId);
         }
     }
 
@@ -391,12 +412,38 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * Renames, in the node itself, the outer columns of the mapping above {@code base} to their mapped columns.
+     * Records, as carriers of the step, the columns {@link #substitution} maps the outer columns its ON condition and
+     * key filter read to.
+     */
+    void recordCarriers(JoinInput step) {
+        recordCarriers(step, step.getOnResidual());
+        recordCarriers(step, step.getKeyFilter());
+    }
+
+    /**
+     * Empties the carriers of every step decorrelation recorded them on: their column ids hold only until the next
+     * pass renames columns.
+     */
+    void releaseCarriers() {
+        for (int i = 0, n = carrierSteps.size(); i < n; i++) {
+            carrierSteps.getQuick(i).getCarrierColumnIds().clear();
+        }
+        carrierSteps.clear();
+    }
+
+    /**
+     * Renames, in the node itself, the outer columns of the mapping above {@code base} to their mapped columns, and
+     * records the mapped columns a join step's ON condition reads as the step's carriers.
      */
     void remapMapped(LogicalPlan node, int base) {
         substitution.clear();
         for (int k = base, n = mappedOuterIds.size(); k < n; k++) {
             substitution.put(mappedOuterIds.getQuick(k), mappedColumnIds.getQuick(k));
+        }
+        if (node instanceof JoinPlan join) {
+            for (int i = 0, n = join.getInputs().size(); i < n; i++) {
+                recordCarriers(join.getInputs().getQuick(i));
+            }
         }
         copier.remap(node, substitution);
     }

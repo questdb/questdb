@@ -469,7 +469,7 @@ public final class SqlBinder implements Mutable {
         bindScope.aliasSequences.clear();
         bindScope.projectionAliasIndexes.clear();
 
-        final LatestByPlan latest = source.getLatestBy().size() > 0 ? bindLatestBy(sourcePlan, source) : null;
+        final LatestByPlan latest = bindSourceLatestBy(sourcePlan, source);
         if (where != null && latest != null && sourcePlan instanceof ScanPlan && configuration.useWithinLatestByOptimisation()) {
             bindScope.withinPrefixes.clear();
             validateWithin(where, sourcePlan.getOutput(), sourceAlias(source), executionContext);
@@ -1200,6 +1200,20 @@ public final class SqlBinder implements Mutable {
         return latest;
     }
 
+    /**
+     * Binds LATEST ON over the input, the leading input of the block's joins, filtered by the conjuncts that run
+     * before it.
+     */
+    LatestByPlan bindLatestBy(LogicalPlan input, ExpressionNode where, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
+        final LatestByPlan latest = bindLatestBy(input, source);
+        if (where != null && input instanceof ScanPlan && configuration.useWithinLatestByOptimisation()) {
+            ctx.scope().withinPrefixes.clear();
+            validateWithin(where, input.getOutput(), sourceAlias(source), executionContext);
+        }
+        latest.replaceInput(0, bindWhere(where, input, latest, source, executionContext));
+        return latest;
+    }
+
     BoundExpression bindPredicate(
             ExpressionNode expression, LogicalPlan input, QueryModel source, SqlExecutionContext executionContext
     ) throws SqlException {
@@ -1263,6 +1277,14 @@ public final class SqlBinder implements Mutable {
         } finally {
             scope.currentHints = previousHints;
         }
+    }
+
+    /**
+     * Binds LATEST ON over the block's single source; returns null when the block has no LATEST ON or its joins bind
+     * it over their leading input.
+     */
+    LatestByPlan bindSourceLatestBy(LogicalPlan sourcePlan, QueryModel source) throws SqlException {
+        return source.getLatestBy().size() == 0 || isLatestOverLeadingInput(source) ? null : bindLatestBy(sourcePlan, source);
     }
 
     /**
@@ -1362,6 +1384,14 @@ public final class SqlBinder implements Mutable {
         } finally {
             predicateSource = null;
         }
+    }
+
+    /**
+     * Whether the block's LATEST ON applies to its leading input, which owns the LATEST ON timestamp, before the
+     * block's joins.
+     */
+    boolean isLatestOverLeadingInput(QueryModel source) {
+        return source.getLatestBy().size() > 0 && source.getJoinModels().size() > 1;
     }
 
     void validateBlockWindows(QueryModel model, QueryModel source) throws SqlException {

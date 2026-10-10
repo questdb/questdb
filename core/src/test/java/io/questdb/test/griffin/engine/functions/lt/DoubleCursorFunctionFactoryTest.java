@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
@@ -61,6 +62,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -2084,6 +2086,12 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         }
     }
 
+    private static ObjList<ObjectFactory<RecordSink>> noSinkFactories(int count) {
+        final ObjList<ObjectFactory<RecordSink>> factories = new ObjList<>(count);
+        factories.setPos(count);
+        return factories;
+    }
+
     private void assertHorizonConstructorRollback(boolean isMulti) {
         final RuntimeException primary = new RuntimeException("constructor primary");
         final RuntimeException ownerFilterFailure = new RuntimeException("owner filter close");
@@ -2132,8 +2140,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         masterFactory,
                         slaveStates,
                         null,
-                        new Class[2],
-                        new Class[2],
+                        noSinkFactories(2),
+                        noSinkFactories(2),
                         new long[]{0},
                         0,
                         groupByFunctions,
@@ -2326,8 +2334,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     masterFactory,
                     states,
                     null,
-                    new Class[3],
-                    new Class[3],
+                    noSinkFactories(3),
+                    noSinkFactories(3),
                     new long[]{0},
                     0,
                     groups,

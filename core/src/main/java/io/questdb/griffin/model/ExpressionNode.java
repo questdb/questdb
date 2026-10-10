@@ -60,6 +60,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public boolean implemented;
     public boolean innerPredicate = false;
     public boolean isConstantExpression;
+    public boolean isQuoted;
     // A synthetic timestamp reference keeps the column live without declaring output order.
     // Code generation inherits the input factory's designation, including no designation.
     public boolean isTimestampOrderInherited;
@@ -171,6 +172,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.type = node.type;
         copy.paramCount = node.paramCount;
         copy.isConstantExpression = node.isConstantExpression;
+        copy.isQuoted = node.isQuoted;
         copy.isTimestampOrderInherited = node.isTimestampOrderInherited;
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
@@ -192,6 +194,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         type = UNKNOWN;
         paramCount = 0;
         isConstantExpression = false;
+        isQuoted = false;
         isTimestampOrderInherited = false;
         queryModel = null;
         innerPredicate = false;
@@ -216,6 +219,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.type = other.type;
         this.paramCount = other.paramCount;
         this.isConstantExpression = other.isConstantExpression;
+        this.isQuoted = other.isQuoted;
         this.isTimestampOrderInherited = other.isTimestampOrderInherited;
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;

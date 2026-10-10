@@ -53,6 +53,7 @@ import io.questdb.griffin.plan.logical.LogicalPlanPrinter;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
+import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -86,6 +87,7 @@ public final class PlanVerifier {
     public static final String CHOICE_UNPLANNED = "physical choice is not recorded after access path planning";
     public static final String COLUMN_TYPE = "column expression type differs from the column it reads";
     public static final String CURSOR_PLAN = "sub-query cursor has no plan";
+    public static final String DECORRELATION_CARRIER = "decorrelation carrier reads a column that a step matching per outer row null-extends";
     public static final String DEPENDENT_STEP = "dependent join step survives decorrelation";
     public static final String DUPLICATE_COLUMN_ID = "output lists a column id twice";
     public static final String EXPRESSION_NULL = "expression is null";
@@ -112,6 +114,7 @@ public final class PlanVerifier {
     public static final String ORDER_REQUEST = "requested order names a column the node does not output";
     public static final String OUTER_COLUMN_SCOPE = "outer column outside a dependent join step";
     public static final String OUTER_COLUMN_UNRESOLVED = "outer column is not a column of a preceding join input";
+    public static final String OUTER_JOIN_ON_KEPT = "outer join step lost an ON condition fact in decorrelation";
     public static final String OUTPUT_FORWARDING = "output does not forward the input columns";
     public static final String OUTPUT_TIMESTAMP = "designated timestamp differs from the input's";
     public static final String PREDICATE_CONSTANT = "constant predicate is not folded to a literal";
@@ -139,10 +142,17 @@ public final class PlanVerifier {
     public static final String WINDOW_OUTPUT = "window output is not input columns followed by its function columns";
     public static final String WINDOW_SHAPE = "window functions, specs and column ids differ in length";
     private final ObjList<BoundExpression> checkedExpressions = new ObjList<>();
+    private final PlanVisitor carrierChecker = this::checkCarriers;
     private final IntList checkedReadIds = new IntList();
     private final IntHashSet columnIds;
     private final OutputSchema joinScope;
     private final ObjList<JoinInput> outerInputs;
+    private final IntList outerJoinOtherCounts = new IntList();
+    private final IntList outerJoinOuterPairCounts = new IntList();
+    private final IntList outerJoinPairCounts = new IntList();
+    private final PlanVisitor outerJoinRecorder = this::recordJoinSteps;
+    private final ObjList<JoinInput> outerJoinSteps = new ObjList<>();
+    private final IntList onPairs = new IntList();
     private final ExpressionVisitor expressionNodes = this::expressionNode;
     private final ReadEnumerator readEnumerator = new ReadEnumerator();
     private final ObjList<LogicalPlan> visited;
@@ -151,6 +161,8 @@ public final class PlanVerifier {
     private boolean isAccessPathRequired;
     private boolean isDependentStepAllowed;
     private boolean isJoinUnordered;
+    private int onOtherCount;
+    private int onOuterPairCount;
     private LogicalPlan node;
     private String pass;
     private LogicalPlan root;
@@ -173,6 +185,19 @@ public final class PlanVerifier {
     @TestOnly
     public static PlanVerifier newStandalone() {
         return new PlanVerifier(new ObjList<>(), new OutputSchema(), new IntHashSet(), new ObjList<>());
+    }
+
+    /**
+     * Records the ON condition facts of every outer join step of the plan, which {@link #verifyDecorrelation}
+     * compares decorrelation's output with.
+     */
+    public boolean recordOuterJoins(LogicalPlan root) {
+        outerJoinSteps.clear();
+        outerJoinPairCounts.clear();
+        outerJoinOuterPairCounts.clear();
+        outerJoinOtherCounts.clear();
+        root.walkTopDown(outerJoinRecorder);
+        return true;
     }
 
     /**
@@ -211,9 +236,77 @@ public final class PlanVerifier {
         return check(root, pass, true);
     }
 
+    /**
+     * Verifies decorrelation's output against the facts {@link #recordOuterJoins} recorded: every recorded outer join
+     * step keeps at least as many distinct equalities between its own columns and other ON conjuncts, and, when its ON
+     * condition compared a column with an outer column, an equality with one of its carriers, so decorrelation moved
+     * none of its ON condition out of it; and no carrier reads a column that a step matching per outer row
+     * null-extends.
+     */
+    public boolean verifyDecorrelation(LogicalPlan root, String pass) {
+        this.root = root;
+        this.pass = pass;
+        node = root;
+        try {
+            for (int i = 0, n = outerJoinSteps.size(); i < n; i++) {
+                final JoinInput step = outerJoinSteps.getQuick(i);
+                countOnFacts(step);
+                if (onPairs.size() / 2 < outerJoinPairCounts.getQuick(i) || onOtherCount < outerJoinOtherCounts.getQuick(i)
+                        || outerJoinOuterPairCounts.getQuick(i) > 0 && !hasCarrierPair(step)) {
+                    fail(OUTER_JOIN_ON_KEPT);
+                }
+            }
+            root.walkTopDown(carrierChecker);
+        } finally {
+            outerJoinSteps.clear();
+            outerJoinPairCounts.clear();
+            outerJoinOuterPairCounts.clear();
+            outerJoinOtherCounts.clear();
+            onPairs.clear();
+            this.root = null;
+            this.pass = null;
+            node = null;
+        }
+        return true;
+    }
+
     private static boolean isBounded(SortPlan.Algorithm algorithm) {
         return algorithm == SortPlan.Algorithm.LIMITED || algorithm == SortPlan.Algorithm.PRESORTED_LIMITED || algorithm == SortPlan.Algorithm.LONG_TOP_K
                 || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K || algorithm == SortPlan.Algorithm.PARALLEL_TOP_K;
+    }
+
+    private static boolean isColumnReference(BoundExpression expression) {
+        return expression instanceof ColumnExpression column && !column.isCast() || expression instanceof OuterColumnExpression;
+    }
+
+    /**
+     * True when a step at an ordered position up to {@code through} null-extends the input at {@code input} and
+     * matches per outer row: it null-extends its master and reads a carrier, or it keys on a carrier of its prefix.
+     */
+    private static boolean isNulledPerOuterRow(JoinPlan join, int input, int through) {
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+        for (int i = 1; i <= through; i++) {
+            if (LogicalPlans.isNullingStep(join, steps.getQuick(i), steps.getQuick(input)) && isOuterDependent(steps.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isOuterDependent(JoinInput step) {
+        final IntList carriers = step.getCarrierColumnIds();
+        if (carriers.size() == 0) {
+            return false;
+        }
+        if (step.getJoinType().isMasterNulling()) {
+            return true;
+        }
+        for (int i = 0, n = carriers.size(); i < n; i++) {
+            if (step.getSourceOutput().getColumnIndexById(carriers.getQuick(i)) < 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int occurrences(BoundExpression tree, BoundExpression node) {
@@ -231,6 +324,15 @@ public final class PlanVerifier {
 
     private static boolean sameText(CharSequence text, CharSequence other) {
         return text == null ? other == null : other != null && Chars.equals(text, other);
+    }
+
+    private static int sourcePosition(ObjList<JoinInput> steps, int columnId, int limit) {
+        for (int i = 0; i < limit; i++) {
+            if (steps.getQuick(i).getSourceOutput().getColumnIndexById(columnId) > -1) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void accessPath(ScanPlan scan) {
@@ -266,6 +368,18 @@ public final class PlanVerifier {
         predicate(scan.getWithin());
     }
 
+    private void addOnPair(int left, int right) {
+        final int lo = Math.min(left, right);
+        final int hi = Math.max(left, right);
+        for (int i = 0, n = onPairs.size(); i < n; i += 2) {
+            if (onPairs.getQuick(i) == lo && onPairs.getQuick(i + 1) == hi) {
+                return;
+            }
+        }
+        onPairs.add(lo);
+        onPairs.add(hi);
+    }
+
     private boolean check(LogicalPlan root, String pass, boolean isDependentStepAllowed) {
         this.root = root;
         this.pass = pass;
@@ -284,6 +398,32 @@ public final class PlanVerifier {
             site = null;
         }
         return true;
+    }
+
+    private int checkCarriers(LogicalPlan plan) {
+        if (plan instanceof JoinPlan join) {
+            final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+            for (int p = 0, n = steps.size(); p < n; p++) {
+                final JoinInput step = steps.getQuick(p);
+                final IntList carriers = step.getCarrierColumnIds();
+                for (int i = 0, m = carriers.size(); i < m; i++) {
+                    final int columnId = carriers.getQuick(i);
+                    if (step.getSourceOutput().getColumnIndexById(columnId) > -1) {
+                        resolveCarrier(step.getInput(), columnId);
+                        continue;
+                    }
+                    final int source = sourcePosition(steps, columnId, p);
+                    if (source > -1) {
+                        if (isNulledPerOuterRow(join, source, p - 1)) {
+                            node = join;
+                            fail(DECORRELATION_CARRIER, columnId);
+                        }
+                        resolveCarrier(steps.getQuick(source).getInput(), columnId);
+                    }
+                }
+            }
+        }
+        return TreeWalk.CONTINUE;
     }
 
     /**
@@ -307,6 +447,40 @@ public final class PlanVerifier {
         if (!isCast && type != dataType) {
             fail(COLUMN_TYPE, columnId);
         }
+    }
+
+    private void countConjuncts(BoundExpression predicate) {
+        if (predicate == null) {
+            return;
+        }
+        if (predicate instanceof FunctionExpression call && call.isAnd()) {
+            countConjuncts(call.argumentAt(0));
+            countConjuncts(call.argumentAt(1));
+            return;
+        }
+        if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && Chars.equals(call.getName(), '=')
+                && isColumnReference(call.argumentAt(0)) && isColumnReference(call.argumentAt(1))) {
+            final boolean isLeftOuter = call.argumentAt(0) instanceof OuterColumnExpression;
+            final boolean isRightOuter = call.argumentAt(1) instanceof OuterColumnExpression;
+            if (isLeftOuter != isRightOuter) {
+                onOuterPairCount++;
+            } else if (!isLeftOuter) {
+                addOnPair(((ColumnExpression) call.argumentAt(0)).getColumnId(), ((ColumnExpression) call.argumentAt(1)).getColumnId());
+            }
+            return;
+        }
+        onOtherCount++;
+    }
+
+    private void countOnFacts(JoinInput step) {
+        onPairs.clear();
+        onOtherCount = 0;
+        onOuterPairCount = 0;
+        for (int i = 0, n = step.getMasterKeyColumnIds().size(); i < n; i++) {
+            addOnPair(step.getMasterKeyColumnIds().getQuick(i), step.getSlaveKeyColumnIds().getQuick(i));
+        }
+        countConjuncts(step.getOnResidual());
+        countConjuncts(step.getKeyFilter());
     }
 
     private AssertionError error(String invariant, int columnId) {
@@ -511,6 +685,16 @@ public final class PlanVerifier {
                 noColumnReads(sample.getFillValues().getQuick(i));
             }
         }
+    }
+
+    private boolean hasCarrierPair(JoinInput step) {
+        final IntList carriers = step.getCarrierColumnIds();
+        for (int i = 0, n = onPairs.size(); i < n; i++) {
+            if (carriers.contains(onPairs.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void horizonJoin(HorizonJoinPlan horizon) {
@@ -923,6 +1107,22 @@ public final class PlanVerifier {
         readIds.clear();
     }
 
+    private int recordJoinSteps(LogicalPlan plan) {
+        if (plan instanceof JoinPlan join) {
+            for (int i = 0, n = join.getInputs().size(); i < n; i++) {
+                final JoinInput step = join.getInputs().getQuick(i);
+                if (!step.isDependent() && step.getJoinType().isBarrier()) {
+                    countOnFacts(step);
+                    outerJoinSteps.add(step);
+                    outerJoinPairCounts.add(onPairs.size() / 2);
+                    outerJoinOuterPairCounts.add(onOuterPairCount);
+                    outerJoinOtherCounts.add(onOtherCount);
+                }
+            }
+        }
+        return TreeWalk.CONTINUE;
+    }
+
     private void requestedColumn(int columnId, OutputSchema output) {
         if (columnId >= 0 && output.getColumnIndexById(columnId) < 0) {
             fail(ORDER_REQUEST, columnId);
@@ -941,6 +1141,57 @@ public final class PlanVerifier {
     private void resolveAll(IntList columnIds) {
         for (int i = 0, n = columnIds.size(); i < n; i++) {
             readColumn(columnIds.getQuick(i));
+        }
+    }
+
+    /**
+     * Follows a carrier column down to the join input that defines it, through column projections, forwarding
+     * nodes, grouping keys and window pass-through columns; a computed column, such as the CASE a FULL join's carrier
+     * is, ends the walk.
+     */
+    private void resolveCarrier(LogicalPlan plan, int columnId) {
+        while (plan != null) {
+            switch (plan) {
+                case ProjectPlan project -> {
+                    final int index = project.getOutput().getColumnIndexById(columnId);
+                    if (index < 0 || !(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
+                        return;
+                    }
+                    columnId = column.getColumnId();
+                    plan = project.getInput();
+                }
+                case ForwardingPlan forwarding -> plan = forwarding.inputAt(0);
+                case AggregatePlan aggregate -> {
+                    final int index = aggregate.getOutput().getColumnIndexById(columnId);
+                    if (index < 0 || index >= aggregate.getGroupingExpressions().size()
+                            || !(aggregate.getGroupingExpressions().getQuick(index) instanceof ColumnExpression column)) {
+                        return;
+                    }
+                    columnId = column.getColumnId();
+                    plan = aggregate.getInput();
+                }
+                case WindowPlan window -> {
+                    if (window.getInput().getOutput().getColumnIndexById(columnId) < 0) {
+                        return;
+                    }
+                    plan = window.getInput();
+                }
+                case JoinPlan join -> {
+                    final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+                    final int source = sourcePosition(steps, columnId, steps.size());
+                    if (source < 0) {
+                        return;
+                    }
+                    if (isNulledPerOuterRow(join, source, steps.size() - 1)) {
+                        node = join;
+                        fail(DECORRELATION_CARRIER, columnId);
+                    }
+                    plan = steps.getQuick(source).getInput();
+                }
+                default -> {
+                    return;
+                }
+            }
         }
     }
 

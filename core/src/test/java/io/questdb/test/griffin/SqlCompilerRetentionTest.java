@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.pool.SqlCompilerPool;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
@@ -31,6 +32,7 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -117,6 +119,60 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                         .returns("""
                                 x
                                 2
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testFailedCteReparseLeavesNoLexerStash() throws Exception {
+        assertMemoryLeak(() -> {
+            final String sql = "WITH c AS (SELECT @x v FROM long_sequence(1)) SELECT * FROM c UNION ALL SELECT * FROM (DECLARE @y := 1 SELECT * FROM c)";
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (int i = 0; i < 3; i++) {
+                    try {
+                        compileAndClose(compiler, sql);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        Assert.assertEquals(18, e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "tried to use undeclared variable `@x`");
+                    }
+                    Assert.assertEquals(0, compiler.getLexerStashSize());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLongDeclaredValueAliasesReturnStore() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+            final int valueLength = 15_000;
+            final int columnCount = 1_000;
+            final StringSink sql = new StringSink();
+            sql.put("DECLARE @s := '").repeat("x", valueLength).put("' SELECT ");
+            for (int i = 0; i < columnCount; i++) {
+                if (i > 0) {
+                    sql.put(',');
+                }
+                sql.put("@s");
+            }
+            sql.put(" FROM long_sequence(1)");
+            final int ceiling = configuration.getSqlCharacterStoreCapacity();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                compileAndClose(compiler, sql);
+                Assert.assertTrue(compiler.getCharacterStoreCapacity() > ceiling);
+                Assert.assertTrue(compiler.getCharacterStoreCapacity() < valueLength * 50);
+                compiler.clear();
+                Assert.assertEquals(ceiling, compiler.getCharacterStoreCapacity());
+
+                assertQuery("DECLARE @s := 'abc' SELECT @s, @s FROM long_sequence(1)")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                'abc'\t'abc'_2
+                                abc\tabc
                                 """);
             }
         });

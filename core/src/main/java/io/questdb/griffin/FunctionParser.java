@@ -141,10 +141,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
 
             Function function = functionStack.poll();
-            positionStack.pop();
+            final int position = positionStack.pop();
             assert positionStack.size() == functionStack.size();
             if (function != null && function.isConstant() && function.extendedOps() == null) {
-                function = resolver.functionToConstant(function);
+                function = resolver.functionToConstant(function, position);
             }
             return function;
         } finally {
@@ -192,7 +192,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                 try {
                     if (arg != null && arg.isConstant() && arg.extendedOps() == null && !(arg instanceof TypeConstant)) {
-                        arg = resolver.functionToConstant(arg);
+                        arg = resolver.functionToConstant(arg, pos);
                     }
                 } catch (Throwable th) {
                     // these args were already popped from functionStack.

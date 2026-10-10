@@ -103,6 +103,97 @@ public class JoinPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossBeforeKeyedJoinTrailsItInNonEquiNullingPrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_cross_a (k INT, x INT)");
+            execute("CREATE TABLE lp_cross_b (k INT)");
+            execute("CREATE TABLE lp_cross_c (y INT)");
+            execute("CREATE TABLE lp_cross_d (k INT)");
+            execute("INSERT INTO lp_cross_a VALUES (1, 1), (2, 2), (3, 3)");
+            execute("INSERT INTO lp_cross_b VALUES (1), (2)");
+            execute("INSERT INTO lp_cross_c VALUES (10), (20)");
+            execute("INSERT INTO lp_cross_d VALUES (2)");
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                final String nullingJoin = joinType.equals("RIGHT") ? "Right" : "Full";
+                assertQuery("SELECT a.k, c.y, d.k dk FROM lp_cross_a a CROSS JOIN lp_cross_c c JOIN lp_cross_b b ON a.k = b.k "
+                        + joinType + " JOIN lp_cross_d d ON a.x >= d.k")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlan("""
+                                SelectedRecord
+                                    Nested Loop %s Join
+                                      filter: a.x>=d.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_cross_b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_cross_d
+                                """.formatted(nullingJoin))
+                        .returns(joinType.equals("RIGHT")
+                                ? """
+                                k	y	dk
+                                2	10	2
+                                2	20	2
+                                """
+                                : """
+                                k	y	dk
+                                1	10	null
+                                1	20	null
+                                2	10	2
+                                2	20	2
+                                """);
+                assertQuery("SELECT a.k, c.y, d.k dk, b2.k bk FROM lp_cross_a a CROSS JOIN lp_cross_c c JOIN lp_cross_b b ON a.k = b.k "
+                        + joinType + " JOIN lp_cross_d d ON a.x >= d.k JOIN lp_cross_b b2 ON b2.k = d.k")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlan("""
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: b2.k=d.k
+                                        Nested Loop %s Join
+                                          filter: a.x>=d.k
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: b.k=a.k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_cross_a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: lp_cross_b
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_c
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_d
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_b
+                                """.formatted(nullingJoin))
+                        .returns("""
+                                k	y	dk	bk
+                                2	10	2	2
+                                2	20	2	2
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testCrossInnerExplicitShorthandAndCompositeKeys() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -568,12 +659,14 @@ public class JoinPlanningTest extends AbstractCairoTest {
                                 lid	rid	lts	rts
                                 1	10	1970-01-01T00:00:00.001000Z	1970-01-01T00:00:00.001000000Z
                                 2	12	1970-01-01T00:00:00.002000Z	1970-01-01T00:00:00.002000000Z
+                                3	13	\t
                                 """);
                 assertRows("SELECT l.id lid,r.id rid FROM lp_join_r r JOIN lp_join_l l ON r.ts=l.ts ORDER BY lid,rid", fullFat,
                         """
                                 lid	rid
                                 1	10
                                 2	12
+                                3	13
                                 """);
             }
         });

@@ -2118,10 +2118,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             """);
 
             assertQuery("SELECT 'm' -1")
-                    .fails(0, "inconvertible value: m [CHAR -> INT]");
+                    .fails(11, "inconvertible value: m [CHAR -> INT]");
 
             assertQuery("select ~'m'")
-                    .fails(0, "inconvertible value: m [CHAR -> INT]");
+                    .fails(7, "inconvertible value: m [CHAR -> INT]");
         });
 
         assertMemoryLeak(() -> {

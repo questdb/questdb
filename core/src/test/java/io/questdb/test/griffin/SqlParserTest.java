@@ -10537,17 +10537,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 Cross Join
                                     Hash Join Light
                                       condition: e.id=b.id
-                                        AsOf Join Fast
-                                            Cross Join
+                                        Cross Join
+                                            AsOf Join Fast
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: a
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: b
+                                                    Frame forward scan on: d
                                             PageFrame
                                                 Row forward scan
-                                                Frame forward scan on: d
+                                                Frame forward scan on: b
                                         Hash
                                             PageFrame
                                                 Row forward scan
@@ -19182,22 +19182,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSubQueryModeNestedCorruption() throws Exception {
-        // Known bug: nested parseAsSubQuery calls corrupt the subQueryMode flag.
-        // parseAsSubQuery sets subQueryMode=true on entry and unconditionally
-        // resets it to false in the finally block. With 3+ nesting levels, the
-        // inner finally resets the flag while the outer subquery is still being
-        // parsed, causing "unexpected token [)]" for a valid query.
-        //
-        // Both the naive save/restore fix and the counter-based fix break 39
-        // other parser tests because subQueryMode's reset-to-false behavior is
-        // relied upon by other parsing paths in non-obvious ways. A proper fix
-        // requires a deeper refactor of how the parser tracks parenthesis context.
-        assertSyntaxError(
-                "SELECT * FROM (SELECT (SELECT x FROM (SELECT x FROM long_sequence(1))) + 0)",
-                74,
-                "unexpected token"
-        );
+    public void testSubQueryModeSurvivesNestedSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT * FROM (SELECT x FROM (SELECT x FROM (SELECT x FROM long_sequence(1))) UNION ALL SELECT 2 x)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            2
+                            """);
+            assertQuery("SELECT * FROM (SELECT (SELECT x FROM (SELECT x FROM long_sequence(1))) + 0)")
+                    .fails(71, "there is no matching operator `+` with the argument types: CURSOR + INT");
+        });
     }
 
     @Test

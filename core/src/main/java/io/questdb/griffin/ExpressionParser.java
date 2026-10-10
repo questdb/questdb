@@ -176,6 +176,12 @@ public class ExpressionParser {
         return hasOffset;
     }
 
+    private static boolean isValueListOwner(ExpressionNode node) {
+        return node.type == ExpressionNode.LITERAL
+                || node.type == ExpressionNode.MEMBER_ACCESS
+                || node.type == ExpressionNode.SET_OPERATION;
+    }
+
     private static SqlException missingArgs(int position) {
         return SqlException.$(position, "missing arguments");
     }
@@ -335,6 +341,11 @@ public class ExpressionParser {
         opStack.push(node);
     }
 
+    private boolean isColonColonOnTop() {
+        final ExpressionNode en = opStack.peek();
+        return en != null && SqlKeywords.isColonColon(en.token);
+    }
+
     private boolean isCompletedOperand(int branchTag) {
         return branchTag == BRANCH_LITERAL
                 || branchTag == BRANCH_CONSTANT
@@ -395,6 +406,7 @@ public class ExpressionParser {
             if (exprStackUnwind) {
                 SqlKeywords.assertNameIsQuotedOrNotAKeyword(node.token, node.position);
             }
+            node.isQuoted = Chars.isQuoted(node.token);
             node.token = GenericLexer.unquote(node.token);
         }
         listener.onNode(node);
@@ -1090,6 +1102,7 @@ public class ExpressionParser {
             int prevBranch = BRANCH_NONE;
             int thisBranch = BRANCH_NONE;
             boolean isCastingNull = false;
+            int frameListPosition = -1;
             OUT:
             while ((tok = SqlUtil.fetchNext(lexer)) != null) {
                 thisChar = tok.charAt(0);
@@ -1306,6 +1319,9 @@ public class ExpressionParser {
                         if (prevBranch == BRANCH_CONSTANT) {
                             throw SqlException.$(lastPos, "dangling expression");
                         }
+                        if (prevBranch == BRANCH_OPERATOR && isColonColonOnTop()) {
+                            throw SqlException.$(lastPos, "type definition is expected");
+                        }
 
                         thisBranch = BRANCH_LEFT_PARENTHESIS;
                         // entering parenthesised context, push stuff onto the stacks
@@ -1364,8 +1380,9 @@ public class ExpressionParser {
                                     if (thisWasCast && prevBranch != BRANCH_GEOHASH && prevBranch != BRANCH_DECIMAL) {
                                         // validate type
                                         final short castAsTag = ColumnType.tagOf(node.token);
-                                        if ((cannotCastTo(castAsTag, isCastingNull)) ||
-                                                (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
+                                        final boolean isVariable = node.type == ExpressionNode.LITERAL && Chars.startsWith(node.token, '@');
+                                        if (!isVariable && (cannotCastTo(castAsTag, isCastingNull)
+                                                || (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL))
                                         ) {
                                             throw SqlException.$(node.position, "unsupported cast");
                                         }
@@ -1374,6 +1391,7 @@ public class ExpressionParser {
                                     argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                 }
 
+                                final int listPosition = node.position;
                                 if (argStackDepthStack.notEmpty()) {
                                     argStackDepth += argStackDepthStack.pop();
                                 }
@@ -1382,6 +1400,12 @@ public class ExpressionParser {
                                 }
 
                                 node = opStack.peek();
+                                frameListPosition = localParamCount > 1
+                                        && (node == null || node.type == ExpressionNode.CONTROL && Chars.equals(node.token, '|'))
+                                        ? listPosition : -1;
+                                if (frameListPosition != -1 && !listener.isValueListAllowed()) {
+                                    throw SqlException.$(listPosition, "value list is not allowed here");
+                                }
                                 if (node == null) {
                                     break;
                                 }
@@ -1398,6 +1422,9 @@ public class ExpressionParser {
                                         }
                                     }
                                     throw SqlException.$(lastPos, "no function or operator?");
+                                }
+                                if (localParamCount > 1 && frameListPosition == -1 && !isValueListOwner(node)) {
+                                    throw SqlException.$(listPosition, "value list is not allowed here");
                                 }
 
                                 // Check for window function OVER clause (including IGNORE/RESPECT NULLS)
@@ -1634,6 +1661,15 @@ public class ExpressionParser {
                         }
                         processDefaultBranch = true;
                         break;
+                    case 'w':
+                    case 'W':
+                        if (prevBranch == BRANCH_LEFT_PARENTHESIS && SqlKeywords.isWithKeyword(tok)) {
+                            thisBranch = BRANCH_LAMBDA;
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);
+                        } else {
+                            processDefaultBranch = true;
+                        }
+                        break;
                     case 's':
                     case 'S':
                         if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && SqlKeywords.isSelectKeyword(tok)) {
@@ -1812,6 +1848,9 @@ public class ExpressionParser {
                     OperatorExpression op;
                     if ((op = activeRegistry.map.get(tok)) != null && !(stopOnTopINOperator && op.operator == In && scopeStack.size() == 0)) {
 
+                        if (prevBranch == BRANCH_RIGHT_PARENTHESIS && frameListPosition != -1) {
+                            throw SqlException.$(frameListPosition, "value list is not allowed here");
+                        }
                         thisBranch = BRANCH_OPERATOR;
 
                         if (Chars.equals(tok, ":=")) {

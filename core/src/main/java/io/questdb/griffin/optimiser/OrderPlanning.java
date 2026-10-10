@@ -99,16 +99,16 @@ final class OrderPlanning implements OptimiserPass {
         }
         return TreeWalk.CONTINUE;
     };
-    private static final PlanVisitor SHARED_CONSUMER_COUNTS = plan -> {
-        if (plan instanceof AggregatePlan aggregate) {
-            aggregate.setSharedConsumerCount(0);
-        }
-        return TreeWalk.CONTINUE;
-    };
     private static final PlanVisitor SHARED_CONSUMERS = plan -> {
         if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null
                 && sharedTarget(aggregate.getSharedSource().getInput()) instanceof AggregatePlan target) {
             target.setSharedConsumerCount(target.getSharedConsumerCount() + 1);
+        }
+        return TreeWalk.CONTINUE;
+    };
+    private static final PlanVisitor SHARED_CONSUMER_COUNTS = plan -> {
+        if (plan instanceof AggregatePlan aggregate) {
+            aggregate.setSharedConsumerCount(0);
         }
         return TreeWalk.CONTINUE;
     };
@@ -564,16 +564,6 @@ final class OrderPlanning implements OptimiserPass {
     }
 
     /**
-     * The direction a validation reads; the plan must carry it.
-     */
-    private static PhysicalProperties.ScanDirection validatedDirection(PhysicalProperties.ScanDirection direction) {
-        if (direction == PhysicalProperties.ScanDirection.UNKNOWN) {
-            throw new IllegalStateException("scan direction is unknown at planning");
-        }
-        return direction;
-    }
-
-    /**
      * Rejects an aggregate function that requires the designated timestamp of its input as its second argument when
      * the argument is not that column, at {@code timestampIndex} of {@code input}, and one that requires ascending
      * designated timestamp order when the input does not deliver it.
@@ -591,6 +581,16 @@ final class OrderPlanning implements OptimiserPass {
                 throw SqlException.$(call.getPosition(), call.getName()).put("() requires the base query to provide ascending designated timestamp order");
             }
         }
+    }
+
+    /**
+     * The direction a validation reads; the plan must carry it.
+     */
+    private static PhysicalProperties.ScanDirection validatedDirection(PhysicalProperties.ScanDirection direction) {
+        if (direction == PhysicalProperties.ScanDirection.UNKNOWN) {
+            throw new IllegalStateException("scan direction is unknown at planning");
+        }
+        return direction;
     }
 
     /**
@@ -679,10 +679,6 @@ final class OrderPlanning implements OptimiserPass {
         return false;
     }
 
-    /**
-     * True when the scan's factory carries a filter: a filter or gate over the residual of a page-frame scan, the
-     * filter over the residual of a covering index scan, or the filter of a pattern scan, within it or above it.
-     */
     /**
      * True when the page frames the plan serves come from a table whose parquet partitions store a column under a
      * converted type.
@@ -1468,17 +1464,6 @@ final class OrderPlanning implements OptimiserPass {
         require(operation.getRight(), orderIndex < 0 ? -1 : operation.getRight().getOutput().getColumnId(orderIndex), direction, null, null, isRowOrderRequired);
     }
 
-    private void requireSortedLimit(LogicalPlan plan, LimitPlan limit) {
-        if (plan instanceof ProjectPlan project) {
-            requireSortedLimit(project.getInput(), limit);
-            return;
-        }
-        final SortPlan sort = (SortPlan) plan;
-        final int orderColumnId = sort.getColumnIds().size() == 1 || limit.getHi() == null
-                && !(limit.getLo() instanceof ConstantExpression lo && lo.getLongValue() < 0) ? sort.getColumnIds().getQuick(0) : -1;
-        requireSortInput(sort, orderColumnId, sort.getDirections().getQuick(0), limit);
-    }
-
     /**
      * A join slave never scans backward for a sort that it re-sorts anyway, unless the sort reverses a negative LIMIT.
      */
@@ -1488,6 +1473,17 @@ final class OrderPlanning implements OptimiserPass {
         } else {
             require(sort.getInput(), orderColumnId, direction, sort, limit, false);
         }
+    }
+
+    private void requireSortedLimit(LogicalPlan plan, LimitPlan limit) {
+        if (plan instanceof ProjectPlan project) {
+            requireSortedLimit(project.getInput(), limit);
+            return;
+        }
+        final SortPlan sort = (SortPlan) plan;
+        final int orderColumnId = sort.getColumnIds().size() == 1 || limit.getHi() == null
+                && !(limit.getLo() instanceof ConstantExpression lo && lo.getLongValue() < 0) ? sort.getColumnIds().getQuick(0) : -1;
+        requireSortInput(sort, orderColumnId, sort.getDirections().getQuick(0), limit);
     }
 
     private void requireUnary(LogicalPlan plan, int orderColumnId, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
@@ -1535,14 +1531,13 @@ final class OrderPlanning implements OptimiserPass {
             }
         }
         final LogicalPlan input = plan.inputAt(0);
-        if (plan instanceof FilterPlan filter && filter.getPredicate() != null && input instanceof ScanPlan scan) {
-            requireScan(scan, scanDirection(scan, inputOrderColumnId, inputDirection), inputOrder, inputLimit, isInputRowOrderRequired);
-        } else if (plan instanceof LimitPlan && input instanceof DistinctPlan distinct) {
-            requireNothing(distinct.getInput());
-        } else if (plan instanceof SortPlan sort) {
-            requireSortInput(sort, inputOrderColumnId, inputDirection, inputLimit);
-        } else {
-            require(input, inputOrderColumnId, inputDirection, inputOrder, inputLimit, isInputRowOrderRequired);
+        switch (plan) {
+            case FilterPlan filter when filter.getPredicate() != null && input instanceof ScanPlan scan ->
+                    requireScan(scan, scanDirection(scan, inputOrderColumnId, inputDirection), inputOrder, inputLimit, isInputRowOrderRequired);
+            case LimitPlan _ when input instanceof DistinctPlan distinct -> requireNothing(distinct.getInput());
+            case SortPlan sort -> requireSortInput(sort, inputOrderColumnId, inputDirection, inputLimit);
+            default ->
+                    require(input, inputOrderColumnId, inputDirection, inputOrder, inputLimit, isInputRowOrderRequired);
         }
     }
 
@@ -1613,11 +1608,6 @@ final class OrderPlanning implements OptimiserPass {
         return isRandomAccess(input) ? SortPlan.Algorithm.LIGHT : SortPlan.Algorithm.MATERIALIZED;
     }
 
-    /**
-     * Rejects an input whose designated timestamp the node consumes when the factory of the input designates none
-     * because a LATEST BY under its projections inherits the order of a sub-query: the generator has nothing to
-     * order by.
-     */
     /**
      * The ASOF or LT join the generator builds: full-fat over a slave without random access, one that steals the
      * filter of its slave, one that reads the time frames of its slave unless the {@code asof_linear} hint asks for

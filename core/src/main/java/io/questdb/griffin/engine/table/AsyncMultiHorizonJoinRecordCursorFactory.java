@@ -62,6 +62,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -100,8 +101,8 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
+            @NotNull ObjList<ObjectFactory<RecordSink>> masterAsOfJoinMapSinkFactories,
+            @NotNull ObjList<ObjectFactory<RecordSink>> slaveAsOfJoinMapSinkFactories,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -133,8 +134,8 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     horizonJoinMetadata,
                     slaveStates,
                     perSlaveAsOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClasses,
-                    slaveAsOfJoinMapSinkClasses,
+                    masterAsOfJoinMapSinkFactories,
+                    slaveAsOfJoinMapSinkFactories,
                     masterTimestampColumnIndex,
                     offsets,
                     keyTypes,

@@ -705,6 +705,9 @@ final class JoinBinder implements Mutable {
         join.setExplicitTimestamp(lo == 0 && source.hasExplicitTimestamp());
         try {
             bindJoinInputs(join, source, lo, hi, hasTemporalJoin(sources, lo, hi), executionContext);
+            if (binder.isLatestOverLeadingInput(source)) {
+                where = bindLatestInput(join, source, where, modelBase, executionContext);
+            }
             bindJoinConditions(join, source, where, dependencyBase, modelBase, executionContext);
             return join;
         } finally {
@@ -712,6 +715,31 @@ final class JoinBinder implements Mutable {
             lateralDependencyInputs.setPos(dependencyBase);
             lateralDependencyParents.setPos(dependencyBase);
         }
+    }
+
+    /**
+     * Binds LATEST ON over the first input, which owns its timestamp, before the join: the conjuncts of WHERE and of
+     * the INNER ON clauses that read only the first input and can filter it before the join run before LATEST ON.
+     * Returns the rest of WHERE.
+     */
+    private ExpressionNode bindLatestInput(JoinPlan join, QueryModel source, ExpressionNode where, int modelBase,
+                                           SqlExecutionContext executionContext) throws SqlException {
+        final ObjList<JoinInput> inputs = join.getInputs();
+        final int lastInput = inputs.size() - 1;
+        ExpressionNode latestFilter = null;
+        if (canPushJoinFilter(join, 0, lastInput)) {
+            latestFilter = selectLatestFilterTerms(where, join, true);
+            where = selectLatestFilterTerms(where, join, false);
+        }
+        for (int i = 1; i <= lastInput; i++) {
+            if (isLatestFilteredOn(join, source, modelBase, i)) {
+                latestFilter = combineJoinPredicates(latestFilter,
+                        selectLatestFilterTerms(joinModel(source, modelBase, i).getJoinCriteria(), join, true));
+            }
+        }
+        final JoinInput first = inputs.getQuick(0);
+        first.setInput(binder.bindLatestBy(first.getInput(), latestFilter, source, executionContext));
+        return where;
     }
 
     private UnnestSpec bindUnnest(QueryModel model, OutputSchema prefix, SqlExecutionContext executionContext) throws SqlException {
@@ -895,6 +923,9 @@ final class JoinBinder implements Mutable {
             final JoinInput slave = join.getInputs().getQuick(i);
             final boolean isBarrier = slave.getJoinType().isBarrier();
             ExpressionNode onCriteria = occurrence.getJoinCriteria();
+            if (isLatestFilteredOn(join, source, modelBase, i)) {
+                onCriteria = selectLatestFilterTerms(onCriteria, join, false);
+            }
             if (hasBarriers && !isBarrier && isPostJoinFilterReference(onCriteria, join, i)) {
                 final ExpressionNode postJoinFilter = selectPostJoinFilterTerms(onCriteria, join, i, true);
                 rejectMasterNullingForwardReference(postJoinFilter, join, i);
@@ -1129,6 +1160,15 @@ final class JoinBinder implements Mutable {
         return lower != origin && forwardLeftJoinInputs.contains(lower) && Math.max(leftSource, rightSource) > lower;
     }
 
+    /**
+     * Whether the conjuncts of the ON clause of the input that read only the first input run before LATEST ON: the
+     * first input is the block's own source, which carries LATEST ON.
+     */
+    private boolean isLatestFilteredOn(JoinPlan join, QueryModel source, int modelBase, int input) {
+        return binder.isLatestOverLeadingInput(source) && joinModel(source, modelBase, 0) == source
+                && join.getInputs().getQuick(input).getJoinType() == JoinKind.INNER && canPushJoinFilter(join, 0, input);
+    }
+
     private boolean isOuterColumn(ExpressionNode literal, JoinPlan join) {
         return ctx.functionBinder.isOuterColumn(literal, join.getOutput(), null);
     }
@@ -1278,6 +1318,17 @@ final class JoinBinder implements Mutable {
         // predicates even when their selected implementation folds at binding.
         final boolean isConstant = !hasColumnReference(expression) && isCompileTimeJoinConstant(expression);
         return isConstant == isConstantTerms ? expression : null;
+    }
+
+    private ExpressionNode selectLatestFilterTerms(ExpressionNode expression, JoinPlan join, boolean isSelected) {
+        if (expression == null) {
+            return null;
+        }
+        if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
+            return combineJoinPredicates(selectLatestFilterTerms(expression.lhs, join, isSelected),
+                    selectLatestFilterTerms(expression.rhs, join, isSelected));
+        }
+        return (joinExpressionSource(expression, join) == 0) == isSelected ? expression : null;
     }
 
     private ExpressionNode selectPostJoinFilterTerms(ExpressionNode expression, JoinPlan join, int origin, boolean isSelected) throws SqlException {

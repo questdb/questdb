@@ -93,8 +93,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         } else if (ColumnType.tagOf(arg0ColType) == ColumnType.NULL && ColumnType.isTimestamp(metadataType)) {
             arg0Type = ColumnType.getTimestampType(metadataType);
         } else {
-            throw SqlException.$(argPositions.getQuick(0), "left operand must be a TIMESTAMP, found: ")
-                    .put(ColumnType.nameOf(args.getQuick(0).getType()));
+            throw ScalarSubQueryUtils.unsupportedOperand(argPositions.getQuick(0), args.getQuick(0).getType());
         }
         switch (ColumnType.tagOf(metadataType)) {
             case ColumnType.TIMESTAMP:

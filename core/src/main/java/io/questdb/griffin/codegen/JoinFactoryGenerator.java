@@ -581,6 +581,25 @@ final class JoinFactoryGenerator {
                 symbolJoinKeyFlags.setQuick(k, 1);
             }
         }
+        // SymbolTranslatingRecord keeps one translation per column of the translated side,
+        // which is the master or, after a hash join swap, the slave. A column paired with two
+        // different partner columns needs two translations, so its pairs keep string comparison.
+        for (int k = 0; k < keyCount; k++) {
+            if (symbolJoinKeyFlags.getQuick(k) == 1) {
+                final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
+                final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
+                for (int j = k + 1; j < keyCount; j++) {
+                    if (symbolJoinKeyFlags.getQuick(j) == 1) {
+                        final boolean isSameSlave = listColumnFilterA.getColumnIndexFactored(j) == slaveColIndex;
+                        final boolean isSameMaster = listColumnFilterB.getColumnIndexFactored(j) == masterColIndex;
+                        if (isSameSlave != isSameMaster) {
+                            symbolJoinKeyFlags.setQuick(k, 0);
+                            symbolJoinKeyFlags.setQuick(j, 0);
+                        }
+                    }
+                }
+            }
+        }
         // Record sinks convert per column, so a column shared with a key pair that keeps
         // string comparison must keep it in every pair.
         boolean isChanged = true;

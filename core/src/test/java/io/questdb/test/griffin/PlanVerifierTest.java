@@ -208,6 +208,29 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecorrelationCarrier() {
+        final JoinPlan inner = join(source(), source(5, 6));
+        final JoinInput right = inner.getInputs().getQuick(1);
+        right.setJoinType(JoinKind.RIGHT_OUTER);
+        right.getCarrierColumnIds().add(5);
+        final JoinPlan outer = join(source(10, 11), inner);
+        final JoinInput step = outer.getInputs().getQuick(1);
+        step.getCarrierColumnIds().add(5);
+        Assert.assertTrue(verifier.recordOuterJoins(outer));
+        Assert.assertTrue(verifier.verifyDecorrelation(outer, PASS));
+        step.getCarrierColumnIds().add(1);
+        Assert.assertTrue(verifier.recordOuterJoins(outer));
+        try {
+            verifier.verifyDecorrelation(outer, PASS);
+            Assert.fail("expected " + PlanVerifier.DECORRELATION_CARRIER);
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), PlanVerifier.DECORRELATION_CARRIER);
+            TestUtils.assertContains(e.getMessage(), " at JoinPlan position ");
+            TestUtils.assertContains(e.getMessage(), "after " + PASS);
+        }
+    }
+
+    @Test
     public void testDependentStepSurvivesDecorrelation() {
         final JoinPlan join = join(source(), source(5, 6));
         join.getInputs().getQuick(1).setDependent(true);
@@ -387,6 +410,39 @@ public class PlanVerifierTest extends AbstractCairoTest {
         } catch (AssertionError e) {
             TestUtils.assertContains(e.getMessage(), PlanVerifier.OUTER_COLUMN_UNRESOLVED);
             TestUtils.assertContains(e.getMessage(), "after SqlBinder.bind");
+        }
+    }
+
+    @Test
+    public void testOuterJoinOnKept() {
+        final JoinPlan join = join(source(), source(5, 6));
+        final JoinInput step = join.getInputs().getQuick(1);
+        step.setJoinType(JoinKind.LEFT_OUTER);
+        step.addKey(1, 5, "m.a", "s.a", 0);
+        step.getMasterKeyColumnIds().add(1);
+        step.getSlaveKeyColumnIds().add(5);
+        step.getMasterKeyNames().add("m.a");
+        step.getSlaveKeyNames().add("s.a");
+        step.getKeyPositions().add(0);
+        Assert.assertTrue(verifier.recordOuterJoins(join));
+        step.getMasterKeyColumnIds().removeIndex(1);
+        step.getSlaveKeyColumnIds().removeIndex(1);
+        step.getMasterKeyNames().remove(1);
+        step.getSlaveKeyNames().remove(1);
+        step.getKeyPositions().removeIndex(1);
+        Assert.assertTrue(verifier.verifyDecorrelation(join, PASS));
+        Assert.assertTrue(verifier.recordOuterJoins(join));
+        step.getMasterKeyColumnIds().clear();
+        step.getSlaveKeyColumnIds().clear();
+        step.getMasterKeyNames().clear();
+        step.getSlaveKeyNames().clear();
+        step.getKeyPositions().clear();
+        try {
+            verifier.verifyDecorrelation(join, PASS);
+            Assert.fail("expected " + PlanVerifier.OUTER_JOIN_ON_KEPT);
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), PlanVerifier.OUTER_JOIN_ON_KEPT);
+            TestUtils.assertContains(e.getMessage(), "after " + PASS);
         }
     }
 

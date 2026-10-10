@@ -519,6 +519,11 @@ public final class JoinOrderSolver implements Mutable {
         return false;
     }
 
+    private boolean isParentless(int source) {
+        final JoinDependency dependency = dependencies.getQuick(source);
+        return dependency == null || dependency.getParents().size() == 0;
+    }
+
     private void link(int parent, int child) {
         children.getQuick(parent).add(child);
     }
@@ -800,7 +805,8 @@ public final class JoinOrderSolver implements Mutable {
 
     /**
      * Kahn's order with the first input first; returns the order's cost, or {@link Integer#MAX_VALUE} when the
-     * dependencies are cyclic.
+     * dependencies are cyclic. An unkeyed CROSS step, or a late input that nothing waits for, joins only when no
+     * other input is ready, and an input that no edge ties to another joins last.
      */
     private int topologicalOrder() {
         stagedIndexes.clear();
@@ -827,7 +833,8 @@ public final class JoinOrderSolver implements Mutable {
             final int source;
             if (ready.notEmpty()) {
                 source = ready.poll();
-                if (lateInputs.contains(source) && children.getQuick(source).size() == 0) {
+                if (lateInputs.contains(source) && children.getQuick(source).size() == 0
+                        || joinTypes.getQuick(source) == JoinKind.CROSS && isParentless(source)) {
                     pendingSources.add(source);
                     continue;
                 }

@@ -433,6 +433,9 @@ public class CairoEngine implements Closeable, WriterSource {
                 insert(cq, sqlExecutionContext);
                 break;
             case SELECT:
+            case EXPLAIN:
+            case PSEUDO_SELECT:
+                freeCompiledQuery(cq);
                 throw SqlException.$(0, "use select()");
             default:
                 try (OperationFuture future = cq.execute(eventSubSeq)) {
@@ -3655,11 +3658,20 @@ public class CairoEngine implements Closeable, WriterSource {
                                 return future.getAffectedRowsCount();
                             }
                         case INSERT:
+                        case INSERT_AS_SELECT:
+                            freeCompiledQuery(cc);
                             throw SqlException.$(0, "use insert()");
                         case DROP:
+                            freeCompiledQuery(cc);
                             throw SqlException.$(0, "use drop()");
                         case SELECT:
+                        case EXPLAIN:
+                        case PSEUDO_SELECT:
+                            freeCompiledQuery(cc);
                             throw SqlException.$(0, "use select()");
+                        default:
+                            freeCompiledQuery(cc);
+                            throw SqlException.$(0, "use execute()");
                     }
                 } catch (TableReferenceOutOfDateException ex) {
                     // retry, e.g. continue
@@ -3752,6 +3764,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return reader;
     }
 
+    private static void freeCompiledQuery(CompiledQuery cq) {
+        cq.closeAllButSelect();
+        Misc.free(cq.getOperation());
+        Misc.free(cq.getRecordCursorFactory());
+    }
+
     private static void insert(
             CompiledQuery cq,
             SqlExecutionContext sqlExecutionContext
@@ -3768,10 +3786,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 break;
             case SELECT:
+                freeCompiledQuery(cq);
                 throw SqlException.$(0, "use select()");
             case DROP:
+                freeCompiledQuery(cq);
                 throw SqlException.$(0, "use drop()");
             default:
+                freeCompiledQuery(cq);
                 throw SqlException.$(0, "use ddl()");
         }
     }

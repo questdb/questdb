@@ -29,6 +29,115 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class LateralCorrelationTest extends AbstractCairoTest {
+    private static final String FULL_JOIN_CARRIER_ROWS = """
+            id\taid\tbid
+            1\tnull\t21
+            1\t10\t20
+            2\tnull\t20
+            2\tnull\t21
+            2\t10\tnull
+            """;
+    private static final String PER_OUTER_ROW_RIGHT_JOIN = """
+            id\ttid\trid
+            1\tnull\t101
+            1\t10\t100
+            2\tnull\t100
+            2\tnull\t101
+            """;
+
+    @Test
+    public void testAsofJoinBeforeCorrelatedRightJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT)");
+            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE a (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO a VALUES (10, 1, '2024-01-01T00:00:01.000000Z'), (11, 2, '2024-01-01T00:00:03.000000Z')");
+            execute("CREATE TABLE q (qid INT, qk INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO q VALUES
+                    (50, 1, '2024-01-01T00:00:00.000000Z'),
+                    (51, 2, '2024-01-01T00:00:02.000000Z'),
+                    (52, 1, '2024-01-01T00:00:04.000000Z')
+                    """);
+            execute("CREATE TABLE r (id INT, k INT)");
+            execute("INSERT INTO r VALUES (100, 1), (101, 2)");
+            assertQuery("""
+                    SELECT o.id, l.aid, l.qid, l.rid FROM o JOIN LATERAL (
+                        SELECT a.id aid, q.qid, r.id rid
+                        FROM a ASOF JOIN (SELECT qid, ts FROM q WHERE qk = o.k) q
+                        RIGHT JOIN r ON r.k = a.k
+                    ) l ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tqid\trid
+                            1\t10\t50\t100
+                            1\t11\t50\t101
+                            2\t10\tnull\t100
+                            2\t11\t51\t101
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.aid, l.qid, l.rid FROM o JOIN LATERAL (
+                        SELECT a.id aid, q.qid, r.id rid
+                        FROM a ASOF JOIN q RIGHT JOIN r ON r.k = a.k AND r.k = o.k
+                    ) l ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tqid\trid
+                            1\tnull\tnull\t101
+                            1\t10\t50\t100
+                            2\tnull\tnull\t100
+                            2\t11\t51\t101
+                            """);
+        });
+    }
+
+    @Test
+    public void testConsecutiveRightAndFullJoinsAfterCorrelatedOn() throws Exception {
+        // #7723
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            execute("INSERT INTO xs VALUES (3, 300)");
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid, l.xk FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid, x.k xk FROM trades t
+                        RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        RIGHT JOIN xs x ON x.k = r.k
+                    ) l ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid\txk
+                            1\tnull\tnull\t3
+                            1\t10\t100\t1
+                            2\tnull\tnull\t3
+                            2\tnull\t100\t1
+                            """);
+            execute("INSERT INTO xs VALUES (2, 200)");
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid, l.xk FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid, x.k xk FROM trades t
+                        FULL JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        RIGHT JOIN xs x ON x.k = r.k
+                    ) l ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid\txk
+                            1\tnull\tnull\t3
+                            1\tnull\t101\t2
+                            1\t10\t100\t1
+                            2\tnull\tnull\t3
+                            2\tnull\t100\t1
+                            2\tnull\t101\t2
+                            """);
+        });
+    }
 
     @Test
     public void testCorrelatedFromSubQueryWithWhereEquality() throws Exception {
@@ -111,6 +220,77 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrelatedSubQueryAroundRightOrFullJoin() throws Exception {
+        // #7724
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid, l.xk FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid, x.k xk
+                        FROM trades t FULL JOIN refunds r ON r.k = t.x
+                        LEFT JOIN (SELECT k, v FROM xs WHERE k = o.k) x ON x.v > 0
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid\txk
+                            1\tnull\t101\t1
+                            1\t10\t100\t1
+                            2\tnull\t101\tnull
+                            2\t10\t100\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid
+                        FROM trades t FULL JOIN (SELECT id, k FROM refunds WHERE k = o.k) r ON r.k = t.x
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            2\tnull\t101
+                            2\t10\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid
+                        FROM (SELECT id, x FROM trades WHERE x = o.k) t RIGHT JOIN refunds r ON t.x = r.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid
+                        FROM trades t JOIN (SELECT k, v FROM xs WHERE k = o.k) x ON x.k = t.x
+                        RIGHT JOIN refunds r ON r.k = t.x
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid
+                        FROM (SELECT id, x FROM trades WHERE x = o.k) t
+                        FULL JOIN (SELECT id, k FROM refunds WHERE k = o.k) r ON r.k = t.x
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\t10\t100
+                            2\tnull\t101
+                            """);
+        });
+    }
+
+    @Test
     public void testCorrelatedUnionAllOnLeftJoinSlave() throws Exception {
         // #7803 section 5
         assertMemoryLeak(() -> {
@@ -161,6 +341,77 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             1\t10\t30
                             2\t11\t21
                             2\t11\t31
+                            """);
+        });
+    }
+
+    @Test
+    public void testCorrelationAtOrBeforeSpliceJoinRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, g GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE a (id INT, g GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE b (id INT, g GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO o VALUES (1, #u33d8, '2024-01-01T00:00:01.000000Z'), (2, #v33d8, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO a VALUES (10, #u33d8, '2024-01-01T00:00:01.000000Z'), (11, #v33d8, '2024-01-01T00:00:03.000000Z')");
+            execute("INSERT INTO b VALUES (20, #u33d8, '2024-01-01T00:00:02.000000Z'), (21, #w33d8, '2024-01-01T00:00:04.000000Z')");
+            assertSpliceCorrelationRejected("""
+                    SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM (SELECT * FROM a WHERE id > o.id + 8) a SPLICE JOIN b
+                    ) l
+                    """);
+            assertSpliceCorrelationRejected("""
+                    SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a SPLICE JOIN (SELECT * FROM b WHERE id > o.id + 18) b
+                    ) l
+                    """);
+            assertSpliceCorrelationRejected("""
+                    SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a JOIN b ON b.id = o.id + 19 SPLICE JOIN b b2
+                    ) l
+                    """);
+            assertQuery("""
+                    SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a SPLICE JOIN b WHERE b.g = o.g
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tbid
+                            1\t10\t20
+                            1\t11\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testCountOverRightJoinWithEmptyPreservedSide() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            execute("INSERT INTO orders VALUES (3, 3)");
+            assertQuery("""
+                    SELECT o.id, l.c FROM orders o LEFT JOIN LATERAL (
+                        SELECT count(*) c FROM trades t RIGHT JOIN (SELECT id, k FROM refunds WHERE k = o.k) r ON t.x = r.k
+                    ) l ON true ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            2\t1
+                            3\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.c FROM orders o JOIN LATERAL (
+                        SELECT count(*) c FROM trades t RIGHT JOIN (SELECT id, k FROM refunds WHERE k = o.k) r ON t.x = r.k
+                    ) l ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            2\t1
+                            3\t0
                             """);
         });
     }
@@ -358,6 +609,69 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDuplicatedOnConjunctOfOuterJoinInBody() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            final String plan = """
+                    Sort
+                      keys: [id, tid, rid]
+                      Project
+                        columns: [o.id, l.tid, l.rid]
+                        Join
+                          Master o
+                            Scan
+                              table: orders
+                              columns: [id, k]
+                          INNER l
+                            keys: [l.__qdb_outer_ref__0_k = o.k]
+                            Project
+                              columns: [t.id AS tid, r.id AS rid, r.__qdb_outer_ref__0_k]
+                              Join
+                                Master t
+                                  Scan
+                                    table: trades
+                                    columns: [id, x]
+                                RIGHT r
+                                  keys: [r.k = t.x]
+                                  on: r.k = r.__qdb_outer_ref__0_k
+                                  Join
+                                    Master
+                                      Scan
+                                        table: refunds
+                                        columns: [id, k]
+                                    CROSS __qdb_outer_ref__0
+                                      Aggregate
+                                        keys: [k AS __qdb_outer_ref__0_k]
+                                        values: []
+                                        Scan
+                                          table: orders
+                                          columns: [k]
+                    """;
+            final String single = """
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """;
+            final String duplicated = """
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND t.x = r.k AND r.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """;
+            assertQuery(single).noLeakCheck().assertsLogicalPlan(plan);
+            assertQuery(duplicated).noLeakCheck().assertsLogicalPlan(plan);
+            assertQuery(duplicated).noLeakCheck().expectSize().returns(PER_OUTER_ROW_RIGHT_JOIN);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k AND r.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+        });
+    }
+
+    @Test
     public void testEquatedInnerColumnsFollowedByLeftJoinsWithRedundantKeys() throws Exception {
         // #7731
         assertMemoryLeak(() -> {
@@ -416,6 +730,249 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     ) l
                     """;
             assertExceptionNoLeakCheck(sql2, sql2.indexOf("ASOF JOIN b s"), "left side of time series join has no timestamp");
+        });
+    }
+
+    @Test
+    public void testFullJoinCarrierForEveryOuterColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            assertFullJoinCarrier("BOOLEAN", "false", "true");
+            assertFullJoinCarrier("BYTE", "0::byte", "1::byte");
+            assertFullJoinCarrier("SHORT", "0::short", "1::short");
+            assertFullJoinCarrier("CHAR", "'a'", "'b'");
+            assertFullJoinCarrier("GEOHASH(5c)", "#u33d8", "#v33d8");
+            assertFullJoinCarrier("GEOHASH(1c)", "#u", "#v");
+            assertFullJoinCarrier("INT", "1", "2");
+            assertFullJoinCarrier("LONG", "1", "2");
+            assertFullJoinCarrier("DOUBLE", "1.5", "2.5");
+            assertFullJoinCarrier("SYMBOL", "'s1'", "'s2'");
+            assertFullJoinCarrier("VARCHAR", "'v1'", "'v2'");
+            assertFullJoinCarrier("STRING", "'t1'", "'t2'");
+            assertFullJoinCarrier("IPv4", "'1.1.1.1'", "'2.2.2.2'");
+            assertFullJoinCarrier("UUID", "'11111111-1111-1111-1111-111111111111'", "'22222222-2222-2222-2222-222222222222'");
+            assertFullJoinCarrier("LONG256", "'0x01'", "'0x02'");
+            assertFullJoinCarrier("DECIMAL(18,2)", "1.5m", "2.5m");
+            assertFullJoinCarrier("DECIMAL(38,2)", "1.5m", "2.5m");
+            assertFullJoinCarrier("DATE", "'2024-01-01'", "'2024-01-02'");
+            assertFullJoinCarrier("TIMESTAMP", "'2024-01-01T00:00:00.000001Z'", "'2024-01-02T00:00:00.000001Z'");
+            assertFullJoinCarrier("TIMESTAMP_NS", "'2024-01-01T00:00:00.000000001Z'", "'2024-01-02T00:00:00.000000002Z'");
+        });
+    }
+
+    @Test
+    public void testFullJoinCarrierForIntervalOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO o VALUES (1, '2024-01-01T00:00:01.000000Z'), (2, '2024-01-01T00:00:02.000000Z')");
+            execute("CREATE TABLE a (id INT, ts TIMESTAMP)");
+            execute("INSERT INTO a VALUES (10, '2024-01-01T00:00:01.000000Z')");
+            execute("CREATE TABLE b (id INT, ts TIMESTAMP)");
+            execute("INSERT INTO b VALUES (20, '2024-01-01T00:00:01.000000Z'), (21, '2024-01-01T00:00:02.000000Z')");
+            assertQuery("""
+                    SELECT o.id, l.aid, l.bid FROM (SELECT id, interval(ts, ts) iv FROM o) o JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a FULL JOIN b ON a.ts = b.ts AND b.ts IN o.iv
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(FULL_JOIN_CARRIER_ROWS);
+        });
+    }
+
+    @Test
+    public void testFullJoinOnReadingOuterColumn() throws Exception {
+        // #7723, #7730
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            final String expected = """
+                    id\ttid\trid
+                    1\tnull\t101
+                    1\t10\t100
+                    2\tnull\t100
+                    2\tnull\t101
+                    2\t10\tnull
+                    """;
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t FULL JOIN refunds r ON r.k = o.k AND t.x = r.k AND t.id > 0
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t FULL JOIN refunds r ON r.k = o.k AND t.x = r.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, l.c, l.ct FROM orders o JOIN LATERAL (
+                        SELECT count(*) c, count(t.id) ct FROM trades t FULL JOIN refunds r ON r.k = o.k AND t.x = r.k
+                    ) l ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc\tct
+                            1\t2\t1
+                            2\t3\t1
+                            """);
+            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
+            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
+            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            assertQuery("""
+                    SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a FULL JOIN b ON a.x = b.k AND b.k = o.k WHERE a.id > 0
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tbid
+                            1\t10\t20
+                            1\t11\tnull
+                            2\t10\tnull
+                            2\t11\t21
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a FULL JOIN b ON a.x = b.k AND b.k = o.k WHERE a.id > 0 AND b.id > 0
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tbid
+                            1\t10\t20
+                            2\t11\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullJoinPlanSplitsWithMarkerCarrier() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t FULL JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id > 0
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [id, tid, rid]
+                              Project
+                                columns: [o.id, l.tid, l.rid]
+                                Join
+                                  Master o
+                                    Scan
+                                      table: orders
+                                      columns: [id, k]
+                                  INNER l
+                                    keys: [l.__qdb_outer_ref__0_k = o.k]
+                                    Project
+                                      columns: [id AS tid, id1 AS rid, __qdb_outer_ref__0_k]
+                                      Project
+                                        columns: [t.id, r.id AS id1, case(t.__qdb_outer_ref__marker_0 = null, r.__qdb_outer_ref__0_k, t.__qdb_outer_ref__0_k) AS __qdb_outer_ref__0_k]
+                                        Filter
+                                          predicate: t.id > 0
+                                          Join
+                                            Master t
+                                              Join
+                                                Master
+                                                  Scan
+                                                    table: trades
+                                                    columns: [id, x]
+                                                CROSS __qdb_outer_ref__0
+                                                  Aggregate
+                                                    keys: [k AS __qdb_outer_ref__0_k]
+                                                    values: [count() AS __qdb_outer_ref__marker_0]
+                                                    Scan
+                                                      table: orders
+                                                      columns: [k]
+                                            FULL r
+                                              keys: [r.k = t.x, r.__qdb_outer_ref__0_k = t.__qdb_outer_ref__0_k]
+                                              on: r.k = r.__qdb_outer_ref__0_k
+                                              Join
+                                                Master
+                                                  Scan
+                                                    table: refunds
+                                                    columns: [id, k]
+                                                CROSS __qdb_outer_ref__0_1
+                                                  Aggregate
+                                                    keys: [k AS __qdb_outer_ref__0_k]
+                                                    values: []
+                                                    Scan
+                                                      table: orders
+                                                      columns: [k]
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupByOverJoinedCorrelatedSubQuery() throws Exception {
+        // #7728
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
+            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
+            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            assertQuery("""
+                    SELECT o.id, l.g, l.c FROM o JOIN LATERAL (
+                        SELECT a.x g, count(*) c
+                        FROM a CROSS JOIN (SELECT id, k, x FROM b WHERE x = o.x) s
+                        GROUP BY a.x
+                    ) l ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tg\tc
+                            1\t1\t1
+                            1\t2\t1
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.g, l.c FROM o JOIN LATERAL (
+                        SELECT a.x g, count(*) c
+                        FROM a JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON s.k = a.k
+                        GROUP BY a.x
+                    ) l ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tg\tc
+                            1\t1\t1
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.g, l.c FROM o JOIN LATERAL (
+                        SELECT s.x g, count(*) c
+                        FROM a CROSS JOIN (SELECT id, k, x FROM b WHERE x = o.x) s
+                        GROUP BY s.x
+                    ) l ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tg\tc
+                            1\t1\t2
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.c FROM o JOIN LATERAL (
+                        SELECT count(*) c FROM a CROSS JOIN (SELECT id, k, x FROM b WHERE x = o.x) s
+                    ) l ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t0
+                            """);
         });
     }
 
@@ -500,67 +1057,6 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupByOverJoinedCorrelatedSubQuery() throws Exception {
-        // #7728
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
-            assertQuery("""
-                    SELECT o.id, l.g, l.c FROM o JOIN LATERAL (
-                        SELECT a.x g, count(*) c
-                        FROM a CROSS JOIN (SELECT id, k, x FROM b WHERE x = o.x) s
-                        GROUP BY a.x
-                    ) l ORDER BY 1, 2
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            id\tg\tc
-                            1\t1\t1
-                            1\t2\t1
-                            """);
-            assertQuery("""
-                    SELECT o.id, l.g, l.c FROM o JOIN LATERAL (
-                        SELECT a.x g, count(*) c
-                        FROM a JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON s.k = a.k
-                        GROUP BY a.x
-                    ) l ORDER BY 1, 2
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            id\tg\tc
-                            1\t1\t1
-                            """);
-            assertQuery("""
-                    SELECT o.id, l.g, l.c FROM o JOIN LATERAL (
-                        SELECT s.x g, count(*) c
-                        FROM a CROSS JOIN (SELECT id, k, x FROM b WHERE x = o.x) s
-                        GROUP BY s.x
-                    ) l ORDER BY 1, 2
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            id\tg\tc
-                            1\t1\t2
-                            """);
-            assertQuery("""
-                    SELECT o.id, l.c FROM o JOIN LATERAL (
-                        SELECT count(*) c FROM a CROSS JOIN (SELECT id, k, x FROM b WHERE x = o.x) s
-                    ) l ORDER BY 1
-                    """)
-                    .noLeakCheck()
-                    .returns("""
-                            id\tc
-                            1\t2
-                            2\t0
-                            """);
-        });
-    }
-
-    @Test
     public void testInnerJoinKeysSharingColumnNamesInBody() throws Exception {
         // #7716
         assertMemoryLeak(() -> {
@@ -585,90 +1081,29 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinToSubQueryWithCorrelatedOn() throws Exception {
-        // #7729
+    public void testInnerJoinOnReadingOuterColumnBeforeRightOrFullJoin() throws Exception {
+        // #7723, #7737
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            createOrdersTradesRefunds();
             assertQuery("""
-                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
-                        SELECT a.id aid, s.id sid FROM a JOIN (SELECT id, k FROM b) s ON s.k = o.k
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k FULL JOIN refunds r ON r.k = t.x
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE r.k = o.k
                     ) l ORDER BY 1, 2, 3
                     """)
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            id\taid\tsid
-                            1\t10\t20
-                            1\t11\t20
-                            2\t10\t21
-                            2\t11\t21
-                            """);
-            assertQuery("""
-                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
-                        SELECT a.id aid, s.id sid FROM a JOIN (SELECT id, k FROM b) s ON a.x = s.k AND s.k = o.k
-                    ) l ORDER BY 1, 2, 3
-                    """)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            id\taid\tsid
-                            1\t10\t20
-                            2\t11\t21
-                            """);
-            assertQuery("""
-                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
-                        SELECT a.id aid, s.id sid FROM a JOIN (SELECT id, k FROM b) s ON a.x = s.k AND a.k = o.k
-                    ) l ORDER BY 1, 2, 3
-                    """)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            id\taid\tsid
-                            1\t10\t20
-                            2\t11\t21
-                            """);
-            assertQuery("""
-                    SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
-                        SELECT a.id aid, b.id bid FROM a JOIN b ON a.x = b.k AND b.k = o.k
-                    ) l ORDER BY 1, 2, 3
-                    """)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            id\taid\tbid
-                            1\t10\t20
-                            2\t11\t21
-                            """);
-            assertQuery("""
-                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
-                        SELECT a.id aid, s.id sid FROM a LEFT JOIN (SELECT id, k FROM b) s ON a.x = s.k AND s.k = o.k
-                    ) l ORDER BY 1, 2, 3
-                    """)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            id\taid\tsid
-                            1\t10\t20
-                            1\t11\tnull
-                            2\t10\tnull
-                            2\t11\t21
-                            """);
-            assertQuery("""
-                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
-                        SELECT a.id aid, s.id sid FROM a CROSS JOIN (SELECT id, k FROM b) s WHERE a.x = s.k AND s.k = o.k
-                    ) l ORDER BY 1, 2, 3
-                    """)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            id\taid\tsid
-                            1\t10\t20
-                            2\t11\t21
+                            id\ttid\trid
+                            1\t10\t100
+                            2\tnull\t101
                             """);
         });
     }
@@ -811,6 +1246,95 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinToSubQueryWithCorrelatedOn() throws Exception {
+        // #7729
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
+            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
+            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid FROM a JOIN (SELECT id, k FROM b) s ON s.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t20
+                            1\t11\t20
+                            2\t10\t21
+                            2\t11\t21
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid FROM a JOIN (SELECT id, k FROM b) s ON a.x = s.k AND s.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t20
+                            2\t11\t21
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid FROM a JOIN (SELECT id, k FROM b) s ON a.x = s.k AND a.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t20
+                            2\t11\t21
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a JOIN b ON a.x = b.k AND b.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tbid
+                            1\t10\t20
+                            2\t11\t21
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid FROM a LEFT JOIN (SELECT id, k FROM b) s ON a.x = s.k AND s.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t20
+                            1\t11\tnull
+                            2\t10\tnull
+                            2\t11\t21
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid FROM a CROSS JOIN (SELECT id, k FROM b) s WHERE a.x = s.k AND s.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t20
+                            2\t11\t21
+                            """);
+        });
+    }
+
+    @Test
     public void testKeylessAggregateReadByFilterOrJoin() throws Exception {
         // #7803 section 2
         assertMemoryLeak(() -> {
@@ -946,6 +1470,79 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             id\tv
                             1\t10
                             2\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinedCorrelatedSubQueryAfterInnerJoinWithWhereEquality() throws Exception {
+        // #7725
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            execute("CREATE TABLE t0 (id INT, k INT, x INT)");
+            execute("CREATE TABLE t4 (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (401, 0, 2), (402, NULL, 1), (403, 3, NULL), (404, 0, 3), (405, NULL, 0), (406, 3, 0)");
+            execute("INSERT INTO t0 VALUES (1, 1, 3), (2, 3, 3), (3, 0, NULL)");
+            execute("INSERT INTO t4 VALUES (401, 0, 2), (402, NULL, 1), (403, 3, NULL), (404, 0, 3), (405, NULL, 0), (406, 3, 0)");
+            assertQuery("""
+                    SELECT o.id, l.i0, l.i1, l.i2 FROM o LEFT JOIN LATERAL (
+                        SELECT b0.id i0, b1.id i1, b2.id i2
+                        FROM t0 b0 JOIN t4 b1 ON b0.k = b1.x
+                        LEFT JOIN (SELECT id, k, x FROM t4 WHERE x = o.k) b2 ON b1.x = b2.k
+                        WHERE b1.x = o.x
+                    ) l ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\ti0\ti1\ti2
+                            401\tnull\tnull\tnull
+                            402\t1\t402\tnull
+                            403\tnull\tnull\tnull
+                            404\t2\t404\t406
+                            405\t3\t405\tnull
+                            405\t3\t406\tnull
+                            406\t3\t405\t404
+                            406\t3\t406\t404
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinedCorrelatedSubQueryWithWhereEqualityOnMaster() throws Exception {
+        // #7725
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1, 1)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("INSERT INTO b VALUES (20, 5, 1)");
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid
+                        FROM a LEFT JOIN (SELECT id, k, x FROM b WHERE x = o.k) s ON a.x = s.k
+                        WHERE a.x = o.x
+                    ) l
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o LEFT JOIN LATERAL (
+                        SELECT a.id aid, s.id sid
+                        FROM a LEFT JOIN (SELECT id, k, x FROM b WHERE x = o.k) s ON a.x = s.k
+                        WHERE a.x = o.x
+                    ) l ON true
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\tnull
                             """);
         });
     }
@@ -1111,74 +1708,61 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLeftJoinedCorrelatedSubQueryAfterInnerJoinWithWhereEquality() throws Exception {
-        // #7725
+    public void testLeftJoinOnReadingOuterColumnBeforeEquatedInput() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE t0 (id INT, k INT, x INT)");
-            execute("CREATE TABLE t4 (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (401, 0, 2), (402, NULL, 1), (403, 3, NULL), (404, 0, 3), (405, NULL, 0), (406, 3, 0)");
-            execute("INSERT INTO t0 VALUES (1, 1, 3), (2, 3, 3), (3, 0, NULL)");
-            execute("INSERT INTO t4 VALUES (401, 0, 2), (402, NULL, 1), (403, 3, NULL), (404, 0, 3), (405, NULL, 0), (406, 3, 0)");
+            execute("CREATE TABLE o (id INT, k INT)");
+            execute("CREATE TABLE t (id INT, k INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1), (2, 2), (3, NULL)");
+            execute("INSERT INTO t VALUES (10, 1), (11, 2)");
+            execute("INSERT INTO a VALUES (100, 1), (101, 2), (102, NULL)");
+            execute("INSERT INTO b VALUES (200, 1, 10), (201, 2, 11), (202, NULL, 10)");
+            final String expected = """
+                    id\ttid\taid\tbid
+                    1\t10\t100\t200
+                    2\t11\t101\t201
+                    3\t10\t102\t202
+                    """;
             assertQuery("""
-                    SELECT o.id, l.i0, l.i1, l.i2 FROM o LEFT JOIN LATERAL (
-                        SELECT b0.id i0, b1.id i1, b2.id i2
-                        FROM t0 b0 JOIN t4 b1 ON b0.k = b1.x
-                        LEFT JOIN (SELECT id, k, x FROM t4 WHERE x = o.k) b2 ON b1.x = b2.k
-                        WHERE b1.x = o.x
+                    SELECT o.id, l.tid, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT t.id tid, a.id aid, b.id bid FROM t LEFT JOIN a ON a.k = o.k JOIN b ON b.x = t.id WHERE b.k = o.k
                     ) l ORDER BY 1, 2, 3, 4
                     """)
                     .noLeakCheck()
-                    .returns("""
-                            id\ti0\ti1\ti2
-                            401\tnull\tnull\tnull
-                            402\t1\t402\tnull
-                            403\tnull\tnull\tnull
-                            404\t2\t404\t406
-                            405\t3\t405\tnull
-                            405\t3\t406\tnull
-                            406\t3\t405\t404
-                            406\t3\t406\t404
-                            """);
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT t.id tid, a.id aid, b.id bid FROM t LEFT JOIN a ON a.k = o.k
+                        LEFT JOIN b ON b.x = t.id AND b.id > 0 WHERE b.k = o.k
+                    ) l ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
     @Test
-    public void testLeftJoinedCorrelatedSubQueryWithWhereEqualityOnMaster() throws Exception {
-        // #7725
+    public void testLeftJoinOnWithTwoOuterColumnsEquatedToOneColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1)");
-            execute("INSERT INTO a VALUES (10, 1)");
-            execute("INSERT INTO b VALUES (20, 5, 1)");
+            execute("CREATE TABLE t (id INT, k INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 3)");
+            execute("INSERT INTO t VALUES (10, 1), (11, 2)");
+            execute("INSERT INTO a VALUES (100, 1), (101, 2)");
             assertQuery("""
-                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
-                        SELECT a.id aid, s.id sid
-                        FROM a LEFT JOIN (SELECT id, k, x FROM b WHERE x = o.k) s ON a.x = s.k
-                        WHERE a.x = o.x
-                    ) l
+                    SELECT o.id, l.tid, l.aid FROM o JOIN LATERAL (
+                        SELECT t.id tid, a.id aid FROM t LEFT JOIN a ON a.k = o.k AND a.k = o.x WHERE t.k = o.k AND t.k = o.x
+                    ) l ORDER BY 1, 2, 3
                     """)
                     .noLeakCheck()
-                    .noRandomAccess()
                     .expectSize()
                     .returns("""
-                            id\taid\tsid
-                            1\t10\tnull
-                            """);
-            assertQuery("""
-                    SELECT o.id, l.aid, l.sid FROM o LEFT JOIN LATERAL (
-                        SELECT a.id aid, s.id sid
-                        FROM a LEFT JOIN (SELECT id, k, x FROM b WHERE x = o.k) s ON a.x = s.k
-                        WHERE a.x = o.x
-                    ) l ON true
-                    """)
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("""
-                            id\taid\tsid
-                            1\t10\tnull
+                            id\ttid\taid
+                            1\t10\t100
                             """);
         });
     }
@@ -1399,6 +1983,25 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitPerOuterRowOverRightJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        ORDER BY r.id DESC LIMIT 1
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            2\tnull\t101
+                            """);
+        });
+    }
+
+    @Test
     public void testNestedLateralReadingCorrelatedSubQueryColumn() throws Exception {
         // #7803 section 15
         assertMemoryLeak(() -> {
@@ -1466,6 +2069,65 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             1\t20\t2
                             2\tnull\t0
                             2\t21\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLateralWithRightOrFullJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT)");
+            execute("CREATE TABLE p (id INT)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT)");
+            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO p VALUES (1), (5)");
+            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
+            execute("INSERT INTO b VALUES (5, 1), (6, 2)");
+            assertQuery("""
+                    SELECT o.id, l.pid, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT p.id pid, m.aid, m.bid FROM p JOIN LATERAL (
+                            SELECT a.id aid, b.id bid FROM a RIGHT JOIN b ON a.x = b.k AND b.id > p.id AND b.k = o.k
+                        ) m
+                    ) l ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tpid\taid\tbid
+                            1\t1\tnull\t6
+                            1\t1\t10\t5
+                            1\t5\tnull\t5
+                            1\t5\tnull\t6
+                            2\t1\tnull\t5
+                            2\t1\t11\t6
+                            2\t5\tnull\t5
+                            2\t5\t11\t6
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.pid, l.aid, l.bid FROM o JOIN LATERAL (
+                        SELECT p.id pid, m.aid, m.bid FROM p JOIN LATERAL (
+                            SELECT a.id aid, b.id bid FROM a FULL JOIN b ON a.x = b.k AND b.id > p.id AND b.k = o.k
+                        ) m
+                    ) l ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tpid\taid\tbid
+                            1\t1\tnull\t6
+                            1\t1\t10\t5
+                            1\t1\t11\tnull
+                            1\t5\tnull\t5
+                            1\t5\tnull\t6
+                            1\t5\t10\tnull
+                            1\t5\t11\tnull
+                            2\t1\tnull\t5
+                            2\t1\t10\tnull
+                            2\t1\t11\t6
+                            2\t5\tnull\t5
+                            2\t5\t10\tnull
+                            2\t5\t11\t6
                             """);
         });
     }
@@ -1546,6 +2208,106 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             1\t20
                             2\t22
                             """);
+        });
+    }
+
+    @Test
+    public void testNonEquiRightJoinWithCorrelatedWhere() throws Exception {
+        // #7723
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO a VALUES (1, 1, '2024-01-01T00:00:01.000000Z'), (2, 2, '2024-01-01T00:00:03.000000Z')");
+            execute("INSERT INTO b VALUES (11, 1, 10), (12, 2, 20), (13, 3, 30)");
+            assertQuery("""
+                    SELECT o.id, t.aid, t.cid FROM o CROSS JOIN LATERAL (
+                        SELECT a.id aid, c.id cid FROM a RIGHT JOIN b c ON c.k > a.k WHERE c.x != o.x
+                    ) t ORDER BY o.id, t.cid, t.aid
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tcid
+                            1\t1\t12
+                            1\t1\t13
+                            1\t2\t13
+                            2\tnull\t11
+                            2\t1\t13
+                            2\t2\t13
+                            """);
+        });
+    }
+
+    @Test
+    public void testNullRejectingFilterOnNonNullableColumnAfterRightJoin() throws Exception {
+        // #7737
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, k INT)");
+            execute("CREATE TABLE trades (id INT, x INT, s SHORT, f BOOLEAN)");
+            execute("CREATE TABLE refunds (id INT, k INT)");
+            execute("CREATE TABLE xs (k INT, v INT)");
+            execute("INSERT INTO orders VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO trades VALUES (10, 1, 10, true)");
+            execute("INSERT INTO refunds VALUES (100, 1), (101, 2)");
+            execute("INSERT INTO xs VALUES (1, 100)");
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM (SELECT id, x, s FROM trades) t
+                        RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        WHERE t.s < 11
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM (SELECT id, x, s FROM trades) t
+                        RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        WHERE t.s IS NOT NULL
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM (SELECT id, x, f FROM trades) t
+                        RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        WHERE t.f = false
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            2\tnull\t100
+                            2\tnull\t101
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM (SELECT id, x, s FROM trades) t
+                        JOIN xs x ON x.k = o.k
+                        RIGHT JOIN refunds r ON r.k = t.x
+                        WHERE t.s < 11
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t
+                        RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        WHERE t.s < 11
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
         });
     }
 
@@ -1690,6 +2452,77 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             id\taid
                             1\t5
                             1\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnReadingOuterColumnAfterCrossJoin() throws Exception {
+        // #7700
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (id INT)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO p VALUES (1), (2)");
+            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
+            execute("INSERT INTO b VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO c VALUES (1)");
+            assertQuery("""
+                    SELECT p.id pid, m.aid, m.bid FROM p JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a CROSS JOIN c RIGHT JOIN b ON a.x = b.k AND b.id > p.id WHERE a.id > 0
+                    ) m ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            pid\taid\tbid
+                            1\t11\t2
+                            """);
+            assertQuery("""
+                    SELECT p.id pid, m.aid, m.bid FROM p JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a CROSS JOIN c FULL JOIN b ON a.x = b.k AND b.id > p.id WHERE a.id > 0
+                    ) m ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            pid\taid\tbid
+                            1\t10\tnull
+                            1\t11\t2
+                            2\t10\tnull
+                            2\t11\tnull
+                            """);
+            assertQuery("""
+                    SELECT p.id pid, m.aid, m.bid FROM p JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a CROSS JOIN c RIGHT JOIN b ON a.x = b.k AND b.id > p.id
+                    ) m ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            pid\taid\tbid
+                            1\tnull\t1
+                            1\t11\t2
+                            2\tnull\t1
+                            2\tnull\t2
+                            """);
+            assertQuery("""
+                    SELECT p.id pid, m.aid, m.bid FROM p JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a CROSS JOIN c FULL JOIN b ON a.x = b.k AND b.id > p.id
+                    ) m ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            pid\taid\tbid
+                            1\tnull\t1
+                            1\t10\tnull
+                            1\t11\t2
+                            2\tnull\t1
+                            2\tnull\t2
+                            2\t10\tnull
+                            2\t11\tnull
                             """);
         });
     }
@@ -1840,6 +2673,70 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPrefixDomainJoinsAtFirstCorrelatedStep() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (id INT)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT)");
+            execute("CREATE TABLE c (k INT)");
+            assertQuery("""
+                    SELECT p.id pid, m.aid, m.bid FROM p JOIN LATERAL (
+                        SELECT a.id aid, b.id bid FROM a CROSS JOIN c FULL JOIN b ON a.x = b.k AND b.id > p.id
+                    ) m ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [pid, aid, bid]
+                              Project
+                                columns: [p.id AS pid, m.aid, m.bid]
+                                Join
+                                  Master p
+                                    Scan
+                                      table: p
+                                      columns: [id]
+                                  INNER m
+                                    keys: [m.__qdb_outer_ref__0_id = p.id]
+                                    Project
+                                      columns: [id AS aid, id1 AS bid, __qdb_outer_ref__0_id]
+                                      Project
+                                        columns: [a.id, b.id AS id1, case(__qdb_outer_ref__0.__qdb_outer_ref__marker_0 = null, b.__qdb_outer_ref__0_id, __qdb_outer_ref__0.__qdb_outer_ref__0_id) AS __qdb_outer_ref__0_id]
+                                        Join
+                                          Master a
+                                            Scan
+                                              table: a
+                                              columns: [id, x]
+                                          CROSS c
+                                            Scan
+                                              table: c
+                                              columns: []
+                                          CROSS __qdb_outer_ref__0
+                                            Aggregate
+                                              keys: [id AS __qdb_outer_ref__0_id]
+                                              values: [count() AS __qdb_outer_ref__marker_0]
+                                              Scan
+                                                table: p
+                                                columns: [id]
+                                          FULL b
+                                            keys: [b.k = a.x, b.__qdb_outer_ref__0_id = __qdb_outer_ref__0.__qdb_outer_ref__0_id]
+                                            on: b.id > b.__qdb_outer_ref__0_id
+                                            Join
+                                              Master
+                                                Scan
+                                                  table: b
+                                                  columns: [id, k]
+                                              CROSS __qdb_outer_ref__0_1
+                                                Aggregate
+                                                  keys: [id AS __qdb_outer_ref__0_id]
+                                                  values: []
+                                                  Scan
+                                                    table: p
+                                                    columns: [id]
+                            """);
+        });
+    }
+
+    @Test
     public void testRightAndFullJoinInBodyMatchedRows() throws Exception {
         // #7803
         assertMemoryLeak(() -> {
@@ -1879,6 +2776,30 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             1\t11\tnull
                             2\t10\tnull
                             2\t11\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinBodyInUnionAllBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                        UNION ALL
+                        SELECT -1, x.k FROM xs x WHERE x.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\t-1\t1
+                            1\t10\t100
+                            2\tnull\t100
+                            2\tnull\t101
                             """);
         });
     }
@@ -1947,6 +2868,304 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRightJoinOnReadingOuterColumn() throws Exception {
+        // #7723
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+            assertQuery("""
+                    SELECT o.id, l.c FROM orders o JOIN LATERAL (
+                        SELECT count(*) c FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                    ) l ORDER BY 1
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t2
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND t.x = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+            assertQuery("""
+                    SELECT o.id, l.rid FROM orders o JOIN LATERAL (
+                        SELECT r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id IS NULL
+                    ) l ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\trid
+                            1\t101
+                            2\t100
+                            2\t101
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON r.k = o.k AND t.id > 0
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\t10\t100
+                            2\tnull\t100
+                            2\t10\t101
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinOnReadingTwoOuterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            execute("CREATE TABLE o (id INT, k INT, lim INT)");
+            execute("INSERT INTO o VALUES (1, 1, 5), (2, 1, 50)");
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k AND t.id > o.lim
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PER_OUTER_ROW_RIGHT_JOIN);
+        });
+    }
+
+    @Test
+    public void testRightJoinPlanKeepsOnAndKeysSlaveDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid
+                        FROM (SELECT id, x FROM trades WHERE x = o.k) t RIGHT JOIN refunds r ON t.x = r.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [id, tid, rid]
+                              Project
+                                columns: [o.id, l.tid, l.rid]
+                                Join
+                                  Master o
+                                    Scan
+                                      table: orders
+                                      columns: [id, k]
+                                  INNER l
+                                    keys: [l.__qdb_outer_ref__0_k = o.k]
+                                    Project
+                                      columns: [t.id AS tid, r.id AS rid, r.__qdb_outer_ref__0_k]
+                                      Join
+                                        Master t
+                                          Project
+                                            columns: [id, x, x AS __qdb_outer_ref__0_k]
+                                            Scan
+                                              table: trades
+                                              columns: [id, x]
+                                        RIGHT r
+                                          keys: [r.k = t.x, r.__qdb_outer_ref__0_k = t.__qdb_outer_ref__0_k]
+                                          Join
+                                            Master
+                                              Scan
+                                                table: refunds
+                                                columns: [id, k]
+                                            CROSS __qdb_outer_ref__0
+                                              Aggregate
+                                                keys: [k AS __qdb_outer_ref__0_k]
+                                                values: []
+                                                Scan
+                                                  table: orders
+                                                  columns: [k]
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid, l.xk FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid, x.k xk
+                        FROM trades t FULL JOIN refunds r ON r.k = t.x
+                        LEFT JOIN (SELECT k, v FROM xs WHERE k = o.k) x ON x.v > 0
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [id, tid, rid]
+                              Project
+                                columns: [o.id, l.tid, l.rid, l.xk]
+                                Join
+                                  Master o
+                                    Scan
+                                      table: orders
+                                      columns: [id, k]
+                                  INNER l
+                                    keys: [l.__qdb_outer_ref__0_k = o.k]
+                                    Project
+                                      columns: [t.id AS tid, r.id AS rid, x.k AS xk, __qdb_outer_ref__0.__qdb_outer_ref__0_k]
+                                      Join
+                                        Master t
+                                          Scan
+                                            table: trades
+                                            columns: [id, x]
+                                        FULL r
+                                          keys: [r.k = t.x]
+                                          Scan
+                                            table: refunds
+                                            columns: [id, k]
+                                        CROSS __qdb_outer_ref__0
+                                          Aggregate
+                                            keys: [k AS __qdb_outer_ref__0_k]
+                                            values: []
+                                            Scan
+                                              table: orders
+                                              columns: [k]
+                                        LEFT x
+                                          keys: [x.__qdb_outer_ref__0_k = __qdb_outer_ref__0.__qdb_outer_ref__0_k]
+                                          on: x.v > 0
+                                          Project
+                                            columns: [k, v, k AS __qdb_outer_ref__0_k]
+                                            Scan
+                                              table: xs
+                                              columns: [k, v]
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinToSubQueryWithCorrelatedOn() throws Exception {
+        // #7729
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
+            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
+            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k FROM b) s ON a.x = s.k AND s.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\tnull\t21
+                            1\t10\t20
+                            2\tnull\t20
+                            2\t11\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightOrFullJoinWithNullOuterValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, k INT)");
+            execute("CREATE TABLE trades (id INT, x INT)");
+            execute("CREATE TABLE refunds (id INT, k INT)");
+            execute("INSERT INTO orders VALUES (1, 1), (2, 2), (3, NULL)");
+            execute("INSERT INTO trades VALUES (10, 1), (11, NULL)");
+            execute("INSERT INTO refunds VALUES (100, 1), (101, 2), (102, NULL)");
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\tnull\t102
+                            1\t10\t100
+                            2\tnull\t100
+                            2\tnull\t101
+                            2\tnull\t102
+                            3\tnull\t100
+                            3\tnull\t101
+                            3\t11\t102
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM trades t FULL JOIN refunds r ON t.x = r.k AND r.k = o.k
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\tnull\t102
+                            1\t10\t100
+                            1\t11\tnull
+                            2\tnull\t100
+                            2\tnull\t101
+                            2\tnull\t102
+                            2\t10\tnull
+                            2\t11\tnull
+                            3\tnull\t100
+                            3\tnull\t101
+                            3\t10\tnull
+                            3\t11\t102
+                            """);
+            execute("CREATE TABLE od (id INT, d DOUBLE, s SYMBOL)");
+            execute("CREATE TABLE td (id INT, d DOUBLE)");
+            execute("CREATE TABLE rd (id INT, s SYMBOL, d DOUBLE)");
+            execute("INSERT INTO od VALUES (1, 1.5, 'a'), (2, NULL, NULL)");
+            execute("INSERT INTO td VALUES (10, 1.5), (11, NULL)");
+            execute("INSERT INTO rd VALUES (100, 'a', 1.5), (101, NULL, NULL), (102, 'b', 2.5)");
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM od o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM td t RIGHT JOIN rd r ON t.d = r.d AND r.s = o.s AND r.d = o.d
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\tnull\t102
+                            1\t10\t100
+                            2\tnull\t100
+                            2\tnull\t102
+                            2\t11\t101
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.tid, l.rid FROM od o JOIN LATERAL (
+                        SELECT t.id tid, r.id rid FROM td t FULL JOIN rd r ON t.d = r.d AND r.s = o.s AND r.d = o.d
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ttid\trid
+                            1\tnull\t101
+                            1\tnull\t102
+                            1\t10\t100
+                            1\t11\tnull
+                            2\tnull\t100
+                            2\tnull\t102
+                            2\t10\tnull
+                            2\t11\t101
+                            """);
+        });
+    }
+
+    @Test
     public void testSameNamedOuterColumnsOfTwoOuterTables() throws Exception {
         // #7803 section 6
         assertMemoryLeak(() -> {
@@ -1985,6 +3204,28 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             id\taid\trid
                             1\t10\t20
                             2\t11\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarCountBeforeRightJoinInLeftLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            assertQuery("""
+                    SELECT o.id, l.rid, l.n FROM orders o LEFT JOIN LATERAL (
+                        SELECT r.id rid, c.n FROM trades t
+                        CROSS JOIN (SELECT count(*) n FROM xs WHERE k = o.k) c
+                        RIGHT JOIN refunds r ON t.x = r.k
+                    ) l ON true ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\trid\tn
+                            1\t100\t1
+                            1\t101\tnull
+                            2\t100\t0
+                            2\t101\tnull
                             """);
         });
     }
@@ -2151,6 +3392,67 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             id\taid\tbid\tcid
                             1\t10\t20\t30
                             2\t10\t21\t31
+                            """);
+        });
+    }
+
+    @Test
+    public void testWhereEqualityOnCorrelatedFullOrRightJoinSlave() throws Exception {
+        // #7725, #7726
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o2 (id INT, k INT, x INT)");
+            execute("CREATE TABLE a2 (id INT, k INT, x INT)");
+            execute("CREATE TABLE b2 (id INT, k INT, x INT)");
+            execute("INSERT INTO o2 VALUES (1, 5, 1)");
+            execute("INSERT INTO a2 VALUES (10, 9, 9), (11, 8, 8)");
+            execute("INSERT INTO b2 VALUES (20, 2, 1)");
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o2 o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid
+                        FROM a2 a FULL JOIN (SELECT id, k, x FROM b2 WHERE x = o.x) s ON a.k = s.x
+                        WHERE s.k < o.k
+                    ) l
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\tnull\t20
+                            """);
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1), (2, NULL)");
+            execute("INSERT INTO a VALUES (10, 1)");
+            execute("INSERT INTO b VALUES (20, 5, 1)");
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid
+                        FROM a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k
+                        WHERE a.x = o.x
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\tnull
+                            """);
+            execute("INSERT INTO b VALUES (21, 1, 1), (22, 7, NULL)");
+            assertQuery("""
+                    SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
+                        SELECT a.id aid, s.id sid
+                        FROM a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k
+                        WHERE a.x = o.x
+                    ) l ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid
+                            1\t10\t21
+                            2\tnull\t22
                             """);
         });
     }
@@ -2349,6 +3651,28 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWildcardOverFullJoinHidesCarriers() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersTradesRefunds();
+            assertQuery("""
+                    SELECT * FROM orders o JOIN LATERAL (
+                        SELECT * FROM trades t FULL JOIN refunds r ON t.x = r.k AND r.k = o.k
+                    ) l ORDER BY 1, 3, 5
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tk\tid1\tx\tid11\tk1
+                            1\t1\tnull\tnull\t101\t2
+                            1\t1\t10\t1\t100\t1
+                            2\t2\tnull\tnull\t100\t1
+                            2\t2\tnull\tnull\t101\t2
+                            2\t2\t10\t1\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowAndLatestOnAboveJoinedCorrelatedSubQuery() throws Exception {
         // #7803 section 7
         assertMemoryLeak(() -> {
@@ -2406,6 +3730,26 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         });
     }
 
+    private void assertFullJoinCarrier(String type, String value1, String value2) throws Exception {
+        execute("CREATE TABLE o (id INT, v " + type + ")");
+        execute("CREATE TABLE a (id INT, v " + type + ")");
+        execute("CREATE TABLE b (id INT, v " + type + ")");
+        execute("INSERT INTO o VALUES (1, " + value1 + "), (2, " + value2 + ")");
+        execute("INSERT INTO a VALUES (10, " + value1 + ")");
+        execute("INSERT INTO b VALUES (20, " + value1 + "), (21, " + value2 + ")");
+        assertQuery("""
+                SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
+                    SELECT a.id aid, b.id bid FROM a FULL JOIN b ON a.v = b.v AND b.v = o.v
+                ) l ORDER BY 1, 2, 3
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .returns(FULL_JOIN_CARRIER_ROWS);
+        execute("DROP TABLE o");
+        execute("DROP TABLE a");
+        execute("DROP TABLE b");
+    }
+
     private void assertNullOuterValueFindsDomainRow(String type, String value1, String value2) throws Exception {
         execute("CREATE TABLE o (id INT, x INT)");
         execute("INSERT INTO o VALUES (1, 1), (2, 2)");
@@ -2429,5 +3773,20 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         execute("DROP TABLE o");
         execute("DROP TABLE c");
         execute("DROP TABLE d");
+    }
+
+    private void assertSpliceCorrelationRejected(String sql) throws Exception {
+        assertQuery(sql).noLeakCheck().fails(sql.indexOf("SPLICE"), "outer column reference at or before a SPLICE join is not supported in a LATERAL sub-query");
+    }
+
+    private void createOrdersTradesRefunds() throws Exception {
+        execute("CREATE TABLE orders (id INT, k INT)");
+        execute("CREATE TABLE trades (id INT, x INT)");
+        execute("CREATE TABLE refunds (id INT, k INT)");
+        execute("CREATE TABLE xs (k INT, v INT)");
+        execute("INSERT INTO orders VALUES (1, 1), (2, 2)");
+        execute("INSERT INTO trades VALUES (10, 1)");
+        execute("INSERT INTO refunds VALUES (100, 1), (101, 2)");
+        execute("INSERT INTO xs VALUES (1, 100)");
     }
 }

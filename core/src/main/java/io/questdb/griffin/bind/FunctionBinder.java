@@ -52,6 +52,7 @@ import io.questdb.griffin.SubsampleValidator;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
@@ -474,6 +475,14 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
                 && (ColumnType.tagOf(function.getType()) == ColumnType.TIMESTAMP || function.getType() == ColumnType.DATE);
     }
 
+    private static boolean isTimestampConvertible(OutputSchema output, int timestampType) {
+        if (output.getColumnCount() != 1) {
+            return false;
+        }
+        final int columnType = output.getColumnType(0);
+        return ColumnType.isNull(columnType) || ColumnType.isConvertibleFrom(columnType, timestampType);
+    }
+
     private static boolean isTimestampText(TimestampDriver driver, CharSequence text) {
         try {
             ColumnType.getTimestampDriver(IntervalUtils.literalTimestampType(driver, text)).parseFloorLiteral(text);
@@ -629,7 +638,8 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
                 }
                 traverseAlgo.traverse(node, this);
             }
-            Function function = foldRoot(popFunction());
+            final int rootPosition = positionStack.getLast();
+            Function function = foldRoot(popFunction(), rootPosition);
             assert functionStack.size() == functionMark;
             if (function instanceof StaticTypeFunction) {
                 // UPDATE converts the owned root while binding; every other root is built by its generator.
@@ -890,7 +900,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
 
     private Function captureImplicitConversion(int index, Function function, int position, Class<? extends FunctionFactory> factoryClass) {
         if (function.isConstant()) {
-            final Function folded = resolver.functionToConstant(function);
+            final Function folded = resolver.functionToConstant(function, position);
             arguments.setQuick(index, constant(folded, position));
             return folded;
         }
@@ -1041,8 +1051,15 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             subquery = subqueryCompiler.bindSubquery(node.queryModel, node.position, executionContext);
         }
         scope.currentPreparation.isRebuildRequired = true;
-        push(nextCursor().of(subquery, node.position), leafMark());
-        return new CursorFunction(subquery.getOutputMetadata());
+        final CursorExpression cursor = nextCursor().of(subquery, node.position);
+        final Function function = new CursorFunction(subquery.getOutputMetadata());
+        if (scope.timestampSubqueries.indexOf(node.queryModel) >= 0 && isTimestampConvertible(subquery.getRoot().getOutput(), scope.timestampSubqueryType)) {
+            push(nextCursor().ofTimestamp(cursor, scope.timestampSubqueryType,
+                    BoundExpression.RUNTIME_CONSTANT | cursor.getFunctionFlags() & BoundExpression.STABLE_WITHIN_EXECUTION), leafMark());
+            return new ScalarSubQueryTimestampFunction(function, node.position, scope.timestampSubqueryType);
+        }
+        push(cursor, leafMark());
+        return function;
     }
 
     /**
@@ -1235,7 +1252,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
 
     private Function foldArgument(int index, Function function, int position) {
         final Function argument = function != null && function.isConstant() && function.extendedOps() == null
-                && !(function instanceof TypeConstant) ? resolver.functionToConstant(function) : function;
+                && !(function instanceof TypeConstant) ? resolver.functionToConstant(function, position) : function;
         try {
             if (argument instanceof ConstantFunction && !(argument instanceof TypeConstant)) {
                 final BoundExpression expression = arguments.getQuick(index);
@@ -1253,9 +1270,9 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         }
     }
 
-    private Function foldRoot(Function function) {
+    private Function foldRoot(Function function, int position) {
         final Function root = function != null && function.isConstant() && function.extendedOps() == null
-                ? resolver.functionToConstant(function) : function;
+                ? resolver.functionToConstant(function, position) : function;
         try {
             finish(root);
             return root;

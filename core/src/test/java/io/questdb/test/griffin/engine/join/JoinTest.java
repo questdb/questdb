@@ -4415,10 +4415,10 @@ public class JoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .withPlanContaining(
-                            "            DeferredSingleSymbolFilterPageFrame\n"
-                                    + "                Index forward scan on: x\n"
-                                    + "                  filter: x=1\n"
-                                    + "                Frame forward scan on: ft"
+                            "                    DeferredSingleSymbolFilterPageFrame\n"
+                                    + "                        Index forward scan on: x\n"
+                                    + "                          filter: x=1\n"
+                                    + "                        Frame forward scan on: ft"
                     )
                     .returns("row_count\n1\n");
             assertQuery(sql)

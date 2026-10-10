@@ -85,6 +85,8 @@ import static io.questdb.griffin.bind.BindContext.isWildcardColumn;
 import static io.questdb.griffin.bind.BindContext.sourceAlias;
 
 final class SampleByBinder {
+    private static final String FROM_BOUND_ERROR = "from lower bound must be a constant expression convertible to a TIMESTAMP";
+    private static final String TO_BOUND_ERROR = "to upper bound must be a constant expression convertible to a TIMESTAMP";
     private final SqlBinder binder;
     private final CairoConfiguration configuration;
     private final BindContext ctx;
@@ -150,7 +152,7 @@ final class SampleByBinder {
         final ExpressionNode from = source.getSampleByFrom();
         if (source.getSampleByOffset() == null || source.getSampleByUnit() != null
                 || from != null && (from.type == ExpressionNode.BIND_VARIABLE || from.type == ExpressionNode.FUNCTION
-                || from.type == ExpressionNode.OPERATION)) {
+                || from.type == ExpressionNode.OPERATION || from.type == ExpressionNode.QUERY)) {
             return true;
         }
         return hasLinearFill(source);
@@ -297,6 +299,12 @@ final class SampleByBinder {
         return ctx.functionBinder.bind(expression, emptySchema, null, executionContext);
     }
 
+    private BoundExpression bindSampleByBound(ExpressionNode bound, int timestampType, CharSequence error, SqlExecutionContext executionContext) throws SqlException {
+        final BoundExpression expression = bindSampleByParameter(bound, timestampType, executionContext);
+        validateRuntimeConstant(expression, timestampType, error);
+        return expression;
+    }
+
     private BoundExpression bindSampleByParameter(ExpressionNode expression, int type, SqlExecutionContext executionContext) throws SqlException {
         if (expression == null) {
             return null;
@@ -330,6 +338,24 @@ final class SampleByBinder {
             scope.substitutionNodes.clear();
             scope.substitutionColumns.clear();
             ctx.tmpScope.clear();
+        }
+    }
+
+    /**
+     * Scalar sub-query bounds bind as runtime-constant timestamps on every SAMPLE BY path: the bucket, the cursor,
+     * the fill and the range filter.
+     */
+    private void markTimestampSubqueries(QueryModel source, int timestampType) {
+        final BindScope scope = ctx.scope();
+        scope.timestampSubqueries.clear();
+        scope.timestampSubqueryType = timestampType;
+        final ExpressionNode from = source.getSampleByFrom();
+        if (from != null && from.type == ExpressionNode.QUERY) {
+            scope.timestampSubqueries.add(from.queryModel);
+        }
+        final ExpressionNode to = source.getSampleByTo();
+        if (to != null && to.type == ExpressionNode.QUERY) {
+            scope.timestampSubqueries.add(to.queryModel);
         }
     }
 
@@ -600,10 +626,10 @@ final class SampleByBinder {
         final ExpressionNode from = source.getSampleByFrom();
         final ExpressionNode to = source.getSampleByTo();
         final int timestampType = output.getColumnType(timestampIndex);
-        plan.setFrom(bindSampleByParameter(from == null ? null : sampleByRangeBound(from, isSubDay ? timezone : null, timestampType),
-                timestampType, executionContext));
-        plan.setTo(bindSampleByParameter(to == null ? null : sampleByRangeBound(to, isSubDay ? timezone : null, timestampType),
-                timestampType, executionContext));
+        plan.setFrom(bindSampleByBound(from == null ? null : sampleByRangeBound(from, isSubDay ? timezone : null, timestampType),
+                timestampType, FROM_BOUND_ERROR, executionContext));
+        plan.setTo(bindSampleByBound(to == null ? null : sampleByRangeBound(to, isSubDay ? timezone : null, timestampType),
+                timestampType, TO_BOUND_ERROR, executionContext));
         if (!isSubDay) {
             plan.setTimezone(bindSampleByParameter(timezone, ColumnType.STRING, executionContext));
         }
@@ -611,8 +637,6 @@ final class SampleByBinder {
         if ((timezone == null || isSubDay && from != null || !isSubDay) && offset != null && offset != SqlParser.ZERO_OFFSET) {
             plan.setOffset(bindSampleByParameter(offset, ColumnType.STRING, executionContext));
         }
-        validateRuntimeConstant(plan.getFrom(), timestampType, "from lower bound must be a constant expression convertible to a TIMESTAMP");
-        validateRuntimeConstant(plan.getTo(), timestampType, "to upper bound must be a constant expression convertible to a TIMESTAMP");
         final int aggregateCount = aggregate.getAggregates().size();
         final boolean isBroadcast = fillCount < aggregateCount;
         if (isBroadcast) {
@@ -704,6 +728,7 @@ final class SampleByBinder {
         final ExpressionNode sampleBy = source.getSampleBy();
         validateSampleByQuery(model, source, input.getOutput(), false);
         final int timestampIndex = input.getOutput().getTimestampIndex();
+        markTimestampSubqueries(source, input.getOutput().getColumnType(timestampIndex));
 
         final SampleByPlan plan = ctx.planNodes.sampleByPlans.next().of(input, model.getModelPosition());
         plan.setTimestampColumnId(input.getOutput().getColumnId(timestampIndex));
@@ -713,12 +738,10 @@ final class SampleByBinder {
         final int timestampType = input.getOutput().getColumnType(timestampIndex);
         plan.setTimezone(bindSampleByParameter(source.getSampleByTimezoneName(), ColumnType.STRING, executionContext));
         plan.setOffset(bindSampleByParameter(source.getSampleByOffset(), ColumnType.STRING, executionContext));
-        plan.setFrom(bindSampleByParameter(source.getSampleByFrom(), timestampType, executionContext));
-        plan.setTo(bindSampleByParameter(source.getSampleByTo(), timestampType, executionContext));
         validateRuntimeConstant(plan.getTimezone(), ColumnType.STRING, "timezone must be a constant expression of STRING or CHAR type");
         validateRuntimeConstant(plan.getOffset(), ColumnType.STRING, "offset must be a constant expression of STRING or CHAR type");
-        validateRuntimeConstant(plan.getFrom(), timestampType, "from lower bound must be a constant expression convertible to a TIMESTAMP");
-        validateRuntimeConstant(plan.getTo(), timestampType, "to upper bound must be a constant expression convertible to a TIMESTAMP");
+        plan.setFrom(bindSampleByBound(source.getSampleByFrom(), timestampType, FROM_BOUND_ERROR, executionContext));
+        plan.setTo(bindSampleByBound(source.getSampleByTo(), timestampType, TO_BOUND_ERROR, executionContext));
         final ExpressionNode unit = source.getSampleByUnit();
         final ConstantExpression period;
         if (unit == null) {
@@ -749,10 +772,14 @@ final class SampleByBinder {
         final ExpressionNode sampleBy = source.getSampleBy();
         validateSampleByQuery(model, source, input, true);
         final ExpressionNode from = source.getSampleByFrom();
+        final int timestampType = input.getColumnType(input.getTimestampIndex());
+        markTimestampSubqueries(source, timestampType);
+        bindSampleByBound(from, timestampType, FROM_BOUND_ERROR, executionContext);
+        bindSampleByBound(source.getSampleByTo(), timestampType, TO_BOUND_ERROR, executionContext);
         final ExpressionNode timezone = sampleByTimezone(source);
         SqlUtil.validateSampleByTimezone(timezone, functionParser, executionContext);
         final boolean isSubDay = !sampleBy.token.isEmpty() && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
-        final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor_utc", 0, 0);
+        final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor_utc", 0, sampleBy.position);
         floor.paramCount = 5;
         floor.args.add(timezone != null && !(isSubDay && from != null) ? timezone : sampleByNull());
         floor.args.add(source.getSampleByOffset());

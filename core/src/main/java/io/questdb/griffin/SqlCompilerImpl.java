@@ -523,8 +523,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (batchCallback.preCompile(this, sqlText)) {
                     // ok, the callback wants us to compile this query, let's go!
 
-                    // re-position lexer pointer to where sqlText just began
-                    lexer.backTo(position, null);
+                    lexer.restartAt(position);
                     compileInner(executionContext, sqlText, true);
 
                     // consume residual text, such as semicolon
@@ -635,6 +634,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @TestOnly
+    public int getCharacterStoreCapacity() {
+        return characterStore.getCapacity();
+    }
+
+    @TestOnly
     public int getCharacterStorePoolCapacity() {
         return characterStore.getPoolCapacity();
     }
@@ -656,6 +660,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public int getJoinEqualityCapacity() {
         return planNodePools.joinEqualities.getCapacity();
+    }
+
+    @TestOnly
+    public int getLexerStashSize() {
+        return lexer.getStashSize();
     }
 
     @TestOnly

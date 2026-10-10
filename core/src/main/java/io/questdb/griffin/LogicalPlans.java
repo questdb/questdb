@@ -243,6 +243,16 @@ public final class LogicalPlans {
     }
 
     /**
+     * The name the generator's factory gives column {@code index} of the plan: a count aggregate, read through
+     * filters, names its column {@code count} under any spelling of that name.
+     */
+    public static CharSequence factoryColumnName(LogicalPlan plan, int index) {
+        final CharSequence name = plan.getOutput().getColumnName(index);
+        return skipFilters(plan) instanceof AggregatePlan aggregate && isCount(aggregate) && SqlKeywords.isCountKeyword(name)
+                ? "count" : name;
+    }
+
+    /**
      * The first filter under the projections of the input, past the filters that are constant true.
      */
     public static FilterPlan firstFilter(LogicalPlan input) {
@@ -290,16 +300,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * The name the generator's factory gives column {@code index} of the plan: a count aggregate, read through
-     * filters, names its column {@code count} under any spelling of that name.
-     */
-    public static CharSequence factoryColumnName(LogicalPlan plan, int index) {
-        final CharSequence name = plan.getOutput().getColumnName(index);
-        return skipFilters(plan) instanceof AggregatePlan aggregate && isCount(aggregate) && SqlKeywords.isCountKeyword(name)
-                ? "count" : name;
-    }
-
-    /**
      * True when the order a sort requests reaches a filtered table scan, directly, through a window, or as
      * the master of a join that preserves master order.
      */
@@ -312,18 +312,15 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when a step of the join after its first input is a barrier and none is a RIGHT or FULL join.
+     * True when a step of the join after its first input is a barrier.
      */
     public static boolean hasBarrierInput(JoinPlan join) {
-        boolean hasBarrier = false;
         for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-            final JoinKind type = join.getInputs().getQuick(i).getJoinType();
-            if (type == JoinKind.RIGHT_OUTER || type == JoinKind.FULL_OUTER) {
-                return false;
+            if (join.getInputs().getQuick(i).getJoinType().isBarrier()) {
+                return true;
             }
-            hasBarrier |= type.isBarrier();
         }
-        return hasBarrier;
+        return false;
     }
 
     /**
@@ -562,6 +559,18 @@ public final class LogicalPlans {
         return true;
     }
 
+    /**
+     * True when the step can emit the columns of the input as NULL: the input's own step null-extends it, or a step
+     * the join orders after the input null-extends its master.
+     */
+    public static boolean isNullingStep(JoinPlan join, JoinInput step, JoinInput input) {
+        if (step == input) {
+            return step.getJoinType().isSlaveNulling();
+        }
+        final ObjList<JoinInput> steps = orderedSteps(join);
+        return step.getJoinType().isMasterNulling() && steps.indexOf(step) > steps.indexOf(input);
+    }
+
     public static boolean isOrderIndependent(BoundExpression predicate) {
         return isStableWithinExecution(predicate) && (predicate.getFunctionFlags() & BoundExpression.NON_DETERMINISTIC) == 0;
     }
@@ -721,6 +730,19 @@ public final class LogicalPlans {
     /**
      * The LONG value a LIMIT bound function returns for the constant.
      */
+    /**
+     * The ordered position of the last step of the join that can null-extend its master rows, or -1.
+     */
+    public static int lastMasterNullingStep(JoinPlan join) {
+        final ObjList<JoinInput> steps = orderedSteps(join);
+        for (int i = steps.size() - 1; i > 0; i--) {
+            if (steps.getQuick(i).getJoinType().isMasterNulling()) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public static long limitValue(ConstantExpression constant) {
         return switch (ColumnType.tagOf(constant.getDataType())) {
             case ColumnType.NULL -> Numbers.LONG_NULL;
@@ -764,6 +786,13 @@ public final class LogicalPlans {
      * The projection a parallel top-K over the sort's input builds over itself: the one projection the generator
      * builds for the input, unless the projection's input is another; null otherwise.
      */
+    /**
+     * The join's steps in the order the join runs them, or in binding order before the order is decided.
+     */
+    public static ObjList<JoinInput> orderedSteps(JoinPlan join) {
+        return join.getOrderedInputs().size() > 0 ? join.getOrderedInputs() : join.getInputs();
+    }
+
     public static ProjectPlan parallelTopKProjection(SortPlan sort) {
         final LogicalPlan base = generatedPlan(sort.getInput());
         if (!isPeelableProjection(base)) {

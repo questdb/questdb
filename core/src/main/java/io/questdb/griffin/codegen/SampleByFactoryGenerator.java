@@ -61,6 +61,7 @@ import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillValueNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByUtcBoundFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
@@ -194,14 +195,22 @@ final class SampleByFactoryGenerator {
                 ? SampleByPlan.Algorithm.FILL_NONE : SampleByPlan.Algorithm.FILL_VALUE;
     }
 
+    /**
+     * Consumes the function: a constant bound converts now, a runtime-constant one converts once it has its value.
+     */
     private static Function toSampleByUtc(Function function, TimestampDriver driver, TimeZoneRules rules, int timestampType) {
-        if (function != driver.getTimestampConstantNull()) {
-            final long timestamp = driver.from(function.getTimestamp(null), ColumnType.getTimestampType(function.getType()));
-            if (timestamp != Numbers.LONG_NULL) {
-                return TimestampConstant.newInstance(driver.toUTC(timestamp, rules), timestampType);
-            }
+        if (function == driver.getTimestampConstantNull()) {
+            return function;
         }
-        return function;
+        if (!function.isConstant()) {
+            return new SampleByUtcBoundFunction(function, rules, timestampType);
+        }
+        final long timestamp = driver.from(function.getTimestamp(null), ColumnType.getTimestampType(function.getType()));
+        if (timestamp == Numbers.LONG_NULL) {
+            return function;
+        }
+        Misc.free(function);
+        return TimestampConstant.newInstance(driver.toUTC(timestamp, rules), timestampType);
     }
 
     /**
@@ -864,16 +873,8 @@ final class SampleByFactoryGenerator {
                 final CharSequence zone = timezone.getStrA(null);
                 if (zone != null) {
                     final TimeZoneRules rules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
-                    final Function oldFrom = from;
                     from = toSampleByUtc(from, driver, rules, timestampType);
-                    if (from != oldFrom) {
-                        Misc.free(oldFrom);
-                    }
-                    final Function oldTo = to;
                     to = toSampleByUtc(to, driver, rules, timestampType);
-                    if (to != oldTo) {
-                        Misc.free(oldTo);
-                    }
                 }
             }
             final TimestampSampler sampler = plan.getPeriod() instanceof ConstantExpression period

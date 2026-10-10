@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -1955,6 +1956,66 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinSymbolAndVarcharKeyIndexCollision() throws Exception {
         assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("VARCHAR", "quotes", "", "Fast"));
+    }
+
+    @Test
+    public void testAsOfJoinSymbolKeysSharedMasterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (a SYMBOL, c SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('X', 'Y', '2024-01-01T00:00:01Z'),
+                        ('Y', 'X', '2024-01-01T00:00:02Z'),
+                        ('X', 'X', '2024-01-01T00:00:03Z')
+                    """);
+            execute("CREATE TABLE m (mx SYMBOL, my SYMBOL, mz SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('X', 'X', 'X', '2024-01-01T00:00:03Z'),
+                        ('X', 'X', 'X', '2024-01-01T00:00:04Z'),
+                        ('Y', 'Y', 'Y', '2024-01-01T00:00:05Z')
+                    """);
+
+            printSql("EXPLAIN SELECT m.ts, s.ts sts, s.a, s.c FROM m ASOF JOIN s ON s.c = m.mx AND s.a = m.mz AND s.a = m.mx");
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+
+            final String asOfExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:05.000000Z\t\t\t
+                    """;
+            final String asOfMatchedExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    """;
+            final String ltExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:03.000000Z\t\t\t
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:05.000000Z\t\t\t
+                    """;
+            final String ltMatchedExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    """;
+            final ObjList<String> onClauses = new ObjList<>();
+            collectOnClausePermutations(new String[]{"s.c = m.mx", "s.a = m.mz", "s.a = m.mx"}, 0, onClauses);
+            collectOnClausePermutations(new String[]{"s.a = m.mx", "s.c = m.mz", "s.c = m.mx", "s.a = m.my"}, 0, onClauses);
+            final String[] asOfHints = {"", "/*+ asof_linear(m s) */ ", "/*+ asof_dense(m s) */ "};
+            for (int i = 0, n = onClauses.size(); i < n; i++) {
+                final String on = onClauses.getQuick(i);
+                for (String hint : asOfHints) {
+                    final String asOf = "SELECT " + hint + "m.ts, s.ts sts, s.a, s.c FROM m ASOF JOIN s ON " + on;
+                    assertSymbolKeysSharedMasterColumn(asOf, asOfExpected, false);
+                    assertSymbolKeysSharedMasterColumn(asOf + " WHERE s.ts IS NOT NULL", asOfMatchedExpected, true);
+                }
+                final String lt = "SELECT m.ts, s.ts sts, s.a, s.c FROM m LT JOIN s ON " + on;
+                assertSymbolKeysSharedMasterColumn(lt, ltExpected, false);
+                assertSymbolKeysSharedMasterColumn(lt + " WHERE s.ts IS NOT NULL", ltMatchedExpected, true);
+            }
+        });
     }
 
     @Test
@@ -6595,6 +6656,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
         TestUtils.assertEquals(expectedSink, actualSink);
     }
 
+    private void assertSymbolKeysSharedMasterColumn(String query, String expected, boolean isFiltered) throws Exception {
+        assertQuery(query).noLeakCheck().timestamp("ts").noRandomAccess().expectSize(!isFiltered).returns(expected);
+        assertQuery(query).noLeakCheck().fullFatJoins().timestamp("ts").noRandomAccess().expectSize(!isFiltered).returns(expected);
+    }
+
     private void createBook() throws Exception {
         executeWithRewriteTimestamp(
                 "CREATE TABLE book (ts #TIMESTAMP, sym SYMBOL, side SYMBOL, side_str STRING, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
@@ -6708,5 +6774,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    static void collectOnClausePermutations(String[] equalities, int from, ObjList<String> sink) {
+        if (from == equalities.length) {
+            sink.add(String.join(" AND ", equalities));
+            return;
+        }
+        for (int i = from; i < equalities.length; i++) {
+            String t = equalities[from];
+            equalities[from] = equalities[i];
+            equalities[i] = t;
+            collectOnClausePermutations(equalities, from + 1, sink);
+            equalities[i] = equalities[from];
+            equalities[from] = t;
+        }
     }
 }

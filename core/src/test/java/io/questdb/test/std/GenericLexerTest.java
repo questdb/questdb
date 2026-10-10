@@ -470,6 +470,18 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testOfDropsStash() {
+        GenericLexer lexer = new GenericLexer(64);
+        lexer.of("orange blue");
+        lexer.next();
+        lexer.unparseLast();
+        lexer.stash();
+        Assert.assertEquals(6, lexer.getStashSize());
+        lexer.of("green");
+        Assert.assertEquals(0, lexer.getStashSize());
+    }
+
+    @Test
     public void testPeek1() {
         GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol(",");

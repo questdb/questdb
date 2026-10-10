@@ -58,23 +58,13 @@ public class SampleByBindValidationTest extends AbstractCairoTest {
                     "linear interpolation is not supported when using fill values for keyed sample by expression"},
             {"SELECT ts, sum(x) s FROM t SAMPLE BY 1h FROM rnd_timestamp(1,2,0) FILL(LINEAR)", "rnd_timestamp",
                     "from lower bound must be a constant expression convertible to a TIMESTAMP"},
+            {"SELECT ts, sum(x) s FROM t SAMPLE BY 1h FROM rnd_timestamp(1,2,0)", "rnd_timestamp",
+                    "from lower bound must be a constant expression convertible to a TIMESTAMP"},
+            {"SELECT ts, sum(x) s FROM t SAMPLE BY 1h FROM '2024-01-01' TO rnd_timestamp(1,2,0) FILL(LINEAR)", "rnd_timestamp",
+                    "to upper bound must be a constant expression convertible to a TIMESTAMP"},
             {"SELECT ts, sum(x) s FROM t SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE rnd_str('a')", "rnd_str",
                     "timezone must be a constant expression of STRING or CHAR type"},
     };
-
-    @Test
-    public void testErrorPrecedesGenerationError() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable();
-            final String generationError = "SELECT ts FROM t WHERE x = " + GENERATION_ERROR_SUBQUERY;
-            assertQuery(generationError).noLeakCheck()
-                    .fails(generationError.indexOf("ASOF"), "left side of time series join doesn't have ASC timestamp order");
-            for (String[] c : CASES) {
-                final String sql = "SELECT ts FROM t WHERE x = " + GENERATION_ERROR_SUBQUERY + " UNION ALL SELECT ts FROM (" + c[0] + ")";
-                assertQuery(sql).noLeakCheck().fails(position(sql, c), c[2]);
-            }
-        });
-    }
 
     @Test
     public void testErrorInCreateView() throws Exception {
@@ -104,6 +94,20 @@ public class SampleByBindValidationTest extends AbstractCairoTest {
             createTable();
             for (String[] c : CASES) {
                 final String sql = "SELECT ts FROM (" + c[0] + ")";
+                assertQuery(sql).noLeakCheck().fails(position(sql, c), c[2]);
+            }
+        });
+    }
+
+    @Test
+    public void testErrorPrecedesGenerationError() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            final String generationError = "SELECT ts FROM t WHERE x = " + GENERATION_ERROR_SUBQUERY;
+            assertQuery(generationError).noLeakCheck()
+                    .fails(generationError.indexOf("ASOF"), "left side of time series join doesn't have ASC timestamp order");
+            for (String[] c : CASES) {
+                final String sql = "SELECT ts FROM t WHERE x = " + GENERATION_ERROR_SUBQUERY + " UNION ALL SELECT ts FROM (" + c[0] + ")";
                 assertQuery(sql).noLeakCheck().fails(position(sql, c), c[2]);
             }
         });
