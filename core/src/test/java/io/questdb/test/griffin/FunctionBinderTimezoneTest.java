@@ -45,6 +45,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.FunctionBindingHarness.binary;
+
 public class FunctionBinderTimezoneTest extends AbstractCairoTest {
     @Test
     public void testConstantAndRowTimezonesSurviveColumnRelocation() throws Exception {
@@ -62,7 +64,7 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
                     for (String name : new String[]{"to_utc", "to_timezone"}) {
                         final int direction = name.equals("to_utc") ? -1 : 1;
                         for (boolean columnZone : new boolean[]{false, true}) {
-                            final BoundExpression expression = binder.bind(call(name, literal("ts"),
+                            final BoundExpression expression = binder.bind(binary(name, literal("ts"),
                                     columnZone ? literal("zone") : constant("'Europe/Berlin'")), original, null, sqlExecutionContext);
                             try (Function first = binder.instantiate(expression, pruned, sqlExecutionContext);
                                  Function second = binder.instantiate(expression, original, sqlExecutionContext)) {
@@ -98,9 +100,9 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
                 for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
                     final long hour = type == ColumnType.TIMESTAMP_MICRO ? 3_600_000_000L : 3_600_000_000_000L;
                     for (String name : new String[]{"to_utc", "to_timezone"}) {
-                        final ExpressionNode timestamp = call("cast", constant("123456789L"),
+                        final ExpressionNode timestamp = binary("cast", constant("123456789L"),
                                 constant(type == ColumnType.TIMESTAMP_MICRO ? "timestamp" : "timestamp_ns"));
-                        final BoundExpression expression = binder.bind(call(name, timestamp, constant("'+01:00'")), input, null, sqlExecutionContext);
+                        final BoundExpression expression = binder.bind(binary(name, timestamp, constant("'+01:00'")), input, null, sqlExecutionContext);
                         try (Function result = binder.instantiate(expression, input, sqlExecutionContext)) {
                             Assert.assertTrue(result.isConstant());
                             Assert.assertEquals(type, result.getType());
@@ -126,7 +128,7 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
                     final Function retained;
                     final Function worker;
                     try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                        final BoundExpression expression = binder.bind(call(name, literal("ts"),
+                        final BoundExpression expression = binder.bind(binary(name, literal("ts"),
                                 ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, "$1", 0, 1)), input, null, sqlExecutionContext);
                         retained = binder.instantiate(expression, input, sqlExecutionContext);
                         worker = binder.instantiate(expression, input, sqlExecutionContext);
@@ -186,14 +188,6 @@ public class FunctionBinderTimezoneTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    private static ExpressionNode call(String name, ExpressionNode left, ExpressionNode right) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
-        node.lhs = left;
-        node.rhs = right;
-        node.paramCount = 2;
-        return node;
     }
 
     private static ExpressionNode constant(String value) {

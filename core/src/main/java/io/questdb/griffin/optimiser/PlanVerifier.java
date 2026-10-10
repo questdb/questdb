@@ -39,6 +39,7 @@ import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
@@ -657,12 +658,12 @@ public final class PlanVerifier {
             final AggregatePlan.Algorithm algorithm = plain.getAlgorithm();
             final boolean isHorizon = plain.getInput() instanceof HorizonJoinPlan;
             final boolean isGroupBy = !LogicalPlans.isCount(plain)
-                    && LogicalPlans.postingDistinctScan(plain) == null;
+                    && GeneratedShapes.postingDistinctScan(plain) == null;
             choice(!isGroupBy || algorithm != null);
             if (algorithm != null && (!isGroupBy
                     || algorithm == AggregatePlan.Algorithm.VECTORISED && (keyCount != 1 || isHorizon)
                     || algorithm == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER
-                    && LogicalPlans.firstFilter(isHorizon ? ((HorizonJoinPlan) plain.getInput()).getMaster() : plain.getInput()) == null)) {
+                    && GeneratedShapes.stolenFilter(isHorizon ? ((HorizonJoinPlan) plain.getInput()).getMaster() : GeneratedShapes.aggregateBase(plain)) == null)) {
                 fail(AGGREGATE_ALGORITHM);
             }
         }
@@ -814,7 +815,7 @@ public final class PlanVerifier {
             case TEMPORAL_TIME_FRAME ->
                     (joinType == JoinKind.ASOF || joinType == JoinKind.LT) && (step.getHints() & JoinInput.HINT_ASOF_LINEAR) == 0;
             case TEMPORAL_STOLEN_FILTER ->
-                    joinType == JoinKind.ASOF && LogicalPlans.firstFilter(step.getInput()) != null;
+                    joinType == JoinKind.ASOF && GeneratedShapes.temporalStolenFilter(step.getInput()) != null;
             case SPLICE, FULL_FAT_SPLICE -> joinType == JoinKind.SPLICE;
             case MARKOUT -> isEquiJoin && step.getMarkoutTimestampColumnId() >= 0;
             case NESTED_LOOP -> isEquiJoin && !isKeyed;
@@ -896,7 +897,7 @@ public final class PlanVerifier {
     private void latestBy(LatestByPlan latest) {
         forwards(latest, OUTPUT_TIMESTAMP);
         final LogicalPlan input = latest.getInput();
-        final boolean isScanned = LogicalPlans.latestByScan(latest) != null;
+        final boolean isScanned = GeneratedShapes.latestByScan(latest) != null;
         if (latest.getAlgorithm() != null && isScanned) {
             fail(LATEST_BY_ALGORITHM);
         }
@@ -914,7 +915,7 @@ public final class PlanVerifier {
         }
         // LATEST BY over a table reads the table's designated timestamp whether or not the scan projects it
         checkedReadIds.add(timestampId);
-        final ScanPlan scan = LogicalPlans.latestByScan(latest);
+        final ScanPlan scan = GeneratedShapes.latestByScan(latest);
         if (scan == null || scan.getNativeTimestampColumnId() != timestampId) {
             fail(UNRESOLVED_COLUMN, timestampId);
         }
@@ -1013,7 +1014,7 @@ public final class PlanVerifier {
                     fail(EXPRESSION_NULL);
                 }
                 predicate(filter.getPredicate());
-                final boolean hasChoice = !LogicalPlans.isFusedFilter(filter) && OperatorPlanning.isFiltering(filter.getPredicate());
+                final boolean hasChoice = !GeneratedShapes.isFusedFilter(filter) && OperatorPlanning.isFiltering(filter.getPredicate());
                 if (filter.getAlgorithm() != null && !hasChoice) {
                     fail(FILTER_ALGORITHM);
                 }
@@ -1254,7 +1255,8 @@ public final class PlanVerifier {
         choice(sort.getAlgorithm() != null);
         if (sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION && !sort.isMarkoutHorizon()
                 || isBounded(sort.getAlgorithm()) && !sort.isLimited()
-                || sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K && LogicalPlans.firstFilter(sort.getInput()) == null) {
+                || sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K
+                && GeneratedShapes.stolenFilter(GeneratedShapes.parallelTopKSource(sort)) == null) {
             fail(SORT_ALGORITHM);
         }
     }
@@ -1385,7 +1387,7 @@ public final class PlanVerifier {
             choice(step.getAlgorithm() != null || step.getFilter() instanceof ConstantExpression constant && constant.getLongValue() == 0);
             if (step.getAlgorithm() != null && step.getFilter() instanceof ConstantExpression constant && constant.getLongValue() == 0
                     || step.getAlgorithm() == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
-                    && (s > 0 || LogicalPlans.firstFilter(windowJoin.getMaster()) == null)) {
+                    && (s > 0 || GeneratedShapes.stolenFilter(windowJoin.getMaster()) == null)) {
                 fail(WINDOW_JOIN_ALGORITHM);
             }
             final ObjList<FunctionExpression> aggregates = step.getAggregates();

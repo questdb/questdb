@@ -30,7 +30,6 @@ import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
@@ -139,7 +138,7 @@ final class OuterJoinCarriers implements Mutable {
         if (!isMarked && mapsEvery(input, deferredBase)) {
             slaveIds.clear();
             for (int i = 0, n = outerIds.size(); i < n; i++) {
-                slaveIds.add(deferredColumn(input, outerIds.getQuick(i), deferredBase));
+                slaveIds.add(keys.deferredColumn(input, outerIds.getQuick(i), deferredBase));
             }
             slaveMarkerId = -1;
             return;
@@ -148,23 +147,13 @@ final class OuterJoinCarriers implements Mutable {
         final JoinPlan crossed = domains.crossDomain(input.getInput(), domain, position);
         final JoinInput domainStep = crossed.getInputs().getQuick(1);
         for (int i = 0, n = outerIds.size(); i < n; i++) {
-            final int columnId = deferredColumn(input, outerIds.getQuick(i), deferredBase);
+            final int columnId = keys.deferredColumn(input, outerIds.getQuick(i), deferredBase);
             if (columnId > -1) {
                 addCarrierKey(domainStep, columnId, slaveIds.getQuick(i), ctx.outerRefName(outerIds.getQuick(i)));
-                domainStep.setJoinType(JoinKind.INNER);
             }
         }
         input.setInput(crossed);
         join.addMissingInputColumns();
-    }
-
-    private int deferredColumn(JoinInput input, int outerId, int deferredBase) {
-        for (int i = deferredBase, n = keys.deferredInputs.size(); i < n; i++) {
-            if (keys.deferredInputs.getQuick(i) == input && keys.deferredOuterIds.getQuick(i) == outerId) {
-                return keys.deferredColumnIds.getQuick(i);
-            }
-        }
-        return -1;
     }
 
     /**
@@ -183,9 +172,6 @@ final class OuterJoinCarriers implements Mutable {
             final int carrierId = carrierOf(outerId, base);
             if (carrierId > -1 && input.getSourceOutput().getColumnIndexById(carrierId) < 0) {
                 addCarrierKey(input, carrierId, keys.deferredColumnIds.getQuick(i), ctx.outerRefName(outerId));
-                if (input.getJoinType() == JoinKind.CROSS) {
-                    input.setJoinType(JoinKind.INNER);
-                }
             }
         }
     }
@@ -193,7 +179,7 @@ final class OuterJoinCarriers implements Mutable {
     private boolean mapsEvery(JoinInput input, int deferredBase) {
         final IntList outerIds = domains.domainOuterIds;
         for (int i = 0, n = outerIds.size(); i < n; i++) {
-            if (deferredColumn(input, outerIds.getQuick(i), deferredBase) < 0) {
+            if (keys.deferredColumn(input, outerIds.getQuick(i), deferredBase) < 0) {
                 return false;
             }
         }
@@ -211,26 +197,14 @@ final class OuterJoinCarriers implements Mutable {
      * a WHERE equality maps through its mapped column and each other outer column through {@code carriers}.
      */
     private void remap(JoinInput step, IntList carriers, int base, boolean isFilterRead) {
-        ctx.substitution.clear();
-        for (int i = base, n = ctx.mappedOuterIds.size(); i < n; i++) {
-            ctx.substitution.put(ctx.mappedOuterIds.getQuick(i), ctx.mappedColumnIds.getQuick(i));
-        }
+        ctx.loadMappedSubstitution(base);
         final IntList outerIds = domains.domainOuterIds;
         for (int i = 0, n = outerIds.size(); i < n; i++) {
             if (carriers.getQuick(i) > -1) {
                 ctx.substitution.put(outerIds.getQuick(i), carriers.getQuick(i));
             }
         }
-        ctx.recordCarriers(step);
-        step.setOnResidual(remapped(step.getOnResidual()));
-        step.setKeyFilter(remapped(step.getKeyFilter()));
-        if (isFilterRead) {
-            step.setPostJoinFilter(remapped(step.getPostJoinFilter()));
-        }
-    }
-
-    private BoundExpression remapped(BoundExpression expression) {
-        return expression == null ? null : ctx.context.getRewriter().remapColumns(expression, ctx.substitution);
+        ctx.remapStepConditions(step, isFilterRead);
     }
 
     /**
@@ -255,27 +229,16 @@ final class OuterJoinCarriers implements Mutable {
             }
         }
         final OutputSchema nestedOutput = nested.getOutput();
-        final ProjectPlan project = ctx.planNodes.projects.next().of(nested, position);
-        final OutputSchema output = project.getOutput();
         forwardedIds.clear();
-        for (int i = 0, n = nestedOutput.getColumnCount(); i < n; i++) {
-            final int columnId = nestedOutput.getColumnId(i);
-            final int type = nestedOutput.getColumnType(i);
-            project.getExpressions().add(ctx.planNodes.columns.next().of(columnId, type, position));
-            final int forwardedId = ctx.context.newColumnId();
-            forwardedIds.put(columnId, forwardedId);
-            output.add(forwardedId, ctx.context.uniqueName(output, nestedOutput.getColumnName(i)), type, nestedOutput.getMetadata(i), nestedOutput.isVisible(i),
-                    nestedOutput.getColumnQualifier(i));
-        }
+        final ProjectPlan project = ctx.forwardingProjection(nested, forwardedIds, position);
+        final OutputSchema output = project.getOutput();
+        ctx.uniqueNames(output);
         final IntList outerIds = domains.domainOuterIds;
         for (int i = 0, n = outerIds.size(); i < n; i++) {
             final BoundExpression isSlaveRow = ctx.context.bindCall("=", position, ctx.column(nestedOutput, markerId, position),
                     ctx.planNodes.constants.next().ofNull(position), nestedOutput);
-            ctx.context.getCallArguments().clear();
-            ctx.context.getCallArguments().add(isSlaveRow);
-            ctx.context.getCallArguments().add(ctx.column(nestedOutput, slaveIds.getQuick(i), position));
-            ctx.context.getCallArguments().add(ctx.column(nestedOutput, carrierIds.getQuick(i), position));
-            final BoundExpression carrier = ctx.context.bindCall("case", position, nestedOutput);
+            final BoundExpression carrier = ctx.caseWhen(isSlaveRow, ctx.column(nestedOutput, slaveIds.getQuick(i), position),
+                    ctx.column(nestedOutput, carrierIds.getQuick(i), position), nestedOutput, position);
             project.getExpressions().add(carrier);
             final int carrierId = ctx.context.newColumnId();
             output.add(carrierId, ctx.outerRefName(outerIds.getQuick(i)), carrier.getDataType(), false);
@@ -287,28 +250,22 @@ final class OuterJoinCarriers implements Mutable {
             markerId = ctx.context.newColumnId();
             output.add(markerId, markerName(), ColumnType.LONG, false);
         }
-        LogicalPlan top = project;
-        final BoundExpression where = fullStep.getPostJoinFilter();
-        if (where != null) {
-            fullStep.setPostJoinFilter(null);
-            ctx.substitution.clear();
-            for (int i = base, n = ctx.mappedOuterIds.size(); i < n; i++) {
-                final int forwardedId = forwardedIds.get(ctx.mappedColumnIds.getQuick(i));
-                ctx.substitution.put(ctx.mappedOuterIds.getQuick(i), forwardedId > -1 ? forwardedId : ctx.mappedColumnIds.getQuick(i));
-            }
-            for (int i = 0, n = outerIds.size(); i < n; i++) {
-                ctx.substitution.put(outerIds.getQuick(i), carrierIds.getQuick(i));
-            }
-            final BoundExpression predicate = remapped(ctx.context.getRewriter().remapColumns(where, forwardedIds));
-            final FilterPlan filter = ctx.planNodes.filters.next().of(project, predicate, position);
-            filter.deriveOutput();
-            top = filter;
-        }
         for (int i = base, n = ctx.mappedColumnIds.size(); i < n; i++) {
             final int forwardedId = forwardedIds.get(ctx.mappedColumnIds.getQuick(i));
             if (forwardedId > -1) {
                 ctx.mappedColumnIds.setQuick(i, forwardedId);
             }
+        }
+        LogicalPlan top = project;
+        final BoundExpression where = fullStep.getPostJoinFilter();
+        if (where != null) {
+            fullStep.setPostJoinFilter(null);
+            ctx.loadMappedSubstitution(base);
+            for (int i = 0, n = outerIds.size(); i < n; i++) {
+                ctx.substitution.put(outerIds.getQuick(i), carrierIds.getQuick(i));
+            }
+            final BoundExpression predicate = ctx.context.getRewriter().remapColumns(ctx.context.getRewriter().remapColumns(where, forwardedIds), ctx.substitution);
+            top = ctx.planNodes.filters.next().of(project, predicate, position);
         }
         for (int i = chainBase, n = ctx.chain.size(); i < n; i++) {
             ctx.copier.remap(ctx.chain.getQuick(i), forwardedIds);
@@ -326,22 +283,6 @@ final class OuterJoinCarriers implements Mutable {
         inputs.insert(0, 1, leading);
         ordered.insert(0, 1, leading);
         ctx.copier.remap(join, forwardedIds);
-        for (int i = 0, n = inputs.size(); i < n; i++) {
-            final IntList carriers = inputs.getQuick(i).getCarrierColumnIds();
-            for (int k = 0, m = carriers.size(); k < m; k++) {
-                final int forwardedId = forwardedIds.get(carriers.getQuick(k));
-                if (forwardedId > -1) {
-                    carriers.setQuick(k, forwardedId);
-                }
-            }
-        }
-        final OutputSchema joinOutput = join.getOutput();
-        for (int i = 0, n = joinOutput.getColumnCount(); i < n; i++) {
-            final int forwardedId = forwardedIds.get(joinOutput.getColumnId(i));
-            if (forwardedId > -1) {
-                joinOutput.setColumnId(i, forwardedId);
-            }
-        }
         join.addMissingInputColumns();
         return join;
     }
@@ -374,11 +315,7 @@ final class OuterJoinCarriers implements Mutable {
                 if (first < 2) {
                     cross(join, steps.getQuick(0), deferredBase, isMarked, position);
                 } else {
-                    final AggregatePlan domain = carrierDomain(isMarked, position);
-                    final JoinInput domainStep = ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domains.domainAlias(), position);
-                    join.getInputs().add(domainStep);
-                    steps.insert(first, 1, domainStep);
-                    join.addMissingInputColumns();
+                    domains.insertDomainStep(join, carrierDomain(isMarked, position), first, position);
                     from = first + 1;
                     last++;
                 }
@@ -432,12 +369,9 @@ final class OuterJoinCarriers implements Mutable {
         if (source == join) {
             final ObjList<JoinInput> steps = join.getOrderedInputs();
             if (isTrailing) {
-                final AggregatePlan domain = carrierDomain(false, position);
-                final JoinInput domainStep = ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domains.domainAlias(), position);
+                final JoinInput domainStep = domains.insertDomainStep(join, carrierDomain(false, position), last + 1, position);
                 final JoinInput lastStep = steps.getQuick(last);
                 lastStep.setPostJoinFilter(domains.moveDomainConjuncts(lastStep.getPostJoinFilter(), domainStep));
-                join.getInputs().add(domainStep);
-                steps.insert(last + 1, 1, domainStep);
                 carrierIds.clear();
                 carrierIds.addAll(slaveIds);
             }
@@ -449,9 +383,7 @@ final class OuterJoinCarriers implements Mutable {
         for (int i = 0, n = outerIds.size(); i < n; i++) {
             ctx.addMapping(outerIds.getQuick(i), carrierIds.getQuick(i));
         }
-        keys.deferredInputs.setPos(deferredBase);
-        keys.deferredOuterIds.setPos(deferredBase);
-        keys.deferredColumnIds.setPos(deferredBase);
+        keys.truncateDeferred(deferredBase);
         return source;
     }
 }

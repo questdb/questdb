@@ -58,9 +58,23 @@ public class OutputSchemaTest {
         Assert.assertEquals(4, target.getColumnCount());
         Assert.assertEquals("q", target.getColumnQualifier(2));
         Assert.assertEquals("q", target.getColumnQualifier(3));
-        Assert.assertTrue(target.isNameProtected(2));
+        // a join scope names its inputs' columns bare: the composed reference resolves
+        Assert.assertFalse(target.isNameProtected(2));
+        Assert.assertTrue(target.isSymbolTableStatic(2));
         Assert.assertTrue(target.isVisible(3));
         Assert.assertEquals(-1, target.getTimestampIndex());
+        target.addColumnsFrom(source, null);
+        Assert.assertEquals(6, target.getColumnCount());
+        Assert.assertEquals("t", target.getColumnQualifier(4));
+        Assert.assertFalse(target.isNameProtected(4));
+        target.addColumnAs(source, 0, 9, "b", true, "r");
+        Assert.assertEquals(9, target.getColumnId(6));
+        Assert.assertEquals("b", target.getColumnName(6));
+        Assert.assertEquals("r", target.getColumnQualifier(6));
+        Assert.assertTrue(target.isVisible(6));
+        Assert.assertTrue(target.isSymbolTableStatic(6));
+        Assert.assertTrue(target.isNameProtected(6));
+        Assert.assertSame(nested, target.getMetadata(6));
     }
 
     @Test

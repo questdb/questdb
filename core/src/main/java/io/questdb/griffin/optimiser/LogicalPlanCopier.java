@@ -490,6 +490,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             case JoinPlan join -> {
                 for (int i = 0, n = join.getInputs().size(); i < n; i++) {
                     final JoinInput input = join.getInputs().getQuick(i);
+                    remapColumnIds(input.getCarrierColumnIds(), columnIds);
                     remapOutput(input.getOutput(), columnIds);
                     if (input.getUnnest() != null) {
                         remapOutput(input.getUnnest().getOutput(), columnIds);

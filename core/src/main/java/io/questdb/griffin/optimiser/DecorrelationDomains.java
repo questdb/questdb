@@ -30,13 +30,10 @@ import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
-import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -44,7 +41,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.optimiser.DecorrelationContext.OUTER_REF_PREFIX;
-import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
 
 /**
  * Builds decorrelation domains: the distinct values of outer columns, read from a copy of the master input or
@@ -52,7 +48,6 @@ import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
  */
 final class DecorrelationDomains implements Mutable {
     final ObjList<JoinInput> decorrelatedSteps;
-    final IntList domainEqualities = new IntList();
     final IntList domainOuterIds = new IntList();
     private final DecorrelationContext ctx;
     private final ConjunctTest nonDomainConjuncts = this::keepsNonDomainConjunct;
@@ -69,7 +64,6 @@ final class DecorrelationDomains implements Mutable {
 
     @Override
     public void clear() {
-        domainEqualities.clear();
         domainOuterIds.clear();
         domainSequence = 0;
         domainStep = null;
@@ -177,38 +171,10 @@ final class DecorrelationDomains implements Mutable {
         return domain;
     }
 
-    /**
-     * Collects the WHERE equalities between a source column and an outer column the domain will satisfy; they
-     * become keys of the join with the domain.
-     */
-    void collectDomainEqualities(BoundExpression predicate, OutputSchema source) {
-        if (!(predicate instanceof FunctionExpression call)) {
-            return;
-        }
-        if (call.isAnd()) {
-            collectDomainEqualities(call.argumentAt(0), source);
-            collectDomainEqualities(call.argumentAt(1), source);
-            return;
-        }
-        if (call.getArgumentCount() != 2 || !"=".equals(call.getName())) {
-            return;
-        }
-        final BoundExpression left = call.argumentAt(0);
-        final BoundExpression right = call.argumentAt(1);
-        final ColumnExpression column = left instanceof ColumnExpression c ? c : right instanceof ColumnExpression c ? c : null;
-        final OuterColumnExpression outer = left instanceof OuterColumnExpression o ? o : right instanceof OuterColumnExpression o ? o : null;
-        if (column != null && outer != null && domainOuterIds.contains(outer.getColumnId()) && pairIndex(domainEqualities, outer.getColumnId()) < 0
-                && source.getColumnIndexById(column.getColumnId()) > -1 && column.getDataType() == outer.getDataType()) {
-            domainEqualities.add(outer.getColumnId());
-            domainEqualities.add(column.getColumnId());
-        }
-    }
-
     JoinPlan crossDomain(LogicalPlan source, AggregatePlan domain, int position) {
         final JoinPlan join = ctx.planNodes.joins.next().of(position);
-        join.getInputs().add(ctx.planNodes.joinInputs.next().of(source, JoinKind.CROSS, null, position));
-        join.getInputs().add(ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position));
-        join.getOrderedInputs().addAll(join.getInputs());
+        join.addInput(ctx.planNodes.joinInputs.next().of(source, JoinKind.CROSS, null, position));
+        join.addInput(ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position));
         join.getOutput().copyFrom(source.getOutput());
         join.getOutput().addMissingColumnsFrom(domain.getOutput());
         join.getOutput().setTimestampIndex(source.getOutput().getTimestampIndex());
@@ -237,6 +203,18 @@ final class DecorrelationDomains implements Mutable {
             alias.put('_').put(domainSequence - 1);
         }
         return alias.toImmutable();
+    }
+
+    /**
+     * Joins the domain to the join as a CROSS step at {@code orderedIndex} of the execution order, last when the
+     * index is the step count, and returns the step.
+     */
+    JoinInput insertDomainStep(JoinPlan join, AggregatePlan domain, int orderedIndex, int position) {
+        final JoinInput step = ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position);
+        join.getInputs().add(step);
+        join.getOrderedInputs().insert(orderedIndex, 1, step);
+        join.addMissingInputColumns();
+        return step;
     }
 
     /**

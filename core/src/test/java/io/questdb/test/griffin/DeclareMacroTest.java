@@ -49,18 +49,18 @@ public class DeclareMacroTest extends AbstractCairoTest {
                             SELECT id+@delta AS value FROM lp_declare ORDER BY id LIMIT @lo,@hi
                             """, sqlExecutionContext).getRecordCursorFactory();
                     Assert.assertNotNull(compiler.getPlanForTesting());
-                    assertResult(retained, "value\n12\n13\n");
+                    assertRowsOnly(retained, "value\n12\n13\n");
                     try (RecordCursorFactory other = compiler.compile(
                             "DECLARE @value := 9 SELECT @value AS value", sqlExecutionContext
                     ).getRecordCursorFactory()) {
-                        assertResult(other, "value\n9\n");
+                        assertRowsOnly(other, "value\n9\n");
                     }
                     compiler.clear();
                 }
                 bindVariableService.setInt(0, 20);
                 bindVariableService.setLong(1, 0);
                 bindVariableService.setLong(2, 2);
-                assertResult(retained, "value\n21\n22\n");
+                assertRowsOnly(retained, "value\n21\n22\n");
             } finally {
                 Misc.free(retained);
             }
@@ -86,7 +86,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "DECLARE @value := abs(-7) SELECT @value AS value", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "value\n7\n");
+                    assertRowsOnly(factory, "value\n7\n");
                 }
             }
         });
@@ -97,12 +97,12 @@ public class DeclareMacroTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createRows();
             final String distinctQuery = "SELECT DISTINCT sum(i*2) AS total FROM lp_declare GROUP BY k";
-            assertQueryRows(
+            assertRowsOnly(
                     "DECLARE @q := (" + distinctQuery + ") SELECT * FROM (SELECT * FROM @q UNION ALL SELECT * FROM @q) ORDER BY total",
                     "total\nnull\nnull\n6\n6\n"
             );
             final String orderedQuery = "SELECT k,sum(i+2) AS total FROM lp_declare GROUP BY k ORDER BY sum(i*2),k LIMIT 3";
-            assertQueryRows(
+            assertRowsOnly(
                     "DECLARE @q := (" + orderedQuery + ") SELECT * FROM (SELECT * FROM @q UNION ALL SELECT * FROM @q) ORDER BY k,total",
                     "k\ttotal\n1\t7\n1\t7\n3\tnull\n3\tnull\n4\tnull\n4\tnull\n"
             );
@@ -113,7 +113,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
     public void testRepeatedScalarMacrosOwnIndependentFunctions() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             DECLARE @member := id, @value := (i+1)
                             SELECT id,@member IN (1,2,3) AS a,@member IN (1,2,3) AS b,@value AS x,@value AS y
@@ -126,7 +126,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
                             3	true	true	4	4
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             DECLARE @predicate := (active AND true), @value := CASE WHEN @predicate THEN i ELSE 7 END
                             SELECT @value AS a,@value AS b FROM lp_declare WHERE @predicate OR false ORDER BY a,b
@@ -145,7 +145,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
     public void testScalarMacrosAcrossClauses() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             DECLARE @table := lp_declare, @column := id, @delta := 2,
                                     @adjusted := (@column+@delta), @predicate := (active AND true)
@@ -157,7 +157,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
                             5
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             DECLARE @key := k, @total := sum(i+2), @lo := 0, @hi := 3
                             SELECT @key,@total AS total FROM lp_declare GROUP BY @key ORDER BY @key LIMIT @lo,@hi
@@ -169,7 +169,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
                             3	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             DECLARE @unused := greatest(i), @value := 3
                             WITH q AS (SELECT id+@value AS value FROM lp_declare WHERE id=1)
@@ -187,7 +187,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
     public void testSingleQueryMacrosAndNestedDeclarationScopes() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             DECLARE @delta := 2, @query := (
                                 DECLARE @delta := 7 SELECT id+@delta AS value FROM lp_declare WHERE active
@@ -201,7 +201,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
                             13
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             DECLARE @value := 2
                             SELECT q.inner_value,@value AS outer_value FROM (
@@ -213,7 +213,7 @@ public class DeclareMacroTest extends AbstractCairoTest {
                             7	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             DECLARE OVERRIDABLE @value := 5
                             SELECT @value AS value FROM lp_declare WHERE id=1
@@ -233,14 +233,6 @@ public class DeclareMacroTest extends AbstractCairoTest {
             Assert.assertEquals(position, e.getPosition());
             TestUtils.assertEquals(message, e.getFlyweightMessage());
         }
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

@@ -216,8 +216,7 @@ final class PivotBinder implements Mutable {
                 default -> false;
             };
             pivotValues.clear();
-            scope.aliases.clear();
-            scope.aliasSequences.clear();
+            scope.resetAliases();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
@@ -514,8 +513,7 @@ final class PivotBinder implements Mutable {
 
     private void validatePivotColumnNames(QueryModel pivot) throws SqlException {
         final BindScope scope = ctx.scope();
-        scope.aliases.clear();
-        scope.aliasSequences.clear();
+        scope.resetAliases();
         final ObjList<ExpressionNode> groupBy = pivot.getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             final ExpressionNode key = groupBy.getQuick(i);
@@ -667,7 +665,6 @@ final class PivotBinder implements Mutable {
                         binder.bindConjuncts(userWhere, source, input, executionContext), where.position));
             }
             final FilterPlan filter = ctx.planNodes.filters.next().of(source, predicate, predicate.getPosition());
-            filter.deriveOutput();
             source = filter;
         }
         if (latest != null) {
@@ -680,8 +677,7 @@ final class PivotBinder implements Mutable {
         grouped.setExplicitGrouping(true);
         scope.groupingNodes.clear();
         scope.aggregateNodes.clear();
-        scope.aliases.clear();
-        scope.aliasSequences.clear();
+        scope.resetAliases();
         scope.pivotKeyAliases.clear();
         scope.pivotKeyIndexes.clear();
         final ObjList<ExpressionNode> groupBy = pivot.getGroupBy();

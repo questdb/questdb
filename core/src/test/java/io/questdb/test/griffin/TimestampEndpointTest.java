@@ -28,7 +28,6 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -233,7 +232,7 @@ public class TimestampEndpointTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 for (String[] c : cases) {
                     try (RecordCursorFactory factory = compiler.compile(c[0], sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, c[1]);
+                        assertRowsOnly(factory, c[1]);
                     }
                 }
             }
@@ -365,7 +364,7 @@ public class TimestampEndpointTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("SELECT first(ts) endpoint FROM lp_endpoint ORDER BY endpoint DESC LIMIT $1")) {
                 for (long limit : new long[]{1, 0, -1}) {
                     bindVariableService.setLong(0, limit);
-                    assertResult(factory, limit == 0 ? "endpoint\n" : "endpoint\n2024-01-01T00:00:00.000000Z\n");
+                    assertRowsOnly(factory, limit == 0 ? "endpoint\n" : "endpoint\n2024-01-01T00:00:00.000000Z\n");
                 }
             }
         });
@@ -380,15 +379,15 @@ public class TimestampEndpointTest extends AbstractCairoTest {
                 final String originalPlan;
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     retained = compiler.compile("SELECT last(ts) endpoint FROM lp_endpoint", sqlExecutionContext).getRecordCursorFactory();
-                    originalPlan = planOf(retained);
+                    originalPlan = planText(retained);
                     try (RecordCursorFactory ignored = compiler.compile("SELECT first(other) value FROM lp_endpoint", sqlExecutionContext).getRecordCursorFactory()) {
                         compiler.clear();
                     }
                 }
-                Assert.assertEquals(originalPlan, planOf(retained));
-                assertResult(retained, "endpoint\n2024-01-04T00:00:00.000000Z\n");
+                Assert.assertEquals(originalPlan, planText(retained));
+                assertRowsOnly(retained, "endpoint\n2024-01-04T00:00:00.000000Z\n");
                 execute("INSERT INTO lp_endpoint VALUES(5,'2024-01-05','2024-01-05')");
-                assertResult(retained, "endpoint\n2024-01-05T00:00:00.000000Z\n");
+                assertRowsOnly(retained, "endpoint\n2024-01-05T00:00:00.000000Z\n");
             } finally {
                 Misc.free(retained);
             }
@@ -404,9 +403,9 @@ public class TimestampEndpointTest extends AbstractCairoTest {
         sqlExecutionContext.setJitMode(jitMode);
         try (RecordCursorFactory factory = select(sql)) {
             if (requiredPlan != null) {
-                TestUtils.assertContains(planOf(factory), requiredPlan);
+                TestUtils.assertContains(planText(factory), requiredPlan);
             }
-            assertResult(factory, rows);
+            assertRowsOnly(factory, rows);
         } finally {
             sqlExecutionContext.setJitMode(oldJitMode);
         }
@@ -414,26 +413,16 @@ public class TimestampEndpointTest extends AbstractCairoTest {
 
     private void assertGrouped(String sql, String rows) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
-            final String plan = planOf(factory);
+            final String plan = planText(factory);
             TestUtils.assertContains(plan, "Group");
             TestUtils.assertNotContains(plan, "Limit value: 1");
-            assertResult(factory, rows);
+            assertRowsOnly(factory, rows);
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String rows) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(rows);
     }
 
     private void createRows(String table, String type) throws SqlException {
         execute("CREATE TABLE " + table + "(x INT,ts " + type + ",other " + type + ") TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO " + table + " VALUES (1,'2024-01-01','2024-01-04'),(2,'2024-01-02',null),"
                 + "(3,'2024-01-03','2024-01-02'),(4,'2024-01-04','2024-01-01')");
-    }
-
-    private String planOf(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        return sink.getSink().toString();
     }
 }

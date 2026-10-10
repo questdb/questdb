@@ -24,13 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -39,7 +36,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
     public void testReducersPreserveNullEmptyAndStridedValues() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,array_sum(a),array_avg(a),array_min(a),array_max(a),array_count(a),"
                             + "array_stddev(a),array_stddev_samp(a),array_stddev_pop(a) FROM lp_array_scalar ORDER BY id",
                     """
@@ -50,7 +47,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             4	null	null	null	null	0	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,array_sum(m),array_avg(m),array_count(m),array_stddev_pop(m),"
                             + "array_min(m[1:3,2]),array_max(m[1:3,2]),array_sum(m[1:3,2]),"
                             + "array_avg(m[1:3,2]),array_stddev(m[1:3,2]),array_count(m[1:3,2]) FROM lp_array_scalar ORDER BY id",
@@ -62,7 +59,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             4	null	null	0	null	null	null	null	null	null	0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_sum(ARRAY[1.0,NULL,3.0]),array_avg(ARRAY[1.0,NULL,3.0]),"
                             + "array_count(ARRAY[1.0,NULL,3.0]),array_stddev_samp(ARRAY[1.0,3.0]),"
                             + "array_stddev_pop(ARRAY[1.0,3.0]),array_sum(ARRAY[]::DOUBLE[]),"
@@ -72,7 +69,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             4.0	2.0	2	1.4142135623730951	1.0	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_array_scalar WHERE array_sum(a)>0 AND array_count(a)>1 ORDER BY id",
                     """
                             id
@@ -80,7 +77,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT sum(array_sum(a)),avg(array_avg(a)),max(array_max(a)) FROM lp_array_scalar",
                     """
                             sum	avg	max
@@ -94,7 +91,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
     public void testSortReverseAndConstantFlagsKeepArrayShapes() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,array_reverse(a),array_sort(a),array_sort(a,false),array_sort(a,true),"
                             + "array_sort(a,false,true),array_sort(a,true,false),array_sort(a,true,true) FROM lp_array_scalar ORDER BY id",
                     """
@@ -105,7 +102,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             4	[]	[]	[]	[]	[]	[]	[]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,array_reverse(m),array_sort(m),array_sort(m[1:3,2],true),"
                             + "array_reverse(array_sort(m[1:3,2],false,true)) FROM lp_array_scalar ORDER BY id",
                     """
@@ -116,7 +113,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             4	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_sort(ARRAY[3.0,NULL,1.0,2.0],true,false),"
                             + "array_reverse(ARRAY[3.0,NULL,1.0,2.0]),array_sort(ARRAY[]::DOUBLE[]),array_reverse(NULL::DOUBLE[])",
                     """
@@ -124,7 +121,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             [3.0,2.0,1.0,null]	[2.0,1.0,null,3.0]	[]	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.value FROM lp_array_scalar t,UNNEST(array_sort(t.a)) u ORDER BY t.id,u.value",
                     """
                             id	value
@@ -136,7 +133,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             2	5.0
                             """
             );
-            assertQueryRows("SELECT * FROM UNNEST(array_reverse(ARRAY[1.0,2.0,3.0])) u", """
+            assertRowsOnly("SELECT * FROM UNNEST(array_reverse(ARRAY[1.0,2.0,3.0])) u", """
                     value
                     3.0
                     2.0
@@ -149,7 +146,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
     public void testDimensionLengthWithPruningNullAndRuntimeDimension() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,dim_length(a,1),dim_length(m,1),dim_length(m,2),dim_length(m,NULL::INT) FROM lp_array_scalar ORDER BY id",
                     """
                             id	dim_length	dim_length1	dim_length2	dim_length3
@@ -159,7 +156,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             4	0	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT dim_length(renamed,2)+1 n FROM (SELECT m renamed FROM lp_array_scalar) ORDER BY n",
                     """
                             n
@@ -169,7 +166,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             3
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT dim_length(array_reverse(m),1),dim_length(m[1:3,2],1),"
                             + "dim_length(ARRAY[1.0,2.0],NULL::INT) FROM lp_array_scalar",
                     """
@@ -181,7 +178,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setInt(0, 2);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,dim_length(m,$1) FROM lp_array_scalar ORDER BY id",
                     """
                             id	dim_length
@@ -192,7 +189,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setInt(0, 1);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,dim_length(m,$1) FROM lp_array_scalar ORDER BY id",
                     """
                             id	dim_length
@@ -202,7 +199,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT dim_length(ARRAY[]::DOUBLE[],$1) FROM lp_array_scalar",
                     """
                             dim_length
@@ -213,7 +210,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setInt(0, Numbers.INT_NULL);
-            assertQueryRows("SELECT dim_length(m,$1) FROM lp_array_scalar", """
+            assertRowsOnly("SELECT dim_length(m,$1) FROM lp_array_scalar", """
                     dim_length
                     null
                     null
@@ -237,7 +234,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                     compiler.clear();
                     try (RecordCursorFactory recovery = compiler.compile("SELECT count() FROM lp_array_scalar", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(recovery, "count\n4\n");
+                        assertRowsOnly(recovery, "count\n4\n");
                     }
                 }
                 for (int pass = 0; pass < 3; pass++) {
@@ -245,7 +242,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
                     bindVariableService.setInt(1, pass == 2 ? Numbers.INT_NULL : pass + 1);
                     try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                          RecordCursorFactory baseline = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(retained, print(baseline));
+                        assertRowsOnly(retained, printFactory(baseline));
                     }
                 }
             } finally {
@@ -267,7 +264,7 @@ public class ArrayScalarTest extends AbstractCairoTest {
             assertQuery("SELECT array_min(ARRAY[])").noLeakCheck().fails(22, "argument type mismatch for function `array_min` at #1 expected: DOUBLE, actual: ARRAY");
             assertQuery("SELECT array_max(ARRAY[])").noLeakCheck().fails(22, "argument type mismatch for function `array_max` at #1 expected: DOUBLE, actual: ARRAY");
             assertQuery("SELECT array_sort(ARRAY[])").noLeakCheck().fails(7, "there is no matching function `array_sort` with the argument types: (ARRAY)");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT dim_length(array_sort(ARRAY[3.0,1.0]),NULL::INT),"
                             + "array_sum(array_reverse(ARRAY[3.0,1.0]))",
                     """
@@ -278,27 +275,11 @@ public class ArrayScalarTest extends AbstractCairoTest {
         });
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private void createRows() throws Exception {
         execute("CREATE TABLE lp_array_scalar(unused INT,id INT,a DOUBLE[],m DOUBLE[][])");
         execute("INSERT INTO lp_array_scalar VALUES"
                 + "(91,1,ARRAY[3.0,NULL,1.0,2.0],ARRAY[ARRAY[6.0,2.0],ARRAY[3.0,1.0]]),"
                 + "(92,2,ARRAY[-1.0,5.0],ARRAY[ARRAY[5.0,6.0],ARRAY[7.0,8.0]]),"
                 + "(93,3,NULL,NULL),(94,4,ARRAY[],NULL)");
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-            return sink.toString();
-        }
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

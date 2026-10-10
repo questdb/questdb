@@ -72,6 +72,10 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.FunctionBindingHarness.constant;
+import static io.questdb.test.griffin.FunctionBindingHarness.literal;
+import static io.questdb.test.griffin.FunctionBindingHarness.parameter;
+
 public class FunctionBinderTest extends AbstractCairoTest {
     @Test
     public void testAdditionalConsumerRebuildsSelectedAliasesWithIndependentLeaves() throws Exception {
@@ -2096,10 +2100,6 @@ public class FunctionBinderTest extends AbstractCairoTest {
         return expression;
     }
 
-    private static ExpressionNode constant(String token, int position) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, token, 0, position);
-    }
-
     private static ExpressionNode countedSubstring() {
         final ExpressionNode length = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "counted_len", 0, 20);
         return call("substring", 7, new ObjList<>(literal("s", 17), literal("i", 19), length));
@@ -2113,10 +2113,6 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 return value;
             }
         };
-    }
-
-    private static ExpressionNode literal(String token, int position) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, token, 0, position);
     }
 
     private static Record numericRecord(int type, int index, double value) {
@@ -2184,10 +2180,6 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 return Double.isNaN(value) ? Numbers.LONG_NULL : (long) value;
             }
         };
-    }
-
-    private static ExpressionNode parameter(String token, int position) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, token, 0, position);
     }
 
     private static Record stringRecord(int index, String value) {

@@ -230,7 +230,7 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
                     final String sql = "SELECT l.id lid,r.id rid FROM lp_join_push_l l JOIN lp_join_push_r r ON l.k=r.k "
                             + "WHERE l.id IN (1,2,3) AND r.id IN (11,12,13) AND l.v<r.v ORDER BY lid,rid";
                     try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, expected);
+                        assertRowsOnly(factory, expected);
                     }
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                     try (RecordCursorFactory ignored = compiler.compile("SELECT count() FROM lp_join_push_l", sqlExecutionContext).getRecordCursorFactory()) {
@@ -238,7 +238,7 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
                     }
                     compiler.clear();
                 }
-                assertResult(retained, expected);
+                assertRowsOnly(retained, expected);
             } finally {
                 Misc.free(retained);
             }
@@ -263,7 +263,7 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
                     assertPrunedInputs(join.inputAt(i));
                 }
                 assertPhysicalFilterCount(factory, 3);
-                assertResult(factory, """
+                assertRowsOnly(factory, """
                         lid	rid	xid
                         1	11	1
                         2	12	2
@@ -307,7 +307,7 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
             if (physicalFilterCount >= 0) {
                 assertPhysicalFilterCount(factory, physicalFilterCount);
             }
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
@@ -338,10 +338,6 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             assertPrunedInputs(plan.inputAt(i));
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private static int countFilters(LogicalPlan plan) {

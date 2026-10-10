@@ -55,6 +55,7 @@ public final class FilterPlan extends ForwardingPlan {
     public FilterPlan of(LogicalPlan input, BoundExpression predicate, int position) {
         configure(input, position);
         this.predicate = Objects.requireNonNull(predicate);
+        deriveOutput();
         return this;
     }
 

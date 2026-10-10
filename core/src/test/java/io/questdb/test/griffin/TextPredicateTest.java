@@ -38,7 +38,7 @@ public class TextPredicateTest extends AbstractCairoTest {
     public void testVarcharAndMixedComparisonsKeepAliasesNullsAndUnicode() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,v=s,v!=s,s<>v,v<s,v<=s,v>s,v>=s,s<v,s<=v,s>v,s>=v,v=v,v<v FROM lp_text_pred ORDER BY id",
                     """
                             id	column	column1	column2	column3	column4	column5	column6	column7	column8	column9	column10	column11	column12
@@ -52,7 +52,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             8	true	false	false	false	true	false	true	false	true	false	true	true	false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,v='abc','abc'=v,v<='abc','abc'>v,v=null,null=v,v<null,v<=null,null>=v FROM lp_text_pred ORDER BY id",
                     """
                             id	column	column1	column2	column3	column4	column5	column6	column7	column8
@@ -66,7 +66,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             8	false	false	false	false	false	false	false	false	false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_text_pred WHERE v>='ab' AND v<'b' ORDER BY id",
                     """
                             id
@@ -74,7 +74,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_text_pred WHERE trim(v)=trim(s) OR v=null ORDER BY id",
                     """
                             id
@@ -88,7 +88,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setVarchar(0, new Utf8String("abc"));
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,v=$1,v!=$1,$1=v,v<$1,$1<=v FROM lp_text_pred ORDER BY id",
                     """
                             id	column	column1	column2	column3	column4
@@ -103,7 +103,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setVarchar(0, null);
-            assertQueryRows("SELECT id FROM lp_text_pred WHERE v=$1 ORDER BY id", """
+            assertRowsOnly("SELECT id FROM lp_text_pred WHERE v=$1 ORDER BY id", """
                     id
                     6
                     """);
@@ -114,7 +114,7 @@ public class TextPredicateTest extends AbstractCairoTest {
     public void testLikeSpecializationsRegexAndUnicodeFallback() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT id,s LIKE 'ab%',v LIKE 'ab%',s LIKE '%bc',v LIKE '%bc',s LIKE '%b%',v LIKE '%b%',
                                    s ILIKE 'AB%',v ILIKE 'AB%',s ILIKE '%BC',v ILIKE '%BC',s ILIKE '%B%',v ILIKE '%B%',
@@ -134,7 +134,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             8	false	false	false	false	false	false	false	false	false	false	false	false	false	false	true	true	false	false	true	true
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s ILIKE 'Ä%',v ILIKE 'Ä%',s ILIKE '%中',v ILIKE '%中',v ILIKE '%é%',v LIKE '%long-pattern%' FROM lp_text_pred ORDER BY id",
                     """
                             id	column	column1	column2	column3	column4	column5
@@ -148,7 +148,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             8	false	false	false	false	false	true
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_text_pred WHERE trim(v) LIKE 'ab%' AND length(v)>1 ORDER BY id",
                     """
                             id
@@ -158,7 +158,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setStr(0, "a_c");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s LIKE $1,v ILIKE $1 FROM lp_text_pred ORDER BY id",
                     """
                             id	column	column1
@@ -173,7 +173,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setStr(0, null);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s LIKE $1,v ILIKE $1 FROM lp_text_pred ORDER BY id",
                     """
                             id	column	column1
@@ -194,7 +194,7 @@ public class TextPredicateTest extends AbstractCairoTest {
     public void testMembershipPrefixAndNullIfWithTypedParameters() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s IN ('abc','äé中',null),v IN ('abc','äé中',null),s NOT IN ('abc',null),v NOT IN ('abc',null),starts_with(s,'ab'),starts_with(v,'ab'),nullif(s,'abc'),nullif(v,'abc') FROM lp_text_pred ORDER BY id",
                     """
                             id	column	column1	column2	column3	starts_with	starts_with1	nullif	nullif1
@@ -208,7 +208,7 @@ public class TextPredicateTest extends AbstractCairoTest {
                             8	false	false	true	true	false	false	xlong-patterny	xlong-patterny
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,starts_with(s,s),starts_with(v,v),starts_with(s,null),starts_with(v,null),nullif(s,s),nullif(v,v),nullif(s,null),nullif(v,null) FROM lp_text_pred ORDER BY id",
                     """
                             id	starts_with	starts_with1	starts_with2	starts_with3	nullif	nullif1	nullif2	nullif3
@@ -224,7 +224,7 @@ public class TextPredicateTest extends AbstractCairoTest {
             );
             bindVariableService.setStr(0, "abc");
             bindVariableService.setVarchar(1, new Utf8String("äé中"));
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s IN ($1,$2,null),v IN ($1,$2,null),starts_with(v,$2),nullif(v,$2) FROM lp_text_pred ORDER BY id",
                     """
                             id	column	column1	starts_with	nullif
@@ -240,14 +240,14 @@ public class TextPredicateTest extends AbstractCairoTest {
             );
             bindVariableService.setStr(0, null);
             bindVariableService.setVarchar(1, null);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_text_pred WHERE v IN ($1,$2,null) OR s IN ($1,$2,null) ORDER BY id",
                     """
                             id
                             6
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (SELECT id,trim(v) text FROM lp_text_pred) WHERE text IN ('abc','äé中') ORDER BY id",
                     """
                             id
@@ -264,7 +264,7 @@ public class TextPredicateTest extends AbstractCairoTest {
     public void testDiscardedNativeChildrenAndInvalidPatternRecover() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,trim(v) LIKE '',trim(v) ILIKE null,(CASE WHEN id IN (1,2) THEN s ELSE s END) LIKE null FROM lp_text_pred ORDER BY id",
                     """
                             id	column	column1	column2
@@ -313,7 +313,7 @@ public class TextPredicateTest extends AbstractCairoTest {
             RecordCursorFactory retained;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                 try (RecordCursorFactory beforeReset = retained) {
@@ -323,18 +323,14 @@ public class TextPredicateTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
                     }
                     compiler.clear();
-                    assertResult(retained, expected);
+                    assertRowsOnly(retained, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         });
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {
@@ -345,9 +341,5 @@ public class TextPredicateTest extends AbstractCairoTest {
                 (94,4,'a%b','a%b'),(95,5,'',''),(96,6,null,null),
                 (97,7,' abc ',' abc '),(98,8,'xlong-patterny','xlong-patterny')
                 """);
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

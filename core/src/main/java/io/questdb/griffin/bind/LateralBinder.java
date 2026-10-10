@@ -64,12 +64,7 @@ final class LateralBinder implements Mutable {
         final OutputSchema scope = scopes.next();
         for (int i = 0; i < index; i++) {
             final JoinInput input = join.getInputs().getQuick(i);
-            final OutputSchema output = input.getSourceOutput();
-            for (int c = 0, n = output.getColumnCount(); c < n; c++) {
-                scope.add(output.getColumnId(c), output.getColumnName(c), output.getColumnType(c), output.getMetadata(c),
-                        output.isVisible(c), input.getBindingAlias() != null ? input.getBindingAlias() : output.getColumnQualifier(c));
-                scope.setSymbolTableStatic(scope.getColumnCount() - 1, output.isSymbolTableStatic(c));
-            }
+            scope.addColumnsFrom(input.getSourceOutput(), input.getBindingAlias());
         }
         final ObjList<OutputSchema> outerScopes = ctx.scope().outerScopes;
         outerScopes.add(scope);

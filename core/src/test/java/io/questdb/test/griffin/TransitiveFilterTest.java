@@ -24,12 +24,9 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -135,7 +132,7 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                         bindVariableService.setInt(0, value);
                         final String rows = value == 1 ? "lid\trid\n1\t11\n"
                                 : value == 2 ? "lid\trid\n2\t12\n" : "lid\trid\n4\t14\n";
-                        Assert.assertEquals(sql, rows, print(factory));
+                        Assert.assertEquals(sql, rows, printFactory(factory));
                     }
                 }
             }
@@ -326,7 +323,7 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: lp_trans_l
                             """);
-            assertRows("SELECT l.id lid,r.id rid,x.id xid FROM lp_trans_l l "
+            assertRowsOnly("SELECT l.id lid,r.id rid,x.id xid FROM lp_trans_l l "
                     + "JOIN lp_trans_r r ON r.k=x.k JOIN lp_trans_l x ON l.k=x.k "
                     + "WHERE l.k=1 ORDER BY lid,rid,xid", "lid\trid\txid\n1\t11\t1\n");
             assertRowsAndPlan("SELECT l.id lid,r.id rid,x.id xid FROM lp_trans_l l "
@@ -817,14 +814,10 @@ public class TransitiveFilterTest extends AbstractCairoTest {
             final String sql = "SELECT lid,rid FROM (SELECT l.id lid,r.id rid,l.k lk FROM lp_trans_l l "
                     + "JOIN lp_trans_r r ON l.k=r.k) q WHERE lk=abs(1) ORDER BY lid,rid";
             try (RecordCursorFactory factory = select(sql)) {
-                Assert.assertEquals("lid\trid\n1\t11\n", print(factory));
+                Assert.assertEquals("lid\trid\n1\t11\n", printFactory(factory));
                 Assert.assertEquals(2, filterCount(factory));
             }
         });
-    }
-
-    private void assertRows(String sql, String rows) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(rows);
     }
 
     private void assertRowsAndPlan(String sql, String rows, String plan) throws Exception {
@@ -848,14 +841,6 @@ public class TransitiveFilterTest extends AbstractCairoTest {
             }
         }
         return count;
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-            return sink.toString();
-        }
     }
 
     private static String query(String condition) {

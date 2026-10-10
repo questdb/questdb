@@ -468,7 +468,7 @@ final class TemporalJoinBinder {
         if (expression == null) {
             return Long.MAX_VALUE;
         }
-        if (hasLiteral(expression)) {
+        if (hasColumnReference(expression)) {
             return -1;
         }
         final BoundExpression bound = ctx.functionBinder.bind(expression, emptySchema, null, executionContext);
@@ -731,7 +731,6 @@ final class TemporalJoinBinder {
         } else if (where != null) {
             final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
             final FilterPlan filter = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
-            filter.deriveOutput();
             master = filter;
         }
         final OutputSchema masterOutput = master.getOutput();
@@ -751,11 +750,7 @@ final class TemporalJoinBinder {
             }
         }
         final OutputSchema output = plan.getOutput();
-        for (int i = 0, n = masterOutput.getColumnCount(); i < n; i++) {
-            output.add(masterOutput.getColumnId(i), masterOutput.getColumnName(i), masterOutput.getColumnType(i),
-                    masterOutput.getMetadata(i), masterOutput.isVisible(i), masterAlias);
-            output.setSymbolTableStatic(i, masterOutput.isSymbolTableStatic(i));
-        }
+        output.addColumnsFrom(masterOutput, masterAlias);
         output.setTimestampIndex(masterOutput.getTimestampIndex());
         output.add(ctx.planNodes.nextColumnId(), "offset", ColumnType.LONG, null, true, horizonAlias);
         output.add(ctx.planNodes.nextColumnId(), "timestamp", masterOutput.getColumnType(masterOutput.getTimestampIndex()), null, true, horizonAlias);
@@ -773,11 +768,7 @@ final class TemporalJoinBinder {
             plan.getSlaves().add(step);
             final OutputSchema slaveOutput = slave.getOutput();
             JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getTimestampColumnId(), slaveOutput);
-            for (int k = 0, m = slaveOutput.getColumnCount(); k < m; k++) {
-                output.add(slaveOutput.getColumnId(k), slaveOutput.getColumnName(k), slaveOutput.getColumnType(k),
-                        slaveOutput.getMetadata(k), slaveOutput.isVisible(k), slaveAlias);
-                output.setSymbolTableStatic(output.getColumnCount() - 1, slaveOutput.isSymbolTableStatic(k));
-            }
+            output.addColumnsFrom(slaveOutput, slaveAlias);
             bindHorizonKeys(occurrence.getJoinCriteria(), step, masterOutput, masterAlias, slaveOutput, slaveAlias);
             final ObjList<ExpressionNode> shorthand = occurrence.getJoinColumns();
             for (int k = 0, m = shorthand.size(); k < m; k++) {
@@ -854,7 +845,6 @@ final class TemporalJoinBinder {
                 isEmpty = true;
             } else {
                 final FilterPlan filter = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
-                filter.deriveOutput();
                 master = filter;
                 plan.replaceInput(0, master);
             }
@@ -863,11 +853,7 @@ final class TemporalJoinBinder {
         ctx.promoteNoArgFunctions(model, master.getOutput(), masterAlias);
         final OutputSchema output = plan.getOutput();
         final OutputSchema masterOutput = master.getOutput();
-        for (int i = 0, n = masterOutput.getColumnCount(); i < n; i++) {
-            output.add(masterOutput.getColumnId(i), masterOutput.getColumnName(i), masterOutput.getColumnType(i),
-                    masterOutput.getMetadata(i), masterOutput.isVisible(i), masterAlias == null ? masterOutput.getColumnQualifier(i) : masterAlias);
-            output.setSymbolTableStatic(i, masterOutput.isSymbolTableStatic(i));
-        }
+        output.addColumnsFrom(masterOutput, masterAlias);
         output.setTimestampIndex(masterOutput.getTimestampIndex());
 
         bindScope.aggregateNodes.clear();
@@ -882,11 +868,7 @@ final class TemporalJoinBinder {
         for (int i = 0, n = bindScope.aggregateNodes.size(); i < n; i++) {
             bindScope.windowJoinAggregateSteps.add(windowJoinStepOf(bindScope.aggregateNodes.getQuick(i), plan, masterOutput));
         }
-        bindScope.aliases.clear();
-        bindScope.aliasSequences.clear();
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            bindScope.aliases.add(output.getColumnName(i));
-        }
+        bindScope.resetAliases(output);
         for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
             final WindowJoinStep step = plan.getSteps().getQuick(s);
             final QueryModel occurrence = sources.getQuick(first + s);
@@ -894,11 +876,7 @@ final class TemporalJoinBinder {
             final OutputSchema scope = step.getScope();
             scope.copyFrom(output);
             final OutputSchema slaveOutput = step.getSlave().getOutput();
-            for (int i = 0, n = slaveOutput.getColumnCount(); i < n; i++) {
-                scope.add(slaveOutput.getColumnId(i), slaveOutput.getColumnName(i), slaveOutput.getColumnType(i),
-                        slaveOutput.getMetadata(i), slaveOutput.isVisible(i), step.getSlaveAlias());
-                scope.setSymbolTableStatic(scope.getColumnCount() - 1, slaveOutput.isSymbolTableStatic(i));
-            }
+            scope.addColumnsFrom(slaveOutput, step.getSlaveAlias());
             bindWindowJoinBounds(step, occurrence.getWindowJoinContext(), step.getMasterScope(), executionContext);
             final ExpressionNode criteria = windowJoinCriteria(occurrence, sourceAlias(masterModel), step.getSlaveAlias());
             if (criteria != null) {
@@ -948,8 +926,7 @@ final class TemporalJoinBinder {
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             collectWindowJoinAggregateOccurrences(model.getBottomUpColumns().getQuick(i).getAst(), plan, aggregateSources, aggregateColumns);
         }
-        scope.aliases.clear();
-        scope.aliasSequences.clear();
+        scope.resetAliases();
         scope.projectionAliasIndexes.clear();
         final ProjectPlan project = ctx.planNodes.projects.next().of(plan, model.getModelPosition());
         scope.sourceProjectionIndexes.setAll(output.getColumnCount(), -1);

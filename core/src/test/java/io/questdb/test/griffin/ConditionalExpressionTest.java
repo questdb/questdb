@@ -35,7 +35,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
     public void testSearchedCaseAndParserGeneratedSwitch() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN i>0 THEN i ELSE l END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -45,7 +45,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN i=1 THEN 10 WHEN i=2 THEN i+20 ELSE null END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -55,7 +55,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN active THEN label ELSE 'fallback' END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -65,7 +65,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4	fallback
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN active THEN i END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -75,7 +75,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN active THEN null END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -85,7 +85,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN active THEN ts ELSE ts END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -95,7 +95,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN active THEN b ELSE f END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -112,7 +112,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
     public void testSwitchKeyTypesNullBranchesAndTypedParameter() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE i WHEN 1 THEN l WHEN 2 THEN i ELSE -1 END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -122,7 +122,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4	-1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE label WHEN 'a' THEN 1 WHEN null THEN 2 ELSE 3 END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -132,7 +132,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE label WHEN null THEN 1 WHEN null THEN 2 ELSE 3 END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -142,7 +142,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE active WHEN true THEN i WHEN false THEN l ELSE 9 END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -152,7 +152,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE b WHEN 1 THEN i WHEN 2 THEN l END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -163,7 +163,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setBoolean(0, true);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN $1 THEN i ELSE i+1 END value FROM lp_case ORDER BY id",
                     """
                             id	value
@@ -180,14 +180,14 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
     public void testConditionalAggregatesFiltersAndNestedProjection() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT sum(CASE WHEN active THEN i ELSE 0 END),count(CASE WHEN active THEN l END) FROM lp_case",
                     """
                             sum	count
                             0	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CASE WHEN active THEN 1 ELSE 2 END k,sum(i) FROM lp_case GROUP BY 1 ORDER BY k",
                     """
                             k	sum
@@ -195,7 +195,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             2	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_case WHERE CASE WHEN active THEN i>0 ELSE l>10 END ORDER BY id",
                     """
                             id
@@ -203,7 +203,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                             2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,value FROM (SELECT id,CASE WHEN active THEN l ELSE i END value FROM lp_case) WHERE value>0 ORDER BY id",
                     """
                             id	value
@@ -232,7 +232,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                 }
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, "id\tvalue\n1\ta\n2\tb\n3\tother\n4\tother\n");
+                assertRowsOnly(factory, "id\tvalue\n1\ta\n2\tb\n3\tother\n4\tother\n");
             }
         });
     }
@@ -246,7 +246,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
             bindVariableService.clear();
             assertQuery("SELECT CASE WHEN i IN (1,2,3) THEN 1 ELSE $1 END FROM lp_case").noLeakCheck().fails(42, "CASE values cannot be bind variables");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT CASE active WHEN true THEN true WHEN false THEN false ELSE i IN (1,2,3) END FROM lp_case",
                         """
                                 switch
@@ -256,7 +256,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                                 false
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT CASE label WHEN null THEN i IN (1,2,3) WHEN null THEN true ELSE false END FROM lp_case",
                         """
                                 switch
@@ -266,7 +266,7 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                                 true
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT CASE WHEN active THEN c ELSE 'more' END FROM lp_case",
                         """
                                 case
@@ -277,14 +277,10 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                                 """
                 );
                 try (RecordCursorFactory factory = compiler.compile("SELECT count() FROM lp_case", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "count\n4\n");
+                    assertRowsOnly(factory, "count\n4\n");
                 }
             }
         });
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {
@@ -296,9 +292,5 @@ public class ConditionalExpressionTest extends AbstractCairoTest {
                 (3,-1,30,3,3,'c','c',true,'2020-01-03'),
                 (4,null,null,0,null,null,null,false,null)
                 """);
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

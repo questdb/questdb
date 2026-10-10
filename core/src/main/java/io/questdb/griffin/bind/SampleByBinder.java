@@ -878,7 +878,6 @@ final class SampleByBinder {
             predicate = ctx.expressionRewriter.combineConjunction(lo, hi, hi.getPosition());
         }
         final FilterPlan filter = ctx.planNodes.filters.next().of(input, predicate, predicate.getPosition());
-        filter.deriveOutput();
         return filter;
     }
 
@@ -973,19 +972,12 @@ final class SampleByBinder {
         window.getSpecs().add(spec);
         window.getFunctionColumnIds().add(keepId);
         window.getOutput().copyFrom(output);
-        scope.aliases.clear();
-        scope.aliasSequences.clear();
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            scope.aliases.add(output.getColumnName(i));
-        }
+        scope.resetAliases(output);
         window.getOutput().add(keepId, ctx.createOutputName("__keep_subsample"), ColumnType.BOOLEAN, false);
         final FilterPlan filter = ctx.planNodes.filters.next().of(window, ctx.planNodes.columns.next().of(keepId, ColumnType.BOOLEAN, subsample.position), subsample.position);
-        filter.deriveOutput();
-        final ProjectPlan project = ctx.planNodes.projects.next().of(filter, subsample.position);
-        project.getOutput().copyFrom(output);
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            project.getExpressions().add(ctx.planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), subsample.position));
-        }
+        final ProjectPlan project = ctx.identityProjection(filter, subsample.position);
+        project.getExpressions().remove(output.getColumnCount());
+        project.getOutput().remove(output.getColumnCount());
         ctx.stopTimestampIntrinsics(project.getOutput());
         return project;
     }

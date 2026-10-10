@@ -41,9 +41,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -362,10 +361,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarAggregateJoinBranchOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10)");
 
@@ -396,12 +393,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountDistinctJoinBranchOnRejectsRowNonPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -430,12 +424,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountDistinctJoinBranchOnRejectsRowPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -464,12 +455,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountJoinBranchOnRejectsRowKeepsBareCount() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -545,12 +533,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountJoinBranchOnRejectsRowNonPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -579,12 +564,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountJoinBranchOnRejectsRowPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -613,12 +595,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountJoinBranchTrivialOnDoesNotRetainFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -680,8 +659,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarAggregateConstantTrueOnKeepsEmptyRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10), (1, 20)");
 
@@ -761,8 +739,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1)");
 
@@ -787,8 +764,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountRuntimeLimitDropsRows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1)");
 
@@ -1138,12 +1114,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralChainLimitPerSideShapePerOuterRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t0 (k INT, x INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (1, 11), (1, 12), (2, 20)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             // a global LIMIT 2 would keep two rows TOTAL; per outer row it keeps
             // two rows for k=1, one for k=2, and LEFT preserves k=3
@@ -1185,8 +1159,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO t1 VALUES (1, 1), (2, 1), (3, 1)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String negativeLeft = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1217,8 +1190,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralNegativeLimitRejected() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1265,8 +1237,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBelowAggregateLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1324,12 +1295,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBelowAggregateLimitPerSideShape() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM ("
@@ -1360,8 +1329,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBindVariableLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1401,8 +1369,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBindVariableLimitCachedPlan() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1456,8 +1423,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBindVariableLimitNegativeRejected() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
             execute("CREATE TABLE t3 (k INT, v INT)");
@@ -1520,8 +1486,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBindVariableLimitOuterWhere() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1557,12 +1522,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountChainBindVarLimitPerSideShape() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1630,12 +1593,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountChainTwoSidedBindVarLimitPerSideShape() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1680,12 +1641,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountJoinBranchBindVarLimitPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1718,12 +1677,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountJoinBranchTwoSidedBindVarLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (1), (2)");
+            createT3("(1), (1), (2)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1744,12 +1701,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountLeftJoinBranchBindVarLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1785,8 +1740,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO t1 VALUES (1,1), (2,1), (3,1)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1808,8 +1762,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountNonLiteralPositiveLimitKeepsCoalesce() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1979,12 +1932,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountOwnLimitWithJoinBranchLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -2017,8 +1968,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountRowDroppingLimitYieldsNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -2042,12 +1992,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountTwoJoinBranchesBindVarLimitsPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
             execute("CREATE TABLE t4 (k INT)");
             execute("INSERT INTO t4 VALUES (1), (2), (3)");
 
@@ -2090,9 +2038,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralStandalone() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -2118,9 +2065,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralUnsupportedJoinType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO trades VALUES (1, 1, '2024-01-01T00:30:00.000000Z')");
 
             assertQuery("""
@@ -2223,10 +2169,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralWithUnionAllBuckets() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z'),
@@ -2456,10 +2400,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralApproxCountDistinctZeroOnNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2495,10 +2437,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCoalesceSumBodyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2533,10 +2473,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2607,11 +2545,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticAggregateOverInnerLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t1 (k INT)");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2652,10 +2588,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2711,10 +2645,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticConstantColumnCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -2743,10 +2675,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticDistinctConsumer() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2822,10 +2752,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticFilteredByParent() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2876,10 +2804,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticGroupByOrderByQualified() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2974,10 +2900,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticImplicitKeyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -3037,10 +2961,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticInCte() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3077,10 +2999,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticMixedAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3133,11 +3053,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticMultipleJoins() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3174,10 +3092,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticNegativeGuards() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3251,10 +3167,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticNestedBodyDoesNotExplode() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -3280,8 +3194,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1)");
 
@@ -3307,10 +3220,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticOrderByOnlyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3345,10 +3256,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticOuterRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3383,10 +3292,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticRenamed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3441,10 +3348,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticRepeatedLeaf() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3509,10 +3414,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticSumWithOuterRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3547,10 +3450,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticUnaliased() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3585,10 +3486,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticUnionConsumer() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3742,10 +3641,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWhereMixedTerms() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3848,10 +3745,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWhereOnlyRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3885,10 +3780,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWhereUnqualified() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3922,10 +3815,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -3953,10 +3844,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWildcardRenamed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4015,10 +3904,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWrapped() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4055,10 +3942,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWrappedSubqueryWhere() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4158,10 +4043,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountCase() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4196,10 +4079,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountCoalesceWrapped() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4234,10 +4115,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountCompensationRepeatedCursor() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4272,10 +4151,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountCompensationRepeatedDescriptions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4311,8 +4188,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountDistinctAndApproxCountDistinctOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1)");
 
@@ -4355,10 +4231,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountDistinctArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4395,10 +4269,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountDistinctZeroOnNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4452,12 +4324,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountMarkerAliasCollision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -4602,10 +4471,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountQuotedDottedAlias() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4878,10 +4745,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralUnionCountBodyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4918,10 +4783,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralWindowFunctionBodyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4982,11 +4845,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountAliasLessCollision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (cnt INT)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5031,12 +4892,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountAliasLessSurfaces() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5122,10 +4980,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountAsSecondJoinModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5153,10 +5009,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountAsSecondJoinModelOuterRefExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (3)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (3)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -5184,12 +5038,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -5217,12 +5068,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchDistinctProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5250,10 +5098,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchMultipleSourceCounts() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10), (1, NULL)");
 
@@ -5310,10 +5156,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWildcardAliasCollisions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10)");
 
@@ -5397,12 +5241,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWildcardAliasLessWrapper() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5431,10 +5272,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWildcardDottedSourceIdentity() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10)");
 
@@ -5467,10 +5306,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWildcardInputAliasBoundary() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT, cnt INT)");
             execute("INSERT INTO t2 VALUES (1, 10, 99)");
 
@@ -5503,12 +5340,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWrapper() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5628,12 +5462,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountCorrelatedBranchesAligned() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
             execute("CREATE TABLE t3 (x INT, v INT)");
             execute("INSERT INTO t3 VALUES (1, 10), (2, 20)");
 
@@ -5666,8 +5497,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 11), (2, 22), (2, 22)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
+            createT1("(7)");
             execute("CREATE TABLE t2 (x INT, y INT)");
             execute("INSERT INTO t2 VALUES (1, 11)");
             execute("CREATE TABLE t3 (x INT, y INT, v INT)");
@@ -5788,12 +5618,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDataSourceAliasCollision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
             execute("CREATE TABLE t3 (v INT)");
             execute("INSERT INTO t3 VALUES (9)");
 
@@ -5848,8 +5675,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDirectBodyAliasProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10)");
 
@@ -5938,8 +5764,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDirectBodyCardinality() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, NULL)");
 
@@ -6081,14 +5906,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDirectBodyExactSourceExpressions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE u (cnt INT)");
             execute("INSERT INTO u VALUES (NULL)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, NULL)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (10)");
+            createT1("(10)");
             execute("CREATE TABLE empty_t1 (k INT)");
 
             assertQuery("""
@@ -6333,10 +6156,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDirectBodyMixedWildcardExpressions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*, l1.cnt + 1 AS cnt_plus_one
@@ -6400,8 +6221,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T00:01:00.000000Z')
                     """);
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
             execute("CREATE TABLE q (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO q VALUES
@@ -6439,8 +6259,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T00:01:00.000000Z')
                     """);
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
             execute("CREATE TABLE q (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO q VALUES
@@ -6477,12 +6296,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // allocator skips to __qdb_count_driver__2, whose derived key collides
         // with a physical sibling column __qdb_count_driver__2_a
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (k INT, __qdb_count_driver__2_a INT)");
             execute("INSERT INTO t1 VALUES (7, 70)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.w, l1.cnt
@@ -6513,12 +6330,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // T7: two correlated scalar-count branches share one driver whose key
         // name collides with a physical sibling column
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (__qdb_count_driver__1_a INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
             execute("CREATE TABLE t3 (y INT)");
             execute("INSERT INTO t3 VALUES (2)");
 
@@ -6587,12 +6402,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // driver key must not make the rewritten join criteria ambiguous;
         // the column is not projected inside the lateral body
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (__qdb_count_driver__1_a INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -6643,12 +6456,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // key is projected under a user alias, so basename matching would
         // silently redirect the join key to the user column
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (__qdb_count_driver__1_a INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -6677,12 +6488,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testNestedLateralLeftCountDriverKeyQuotedColumnCollision() throws Exception {
         // T10: quoted creation and quoted references of the colliding column
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (\"__qdb_count_driver__1_a\" INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -6710,12 +6519,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // T9: upper-case physical column; case-insensitive basename matching
         // would capture it even though the spelling differs in case
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (\"__QDB_COUNT_DRIVER__1_A\" INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -6745,12 +6552,9 @@ public class LateralJoinTest extends AbstractCairoTest {
         // inserted generated key must dedupe and the deduped alias must chain
         // upward into the final alignment criteria
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -6803,11 +6607,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountEmptyDrivingRelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (k INT)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -6852,12 +6654,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountInternalAliasWildcardVisibility() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -6919,12 +6718,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountLimitBody() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2), (3)");
+            createT0("(1), (2), (3)");
             execute("CREATE TABLE t1 (k INT, cnt INT)");
             execute("INSERT INTO t1 VALUES (1, null), (2, 7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt, l1.c2
@@ -6975,12 +6772,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountLimitCardinality() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -7159,12 +6953,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountMultipleDrivingRows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (10), (20)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(10), (20)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.cnt
@@ -7218,12 +7009,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // hardens the wrapper insertion, while in-branch bare outer-ref
         // references remain HEAD-pre-existing behavior (S1/C1 scope ruling)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (__qdb_outer_ref__0_a INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -7251,14 +7040,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefThreeLevels() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t1b (m INT)");
             execute("INSERT INTO t1b VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -7293,12 +7079,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefTwoLevels() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -7328,11 +7111,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefTwoLevelsEmptyMiddle() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (k INT)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -7360,12 +7141,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefTwoLevelsNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (NULL)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(NULL)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -7394,12 +7172,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefTwoLevelsWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -7429,12 +7204,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQualifiedWildcardAliasCollisions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (NULL)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(NULL)");
+            createT2("(1)");
             execute("CREATE TABLE t3 (k INT, cnt INT)");
             execute("INSERT INTO t3 VALUES (NULL, NULL)");
 
@@ -7538,12 +7310,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQualifiedWildcardExcludes() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (NULL)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(NULL)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -7607,12 +7376,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQualifiedWildcardRepeatedProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt AS c1, l1.cnt AS c2
@@ -7638,12 +7404,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQualifiedWildcardSurfaces() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -7688,12 +7451,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQuotedDottedAlias() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1."c.dot"
@@ -7727,10 +7487,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.cnt
@@ -7761,10 +7519,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.c2
@@ -7795,10 +7551,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.cnt
@@ -7827,10 +7581,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterConjunctionDropsZeroRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // cnt >= 0 holds at 0 but cnt > 1 does not, and FALSE AND TRUE is FALSE
             assertQuery("""
@@ -7868,10 +7620,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterDisjunctionCoversZero() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -7899,10 +7649,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterInequalityDropsZeroRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -7930,10 +7678,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterKeepsZeroRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -7961,10 +7707,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterLowerBoundAcceptsWholeDomain() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // count() is non-negative, so cnt > -1 cannot reject anything
             assertQuery("""
@@ -7993,10 +7737,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterTautology() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -8024,10 +7766,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperGroupByCountOutput() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // GROUP BY above the aggregate groups the single zero row by its own
             // value: one group in, one group out. The row survives.
@@ -8057,10 +7797,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperJoinKeepsZeroRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // count body as the FIRST join model. The companion shape with the
             // operands swapped is asserted by
@@ -8101,10 +7839,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperNegatedFilterLifted() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -8132,10 +7868,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperNonTotalFilterLifted() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // cnt < 2 accepts the zero row but rejects a count of 2
             assertQuery("""
@@ -8166,10 +7900,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperNonTotalFilterLiftedBindVarLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             String sql = """
                     SELECT t0.a, l1.cnt
@@ -8217,10 +7949,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperNonTotalFilterNotLiftedWhenBodyHasOtherColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt, l1.tag
@@ -8247,10 +7977,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperUnionAllEmptyBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // the second branch is provably empty for every outer row, so the union
             // contributes exactly the first branch: one row per outer row.
@@ -8287,10 +8015,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperWildcardFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -8323,10 +8049,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.cnt
@@ -8354,10 +8078,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.val
@@ -8385,10 +8107,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.cnt
@@ -8419,8 +8139,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 100), (1, 200), (2, 300)");
 
@@ -8453,8 +8172,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20), (3, 30)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 100), (2, 200), (3, 300)");
 
@@ -8484,11 +8202,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testPerSidePushInnerBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -8497,8 +8212,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, 'A', '2024-01-01T00:05:00.000000Z'),
                     (2, 'B', '2024-01-01T01:05:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -8532,11 +8246,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testPerSidePushIntermediateLayerProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -8545,8 +8256,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, 'A', '2024-01-01T00:05:00.000000Z'),
                     (2, 'B', '2024-01-01T01:05:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -8626,12 +8336,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testPerSidePushMultipleBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -8640,8 +8347,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, 'A', '2024-01-01T00:05:00.000000Z'),
                     (2, 'B', '2024-01-01T01:05:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -8794,10 +8500,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testScalarCountBodyPreservesCrossLateralRows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -8936,10 +8640,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT04GroupByCountLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -9079,10 +8781,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT08DistinctInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -9115,10 +8815,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT09UnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("INSERT INTO trades_a VALUES (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'), (2, 2, 20.0, '2024-01-01T01:10:00.000000Z')");
             execute("INSERT INTO trades_b VALUES (1, 1, 30.0, '2024-01-01T00:20:00.000000Z'), (2, 2, 40.0, '2024-01-01T01:20:00.000000Z')");
 
@@ -9148,10 +8847,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100LeftCountInExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -9186,16 +8883,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100RightJoinBranchInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z')
                     """);
@@ -9235,16 +8928,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100bFullOuterJoinBranchInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z')
                     """);
@@ -9283,17 +8972,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100cMixedLeftRightJoinBranchesInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -9570,15 +9255,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT103ReplaceColumnRefBinaryExpr() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -9603,10 +9284,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT103bReplaceColumnRefMultiArgFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty DOUBLE, qty2 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -9637,15 +9316,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT103cReplaceColumnRefNestedExpr() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -9723,16 +9398,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106LeftJoinCorrelatedOnSemantics() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -9769,16 +9440,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106bRightJoinCorrelatedOnSemantics() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z')
                     """);
             // Adjustments for both orders
@@ -9818,16 +9485,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106cFullOuterJoinCorrelatedOnSemantics() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z')
                     """);
@@ -9865,16 +9528,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106dRightJoinSubqueryBranchCorrelatedOn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, active INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z')
                     """);
             execute("""
@@ -9912,15 +9571,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT106eLeftJoinNonEqCorrelatedOn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE bonuses (trade_order_id INT, bonus DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
                     (2, 5.0, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -9959,16 +9616,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT107CorrelatedJoinAboveDataSourceLevel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10006,16 +9659,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT108aTerminateNonCorrelatedUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -10051,14 +9700,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT108bTerminateDeepCorrelation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
                     (2, 5.0, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10088,10 +9735,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT108cWhereCorrelatedOverNonCorrelatedSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -10177,11 +9822,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT10Intersect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -10276,16 +9919,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT110OuterAliasSaveStackTwoBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10321,17 +9960,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT110bOuterAliasSaveStackThreeBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -10417,15 +10052,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT111LatestByPartitionByCorrelationColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z'),
@@ -10458,11 +10089,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT112CorrelatedSubqueryJoinBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, tag_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tags (id INT, order_id INT, label STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -10531,14 +10160,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT114CaseExprWithOuterRef() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, lo DOUBLE, hi DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 10.0, 20.0, '2024-01-01T00:00:00.000000Z'),
                     (2, 25.0, 35.0, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 5.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 15.0, '2024-01-01T00:20:00.000000Z'),
                     (1, 25.0, '2024-01-01T00:30:00.000000Z'),
@@ -10580,16 +10207,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT115LeftLateralCountInCoalesce() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10628,14 +10251,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT116WindowFunctionCorrelatedPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'A', '2024-01-01T00:00:00.000000Z'),
                     (2, 'B', '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10668,10 +10289,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT11InnerJoinInLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE products (id INT, order_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE prices (id INT, product_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO products VALUES
                     (1, 1, 'Widget', '2024-01-01T00:10:00.000000Z'),
@@ -10708,9 +10328,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT12LatestByInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -10823,10 +10442,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT15EmptyResultLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -10850,10 +10467,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT17LimitAndWindowLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -10896,10 +10511,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT18NullJoinKeyInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (null, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -10929,10 +10542,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT19NullJoinKeyLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (null, '2024-01-01T01:00:00.000000Z'),
                     (2, '2024-01-01T02:00:00.000000Z')
@@ -10964,10 +10575,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT20UncorrelatedLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -11104,9 +10713,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT23SampleByInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11143,9 +10751,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT23bKeyedSampleByInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11186,11 +10793,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT23cUnion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -11233,9 +10838,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT25MultiLevelSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11339,9 +10943,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28PivotInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'buy', 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11377,10 +10980,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28bPivotInsideLateralLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -11419,10 +11020,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28c2SampleByCountLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -11462,10 +11061,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28cSampleByLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -11503,9 +11100,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28dSampleByAlignToFirstObservation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:05:00.000000Z'),
@@ -11540,9 +11136,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28eSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -11586,9 +11181,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28fSampleByWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11627,9 +11221,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28gOrderByFunctionWrapper() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 30.0, '2024-01-01T00:10:00.000000Z'),
@@ -11707,9 +11300,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28iGroupByWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, category STRING, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11771,9 +11363,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28jDistinctWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'A', '2024-01-01T00:10:00.000000Z'),
@@ -11811,9 +11402,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT29CteInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11845,10 +11435,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT30UngroupedCountInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -11881,10 +11469,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT31UngroupedCountLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -11915,10 +11501,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT32UngroupedSumLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -11990,10 +11574,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT35ComplexEquality() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, group_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (10, '2024-01-01T00:00:00.000000Z'),
                     (20, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -12028,10 +11610,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT36InnerJoinOnCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE t1 (id INT, val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t2 (id INT, order_id INT, t1_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("INSERT INTO t1 VALUES (1, 'X', '2024-01-01T00:10:00.000000Z'), (2, 'Y', '2024-01-01T01:10:00.000000Z')");
             execute("""
                     INSERT INTO t2 VALUES
@@ -12417,11 +11998,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT46Except() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -12464,11 +12043,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT47IntersectAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z')
                     """);
             execute("""
@@ -12508,11 +12085,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT48ExceptAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z')
                     """);
             execute("""
@@ -12550,11 +12125,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT49ExceptLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -12598,11 +12171,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT50UnionMultiGroup() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -13003,11 +12574,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT57LeftJoinInLateralPreservesNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE items (id INT, order_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tags (item_id INT, order_id INT, tag STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -13182,11 +12751,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT61MultipleLateralJoinsOnSameOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (id INT, order_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -13738,17 +13305,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT64CascadingLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fees (order_id INT, qty_threshold DOUBLE, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -13795,16 +13358,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT64bCascadingLateralWithWindow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE bonuses (min_rank LONG, bonus DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (1, 30.0, '2024-01-01T00:30:00.000000Z'),
@@ -13893,12 +13452,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT66ThreeWayUnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_c (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -13934,15 +13491,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT67UnionHeterogeneousBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -14025,17 +13578,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT69CascadingLateralLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE discounts (min_qty DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 100.0, '2024-01-01T00:10:00.000000Z'),
                     (2,  20.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -14076,11 +13625,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT70MultipleCorrelatedJoinsInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE items (order_id INT, product STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE payments (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -14122,10 +13669,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT71PostJoinFilterAndAggregateFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -14382,11 +13927,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77LatestByInUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -14434,10 +13977,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77bLatestByLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -14592,15 +14133,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77e1LatestByPartitionByOuterCol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -14799,15 +14336,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT80WindowCompensation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 30.0, '2024-01-01T00:20:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:30:00.000000Z'),
@@ -14899,10 +14432,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT80cWindowWithPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -14948,17 +14479,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT81JoinInsideUnion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE labels (order_id INT, label SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 20.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -15006,12 +14533,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT82UnionInsideJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tags (order_id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15054,11 +14579,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT83JoinMixedCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, product_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE products (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15102,15 +14625,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT84UnionMixedCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 20.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -15143,16 +14662,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT85AsofJoinInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE prices (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:30:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -15262,15 +14777,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT87CorrelatedJoinOnAndBranch() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE factors (trade_order_id INT, factor DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
                     (2, 5.0,  '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -15358,11 +14871,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT89GroupByInUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE refunds (order_id INT, category SYMBOL, amt DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15408,10 +14919,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT90LimitOffsetWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15456,15 +14965,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT91SubqueryOuter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'active', '2024-01-01T00:00:00.000000Z'),
                     (2, 'closed', '2024-01-01T01:00:00.000000Z'),
                     (3, 'active', '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (3, 30.0, '2024-01-01T02:10:00.000000Z')
@@ -15535,17 +15042,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT93CorrelatedSubqueryInLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE valid_orders (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 20.0, '2024-01-01T01:10:00.000000Z'),
                     (3, 30.0, '2024-01-01T02:10:00.000000Z')
@@ -15574,10 +15077,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT94DistinctWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15816,15 +15317,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT97LimitZero() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 20.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -15853,14 +15350,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT98NullInNonEqualityCorrelation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, threshold DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
                     (2, NULL, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -15889,7 +15384,6 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT98OuterWhereFilterWithNonEqLateral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
@@ -15897,8 +15391,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 'ACTIVE', '2024-01-01T02:00:00.000000Z'),
                     (4, 'ACTIVE', '2024-01-01T03:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z'),
@@ -15934,15 +15427,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT98bOuterWhereUnqualifiedColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
                     (2, 'CLOSED', '2024-01-01T01:00:00.000000Z'),
                     (3, 'ACTIVE', '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -16002,16 +15493,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT98cOuterWhereWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z'),
                     (3, 40.0, '2024-01-01T02:10:00.000000Z')
@@ -16298,16 +15785,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT99CorrelatedOnJoinBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -16349,16 +15832,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT99bLeftJoinBranchCorrelatedOn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -16397,17 +15876,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT99cMultipleCorrelatedJoinBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -16478,6 +15953,11 @@ public class LateralJoinTest extends AbstractCairoTest {
                 .assertBinds(cases);
     }
 
+    private void createOrders(String rows) throws Exception {
+        execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO orders VALUES " + rows);
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -16495,5 +15975,30 @@ public class LateralJoinTest extends AbstractCairoTest {
                 (4, 3, 40.0, 400.0, '2024-01-01T02:30:00.000000Z'),
                 (5, 3, 50.0, 500.0, '2024-01-01T02:45:00.000000Z')
                 """);
+    }
+
+    private void createT0(String rows) throws Exception {
+        execute("CREATE TABLE t0 (a INT)");
+        execute("INSERT INTO t0 VALUES " + rows);
+    }
+
+    private void createT1(String rows) throws Exception {
+        execute("CREATE TABLE t1 (k INT)");
+        execute("INSERT INTO t1 VALUES " + rows);
+    }
+
+    private void createT2(String rows) throws Exception {
+        execute("CREATE TABLE t2 (x INT)");
+        execute("INSERT INTO t2 VALUES " + rows);
+    }
+
+    private void createT3(String rows) throws Exception {
+        execute("CREATE TABLE t3 (k INT)");
+        execute("INSERT INTO t3 VALUES " + rows);
+    }
+
+    private void createTrades(String rows) throws Exception {
+        execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO trades VALUES " + rows);
     }
 }

@@ -224,6 +224,15 @@ final class CorrelationKeys implements Mutable {
     }
 
     /**
+     * Adds the outer columns of the deferred inputs above {@code base} to the sink.
+     */
+    void collectDeferredOuterIds(int base, IntList sink) {
+        for (int i = base, n = deferredInputs.size(); i < n; i++) {
+            sink.add(deferredOuterIds.getQuick(i));
+        }
+    }
+
+    /**
      * Records the WHERE equalities between a column of the inputs before the step and an outer column of an
      * enclosing lateral: the step's body reads that column for the outer one.
      */
@@ -266,6 +275,18 @@ final class CorrelationKeys implements Mutable {
         }
         ctx.mappedOuterIds.setPos(inputBase);
         ctx.mappedColumnIds.setPos(inputBase);
+    }
+
+    /**
+     * The column of a deferred input above {@code base} that maps the outer column, or -1.
+     */
+    int deferredColumn(JoinInput input, int outerId, int base) {
+        for (int i = base, n = deferredInputs.size(); i < n; i++) {
+            if (deferredInputs.getQuick(i) == input && deferredOuterIds.getQuick(i) == outerId) {
+                return deferredColumnIds.getQuick(i);
+            }
+        }
+        return -1;
     }
 
     BoundExpression dropEqualities(BoundExpression predicate) throws SqlException {
@@ -312,10 +333,8 @@ final class CorrelationKeys implements Mutable {
             final int outerId = ctx.mappedOuterIds.getQuick(i);
             final int earlier = ctx.mappedColumn(outerId, base, inputBase);
             if (earlier > -1) {
-                input.addKey(earlier, ctx.mappedColumnIds.getQuick(i), ctx.outerRefName(outerId), ctx.outerRefName(outerId), input.getPosition());
-                if (input.getJoinType() == JoinKind.CROSS) {
-                    input.setJoinType(JoinKind.INNER);
-                }
+                final CharSequence name = ctx.outerRefName(outerId);
+                input.addKey(earlier, ctx.mappedColumnIds.getQuick(i), name, name, input.getPosition());
                 ctx.mappedOuterIds.removeIndex(i);
                 ctx.mappedColumnIds.removeIndex(i);
                 i--;
@@ -332,7 +351,8 @@ final class CorrelationKeys implements Mutable {
             final JoinInput input = deferredInputs.getQuick(i);
             final int outerId = deferredOuterIds.getQuick(i);
             final int columnId = ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size());
-            input.addKey(columnId, deferredColumnIds.getQuick(i), ctx.outerRefName(outerId), ctx.outerRefName(outerId), input.getPosition());
+            final CharSequence name = ctx.outerRefName(outerId);
+            input.addKey(columnId, deferredColumnIds.getQuick(i), name, name, input.getPosition());
             orderAfterProvider(join.getOrderedInputs(), input, columnId);
         }
     }
@@ -344,14 +364,12 @@ final class CorrelationKeys implements Mutable {
     void keyOuterConditions(JoinPlan join, JoinInput input) throws SqlException {
         keyedJoin = join;
         keyedInput = input;
+        final boolean isCross = input.getJoinType() == JoinKind.CROSS;
         if (!input.getJoinType().isBarrier()) {
             input.setPostJoinFilter(ctx.context.getRewriter().retainConjuncts(input.getPostJoinFilter(), unkeyedConjuncts));
         }
-        if (input.getJoinType() != JoinKind.CROSS) {
+        if (!isCross) {
             input.setOnResidual(ctx.context.getRewriter().retainConjuncts(input.getOnResidual(), unkeyedConjuncts));
-        }
-        if (input.getJoinType() == JoinKind.CROSS && input.getMasterKeyColumnIds().size() > 0) {
-            input.setJoinType(JoinKind.INNER);
         }
     }
 
@@ -384,5 +402,14 @@ final class CorrelationKeys implements Mutable {
         }
         step.setOnResidual(null);
         return condition;
+    }
+
+    /**
+     * Forgets the deferred inputs above {@code base}.
+     */
+    void truncateDeferred(int base) {
+        deferredInputs.setPos(base);
+        deferredOuterIds.setPos(base);
+        deferredColumnIds.setPos(base);
     }
 }

@@ -80,6 +80,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
@@ -373,7 +374,7 @@ final class AggregateFactoryGenerator {
         final PreparedFilter prepared = frame.pushPreparedFilter();
         final RecordCursorFactory factory;
         try {
-            final RecordCursorFactory leaf = codeGenerator.generateSource(frame, LogicalPlans.aggregateBase(aggregate), prepared, executionContext);
+            final RecordCursorFactory leaf = codeGenerator.generateSource(frame, GeneratedShapes.aggregateBase(aggregate), prepared, executionContext);
             factory = generateFunctions(frame, aggregate, leaf, frame.functionInstantiator, prepared, executionContext);
         } catch (Throwable th) {
             frame.popPreparedFilter(th);
@@ -389,7 +390,7 @@ final class AggregateFactoryGenerator {
         try {
             functions = new ObjList<>(plan.getAggregates().size() + 1);
             final BoundExpression keyExpression = plan.getGroupingExpressions().getQuick(0);
-            final ColumnExpression key = LogicalPlans.vectorKey(keyExpression);
+            final ColumnExpression key = GeneratedShapes.vectorKey(keyExpression);
             assert key != null;
             final int keyType = keyExpression.getDataType();
             final int keyKind = keyExpression instanceof FunctionExpression
@@ -415,7 +416,7 @@ final class AggregateFactoryGenerator {
                 final FunctionExpression call = plan.getAggregates().getQuick(i - 1);
                 final int index = call.getArgumentCount() == 0 ? -1
                         : input.getColumnIndexById(((ColumnExpression) call.argumentAt(0)).getColumnId());
-                final VectorAggregateFunctionConstructor constructor = LogicalPlans.vectorConstructor(call);
+                final VectorAggregateFunctionConstructor constructor = GeneratedShapes.vectorConstructor(call);
                 assert constructor != null;
                 final VectorAggregateFunction function = constructor.create(keyKind,
                         index, base.getMetadata().getTimestampIndex(), executionContext.getSharedQueryWorkerCount());
@@ -662,7 +663,7 @@ final class AggregateFactoryGenerator {
                 final FunctionExpression call = aggregates.getQuick(0);
                 if (call.getArgumentCount() == 0 && call.isAggregate()
                         && SqlKeywords.isCountKeyword(call.getName())) {
-                    final CharSequence name = LogicalPlans.factoryColumnName(plan, 0);
+                    final CharSequence name = GeneratedShapes.factoryColumnName(plan, 0);
                     final RecordMetadata metadata = Chars.equals(name, "count")
                             ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA
                             : new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(name), ColumnType.LONG));
@@ -702,7 +703,7 @@ final class AggregateFactoryGenerator {
                 frame.sharedHeadTarget = null;
             }
         }
-        final RecordCursorFactory base = shared != null ? shared : codeGenerator.generate(frame, LogicalPlans.aggregateBase(aggregate), executionContext);
+        final RecordCursorFactory base = shared != null ? shared : codeGenerator.generate(frame, GeneratedShapes.aggregateBase(aggregate), executionContext);
         return generate(frame, aggregate, base, frame.functionInstantiator, executionContext);
     }
 

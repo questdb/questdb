@@ -27,17 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.IndexType;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
@@ -52,7 +47,6 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
-import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -65,6 +59,12 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.FunctionBindingHarness.binary;
+import static io.questdb.test.griffin.FunctionBindingHarness.call;
+import static io.questdb.test.griffin.FunctionBindingHarness.metadata;
+import static io.questdb.test.griffin.FunctionBindingHarness.parser;
+import static io.questdb.test.griffin.FunctionBindingHarness.unary;
+
 
 public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
     @Test
@@ -73,7 +73,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
             for (int type : new int[]{ColumnType.INT, ColumnType.LONG, ColumnType.IPv4, ColumnType.STRING,
                     ColumnType.VARCHAR, ColumnType.SYMBOL, ColumnType.UUID, ColumnType.LONG256}) {
                 final ObjList<Function> constructions = new ObjList<>();
-                final FunctionParser parser = parser(constructions);
+                final FunctionParser parser = parser(engine, constructions);
                 final OutputSchema original = new OutputSchema().add(10, "unused", ColumnType.INT, true)
                         .add(27, "v", type, true);
                 final OutputSchema pruned = new OutputSchema().add(27, "v", type, true);
@@ -140,7 +140,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final ObjList<Function> constructions = new ObjList<>();
             final OutputSchema original = new OutputSchema().add(27, "v", ColumnType.INT, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(constructions))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(engine, constructions))) {
                 final BoundExpression expression = binder.bind(binary("|", literal("v"), constant("2")), original, null, sqlExecutionContext);
                 final ProjectPlan left = projection(10);
                 final ProjectPlan right = projection(11);
@@ -166,7 +166,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
     @Test
     public void testOwnedScalarArgumentsCloseOnFailureAndReconstruction() throws Exception {
         assertMemoryLeak(() -> {
-            final FunctionParser parser = parser(new ObjList<>());
+            final FunctionParser parser = parser(engine, new ObjList<>());
             final OutputSchema full = new OutputSchema().add(1, "unused", ColumnType.INT, true)
                     .add(27, "v", ColumnType.LONG, true);
             final OutputSchema pruned = new OutputSchema().add(27, "v", ColumnType.LONG, true);
@@ -216,7 +216,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final ObjList<Function> constructions = new ObjList<>();
             final OutputSchema input = new OutputSchema().add(27, "v", ColumnType.INT, true);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(constructions))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(engine, constructions))) {
                 try {
                     binder.bind(unary("count_distinct", literal("v")), input, null, sqlExecutionContext);
                     Assert.fail("aggregate accepted as scalar");
@@ -241,7 +241,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE fb_count_symbol(unused INT,s SYMBOL)");
             execute("INSERT INTO fb_count_symbol VALUES(1,'alpha'),(2,'beta'),(3,null),(4,'alpha')");
-            final FunctionParser parser = parser(new ObjList<>());
+            final FunctionParser parser = parser(engine, new ObjList<>());
             try (RecordCursorFactory source = select("SELECT s FROM fb_count_symbol");
                  FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final OutputSchema schema = new OutputSchema().add(27, "s", ColumnType.SYMBOL, true);
@@ -284,7 +284,7 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
     @Test
     public void testWideNullPredicatesConstantsAndParameters() throws Exception {
         assertMemoryLeak(() -> {
-            final FunctionParser parser = parser(new ObjList<>());
+            final FunctionParser parser = parser(engine, new ObjList<>());
             try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 for (int type : new int[]{ColumnType.IPv4, ColumnType.UUID, ColumnType.LONG256}) {
                     final OutputSchema full = new OutputSchema().add(1, "unused", ColumnType.INT, true).add(27, "v", type, true);
@@ -339,38 +339,12 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         });
     }
 
-    private static ExpressionNode binary(String name, ExpressionNode left, ExpressionNode right) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
-        node.lhs = left;
-        node.rhs = right;
-        node.paramCount = 2;
-        return node;
-    }
-
-    private static ExpressionNode call(String name, ObjList<ExpressionNode> arguments) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
-        node.paramCount = arguments.size();
-        for (int i = arguments.size() - 1; i >= 0; i--) {
-            node.args.add(arguments.getQuick(i));
-        }
-        return node;
-    }
-
     private static ExpressionNode constant(String token) {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, token, 0, 2);
     }
 
     private static ExpressionNode literal(String name) {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, name, 0, 1);
-    }
-
-    private static GenericRecordMetadata metadata(int type, boolean isFull) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        if (isFull) {
-            metadata.add(new TableColumnMetadata("unused", ColumnType.INT));
-        }
-        metadata.add(new TableColumnMetadata("physical", type, IndexType.NONE, 0, false, null));
-        return metadata;
     }
 
     private static ProjectPlan projection(int inputId) {
@@ -380,25 +354,6 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         project.getOutput().add(27, "v", ColumnType.INT, true);
         project.getExpressions().add(new ColumnExpression().of(inputId, ColumnType.INT, 0));
         return project;
-    }
-
-    private static ExpressionNode unary(String name, ExpressionNode argument) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
-        node.rhs = argument;
-        node.paramCount = 1;
-        return node;
-    }
-
-    private FunctionParser parser(ObjList<Function> constructions) {
-        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
-            @Override
-            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                final Function function = super.createFunction(overload, position, name, args, positions, context);
-                constructions.add(function);
-                return function;
-            }
-        });
     }
 
     private static class ValueRecord implements Record {

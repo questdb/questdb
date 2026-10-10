@@ -43,6 +43,7 @@ import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
@@ -261,7 +262,7 @@ final class OperatorPlanning {
     private static boolean isPassedThroughProjection(ProjectPlan project) {
         final LogicalPlan input = project.getInput();
         return !LogicalPlans.isComputedProjection(project)
-                && !(input instanceof WindowPlan window && LogicalPlans.isWindowOutputProjection(project, window))
+                && !(input instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window))
                 && !(input instanceof WindowJoinPlan && LogicalPlans.isColumnOnlyProjection(project));
     }
 
@@ -272,7 +273,7 @@ final class OperatorPlanning {
      */
     private static boolean isWindowKeepFlag(FilterPlan filter) {
         final LogicalPlan input = filter.getInput();
-        final WindowPlan window = LogicalPlans.generatedWindow(input);
+        final WindowPlan window = GeneratedShapes.generatedWindow(input);
         if (!(filter.getPredicate() instanceof ColumnExpression column) || window == null
                 || window.getAlgorithm() != WindowPlan.Algorithm.CACHED_LIGHT || window.getFunctions().size() != 1
                 || !window.getSpecs().getQuick(0).isSubsampleKeepFlag()) {
@@ -347,7 +348,7 @@ final class OperatorPlanning {
             return AggregatePlan.Algorithm.SERIAL;
         }
         final boolean isPageFrameSource = isPageFrameSource(base);
-        if (isPageFrameSource && LogicalPlans.hasVectorShape(aggregate) && !hasParquetConvertedColumns(base)) {
+        if (isPageFrameSource && GeneratedShapes.hasVectorShape(aggregate) && !hasParquetConvertedColumns(base)) {
             return AggregatePlan.Algorithm.VECTORISED;
         }
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
@@ -375,7 +376,7 @@ final class OperatorPlanning {
                         plan = limit.getInput();
                 case JoinPlan join when join.getOrderedInputs().size() == 1 ->
                         plan = join.getOrderedInputs().getQuick(0).getInput();
-                case FilterPlan filter when !LogicalPlans.isFusedFilter(filter) -> {
+                case FilterPlan filter when !GeneratedShapes.isFusedFilter(filter) -> {
                     final BoundExpression predicate = filter.getPredicate();
                     if (!LogicalPlans.isConstant(predicate)) {
                         return true;
@@ -457,10 +458,10 @@ final class OperatorPlanning {
      * column under a converted type, which the SAMPLE BY keys by that symbol or by none.
      */
     private boolean isFirstLastIndexScan(SampleByPlan sample, LogicalPlan base) {
-        while (base instanceof ProjectPlan project && LogicalPlans.isIdentityProjection(project)) {
+        while (base instanceof ProjectPlan project && GeneratedShapes.isIdentityProjection(project)) {
             base = project.getInput();
         }
-        if (base instanceof FilterPlan filter && LogicalPlans.isFusedFilter(filter)) {
+        if (base instanceof FilterPlan filter && GeneratedShapes.isFusedFilter(filter)) {
             base = filter.getInput();
         }
         if (sample.getFillMode() != SampleByPlan.FILL_NONE || !(base instanceof ScanPlan scan)
@@ -511,14 +512,14 @@ final class OperatorPlanning {
      * which a temporal join steals when the factory under the filter serves time frames, as it must for any filter.
      */
     private boolean isStolenFilter(LogicalPlan plan, FilterConsumer consumer) {
-        final FilterPlan filter = LogicalPlans.stolenFilter(plan);
+        final FilterPlan filter = GeneratedShapes.stolenFilter(plan);
         if (filter == null) {
             return false;
         }
         final boolean isSerialScanFilterStolen = consumer == FilterConsumer.TOP_K || consumer == FilterConsumer.AGGREGATE;
         final boolean isGateStolen = consumer == FilterConsumer.TEMPORAL_JOIN;
         final boolean isStolen;
-        if (!LogicalPlans.isFusedFilter(filter)) {
+        if (!GeneratedShapes.isFusedFilter(filter)) {
             final BoundExpression predicate = filter.getPredicate();
             isStolen = isPageFrameSource(filter.getInput())
                     && (isFiltering(predicate) ? filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL : isGateStolen && isGate(predicate));
@@ -547,7 +548,7 @@ final class OperatorPlanning {
      * builds the slave from.
      */
     private boolean isStolenTemporalFilter(LogicalPlan slave) {
-        final FilterPlan filter = LogicalPlans.temporalStolenFilter(slave);
+        final FilterPlan filter = GeneratedShapes.temporalStolenFilter(slave);
         return filter != null && isStolenFilter(filter, FilterConsumer.TEMPORAL_JOIN);
     }
 
@@ -570,12 +571,12 @@ final class OperatorPlanning {
         if (!executionContext.isParallelTopKEnabled()) {
             return SortPlan.Algorithm.LIMITED;
         }
-        final LogicalPlan base = LogicalPlans.generatedPlan(sort.getInput());
-        final ProjectPlan projection = LogicalPlans.parallelTopKProjection(sort);
-        if (projection == null && LogicalPlans.isPeelableProjection(base)) {
+        final LogicalPlan base = GeneratedShapes.generatedPlan(sort.getInput());
+        final ProjectPlan projection = GeneratedShapes.parallelTopKProjection(sort);
+        if (projection == null && GeneratedShapes.isPeelableProjection(base)) {
             return isPageFrameSource(base) ? SortPlan.Algorithm.PARALLEL_TOP_K : SortPlan.Algorithm.LIMITED;
         }
-        final LogicalPlan source = projection != null ? LogicalPlans.generatedPlan(projection.getInput()) : base;
+        final LogicalPlan source = projection != null ? GeneratedShapes.generatedPlan(projection.getInput()) : base;
         final SortPlan.Algorithm algorithm;
         if (isPageFrameSource(source)) {
             algorithm = SortPlan.Algorithm.PARALLEL_TOP_K;
@@ -614,15 +615,15 @@ final class OperatorPlanning {
             aggregate.setAlgorithm(horizonAlgorithm(aggregate, horizon.getMaster()));
             return;
         }
-        if (LogicalPlans.isCount(aggregate) || LogicalPlans.postingDistinctScan(aggregate) != null) {
+        if (LogicalPlans.isCount(aggregate) || GeneratedShapes.postingDistinctScan(aggregate) != null) {
             return;
         }
-        final LogicalPlan base = LogicalPlans.aggregateBase(aggregate);
+        final LogicalPlan base = GeneratedShapes.aggregateBase(aggregate);
         readOrder(base, false, true);
         if (hasTimestampAggregate(aggregate.getAggregates())) {
             final LogicalPlan input = LogicalPlans.skipRenames(aggregate.getInput());
             final int baseTimestampIndex = timestampIndex(base);
-            final int timestampIndex = base != input ? LogicalPlans.projectedTimestampIndex((ProjectPlan) input, baseTimestampIndex) : baseTimestampIndex;
+            final int timestampIndex = base != input ? GeneratedShapes.projectedTimestampIndex((ProjectPlan) input, baseTimestampIndex) : baseTimestampIndex;
             validateTimestampAggregates(aggregate.getAggregates(), aggregate.getInput().getOutput(), timestampIndex,
                     baseTimestampIndex == timestampIndex && scanDirection(base) == PhysicalProperties.ScanDirection.FORWARD);
         }
@@ -657,7 +658,7 @@ final class OperatorPlanning {
      */
     private void planFilter(FilterPlan filter) {
         final boolean isParallelEnabled = context.getExecutionContext().isParallelFilterEnabled();
-        if (!LogicalPlans.isFusedFilter(filter)) {
+        if (!GeneratedShapes.isFusedFilter(filter)) {
             filter.setAlgorithm(!isFiltering(filter.getPredicate()) ? null
                     : isWindowKeepFlag(filter) ? FilterPlan.Algorithm.WINDOW_KEEP_FLAG
                       : isParallelEnabled && isKnownYes(PhysicalProperties.supportsPageFrameCursor(filter.getInput())) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
@@ -715,11 +716,11 @@ final class OperatorPlanning {
     }
 
     private void planLatestBy(LatestByPlan latest) {
-        if (LogicalPlans.latestByScan(latest) != null) {
+        if (GeneratedShapes.latestByScan(latest) != null) {
             return;
         }
         final LogicalPlan input = latest.getInput();
-        final LogicalPlan base = LogicalPlans.latestByBase(latest);
+        final LogicalPlan base = GeneratedShapes.latestByBase(latest);
         boolean isAscending = false;
         if (latest.isTimestampOrderInherited() && input.getOutput().getColumnIndexById(latest.getTimestampColumnId())
                 == PhysicalProperties.timestampIndex(base)) {
@@ -736,7 +737,7 @@ final class OperatorPlanning {
     private void planLimit(LimitPlan limit) {
         final LogicalPlan limited = limit.getInput();
         if (!LogicalPlans.hasSortUnderStableProjects(limited)) {
-            limit.setApplication(LogicalPlans.hasNativeFilterInput(limited)
+            limit.setApplication(GeneratedShapes.hasNativeFilterInput(limited)
                     && PhysicalProperties.implementsLimit(limited) == PhysicalProperties.Capability.YES
                     ? LimitPlan.Application.INPUT : LimitPlan.Application.OPERATOR);
             return;
@@ -745,9 +746,9 @@ final class OperatorPlanning {
         final LogicalPlan input = sort.getInput();
         final int keyIndex = input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
         final boolean isTimestampOrdered = isTimestampOrdered(sort, keyIndex, PhysicalProperties.timestampIndex(input));
-        final boolean isOrderDelivered = isAdviceFollowed(input) && LogicalPlans.hasAdvisedInput(input)
+        final boolean isOrderDelivered = isAdviceFollowed(input) && GeneratedShapes.hasAdvisedInput(input)
                 || sort.getColumnIds().size() == 1 && isTimestampOrdered;
-        if (LogicalPlans.hasNativeFilterInput(input) && PhysicalProperties.implementsLimit(input) == PhysicalProperties.Capability.YES) {
+        if (GeneratedShapes.hasNativeFilterInput(input) && PhysicalProperties.implementsLimit(input) == PhysicalProperties.Capability.YES) {
             limit.setApplication(LimitPlan.Application.INPUT);
             sort.setAlgorithm(isOrderDelivered ? SortPlan.Algorithm.INPUT_ORDER : sortAlgorithm(input));
             return;
@@ -782,7 +783,7 @@ final class OperatorPlanning {
         if (sample.isTimestampRequired()) {
             validateConsumedTimestamp(sampled);
         }
-        final LogicalPlan base = LogicalPlans.sampleByBase(sample);
+        final LogicalPlan base = GeneratedShapes.sampleByBase(sample);
         readOrder(base, false, true);
         final int baseTimestampIndex = timestampIndex(base);
         final int timestampIndex = sample.isTimestampRequired() ? baseTimestampIndex : sampled.getOutput().getColumnIndexById(sample.getTimestampColumnId());
@@ -846,7 +847,7 @@ final class OperatorPlanning {
         final int timestampIndex = PhysicalProperties.timestampIndex(input);
         readOrder(input, true, keyIndex == timestampIndex);
         final boolean isAdviceFollowed = isAdviceFollowed(input);
-        if (isAdviceFollowed && LogicalPlans.hasAdvisedInput(input)) {
+        if (isAdviceFollowed && GeneratedShapes.hasAdvisedInput(input)) {
             sort.setAlgorithm(SortPlan.Algorithm.INPUT_ORDER);
         } else if (isAdviceFollowed && sort.isMarkoutHorizon()) {
             final int sortedIndex = sort.getOutput().getTimestampIndex();
@@ -989,7 +990,7 @@ final class OperatorPlanning {
         }
         switch (plan) {
             case FilterPlan filter -> {
-                if (LogicalPlans.isFusedFilter(filter)) {
+                if (GeneratedShapes.isFusedFilter(filter)) {
                     return;
                 }
                 if (LogicalPlans.isConstant(filter.getPredicate())) {
@@ -1215,7 +1216,7 @@ final class OperatorPlanning {
             case FillPlan fill -> planFill(fill);
             case LatestByPlan latest -> planLatestBy(latest);
             case ProjectPlan project when project.getInput() instanceof WindowJoinPlan windowJoin && !LogicalPlans.isColumnOnlyProjection(project)
-                    && !LogicalPlans.isWindowJoinTimestampKept(project, windowJoin, readOrder, readIds) ->
+                    && !GeneratedShapes.isWindowJoinTimestampKept(project, windowJoin, readOrder, readIds) ->
                     project.markTimestampDropped();
             default -> {
             }

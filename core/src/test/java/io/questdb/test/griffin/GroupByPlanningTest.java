@@ -24,8 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -35,7 +33,6 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -54,16 +51,16 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             "SELECT k+1 AS key,sum(i+$1) AS total FROM lp_group GROUP BY key ORDER BY key",
                             sqlExecutionContext
                     ).getRecordCursorFactory();
-                    assertResult(retained, "key\ttotal\nnull\tnull\n2\t8\n3\t9\n4\tnull\n");
+                    assertRowsOnly(retained, "key\ttotal\nnull\tnull\n2\t8\n3\t9\n4\tnull\n");
                     try (RecordCursorFactory other = compiler.compile(
                             "SELECT l,min(d),max(d) FROM lp_group ORDER BY l", sqlExecutionContext
                     ).getRecordCursorFactory()) {
-                        assertResult(other, "l\tmin\tmax\nnull\tnull\tnull\n10\t2.0\t4.0\n20\t8.0\t8.0\n30\tnull\tnull\n");
+                        assertRowsOnly(other, "l\tmin\tmax\nnull\tnull\tnull\n10\t2.0\t4.0\n20\t8.0\t8.0\n30\tnull\tnull\n");
                     }
                     compiler.clear();
                 }
                 bindVariableService.setInt(0, 2);
-                assertResult(retained, "key\ttotal\nnull\tnull\n2\t10\n3\t10\n4\tnull\n");
+                assertRowsOnly(retained, "key\ttotal\nnull\tnull\n2\t10\n3\t10\n4\tnull\n");
             } finally {
                 Misc.free(retained);
             }
@@ -74,7 +71,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
     public void testComputedKeysAliasesOrdinalsAndOuterExpressions() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k+1 AS key,sum(i) AS total FROM lp_group GROUP BY key ORDER BY key",
                     """
                             key	total
@@ -84,7 +81,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k+1 AS key,sum(i) AS total FROM lp_group GROUP BY 1,1 ORDER BY 1",
                     """
                             key	total
@@ -94,7 +91,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k+1 AS key,sum(i) AS total FROM lp_group GROUP BY k+1 ORDER BY key",
                     """
                             key	total
@@ -104,7 +101,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.k AS key,sum(i) AS total FROM lp_group t GROUP BY k,t.k ORDER BY key",
                     """
                             key	total
@@ -114,7 +111,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             3	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.k+1 AS key,sum(i) AS total FROM lp_group t GROUP BY k+1 ORDER BY key",
                     """
                             key	total
@@ -124,7 +121,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k+1 AS key,sum(i)+count() AS total FROM lp_group GROUP BY k ORDER BY key",
                     """
                             key	total
@@ -134,14 +131,14 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows("SELECT k+sum(i) AS total FROM lp_group ORDER BY total", """
+            assertRowsOnly("SELECT k+sum(i) AS total FROM lp_group ORDER BY total", """
                     total
                     null
                     null
                     7
                     10
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k+1 AS key,sum(i*2) AS total FROM lp_group ORDER BY key",
                     """
                             key	total
@@ -151,7 +148,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             4	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k AS a,k AS b,count() FROM lp_group GROUP BY b,a ORDER BY a",
                     """
                             a	b	count
@@ -161,14 +158,14 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             3	3	1
                             """
             );
-            assertQueryRows("SELECT k,sum(i) FROM lp_group GROUP BY k,l ORDER BY k", """
+            assertRowsOnly("SELECT k,sum(i) FROM lp_group GROUP BY k,l ORDER BY k", """
                     k	sum
                     null	null
                     1	6
                     2	8
                     3	null
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.\"a.b\",sum(i) FROM (SELECT k AS \"a.b\",i FROM lp_group) t GROUP BY t.\"a.b\" ORDER BY 1",
                     """
                             a.b	sum
@@ -185,35 +182,35 @@ public class GroupByPlanningTest extends AbstractCairoTest {
     public void testDefaultDistinctGroupsOnlyTheVisibleTuple() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT DISTINCT k FROM lp_group ORDER BY k", """
+            assertRowsOnly("SELECT DISTINCT k FROM lp_group ORDER BY k", """
                     k
                     null
                     1
                     2
                     3
                     """);
-            assertQueryRows("SELECT DISTINCT k AS a,k AS b FROM lp_group ORDER BY a", """
+            assertRowsOnly("SELECT DISTINCT k AS a,k AS b FROM lp_group ORDER BY a", """
                     a	b
                     null	null
                     1	1
                     2	2
                     3	3
                     """);
-            assertQueryRows("SELECT DISTINCT k+1 AS key FROM lp_group ORDER BY k+1", """
+            assertRowsOnly("SELECT DISTINCT k+1 AS key FROM lp_group ORDER BY k+1", """
                     key
                     null
                     2
                     3
                     4
                     """);
-            assertQueryRows("SELECT DISTINCT k AS key FROM lp_group ORDER BY key+1", """
+            assertRowsOnly("SELECT DISTINCT k AS key FROM lp_group ORDER BY key+1", """
                     key
                     null
                     1
                     2
                     3
                     """);
-            assertQueryRows("SELECT DISTINCT k FROM lp_group ORDER BY k+1", """
+            assertRowsOnly("SELECT DISTINCT k FROM lp_group ORDER BY k+1", """
                     k
                     null
                     1
@@ -221,7 +218,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                     3
                     """);
             assertError("SELECT DISTINCT k FROM lp_group ORDER BY i+1,k", 41, "ORDER BY expressions must appear in select list. Invalid column: i");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT 7 AS fixed,k AS key FROM lp_group ORDER BY key DESC LIMIT 2",
                     """
                             fixed	key
@@ -229,16 +226,16 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             7	2
                             """
             );
-            assertQueryRows("SELECT DISTINCT 7 AS fixed FROM lp_group", """
+            assertRowsOnly("SELECT DISTINCT 7 AS fixed FROM lp_group", """
                     fixed
                     7
                     """);
-            assertQueryRows("SELECT DISTINCT 7 AS fixed FROM lp_group WHERE false", """
+            assertRowsOnly("SELECT DISTINCT 7 AS fixed FROM lp_group WHERE false", """
                     fixed
                     7
                     """);
             assertPlanContains("SELECT DISTINCT 7 AS fixed FROM lp_group WHERE false", "Count");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k FROM (SELECT DISTINCT k,s FROM lp_group) ORDER BY k",
                     """
                             k
@@ -248,7 +245,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             3
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT 7 AS value FROM (SELECT DISTINCT k,s FROM lp_group) ORDER BY value",
                     """
                             value
@@ -258,7 +255,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             7
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY k",
                     """
                             k	total
@@ -277,7 +274,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createRows();
             assertError("SELECT DISTINCT sum(i) AS total FROM lp_group GROUP BY k ORDER BY total,k", 72, "ORDER BY expressions must appear in select list. Invalid column: k");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT sum(i)+1 AS total FROM lp_group GROUP BY k ORDER BY total",
                     """
                             total
@@ -286,7 +283,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             9
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY sum(i)+1,k",
                     """
                             k	total
@@ -296,7 +293,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY count(),k",
                     """
                             k	total
@@ -306,7 +303,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY count(),3,k",
                     """
                             k	total
@@ -316,7 +313,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY 3,count(),k",
                     """
                             k	total
@@ -326,7 +323,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY k ORDER BY total",
                     """
                             total
@@ -334,7 +331,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY lp_group.k ORDER BY total",
                     """
                             total
@@ -342,7 +339,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY K ORDER BY total",
                     """
                             total
@@ -350,7 +347,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k AS key,sum(i) AS total FROM lp_group GROUP BY k ORDER BY key",
                     """
                             key	total
@@ -360,7 +357,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             3	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k AS key,sum(i) AS total FROM lp_group GROUP BY key ORDER BY key",
                     """
                             key	total
@@ -370,14 +367,14 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             3	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT 7 AS fixed FROM lp_group GROUP BY k ORDER BY fixed",
                     """
                             fixed
                             7
                             """
             );
-            assertQueryRows("SELECT DISTINCT k FROM lp_group GROUP BY k,i ORDER BY k", """
+            assertRowsOnly("SELECT DISTINCT k FROM lp_group GROUP BY k,i ORDER BY k", """
                     k
                     null
                     1
@@ -393,33 +390,33 @@ public class GroupByPlanningTest extends AbstractCairoTest {
     public void testDistinctOverGroupingKeepsOnlySelectedColumns() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT DISTINCT count() c FROM lp_group GROUP BY k ORDER BY c", """
+            assertRowsOnly("SELECT DISTINCT count() c FROM lp_group GROUP BY k ORDER BY c", """
                     c
                     1
                     2
                     """);
-            assertQueryRows("SELECT DISTINCT count() FROM lp_group GROUP BY s ORDER BY 1", """
+            assertRowsOnly("SELECT DISTINCT count() FROM lp_group GROUP BY s ORDER BY 1", """
                     count
                     1
                     2
                     3
                     """);
-            assertQueryRows("SELECT DISTINCT k % 2 AS parity FROM lp_group GROUP BY k ORDER BY parity", """
+            assertRowsOnly("SELECT DISTINCT k % 2 AS parity FROM lp_group GROUP BY k ORDER BY parity", """
                     parity
                     null
                     0
                     1
                     """);
-            assertQueryRows("SELECT DISTINCT active FROM lp_group GROUP BY active, k ORDER BY active", """
+            assertRowsOnly("SELECT DISTINCT active FROM lp_group GROUP BY active, k ORDER BY active", """
                     active
                     false
                     true
                     """);
-            assertQueryRows("SELECT count() FROM (SELECT DISTINCT count() c FROM lp_group GROUP BY k)", """
+            assertRowsOnly("SELECT count() FROM (SELECT DISTINCT count() c FROM lp_group GROUP BY k)", """
                     count
                     2
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY k+1 ORDER BY total",
                     """
                             total
@@ -427,7 +424,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY 1+k,k*2 ORDER BY total",
                     """
                             total
@@ -435,14 +432,14 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group GROUP BY 7+1 ORDER BY total",
                     """
                             total
                             14
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT sum(i) AS total FROM lp_group WHERE k>0 AND k<3 GROUP BY k,7+1 ORDER BY total",
                     """
                             total
@@ -467,27 +464,27 @@ public class GroupByPlanningTest extends AbstractCairoTest {
             assertError("SELECT DISTINCT k, max(i) OVER () m FROM lp_group ORDER BY i", 59, "ORDER BY expressions must appear in select list. Invalid column: i");
             assertError("SELECT DISTINCT k, max(i) OVER () m FROM lp_group ORDER BY k+i", 61, "ORDER BY expressions must appear in select list. Invalid column: i");
             assertError("SELECT DISTINCT sum(i) total FROM lp_group SAMPLE BY 1d ORDER BY count()", 65, "ORDER BY expressions must appear in select list. Invalid column: count");
-            assertQueryRows("SELECT DISTINCT s FROM lp_group ORDER BY count(), s", """
+            assertRowsOnly("SELECT DISTINCT s FROM lp_group ORDER BY count(), s", """
                     s
                     
                     b
                     a
                     """);
-            assertQueryRows("SELECT DISTINCT k, s FROM lp_group ORDER BY k+1, 2", """
+            assertRowsOnly("SELECT DISTINCT k, s FROM lp_group ORDER BY k+1, 2", """
                     k\ts
                     null\t
                     1\ta
                     2\tb
                     3\ta
                     """);
-            assertQueryRows("SELECT DISTINCT k AS key FROM lp_group ORDER BY lp_group.k DESC", """
+            assertRowsOnly("SELECT DISTINCT k AS key FROM lp_group ORDER BY lp_group.k DESC", """
                     key
                     3
                     2
                     1
                     null
                     """);
-            assertQueryRows("SELECT DISTINCT k, max(i) OVER () m FROM lp_group ORDER BY m, k+1", """
+            assertRowsOnly("SELECT DISTINCT k, max(i) OVER () m FROM lp_group ORDER BY m, k+1", """
                     k\tm
                     null\t8
                     1\t8
@@ -501,7 +498,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
     public void testIntegerSumNormalizationPreservesOverflowNullsAndOrderProjection() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i*2) AS total FROM lp_group GROUP BY k ORDER BY total,k",
                     """
                             k	total
@@ -511,7 +508,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	16
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(2*i) AS total FROM lp_group GROUP BY k ORDER BY total,k",
                     """
                             k	total
@@ -521,7 +518,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	16
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i+2) AS total FROM lp_group GROUP BY k ORDER BY total,k",
                     """
                             k	total
@@ -531,7 +528,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	10
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(2-i) AS total FROM lp_group GROUP BY k ORDER BY total,k",
                     """
                             k	total
@@ -541,7 +538,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             1	-2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i/2) AS total FROM lp_group GROUP BY k ORDER BY total,k",
                     """
                             k	total
@@ -551,7 +548,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	4
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i*2) AS total FROM lp_group GROUP BY k ORDER BY sum(i*2)+1,k",
                     """
                             k	total
@@ -561,7 +558,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	16
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY sum(i*2),k",
                     """
                             k	total
@@ -571,7 +568,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i+2) AS total FROM lp_group GROUP BY k ORDER BY sum(i*2),k LIMIT 3",
                     """
                             k	total
@@ -580,7 +577,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             1	10
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY sum(i)+1,sum(i*2),k",
                     """
                             k	total
@@ -590,7 +587,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY sum(i*2),sum(i*2) DESC,k",
                     """
                             k	total
@@ -600,7 +597,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i*2147483647) AS total,sum(i+2147483647) AS plus FROM lp_group GROUP BY k ORDER BY k",
                     """
                             k	total	plus
@@ -610,25 +607,25 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             3	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT sum(i*2147483647) AS total,sum(i*2147483647)+1 AS nested FROM lp_group",
                     """
                             total	nested
                             30064771058	-13
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT sum(i+2) AS total,sum(2-i) AS reversed FROM lp_group WHERE false",
                     """
                             total	reversed
                             null	null
                             """
             );
-            assertQueryRows("SELECT sum(i*2) AS total FROM (SELECT i FROM lp_group)", """
+            assertRowsOnly("SELECT sum(i*2) AS total FROM (SELECT i FROM lp_group)", """
                     total
                     28
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(d*2) AS total FROM lp_group GROUP BY k ORDER BY k",
                     """
                             k	total
@@ -645,7 +642,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
     public void testEmptyInputAndNullAggregateArguments() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,count(),count(i),sum(i),min(i),max(i),avg(i) FROM lp_group ORDER BY k",
                     """
                             k	count	count1	sum	min	max	avg
@@ -655,60 +652,60 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             3	1	0	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT count(),count(i),sum(i),min(i),max(i),avg(i) FROM lp_group WHERE false",
                     """
                             count	count1	sum	min	max	avg
                             0	0	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,count(),sum(i),avg(i) FROM lp_group WHERE false GROUP BY k ORDER BY k",
                     """
                             k	count	sum	avg
                             """
             );
-            assertQueryRows("SELECT k FROM lp_group WHERE false GROUP BY k ORDER BY k", """
+            assertRowsOnly("SELECT k FROM lp_group WHERE false GROUP BY k ORDER BY k", """
                     k
                     """);
-            assertQueryRows("SELECT 7 AS fixed FROM lp_group WHERE false GROUP BY fixed", """
+            assertRowsOnly("SELECT 7 AS fixed FROM lp_group WHERE false GROUP BY fixed", """
                     fixed
                     """);
-            assertQueryRows("SELECT 7 AS fixed,count() FROM lp_group WHERE false", """
+            assertRowsOnly("SELECT 7 AS fixed,count() FROM lp_group WHERE false", """
                     fixed	count
                     7	0
                     """);
-            assertQueryRows("SELECT true AS fixed,max(i) FROM lp_group GROUP BY fixed", """
+            assertRowsOnly("SELECT true AS fixed,max(i) FROM lp_group GROUP BY fixed", """
                     fixed	max
                     true	8
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT true AS fixed,max(i) FROM lp_group WHERE false GROUP BY fixed",
                     """
                             fixed	max
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT true AS a,7 AS b,max(i) FROM lp_group WHERE false GROUP BY a,b",
                     """
                             a	b	max
                             """
             );
-            assertQueryRows("SELECT 12+3 AS fixed,count() FROM lp_group GROUP BY fixed", """
+            assertRowsOnly("SELECT 12+3 AS fixed,count() FROM lp_group GROUP BY fixed", """
                     fixed	count
                     15	6
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT 12+3 AS fixed,count() FROM lp_group WHERE false GROUP BY fixed",
                     """
                             fixed	count
                             """
             );
-            assertQueryRows("SELECT count() FROM lp_group GROUP BY 12+3", """
+            assertRowsOnly("SELECT count() FROM lp_group GROUP BY 12+3", """
                     count
                     6
                     """);
-            assertQueryRows("SELECT count() FROM lp_group WHERE false GROUP BY 12+3", """
+            assertRowsOnly("SELECT count() FROM lp_group WHERE false GROUP BY 12+3", """
                     count
                     """);
         });
@@ -718,7 +715,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
     public void testFiltersIntervalsAndOuterOrderLimit() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i) AS total FROM lp_group WHERE active GROUP BY k ORDER BY total DESC,k LIMIT 2",
                     """
                             k	total
@@ -726,7 +723,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             1	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i) AS total FROM lp_group WHERE ts>='2020-01-03' GROUP BY k ORDER BY k",
                     """
                             k	total
@@ -735,7 +732,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             3	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i) AS total FROM lp_group WHERE ts>='2020-01-02' AND active GROUP BY k ORDER BY k",
                     """
                             k	total
@@ -743,14 +740,14 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT key,total FROM (SELECT k AS key,sum(i) AS total FROM lp_group) WHERE total>5 ORDER BY key DESC LIMIT 1",
                     """
                             key	total
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i) AS total FROM (SELECT k,i FROM lp_group ORDER BY i DESC LIMIT 2) GROUP BY k ORDER BY k",
                     """
                             k	total
@@ -758,7 +755,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             2	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY sum(i) DESC,k LIMIT 1,3",
                     """
                             k	total
@@ -766,7 +763,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,sum(i) AS total FROM lp_group GROUP BY k ORDER BY sum(i)+1 DESC,k",
                     """
                             k	total
@@ -801,21 +798,21 @@ public class GroupByPlanningTest extends AbstractCairoTest {
     public void testKeyOnlyGroupsKeepHiddenKeysAndMultiplicity() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT k FROM lp_group GROUP BY k ORDER BY k", """
+            assertRowsOnly("SELECT k FROM lp_group GROUP BY k ORDER BY k", """
                     k
                     null
                     1
                     2
                     3
                     """);
-            assertQueryRows("SELECT k+1 AS key FROM lp_group GROUP BY key ORDER BY key", """
+            assertRowsOnly("SELECT k+1 AS key FROM lp_group GROUP BY key ORDER BY key", """
                     key
                     null
                     2
                     3
                     4
                     """);
-            assertQueryRows("SELECT k FROM lp_group GROUP BY k,i ORDER BY k", """
+            assertRowsOnly("SELECT k FROM lp_group GROUP BY k,i ORDER BY k", """
                     k
                     null
                     1
@@ -824,7 +821,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                     2
                     3
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k+1 AS key,k FROM lp_group GROUP BY k+1,k ORDER BY key",
                     """
                             key	k
@@ -834,7 +831,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             4	3
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT s,label FROM lp_group GROUP BY label,s ORDER BY s,label",
                     """
                             s	label
@@ -851,13 +848,13 @@ public class GroupByPlanningTest extends AbstractCairoTest {
     public void testPostingIndexDistinctAndResidualFallback() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT DISTINCT indexed FROM lp_group ORDER BY indexed", """
+            assertRowsOnly("SELECT DISTINCT indexed FROM lp_group ORDER BY indexed", """
                     indexed
                     
                     a
                     b
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT indexed FROM lp_group GROUP BY indexed ORDER BY indexed",
                     """
                             indexed
@@ -866,7 +863,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             b
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT indexed FROM lp_group WHERE ts>='2020-01-03' ORDER BY indexed",
                     """
                             indexed
@@ -875,7 +872,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             b
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT indexed FROM lp_group WHERE ts>='2020-01-03' AND active ORDER BY indexed",
                     """
                             indexed
@@ -909,13 +906,13 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                             TestUtils.assertContains(plan.getSink(), "PostingIndex op: distinct");
                         }
                         bindVariableService.setTimestamp(0, day);
-                        assertResult(actual, matchingDay);
+                        assertRowsOnly(actual, matchingDay);
                         bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
-                        assertResult(actual, key + "\n");
+                        assertRowsOnly(actual, key + "\n");
                         bindVariableService.setTimestamp(0, day + 172_800_000_000L);
-                        assertResult(actual, matchingLater);
+                        assertRowsOnly(actual, matchingLater);
                         bindVariableService.setTimestamp(0, day);
-                        assertResult(actual, matchingDay);
+                        assertRowsOnly(actual, matchingDay);
                     }
                 }
             }
@@ -932,21 +929,21 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                 final String column = columns.getQuick(i);
                 final String select = "SELECT k,count(" + column + "),sum(" + column + "),min(" + column
                         + "),max(" + column + "),avg(" + column + ") FROM lp_group";
-                assertQueryRows(select + " GROUP BY k ORDER BY k", """
+                assertRowsOnly(select + " GROUP BY k ORDER BY k", """
                         k	count	sum	min	max	avg
                         null	0	null	null	null	null
                         1	2	6	2	4	3.0
                         2	1	8	8	8	8.0
                         3	0	null	null	null	null
                         """);
-                assertQueryRows(select + " ORDER BY k", """
+                assertRowsOnly(select + " ORDER BY k", """
                         k	count	sum	min	max	avg
                         null	0	null	null	null	null
                         1	2	6	2	4	3.0
                         2	1	8	8	8	8.0
                         3	0	null	null	null	null
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT count(" + column + "),sum(" + column + "),min(" + column
                                 + "),max(" + column + "),avg(" + column + ") FROM lp_group",
                         """
@@ -960,21 +957,21 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                 final String column = columns.getQuick(i);
                 final String select = "SELECT k,count(" + column + "),sum(" + column + "),min(" + column
                         + "),max(" + column + "),avg(" + column + ") FROM lp_group";
-                assertQueryRows(select + " GROUP BY k ORDER BY k", """
+                assertRowsOnly(select + " GROUP BY k ORDER BY k", """
                         k	count	sum	min	max	avg
                         null	0	null	null	null	null
                         1	2	20	10	10	10.0
                         2	2	40	20	20	20.0
                         3	1	30	30	30	30.0
                         """);
-                assertQueryRows(select + " ORDER BY k", """
+                assertRowsOnly(select + " ORDER BY k", """
                         k	count	sum	min	max	avg
                         null	0	null	null	null	null
                         1	2	20	10	10	10.0
                         2	2	40	20	20	20.0
                         3	1	30	30	30	30.0
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT count(" + column + "),sum(" + column + "),min(" + column
                                 + "),max(" + column + "),avg(" + column + ") FROM lp_group",
                         """
@@ -988,21 +985,21 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                 final String column = columns.getQuick(i);
                 final String select = "SELECT k,count(" + column + "),sum(" + column + "),min(" + column
                         + "),max(" + column + "),avg(" + column + ") FROM lp_group";
-                assertQueryRows(select + " GROUP BY k ORDER BY k", """
+                assertRowsOnly(select + " GROUP BY k ORDER BY k", """
                         k	count	sum	min	max	avg
                         null	0	null	null	null	null
                         1	2	6.0	2.0	4.0	3.0
                         2	1	8.0	8.0	8.0	8.0
                         3	0	null	null	null	null
                         """);
-                assertQueryRows(select + " ORDER BY k", """
+                assertRowsOnly(select + " ORDER BY k", """
                         k	count	sum	min	max	avg
                         null	0	null	null	null	null
                         1	2	6.0	2.0	4.0	3.0
                         2	1	8.0	8.0	8.0	8.0
                         3	0	null	null	null	null
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT count(" + column + "),sum(" + column + "),min(" + column
                                 + "),max(" + column + "),avg(" + column + ") FROM lp_group",
                         """
@@ -1016,21 +1013,21 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                 final String column = columns.getQuick(i);
                 final String select = "SELECT k,count(" + column + "),sum(" + column + "),min(" + column
                         + "),max(" + column + "),avg(" + column + ") FROM lp_group";
-                assertQueryRows(select + " GROUP BY k ORDER BY k", """
+                assertRowsOnly(select + " GROUP BY k ORDER BY k", """
                         k	count	sum	min	max	avg
                         null	0	null	null	null	null
                         1	2	6.0	2.0	4.0	3.0
                         2	1	8.0	8.0	8.0	8.0
                         3	0	null	null	null	null
                         """);
-                assertQueryRows(select + " ORDER BY k", """
+                assertRowsOnly(select + " ORDER BY k", """
                         k	count	sum	min	max	avg
                         null	0	null	null	null	null
                         1	2	6.0	2.0	4.0	3.0
                         2	1	8.0	8.0	8.0	8.0
                         3	0	null	null	null	null
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT count(" + column + "),sum(" + column + "),min(" + column
                                 + "),max(" + column + "),avg(" + column + ") FROM lp_group",
                         """
@@ -1057,14 +1054,14 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                 assertPlanContains("SELECT k+1 AS key,sum(i) FROM lp_group GROUP BY key", "Async Group By");
                 assertPlanContains("SELECT k,l,sum(i) FROM lp_group GROUP BY k,l", "Async Group By");
                 assertPlanContains("SELECT l FROM lp_group GROUP BY l", "Async Group By");
-                assertQueryRows("SELECT l,sum(i) FROM lp_group GROUP BY l ORDER BY l", """
+                assertRowsOnly("SELECT l,sum(i) FROM lp_group GROUP BY l ORDER BY l", """
                         l	sum
                         null	null
                         10	6
                         20	8
                         30	null
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT k+1 AS key,sum(i) FROM lp_group GROUP BY key ORDER BY key",
                         """
                                 key	sum
@@ -1090,14 +1087,14 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                 assertPlanContains("SELECT k,sum(i) FROM lp_group GROUP BY k", "GroupBy vectorized: false");
                 assertPlanContains("SELECT l,sum(i) FROM lp_group GROUP BY l", "GroupBy vectorized: false");
                 assertPlanContains("SELECT sum(i),avg(d) FROM lp_group", "GroupBy vectorized: false");
-                assertQueryRows("SELECT k,sum(i),avg(d) FROM lp_group GROUP BY k ORDER BY k", """
+                assertRowsOnly("SELECT k,sum(i),avg(d) FROM lp_group GROUP BY k ORDER BY k", """
                         k	sum	avg
                         null	null	null
                         1	6	3.0
                         2	8	8.0
                         3	null	null
                         """);
-                assertQueryRows("SELECT l,sum(i),avg(d) FROM lp_group GROUP BY l ORDER BY l", """
+                assertRowsOnly("SELECT l,sum(i),avg(d) FROM lp_group GROUP BY l ORDER BY l", """
                         l	sum	avg
                         null	null	null
                         10	6	3.0
@@ -1158,7 +1155,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
             try (RecordCursorFactory recovered = compiler.compile(
                     "SELECT k,count() FROM lp_group GROUP BY k ORDER BY k", sqlExecutionContext
             ).getRecordCursorFactory()) {
-                assertResult(recovered, "k\tcount\nnull\t1\n1\t2\n2\t2\n3\t1\n");
+                assertRowsOnly(recovered, "k\tcount\nnull\t1\n1\t2\n2\t2\n3\t1\n");
             }
         }
     }
@@ -1169,10 +1166,6 @@ public class GroupByPlanningTest extends AbstractCairoTest {
             planSink.of(factory, sqlExecutionContext);
             Assert.assertFalse(planSink.getSink().toString(), planSink.getSink().toString().contains(planPart));
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private RecordCursorFactory compile(String sql) throws Exception {
@@ -1199,9 +1192,5 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                 (null,null,null,null,null,null,null,null,true,'2020-01-05'),
                 (3,30,null,null,null,'a','a','z',false,'2020-01-06')
                 """);
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

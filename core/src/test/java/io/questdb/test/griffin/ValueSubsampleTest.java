@@ -25,16 +25,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Misc;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -50,7 +47,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 final String method = bucketMethods()[0];
                 {
                     final String type = types[0];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -64,7 +61,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[1];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -78,7 +75,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[2];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -91,7 +88,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[3];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -104,7 +101,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[4];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -117,7 +114,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[5];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -128,7 +125,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     """
                     );
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts clock,v+id AS value FROM lp_value_subsample SUBSAMPLE " + method
                                 + "(value,4) ORDER BY lp_value_subsample.x",
                         """
@@ -138,7 +135,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:00:01.000000Z	11.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,v AS __keep_subsample FROM lp_value_subsample SUBSAMPLE " + method
                                 + "(__keep_subsample,4) ORDER BY x%2,v DESC",
                         """
@@ -148,7 +145,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:10:08.000000Z	10.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT *,v AS value FROM lp_value_subsample SUBSAMPLE " + method + "(value,4)",
                         """
                                 id	v	x	ts	value
@@ -162,7 +159,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 final String method = bucketMethods()[1];
                 {
                     final String type = types[0];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -176,7 +173,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[1];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -190,7 +187,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[2];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -204,7 +201,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[3];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -218,7 +215,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[4];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -232,7 +229,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[5];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -244,7 +241,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     """
                     );
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts clock,v+id AS value FROM lp_value_subsample SUBSAMPLE " + method
                                 + "(value,4) ORDER BY lp_value_subsample.x",
                         """
@@ -255,7 +252,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:00:01.000000Z	11.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,v AS __keep_subsample FROM lp_value_subsample SUBSAMPLE " + method
                                 + "(__keep_subsample,4) ORDER BY x%2,v DESC",
                         """
@@ -266,7 +263,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:10:08.000000Z	10.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT *,v AS value FROM lp_value_subsample SUBSAMPLE " + method + "(value,4)",
                         """
                                 id	v	x	ts	value
@@ -281,7 +278,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 final String method = bucketMethods()[2];
                 {
                     final String type = types[0];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -295,7 +292,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[1];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -309,7 +306,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[2];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -323,7 +320,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[3];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -337,7 +334,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[4];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -351,7 +348,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String type = types[5];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts clock,v::" + type + " value FROM lp_value_subsample SUBSAMPLE "
                                     + method + "(value,4)",
                             """
@@ -363,7 +360,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     """
                     );
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts clock,v+id AS value FROM lp_value_subsample SUBSAMPLE " + method
                                 + "(value,4) ORDER BY lp_value_subsample.x",
                         """
@@ -374,7 +371,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:00:01.000000Z	11.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,v AS __keep_subsample FROM lp_value_subsample SUBSAMPLE " + method
                                 + "(__keep_subsample,4) ORDER BY x%2,v DESC",
                         """
@@ -385,7 +382,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:10:08.000000Z	10.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT *,v AS value FROM lp_value_subsample SUBSAMPLE " + method + "(value,4)",
                         """
                                 id	v	x	ts	value
@@ -396,7 +393,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 """
                 );
             }
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts clock,v+id value FROM lp_value_subsample SUBSAMPLE sdt(value,0.5) ORDER BY x",
                     """
                             clock	value
@@ -410,7 +407,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                             2024-01-01T00:00:01.000000Z	11.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v AS \"value.dot\" FROM lp_value_subsample SUBSAMPLE sdt(\"value.dot\",abs(-0.5))",
                     """
                             ts	value.dot
@@ -424,7 +421,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                             2024-01-01T00:10:08.000000Z	10.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts AS \"clock.dot\",v AS \"value.dot\" FROM lp_value_subsample SUBSAMPLE m4(\"value.dot\",4)",
                     """
                             clock.dot	value.dot
@@ -442,7 +439,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
             createRows();
             {
                 final String method = bucketMethods()[0];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,sum(v) value FROM lp_value_subsample GROUP BY ts SUBSAMPLE " + method + "(value,4)",
                         """
                                 ts	value
@@ -451,7 +448,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:00:01.000000Z	10.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT DISTINCT ts,v FROM lp_value_subsample SUBSAMPLE " + method + "(v,4) ORDER BY v",
                         """
                                 ts	v
@@ -460,7 +457,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:10:07.000000Z	60.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT a.ts,b.v value FROM lp_value_subsample a ASOF JOIN lp_value_subsample b SUBSAMPLE "
                                 + method + "(value,4)",
                         """
@@ -470,7 +467,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:10:08.000000Z	10.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "WITH q AS(SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + method
                                 + "(v,4)) SELECT * FROM q UNION ALL SELECT * FROM q ORDER BY ts,v",
                         """
@@ -486,7 +483,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
             }
             {
                 final String method = bucketMethods()[1];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,sum(v) value FROM lp_value_subsample GROUP BY ts SUBSAMPLE " + method + "(value,4)",
                         """
                                 ts	value
@@ -496,7 +493,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:00:01.000000Z	10.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT DISTINCT ts,v FROM lp_value_subsample SUBSAMPLE " + method + "(v,4) ORDER BY v",
                         """
                                 ts	v
@@ -506,7 +503,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:10:07.000000Z	60.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT a.ts,b.v value FROM lp_value_subsample a ASOF JOIN lp_value_subsample b SUBSAMPLE "
                                 + method + "(value,4)",
                         """
@@ -517,7 +514,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:10:08.000000Z	10.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "WITH q AS(SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + method
                                 + "(v,4)) SELECT * FROM q UNION ALL SELECT * FROM q ORDER BY ts,v",
                         """
@@ -535,7 +532,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
             }
             {
                 final String method = bucketMethods()[2];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,sum(v) value FROM lp_value_subsample GROUP BY ts SUBSAMPLE " + method + "(value,4)",
                         """
                                 ts	value
@@ -545,7 +542,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:00:01.000000Z	10.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT DISTINCT ts,v FROM lp_value_subsample SUBSAMPLE " + method + "(v,4) ORDER BY v",
                         """
                                 ts	v
@@ -555,7 +552,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:10:07.000000Z	60.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT a.ts,b.v value FROM lp_value_subsample a ASOF JOIN lp_value_subsample b SUBSAMPLE "
                                 + method + "(value,4)",
                         """
@@ -566,7 +563,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                 2024-01-01T00:10:08.000000Z	10.0
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "WITH q AS(SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + method
                                 + "(v,4)) SELECT * FROM q UNION ALL SELECT * FROM q ORDER BY ts,v",
                         """
@@ -609,19 +606,19 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                     final String expectedPlan;
                     try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                         retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-                        assertResult(retained, expected);
-                        expectedPlan = plan(retained);
+                        assertRowsOnly(retained, expected);
+                        expectedPlan = planText(retained);
                         compiler.clear();
                         try (RecordCursorFactory ignored = compiler.compile("SELECT count() FROM lp_value_subsample", sqlExecutionContext).getRecordCursorFactory()) {
                             Assert.assertNotNull(ignored);
                         }
                     }
-                    assertResult(retained, expected);
-                    TestUtils.assertEquals(expectedPlan, plan(retained));
+                    assertRowsOnly(retained, expected);
+                    TestUtils.assertEquals(expectedPlan, planText(retained));
                     bindVariableService.setLong(0, 30);
                     try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                          RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(retained, print(factory));
+                        assertRowsOnly(retained, printFactory(factory));
                     }
                     bindVariableService.setLong(0, 1);
                     try (RecordCursor ignored = retained.getCursor(sqlExecutionContext)) {
@@ -630,7 +627,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "at least 2");
                     }
                     bindVariableService.setLong(0, 4);
-                    assertResult(retained, expected);
+                    assertRowsOnly(retained, expected);
                 } finally {
                     Misc.free(retained);
                 }
@@ -648,25 +645,25 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 1 ? "true" : "false");
                 {
                     final String call = calls[0];
-                    assertQueryRows("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
+                    assertRowsOnly("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
                             ts	v
                             2024-01-01T00:00:01.000000Z	10.0
                             2024-01-01T00:10:07.000000Z	60.0
                             2024-01-01T00:10:08.000000Z	10.0
                             """);
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE id<0 SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE v IS NULL SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM (SELECT * FROM lp_value_subsample ORDER BY ts DESC) SUBSAMPLE " + call,
                             """
                                     ts	v
@@ -675,7 +672,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     2024-01-01T00:00:01.000000Z	10.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call + " ORDER BY x LIMIT 2",
                             """
                                     ts	v
@@ -686,26 +683,26 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String call = calls[1];
-                    assertQueryRows("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
+                    assertRowsOnly("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
                             ts	v
                             2024-01-01T00:00:01.000000Z	10.0
                             2024-01-01T00:00:02.000000Z	50.0
                             2024-01-01T00:10:07.000000Z	60.0
                             2024-01-01T00:10:08.000000Z	10.0
                             """);
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE id<0 SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE v IS NULL SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM (SELECT * FROM lp_value_subsample ORDER BY ts DESC) SUBSAMPLE " + call,
                             """
                                     ts	v
@@ -715,7 +712,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     2024-01-01T00:00:01.000000Z	10.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call + " ORDER BY x LIMIT 2",
                             """
                                     ts	v
@@ -726,26 +723,26 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String call = calls[2];
-                    assertQueryRows("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
+                    assertRowsOnly("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
                             ts	v
                             2024-01-01T00:00:01.000000Z	10.0
                             2024-01-01T00:00:02.000000Z	50.0
                             2024-01-01T00:10:07.000000Z	60.0
                             2024-01-01T00:10:08.000000Z	10.0
                             """);
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE id<0 SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE v IS NULL SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM (SELECT * FROM lp_value_subsample ORDER BY ts DESC) SUBSAMPLE " + call,
                             """
                                     ts	v
@@ -755,7 +752,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     2024-01-01T00:00:01.000000Z	10.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call + " ORDER BY x LIMIT 2",
                             """
                                     ts	v
@@ -766,7 +763,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String call = calls[3];
-                    assertQueryRows("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
+                    assertRowsOnly("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
                             ts	v
                             2024-01-01T00:00:01.000000Z	10.0
                             2024-01-01T00:00:02.000000Z	50.0
@@ -777,20 +774,20 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                             2024-01-01T00:10:07.000000Z	60.0
                             2024-01-01T00:10:08.000000Z	10.0
                             """);
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE id<0 SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE v IS NULL SUBSAMPLE " + call,
                             """
                                     ts	v
                                     2024-01-01T00:00:03.000000Z	null
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM (SELECT * FROM lp_value_subsample ORDER BY ts DESC) SUBSAMPLE " + call,
                             """
                                     ts	v
@@ -804,7 +801,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     2024-01-01T00:00:01.000000Z	10.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call + " ORDER BY x LIMIT 2",
                             """
                                     ts	v
@@ -819,25 +816,25 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, light == 1 ? "true" : "false");
                 {
                     final String call = calls[0];
-                    assertQueryRows("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
+                    assertRowsOnly("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
                             ts	v
                             2024-01-01T00:00:01.000000Z	10.0
                             2024-01-01T00:10:07.000000Z	60.0
                             2024-01-01T00:10:08.000000Z	10.0
                             """);
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE id<0 SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE v IS NULL SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM (SELECT * FROM lp_value_subsample ORDER BY ts DESC) SUBSAMPLE " + call,
                             """
                                     ts	v
@@ -846,7 +843,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     2024-01-01T00:00:01.000000Z	10.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call + " ORDER BY x LIMIT 2",
                             """
                                     ts	v
@@ -857,26 +854,26 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String call = calls[1];
-                    assertQueryRows("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
+                    assertRowsOnly("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
                             ts	v
                             2024-01-01T00:00:01.000000Z	10.0
                             2024-01-01T00:00:02.000000Z	50.0
                             2024-01-01T00:10:07.000000Z	60.0
                             2024-01-01T00:10:08.000000Z	10.0
                             """);
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE id<0 SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE v IS NULL SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM (SELECT * FROM lp_value_subsample ORDER BY ts DESC) SUBSAMPLE " + call,
                             """
                                     ts	v
@@ -886,7 +883,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     2024-01-01T00:00:01.000000Z	10.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call + " ORDER BY x LIMIT 2",
                             """
                                     ts	v
@@ -897,26 +894,26 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String call = calls[2];
-                    assertQueryRows("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
+                    assertRowsOnly("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
                             ts	v
                             2024-01-01T00:00:01.000000Z	10.0
                             2024-01-01T00:00:02.000000Z	50.0
                             2024-01-01T00:10:07.000000Z	60.0
                             2024-01-01T00:10:08.000000Z	10.0
                             """);
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE id<0 SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE v IS NULL SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM (SELECT * FROM lp_value_subsample ORDER BY ts DESC) SUBSAMPLE " + call,
                             """
                                     ts	v
@@ -926,7 +923,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     2024-01-01T00:00:01.000000Z	10.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call + " ORDER BY x LIMIT 2",
                             """
                                     ts	v
@@ -937,7 +934,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String call = calls[3];
-                    assertQueryRows("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
+                    assertRowsOnly("SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call, """
                             ts	v
                             2024-01-01T00:00:01.000000Z	10.0
                             2024-01-01T00:00:02.000000Z	50.0
@@ -948,20 +945,20 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                             2024-01-01T00:10:07.000000Z	60.0
                             2024-01-01T00:10:08.000000Z	10.0
                             """);
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE id<0 SUBSAMPLE " + call,
                             """
                                     ts	v
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample WHERE v IS NULL SUBSAMPLE " + call,
                             """
                                     ts	v
                                     2024-01-01T00:00:03.000000Z	null
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM (SELECT * FROM lp_value_subsample ORDER BY ts DESC) SUBSAMPLE " + call,
                             """
                                     ts	v
@@ -975,7 +972,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     2024-01-01T00:00:01.000000Z	10.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM lp_value_subsample SUBSAMPLE " + call + " ORDER BY x LIMIT 2",
                             """
                                     ts	v
@@ -998,7 +995,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 final String table = precision == 0 ? "lp_value_subsample" : "lp_value_subsample_ns";
                 {
                     final String method = bucketMethods()[0];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM " + table + " SUBSAMPLE " + method + "(v,4)",
                             """
                                     ts	v
@@ -1010,7 +1007,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String method = bucketMethods()[1];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM " + table + " SUBSAMPLE " + method + "(v,4)",
                             """
                                     ts	v
@@ -1023,7 +1020,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String method = bucketMethods()[2];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM " + table + " SUBSAMPLE " + method + "(v,4)",
                             """
                                     ts	v
@@ -1034,14 +1031,14 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     """
                     );
                 }
-                assertQueryRows("SELECT ts,v FROM " + table + " SUBSAMPLE lttb(v,4,'1m')", """
+                assertRowsOnly("SELECT ts,v FROM " + table + " SUBSAMPLE lttb(v,4,'1m')", """
                         ts	v
                         2024-01-01T00:00:01.000000Z	10.0
                         2024-01-01T00:00:04.000000Z	40.0
                         2024-01-01T00:10:05.000000Z	30.0
                         2024-01-01T00:10:08.000000Z	10.0
                         """);
-                assertQueryRows("SELECT ts,v FROM " + table + " SUBSAMPLE sdt(v,0.5)", """
+                assertRowsOnly("SELECT ts,v FROM " + table + " SUBSAMPLE sdt(v,0.5)", """
                         ts	v
                         2024-01-01T00:00:01.000000Z	10.0
                         2024-01-01T00:00:02.000000Z	50.0
@@ -1058,7 +1055,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 final String table = precision == 0 ? "lp_value_subsample" : "lp_value_subsample_ns";
                 {
                     final String method = bucketMethods()[0];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM " + table + " SUBSAMPLE " + method + "(v,4)",
                             """
                                     ts	v
@@ -1070,7 +1067,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String method = bucketMethods()[1];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM " + table + " SUBSAMPLE " + method + "(v,4)",
                             """
                                     ts	v
@@ -1083,7 +1080,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                 }
                 {
                     final String method = bucketMethods()[2];
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,v FROM " + table + " SUBSAMPLE " + method + "(v,4)",
                             """
                                     ts	v
@@ -1094,14 +1091,14 @@ public class ValueSubsampleTest extends AbstractCairoTest {
                                     """
                     );
                 }
-                assertQueryRows("SELECT ts,v FROM " + table + " SUBSAMPLE lttb(v,4,'1m')", """
+                assertRowsOnly("SELECT ts,v FROM " + table + " SUBSAMPLE lttb(v,4,'1m')", """
                         ts	v
                         2024-01-01T00:00:01.000000000Z	10.0
                         2024-01-01T00:00:04.000000000Z	40.0
                         2024-01-01T00:10:05.000000000Z	30.0
                         2024-01-01T00:10:08.000000000Z	10.0
                         """);
-                assertQueryRows("SELECT ts,v FROM " + table + " SUBSAMPLE sdt(v,0.5)", """
+                assertRowsOnly("SELECT ts,v FROM " + table + " SUBSAMPLE sdt(v,0.5)", """
                         ts	v
                         2024-01-01T00:00:01.000000000Z	10.0
                         2024-01-01T00:00:02.000000000Z	50.0
@@ -1121,7 +1118,7 @@ public class ValueSubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_sdt_line AS (SELECT x::DOUBLE v,x::TIMESTAMP ts FROM long_sequence(5)) TIMESTAMP(ts)");
             try (RecordCursorFactory factory = select("SELECT ts,v FROM lp_sdt_line SUBSAMPLE sdt(v,0.5)")) {
-                assertResult(factory, "ts\tv\n1970-01-01T00:00:00.000001Z\t1.0\n1970-01-01T00:00:00.000005Z\t5.0\n");
+                assertRowsOnly(factory, "ts\tv\n1970-01-01T00:00:00.000001Z\t1.0\n1970-01-01T00:00:00.000005Z\t5.0\n");
             }
         });
     }
@@ -1165,10 +1162,6 @@ public class ValueSubsampleTest extends AbstractCairoTest {
         });
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-    }
-
     private static String[] bucketMethods() {
         return new String[]{"m4", "minmax", "lttb"};
     }
@@ -1197,23 +1190,5 @@ public class ValueSubsampleTest extends AbstractCairoTest {
             }
         }
         return false;
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        return sink.getSink().toString();
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        final StringSink sink = new StringSink();
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-        }
-        return sink.toString();
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

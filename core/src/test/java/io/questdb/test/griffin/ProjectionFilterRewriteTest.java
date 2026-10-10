@@ -170,12 +170,12 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
                     try (RecordCursorFactory other = compiler.compile(
                             "SELECT id FROM lp_pushdown WHERE id<3", sqlExecutionContext
                     ).getRecordCursorFactory()) {
-                        assertResult(other, "id\n1\n2\n");
+                        assertRowsOnly(other, "id\n1\n2\n");
                     }
                     compiler.clear();
-                    assertResult(retained, "value\n2\n3\n4\n");
+                    assertRowsOnly(retained, "value\n2\n3\n4\n");
                 }
-                assertResult(retained, "value\n2\n3\n4\n");
+                assertRowsOnly(retained, "value\n2\n3\n4\n");
             } finally {
                 Misc.free(retained);
             }
@@ -251,7 +251,7 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
              RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             Assert.assertEquals(expectedProjects, countProjects(compiler.getPlanForTesting()));
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
@@ -259,12 +259,8 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
              RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             assertFilterInput(compiler.getPlanForTesting(), expectedFilterInput);
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

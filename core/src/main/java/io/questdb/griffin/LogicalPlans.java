@@ -25,10 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.groupby.vect.VectorAggregateConstructors;
-import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -41,34 +37,25 @@ import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
-import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
-import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.UnaryPlan;
-import io.questdb.griffin.plan.logical.WindowJoinPlan;
-import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Stateless plan-node predicates, walkers and plan-property utilities shared by the binder, the optimiser and the plan generator.
@@ -90,14 +77,6 @@ public final class LogicalPlans {
             ? TreeWalk.STOP : TreeWalk.CONTINUE;
 
     private LogicalPlans() {
-    }
-
-    /**
-     * The input the generator builds a GROUP BY over: the aggregate's input past renames, without a projection that
-     * only declares the designated timestamp.
-     */
-    public static LogicalPlan aggregateBase(AggregatePlan aggregate) {
-        return timestampDeclarationBase(skipRenames(aggregate.getInput()));
     }
 
     public static boolean canPushJoinFilter(JoinPlan join, int source, int lastInput) {
@@ -258,82 +237,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * The name the generator's factory gives column {@code index} of the plan: a count aggregate, read through
-     * filters, names its column {@code count} under any spelling of that name.
-     */
-    public static CharSequence factoryColumnName(LogicalPlan plan, int index) {
-        final CharSequence name = plan.getOutput().getColumnName(index);
-        return skipFilters(plan) instanceof AggregatePlan aggregate && isCount(aggregate) && SqlKeywords.isCountKeyword(name)
-                ? "count" : name;
-    }
-
-    /**
-     * The first filter under the projections of the input, past the filters that are constant true.
-     */
-    public static FilterPlan firstFilter(LogicalPlan input) {
-        while (true) {
-            if (input instanceof ProjectPlan project) {
-                input = project.getInput();
-            } else if (input instanceof FilterPlan filter) {
-                if (!(filter.getPredicate() instanceof ConstantExpression constant) || constant.getLongValue() == 0) {
-                    return filter;
-                }
-                input = filter.getInput();
-            } else {
-                return null;
-            }
-        }
-    }
-
-    /**
-     * The table scan the generator builds the filter into, or null when it filters the factory of its input.
-     */
-    public static ScanPlan fusedScan(FilterPlan filter) {
-        return filter.getInput() instanceof ScanPlan scan && !scan.isWalClientUpdate() ? scan : null;
-    }
-
-    /**
-     * The plan the generator builds the factory of {@code plan} from: a projection that passes its input through
-     * and a filter it folds to true build none.
-     */
-    public static LogicalPlan generatedPlan(LogicalPlan plan) {
-        while (true) {
-            if (plan instanceof ProjectPlan project && isIdentityProjection(project)) {
-                plan = project.getInput();
-            } else if (plan instanceof FilterPlan filter && !isFusedFilter(filter)
-                    && filter.getPredicate() instanceof ConstantExpression constant && constant.getLongValue() != 0) {
-                plan = filter.getInput();
-            } else {
-                return plan;
-            }
-        }
-    }
-
-    /**
-     * The window the generator builds the factory of {@code plan} from: the window itself, or the window under a
-     * projection of its output, which the window factory builds; null otherwise.
-     */
-    public static WindowPlan generatedWindow(LogicalPlan plan) {
-        if (plan instanceof WindowPlan window) {
-            return window;
-        }
-        return plan instanceof ProjectPlan project && project.getInput() instanceof WindowPlan window
-                && isWindowOutputProjection(project, window) ? window : null;
-    }
-
-    /**
-     * True when the order a sort requests reaches a filtered table scan, directly, through a window, or as
-     * the master of a join that preserves master order.
-     */
-    public static boolean hasAdvisedInput(LogicalPlan plan) {
-        plan = skipProjects(plan);
-        if (plan instanceof WindowPlan) {
-            return hasNativeFilterInput(plan.inputAt(0));
-        }
-        return hasNativeFilterInput(plan) || hasOrderedJoinMasterInput(plan);
-    }
-
-    /**
      * True when a step of the join after its first input is a barrier.
      */
     public static boolean hasBarrierInput(JoinPlan join) {
@@ -351,23 +254,6 @@ public final class LogicalPlans {
     public static boolean hasExplicitJoinTimestamp(LogicalPlan plan) {
         plan = skipFilters(plan);
         return plan instanceof JoinPlan join && join.hasExplicitTimestamp();
-    }
-
-    /**
-     * True when the plan, under any projections, filters a table scan, so the scan's access path serves the filter.
-     */
-    public static boolean hasNativeFilterInput(LogicalPlan plan) {
-        plan = skipProjects(plan);
-        return plan instanceof FilterPlan filter && filter.getInput() instanceof ScanPlan;
-    }
-
-    /**
-     * True when the plan, under any projections, is a join that keeps its master's order over a filtered table scan.
-     */
-    public static boolean hasOrderedJoinMasterInput(LogicalPlan plan) {
-        plan = skipProjects(plan);
-        return plan instanceof JoinPlan join && isMasterOrderPreserved(join)
-                && hasNativeFilterInput(join.getOrderedInputs().getQuick(0).getInput());
     }
 
     /**
@@ -416,22 +302,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * Whether the aggregate has a single vector key and a vector implementation of every aggregate call.
-     */
-    public static boolean hasVectorShape(AggregatePlan plan) {
-        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
-        if (keys.size() != 1 || vectorKey(keys.getQuick(0)) == null) {
-            return false;
-        }
-        for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
-            if (vectorConstructor(plan.getAggregates().getQuick(i)) == null) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
      * True when the projection selects each of its columns as a distinct plain column reference.
      */
     public static boolean isColumnOnlyProjection(ProjectPlan project) {
@@ -454,6 +324,18 @@ public final class LogicalPlans {
             }
         }
         return true;
+    }
+
+    /**
+     * True when a column-reference projection selects the column again before expression {@code index}.
+     */
+    public static boolean isColumnSelectedBefore(ProjectPlan project, int index, int columnId) {
+        for (int k = 0; k < index; k++) {
+            if (((ColumnExpression) project.getExpressions().getQuick(k)).getColumnId() == columnId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -495,59 +377,6 @@ public final class LogicalPlans {
         }
         final FunctionExpression call = aggregates.getQuick(0);
         return call.getArgumentCount() == 0 && call.isAggregate() && SqlKeywords.isCountKeyword(call.getName());
-    }
-
-    /**
-     * True when the generator builds the filter into the factory of the table scan under it.
-     */
-    public static boolean isFusedFilter(FilterPlan filter) {
-        return fusedScan(filter) != null;
-    }
-
-    /**
-     * True when the generator builds no factory for the projection over the factory of its input, see
-     * {@link #isIdentityProjection(ProjectPlan, RecordMetadata, int, int)}, whose columns operator planning takes to be
-     * the input's output schema. Over a join of several inputs, or a filter over one, the factory names its columns
-     * qualifier.name, so the generator builds a selection where this answers true; the planner reads the answer only
-     * to look through the projection for a filter, a scan or page frames, which such a join exposes no more than the
-     * selection does.
-     */
-    public static boolean isIdentityProjection(ProjectPlan project) {
-        return isIdentityProjection(project, null, PhysicalProperties.timestampIndex(project),
-                PhysicalProperties.timestampIndex(project.getInput()));
-    }
-
-    /**
-     * True when the generator builds no factory for the projection: it selects every input column, in order, under
-     * the name and type the input's factory gives it, {@code layout}, or the input's output schema when null, and
-     * designates the timestamp the input's factory designates. A SELECT list over GROUP BY keeps the key spelling when
-     * it only changes the name case.
-     */
-    public static boolean isIdentityProjection(ProjectPlan project, @Nullable RecordMetadata layout, int timestampIndex, int inputTimestampIndex) {
-        final LogicalPlan input = project.getInput();
-        if (isComputedProjection(project) || input instanceof WindowPlan window && isWindowOutputProjection(project, window)
-                || input instanceof WindowJoinPlan && isColumnOnlyProjection(project)) {
-            return false;
-        }
-        final OutputSchema output = project.getOutput();
-        final OutputSchema inputOutput = input.getOutput();
-        if (output.getColumnCount() != (layout == null ? inputOutput.getColumnCount() : layout.getColumnCount())
-                || timestampIndex != inputTimestampIndex) {
-            return false;
-        }
-        final boolean isKeySpellingKept = skipFilters(input) instanceof AggregatePlan aggregate
-                && aggregate.hasKeySpellingKept() && !(aggregate.getInput() instanceof HorizonJoinPlan);
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            final ColumnExpression column = (ColumnExpression) project.getExpressions().getQuick(i);
-            final CharSequence name = output.getColumnName(i);
-            final CharSequence inputName = layout == null ? factoryColumnName(input, i) : layout.getColumnName(i);
-            if (inputOutput.getColumnIndexById(column.getColumnId()) != i
-                    || output.getColumnType(i) != (layout == null ? inputOutput.getColumnType(i) : layout.getColumnType(i))
-                    || !(isKeySpellingKept ? Chars.equalsIgnoreCase(name, inputName) : Chars.equals(name, inputName))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**
@@ -595,26 +424,6 @@ public final class LogicalPlans {
 
     public static boolean isOrderIndependent(BoundExpression predicate) {
         return isStableWithinExecution(predicate) && (predicate.getFunctionFlags() & BoundExpression.NON_DETERMINISTIC) == 0;
-    }
-
-    /**
-     * True when the generator builds a projection factory for the plan, which a parallel top-K can build over itself.
-     */
-    public static boolean isPeelableProjection(LogicalPlan plan) {
-        if (!(plan instanceof ProjectPlan project)) {
-            return false;
-        }
-        final LogicalPlan input = project.getInput();
-        return !(input instanceof WindowPlan window && isWindowOutputProjection(project, window))
-                && !(input instanceof WindowJoinPlan && isColumnOnlyProjection(project));
-    }
-
-    /**
-     * Whether the generator folds the constant filter the join step applies to its joined rows: any constant after
-     * UNNEST, only a literal after another join.
-     */
-    public static boolean isPostJoinFilterFolded(JoinInput step, BoundExpression filter) {
-        return step.getJoinType() == JoinKind.UNNEST || filter instanceof ConstantExpression constant && constant.isLiteral();
     }
 
     /**
@@ -681,60 +490,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when a computing projection over the window join keeps the master's designated timestamp: the columns it
-     * reads, in the order the SELECT list names them, list the master timestamp at its position among the master's
-     * columns. {@code order} and {@code readIds} are scratch lists.
-     */
-    public static boolean isWindowJoinTimestampKept(ProjectPlan project, WindowJoinPlan windowJoin, IntList order, IntList readIds) {
-        final OutputSchema input = project.getInput().getOutput();
-        final ObjList<BoundExpression> expressions = project.getExpressions();
-        order.clear();
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            final int position = expressions.getQuick(i).getPosition();
-            int index = order.size();
-            while (index > 0 && position < expressions.getQuick(order.getQuick(index - 1)).getPosition()) {
-                index--;
-            }
-            order.insert(index, i);
-        }
-        readIds.clear();
-        for (int i = 0, n = order.size(); i < n; i++) {
-            collectInputColumnIds(expressions.getQuick(order.getQuick(i)), input, readIds);
-        }
-        final OutputSchema master = windowJoin.getMaster().getOutput();
-        final int index = master.getTimestampIndex();
-        return index >= 0 && index < readIds.size() && readIds.getQuick(index) == master.getColumnId(index);
-    }
-
-    /**
-     * A projection the window factory can emit directly: plain column references that select every
-     * window output once, at unchanged types.
-     */
-    public static boolean isWindowOutputProjection(ProjectPlan project, WindowPlan window) {
-        if (project.hasTimestampDeclaration()) {
-            return false;
-        }
-        final OutputSchema input = window.getOutput();
-        int windowCount = 0;
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column)) {
-                return false;
-            }
-            final int index = input.getColumnIndexById(column.getColumnId());
-            if (index < 0 || column.isCast() || !column.isDirectReference() || input.getColumnType(index) != project.getOutput().getColumnType(i)) {
-                return false;
-            }
-            if (window.getFunctionColumnIds().indexOf(column.getColumnId(), 0, window.getFunctionColumnIds().size()) >= 0) {
-                if (isColumnSelectedBefore(project, i, column.getColumnId())) {
-                    return false;
-                }
-                windowCount++;
-            }
-        }
-        return windowCount == window.getFunctionColumnIds().size();
-    }
-
-    /**
      * The index of the join input whose output holds the column.
      */
     public static int joinColumnSource(JoinPlan join, int columnId) {
@@ -757,22 +512,6 @@ public final class LogicalPlans {
             }
         }
         return -1;
-    }
-
-    /**
-     * The input the generator builds a LATEST BY over when it reads no table scan directly: its input, without a
-     * projection that only declares the designated timestamp.
-     */
-    public static LogicalPlan latestByBase(LatestByPlan latest) {
-        return timestampDeclarationBase(latest.getInput());
-    }
-
-    /**
-     * The table scan a LATEST BY reads directly, optionally through one filter, which the generator builds the LATEST
-     * BY into; null otherwise.
-     */
-    public static ScanPlan latestByScan(LatestByPlan latest) {
-        return scanThroughFilter(latest.getInput());
     }
 
     /**
@@ -800,7 +539,7 @@ public final class LogicalPlans {
     /**
      * The arithmetic {@code c * k}, {@code c + k} or {@code c - k}, either operand order, that an aggregate
      * reading tables without a sub-query sums, where {@code c} is a BYTE, SHORT, INT or LONG input column and
-     * {@code k} an integer literal; otherwise null. {@link AggregateRewrite} normalises such a sum.
+     * {@code k} an integer literal; otherwise null. {@code AggregateRewrite} normalises such a sum.
      */
     public static FunctionExpression normalisableSumOperation(GroupingPlan aggregate, FunctionExpression sum) {
         if (!aggregate.hasDirectTableInput() || !Chars.equalsIgnoreCase(sum.getName(), "sum") || sum.getArgumentCount() != 1
@@ -832,28 +571,6 @@ public final class LogicalPlans {
         return join.getOrderedInputs().size() > 0 ? join.getOrderedInputs() : join.getInputs();
     }
 
-    /**
-     * The projection a parallel top-K over the sort's input builds over itself: the one projection the generator
-     * builds for the input, unless the projection's input is another; null otherwise.
-     */
-    public static ProjectPlan parallelTopKProjection(SortPlan sort) {
-        final LogicalPlan base = generatedPlan(sort.getInput());
-        if (!isPeelableProjection(base)) {
-            return null;
-        }
-        final ProjectPlan projection = (ProjectPlan) base;
-        return isPeelableProjection(generatedPlan(projection.getInput())) ? null : projection;
-    }
-
-    /**
-     * The scan of a posting index the generator builds a DISTINCT of the aggregate's single SYMBOL key from, read
-     * directly or through one filter, whose predicate the scan's intervals implement whole; null otherwise.
-     */
-    public static ScanPlan postingDistinctScan(AggregatePlan aggregate) {
-        final ScanPlan scan = scanThroughFilter(aggregate.getInput());
-        return scan != null && scan.getAccessPath() == ScanPlan.AccessPath.POSTING_DISTINCT ? scan : null;
-    }
-
     public static int projectedColumnIndex(ProjectPlan project, int columnId) {
         final ObjList<BoundExpression> expressions = project.getExpressions();
         for (int i = 0, n = expressions.size(); i < n; i++) {
@@ -870,26 +587,6 @@ public final class LogicalPlans {
     public static int projectedSourceColumnId(ProjectPlan project, int columnId) {
         final int index = project.getOutput().getColumnIndexById(columnId);
         return index >= 0 && project.getExpressions().getQuick(index) instanceof ColumnExpression column ? column.getColumnId() : -1;
-    }
-
-    /**
-     * The designated timestamp of the factory of a projection over an input whose factory designates
-     * {@code inputTimestampIndex}: the one it declares, else the column its requested order reaches when that column
-     * is the input's timestamp, else the timestamp it selects, lost when that column only passes through an input
-     * that designates none, or when operator planning dropped it from a computing projection over a window join.
-     */
-    public static int projectedTimestampIndex(ProjectPlan project, int inputTimestampIndex) {
-        final LogicalPlan input = project.getInput();
-        final int timestampIndex = requestedTimestampIndex(project, inputTimestampIndex);
-        if (timestampIndex < 0) {
-            return -1;
-        }
-        if (!project.hasTimestampDeclaration() && inputTimestampIndex < 0 && !hasExplicitJoinTimestamp(input)
-                && project.getExpressions().getQuick(timestampIndex) instanceof ColumnExpression timestamp
-                && (input.getOutput().getTimestampIndex() < 0 || timestamp.getColumnId() == input.getOutput().getTimestampColumnId())) {
-            return -1;
-        }
-        return input instanceof WindowJoinPlan && !isColumnOnlyProjection(project) && project.isTimestampDropped() ? -1 : timestampIndex;
     }
 
     /**
@@ -948,15 +645,6 @@ public final class LogicalPlans {
      */
     public static boolean readsOnlyOuterColumns(FunctionExpression call) {
         return hasOuterColumn(call) && !readsColumn(call);
-    }
-
-    /**
-     * The input the generator builds a SAMPLE BY over: its input, without a projection that only declares the
-     * designated timestamp unless the SAMPLE BY reads the timestamp that projection declares.
-     */
-    public static LogicalPlan sampleByBase(SampleByPlan sample) {
-        final LogicalPlan sampled = sample.getInput();
-        return sample.isTimestampRequired() ? sampled : timestampDeclarationBase(sampled);
     }
 
     /**
@@ -1038,115 +726,12 @@ public final class LogicalPlans {
     }
 
     /**
-     * The filter node the generator builds the factory of {@code plan} from, which a parallel consumer of the plan
-     * steals; null when it builds another factory.
-     */
-    public static FilterPlan stolenFilter(LogicalPlan plan) {
-        return generatedPlan(plan) instanceof FilterPlan filter ? filter : null;
-    }
-
-    /**
-     * The selection a temporal join reads the stolen filter of its slave through, or null when it reads the filter
-     * directly.
-     */
-    public static ProjectPlan temporalSlaveProjection(LogicalPlan slave) {
-        return generatedPlan(slave) instanceof ProjectPlan project && isPeelableProjection(project)
-                && !isComputedProjection(project) ? project : null;
-    }
-
-    /**
-     * The filter node a temporal join steals from its slave: the filter the generator builds the slave from, or the
-     * one under the selection it builds the slave from.
-     */
-    public static FilterPlan temporalStolenFilter(LogicalPlan slave) {
-        final ProjectPlan projection = temporalSlaveProjection(slave);
-        return stolenFilter(projection != null ? projection.getInput() : slave);
-    }
-
-    /**
      * The type an UPDATE stores a value of type {@code type} as in a column of type {@code targetType}: the target
      * type for a built-in widening cast other than text to TIMESTAMP, the value's own type otherwise.
      */
     public static int updateColumnType(int type, int targetType) {
         return targetType < 0 || !ColumnType.isBuiltInWideningCast(type, targetType)
                 || targetType == ColumnType.TIMESTAMP && (type == ColumnType.STRING || type == ColumnType.VARCHAR) ? type : targetType;
-    }
-
-    /**
-     * The vector implementation of an aggregate call over a direct column, or of {@code count()}; null when it has none.
-     */
-    public static VectorAggregateFunctionConstructor vectorConstructor(FunctionExpression call) {
-        if (!call.isAggregate()) {
-            return null;
-        }
-        final int count = call.getArgumentCount();
-        if (count == 0) {
-            return VectorAggregateConstructors.of(call.getName(), ColumnType.UNDEFINED, true);
-        }
-        if (count == 1 && call.argumentAt(0) instanceof ColumnExpression column) {
-            return VectorAggregateConstructors.of(call.getName(), column.getDataType(), false);
-        }
-        return null;
-    }
-
-    /**
-     * The column a vector GROUP BY keys on: an INT or SYMBOL column, or the timestamp under {@code hour()}; null when
-     * the key has no vector form.
-     */
-    public static ColumnExpression vectorKey(BoundExpression key) {
-        if (key instanceof ColumnExpression column) {
-            return column.getDataType() == ColumnType.INT || column.getDataType() == ColumnType.SYMBOL ? column : null;
-        }
-        if (key instanceof FunctionExpression call && SqlKeywords.isHourKeyword(call.getName())
-                && call.getArgumentCount() == 1 && call.argumentAt(0) instanceof ColumnExpression column
-                && ColumnType.isTimestamp(column.getDataType())) {
-            return column;
-        }
-        return null;
-    }
-
-    /**
-     * The designated timestamp a column-only projection over a window join keeps: the master timestamp at
-     * {@code timestampIndex}, while the projection selects only master columns, those below {@code splitIndex},
-     * before it.
-     */
-    public static int windowJoinProjectionTimestampIndex(ProjectPlan projection, OutputSchema output, int timestampIndex, int splitIndex) {
-        for (int i = 0, n = projection.getExpressions().size(); i < n; i++) {
-            final int index = output.getColumnIndexById(((ColumnExpression) projection.getExpressions().getQuick(i)).getColumnId());
-            if (index == timestampIndex) {
-                return i;
-            }
-            if (index >= splitIndex) {
-                return -1;
-            }
-        }
-        return -1;
-    }
-
-    /**
-     * Appends the output index and type of the column a within() call tests, then the GeoHash prefixes it matches
-     * normalised to the column's precision; when a prefix is not a constant the column takes, restores the list and
-     * returns false.
-     */
-    public static boolean withinPrefixes(FunctionExpression within, OutputSchema output, LongList prefixes) {
-        final ColumnExpression column = (ColumnExpression) within.argumentAt(0);
-        final int columnType = column.getDataType();
-        final int start = prefixes.size();
-        prefixes.add(output.getColumnIndexById(column.getColumnId()));
-        prefixes.add(columnType);
-        for (int i = 1, n = within.getArgumentCount(); i < n; i++) {
-            if (!(within.argumentAt(i) instanceof ConstantExpression prefix)) {
-                prefixes.setPos(start);
-                return false;
-            }
-            try {
-                GeoHashes.addNormalizedGeoPrefix(prefix.getLongValue(), prefix.getDataType(), columnType, prefixes);
-            } catch (NumericException e) {
-                prefixes.setPos(start);
-                return false;
-            }
-        }
-        return true;
     }
 
     private static boolean areStable(ObjList<? extends BoundExpression> expressions) {
@@ -1187,15 +772,6 @@ public final class LogicalPlans {
         return aggregate.getGroupingExpressions().size() == 0 || !isParallelGroupByEnabled ? SEQUENCE_STABLE : RESULT_STABLE;
     }
 
-    private static boolean isColumnSelectedBefore(ProjectPlan project, int index, int columnId) {
-        for (int k = 0; k < index; k++) {
-            if (((ColumnExpression) project.getExpressions().getQuick(k)).getColumnId() == columnId) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static boolean isStable(BoundExpression expression) {
         return expression == null || isStableWithinExecution(expression);
     }
@@ -1212,22 +788,6 @@ public final class LogicalPlans {
             }
         }
         return true;
-    }
-
-    /**
-     * The designated timestamp a projection declares over an input whose factory designates
-     * {@code inputTimestampIndex}: its own, else the column its requested order reaches when that column is the
-     * input's timestamp.
-     */
-    private static int requestedTimestampIndex(ProjectPlan project, int inputTimestampIndex) {
-        if (!project.getRequestedOrder().isEmpty() && inputTimestampIndex < 0 && hasNativeFilterInput(project)) {
-            return -1;
-        }
-        final int orderColumnId = project.getRequestedOrderColumnId();
-        final int inputOrderId = projectedSourceColumnId(project, orderColumnId);
-        return project.getOutput().getTimestampIndex() < 0 && inputOrderId >= 0
-                && inputTimestampIndex == project.getInput().getOutput().getColumnIndexById(inputOrderId)
-                ? project.getOutput().getColumnIndexById(orderColumnId) : project.getOutput().getTimestampIndex();
     }
 
     private static int stability(LogicalPlan plan, boolean isParallelGroupByEnabled) {
@@ -1247,10 +807,6 @@ public final class LogicalPlans {
                     stability(operation.getLeft(), isParallelGroupByEnabled) & stability(operation.getRight(), isParallelGroupByEnabled);
             default -> 0;
         };
-    }
-
-    private static LogicalPlan timestampDeclarationBase(LogicalPlan plan) {
-        return isTimestampDeclarationOnly(plan) ? plan.inputAt(0) : plan;
     }
 
     /**

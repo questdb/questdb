@@ -25,24 +25,26 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.FunctionBindingHarness.binary;
+import static io.questdb.test.griffin.FunctionBindingHarness.literal;
+import static io.questdb.test.griffin.FunctionBindingHarness.parameter;
+import static io.questdb.test.griffin.FunctionBindingHarness.record;
+import static io.questdb.test.griffin.FunctionBindingHarness.unary;
 
 public class FunctionBinderTextPredicateTest extends AbstractCairoTest {
     @Test
@@ -127,51 +129,5 @@ public class FunctionBinderTextPredicateTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    private static ExpressionNode binary(String name, ExpressionNode left, ExpressionNode right) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
-        node.lhs = left;
-        node.rhs = right;
-        node.paramCount = 2;
-        return node;
-    }
-
-    private static ExpressionNode literal(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, token, 0, 0);
-    }
-
-    private static ExpressionNode parameter(String name) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, name, 0, 0);
-    }
-
-    private static Record record(int expectedIndex, String value) {
-        final Utf8String bytes = value != null ? new Utf8String(value) : null;
-        return new Record() {
-            @Override
-            public Utf8Sequence getVarcharA(int columnIndex) {
-                Assert.assertEquals(expectedIndex, columnIndex);
-                return bytes;
-            }
-
-            @Override
-            public Utf8Sequence getVarcharB(int columnIndex) {
-                Assert.assertEquals(expectedIndex, columnIndex);
-                return bytes;
-            }
-
-            @Override
-            public int getVarcharSize(int columnIndex) {
-                Assert.assertEquals(expectedIndex, columnIndex);
-                return bytes != null ? bytes.size() : TableUtils.NULL_LEN;
-            }
-        };
-    }
-
-    private static ExpressionNode unary(String name, ExpressionNode argument) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
-        node.rhs = argument;
-        node.paramCount = 1;
-        return node;
     }
 }

@@ -77,7 +77,7 @@ public class TableFunctionSourceTest extends AbstractCairoTest {
             execute("INSERT INTO tables VALUES (42)");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile("SELECT id FROM tables", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "id\n42\n");
+                    assertRowsOnly(factory, "id\n42\n");
                 }
             }
             assertFunctionSource("SELECT table_name FROM tables()", "table_name\ntables\n", 1);
@@ -112,7 +112,7 @@ public class TableFunctionSourceTest extends AbstractCairoTest {
                     }
                 }
                 try (RecordCursorFactory factory = compiler.compile("SELECT typname FROM pg_type WHERE oid=23", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "typname\nint4\n");
+                    assertRowsOnly(factory, "typname\nint4\n");
                 }
             }
         });
@@ -127,12 +127,12 @@ public class TableFunctionSourceTest extends AbstractCairoTest {
                     retained = compiler.compile("SELECT x+1 AS v FROM long_sequence(4) ORDER BY v DESC LIMIT 2", sqlExecutionContext)
                             .getRecordCursorFactory();
                     try (RecordCursorFactory other = compiler.compile("SELECT 7 AS value", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(other, "value\n7\n");
+                        assertRowsOnly(other, "value\n7\n");
                     }
                     compiler.clear();
-                    assertResult(retained, "v\n5\n4\n");
+                    assertRowsOnly(retained, "v\n5\n4\n");
                 }
-                assertResult(retained, "v\n5\n4\n");
+                assertRowsOnly(retained, "v\n5\n4\n");
             } finally {
                 Misc.free(retained);
             }
@@ -238,7 +238,7 @@ public class TableFunctionSourceTest extends AbstractCairoTest {
                     Assert.assertEquals(0, closeCounts[1]);
                     Assert.assertEquals(1, result.getMetadata().getColumnCount());
                     TestUtils.assertEquals("value", result.getMetadata().getColumnName(0));
-                    assertResult(result, "value\n");
+                    assertRowsOnly(result, "value\n");
                 }
                 Assert.assertEquals(1, closeCounts[0]);
                 Assert.assertEquals(0, closeCounts[1]);
@@ -276,7 +276,7 @@ public class TableFunctionSourceTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "constant expected");
                 }
                 try (RecordCursorFactory factory = compiler.compile("SELECT x FROM long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "x\n1\n2\n");
+                    assertRowsOnly(factory, "x\n1\n2\n");
                 }
             }
         });
@@ -293,12 +293,8 @@ public class TableFunctionSourceTest extends AbstractCairoTest {
             }
             Assert.assertTrue(source instanceof FunctionSourcePlan);
             Assert.assertEquals(expectedSourceColumnCount, source.getOutput().getColumnCount());
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private static void registerSource(Function result) throws SqlException {

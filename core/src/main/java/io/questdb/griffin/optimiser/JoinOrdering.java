@@ -182,7 +182,6 @@ final class JoinOrdering implements OptimiserPass {
                 final JoinInput input = ordered.getQuick(i);
                 if (i == 0) {
                     final FilterPlan filter = filters.next().of(input.getInput(), predicate, predicate.getPosition());
-                    filter.deriveOutput();
                     input.setInput(filter);
                 } else {
                     input.setPostJoinFilter(predicate);

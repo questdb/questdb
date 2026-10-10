@@ -44,6 +44,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.FunctionBindingHarness.constant;
+import static io.questdb.test.griffin.FunctionBindingHarness.literal;
+
 public class FunctionBinderMathTest extends AbstractCairoTest {
     @Test
     public void testConstantsFoldAndKeepTheirFullResultType() throws Exception {
@@ -164,20 +167,12 @@ public class FunctionBinderMathTest extends AbstractCairoTest {
         });
     }
 
-    private static ExpressionNode constant(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, token, 0, 0);
-    }
-
     private static ExpressionNode function(String name, ExpressionNode left, ExpressionNode right) {
         final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
         node.lhs = left;
         node.rhs = right;
         node.paramCount = left != null ? 2 : right != null ? 1 : 0;
         return node;
-    }
-
-    private static ExpressionNode literal(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, token, 0, 0);
     }
 
     private static Record pair(double first, double second) {

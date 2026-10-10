@@ -434,9 +434,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 break;
             case SELECT:
             case EXPLAIN:
-            case PSEUDO_SELECT:
                 freeCompiledQuery(cq);
                 throw SqlException.$(0, "use select()");
+            case PSEUDO_SELECT:
+                try (OperationFuture future = cq.execute(eventSubSeq)) {
+                    future.await();
+                } finally {
+                    freeCompiledQuery(cq);
+                }
+                break;
             default:
                 try (OperationFuture future = cq.execute(eventSubSeq)) {
                     future.await();
@@ -1404,7 +1410,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final BoolList outputSymbolCacheFlags = new BoolList();
         try (SqlCompiler compiler = getSqlCompiler()) {
             // Arm the shared non-determinism guard for the LV body, mirroring the
-            // mat-view compile (SqlCompilerImpl.compileMatViewQuery). With it armed,
+            // mat-view compile (SqlCompilerImpl.compileCreateSelect). With it armed,
             // FunctionParser rejects now()/sysdate()/systimestamp()/rnd_*/etc. anywhere
             // in the SELECT - projection, WHERE filter, and window-function arguments -
             // so the view can never produce non-reproducible results that diverge on a

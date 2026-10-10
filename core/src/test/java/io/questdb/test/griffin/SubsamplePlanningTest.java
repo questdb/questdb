@@ -25,16 +25,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Misc;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -47,13 +44,13 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
             createRows();
             for (int mode = 0; mode < 2; mode++) {
                 setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, mode == 1 ? "true" : "false");
-                assertQueryRows("SELECT * FROM lp_subsample SUBSAMPLE uniform(3)", """
+                assertRowsOnly("SELECT * FROM lp_subsample SUBSAMPLE uniform(3)", """
                         id	v	x	ts
                         1	10.0	60	2024-01-01T00:00:01.000000Z
                         4	40.0	20	2024-01-01T00:00:04.000000Z
                         6	20.0	50	2024-01-01T00:00:06.000000Z
                         """);
-                assertQueryRows("SELECT ts,v FROM lp_subsample SUBSAMPLE uniform(30)", """
+                assertRowsOnly("SELECT ts,v FROM lp_subsample SUBSAMPLE uniform(30)", """
                         ts	v
                         2024-01-01T00:00:01.000000Z	10.0
                         2024-01-01T00:00:02.000000Z	50.0
@@ -62,7 +59,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                         2024-01-01T00:00:05.000000Z	30.0
                         2024-01-01T00:00:06.000000Z	20.0
                         """);
-                assertQueryRows("SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(1)", """
+                assertRowsOnly("SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(1)", """
                         ts	v
                         2024-01-01T00:00:01.000000Z	10.0
                         2024-01-01T00:00:02.000000Z	50.0
@@ -71,21 +68,21 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                         2024-01-01T00:00:05.000000Z	30.0
                         2024-01-01T00:00:06.000000Z	20.0
                         """);
-                assertQueryRows("SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(2)", """
+                assertRowsOnly("SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(2)", """
                         ts	v
                         2024-01-01T00:00:01.000000Z	10.0
                         2024-01-01T00:00:03.000000Z	null
                         2024-01-01T00:00:05.000000Z	30.0
                         2024-01-01T00:00:06.000000Z	20.0
                         """);
-                assertQueryRows("SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(2,7)", """
+                assertRowsOnly("SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(2,7)", """
                         ts	v
                         2024-01-01T00:00:01.000000Z	10.0
                         2024-01-01T00:00:03.000000Z	null
                         2024-01-01T00:00:05.000000Z	30.0
                         2024-01-01T00:00:06.000000Z	20.0
                         """);
-                assertQueryRows("SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(1,NULL)", """
+                assertRowsOnly("SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(1,NULL)", """
                         ts	v
                         2024-01-01T00:00:01.000000Z	10.0
                         2024-01-01T00:00:02.000000Z	50.0
@@ -94,14 +91,14 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                         2024-01-01T00:00:05.000000Z	30.0
                         2024-01-01T00:00:06.000000Z	20.0
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,v FROM lp_subsample WHERE v IS NULL SUBSAMPLE uniform(2)",
                         """
                                 ts	v
                                 2024-01-01T00:00:03.000000Z	null
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,v FROM lp_subsample WHERE id>10 SUBSAMPLE cadence(2)",
                         """
                                 ts	v
@@ -109,7 +106,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                 );
             }
             execute("CREATE TABLE lp_subsample_ns AS (SELECT id,v,x,ts::TIMESTAMP_NS ts FROM lp_subsample) TIMESTAMP(ts)");
-            assertQueryRows("SELECT ts,v FROM lp_subsample_ns SUBSAMPLE uniform(3)", """
+            assertRowsOnly("SELECT ts,v FROM lp_subsample_ns SUBSAMPLE uniform(3)", """
                     ts	v
                     2024-01-01T00:00:01.000000000Z	10.0
                     2024-01-01T00:00:04.000000000Z	40.0
@@ -122,7 +119,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
     public void testAliasesWildcardAndHiddenOrderColumns() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts clock,v AS x FROM lp_subsample SUBSAMPLE uniform(3) ORDER BY x",
                     """
                             clock	x
@@ -131,7 +128,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:04.000000Z	40.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts clock,v AS x FROM lp_subsample SUBSAMPLE uniform(3) ORDER BY lp_subsample.x",
                     """
                             clock	x
@@ -140,7 +137,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:01.000000Z	10.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v FROM lp_subsample SUBSAMPLE uniform(3) ORDER BY x%2,v DESC",
                     """
                             ts	v
@@ -149,7 +146,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:01.000000Z	10.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v AS __keep_subsample FROM lp_subsample SUBSAMPLE uniform(3) ORDER BY x",
                     """
                             ts	__keep_subsample
@@ -158,7 +155,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:01.000000Z	10.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT *,id AS __keep_subsample,id AS __order_subsample FROM lp_subsample SUBSAMPLE cadence(2) ORDER BY id DESC",
                     """
                             id	v	x	ts	__keep_subsample	__order_subsample
@@ -168,7 +165,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             1	10.0	60	2024-01-01T00:00:01.000000Z	1	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v+id value FROM lp_subsample SUBSAMPLE uniform(3) ORDER BY value+1",
                     """
                             ts	value
@@ -184,7 +181,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
     public void testInputOrderAndFinalOrderLimitBoundaries() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v FROM (SELECT * FROM lp_subsample ORDER BY ts DESC) SUBSAMPLE uniform(3)",
                     """
                             ts	v
@@ -193,7 +190,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:01.000000Z	10.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v FROM (SELECT * FROM lp_subsample ORDER BY x) SUBSAMPLE uniform(3)",
                     """
                             ts	v
@@ -202,7 +199,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:01.000000Z	10.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v FROM lp_subsample SUBSAMPLE uniform(3) ORDER BY x LIMIT 2",
                     """
                             ts	v
@@ -210,7 +207,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:06.000000Z	20.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(2) ORDER BY ts DESC LIMIT -2",
                     """
                             ts	v
@@ -218,7 +215,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:01.000000Z	10.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v FROM (SELECT * FROM lp_subsample LIMIT 4) SUBSAMPLE uniform(3)",
                     """
                             ts	v
@@ -227,7 +224,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:04.000000Z	40.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT * FROM (SELECT ts,v FROM lp_subsample SUBSAMPLE uniform(3)) WHERE v>15 ORDER BY v",
                     """
                             ts	v
@@ -242,7 +239,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
     public void testCompletedAggregateDistinctAndWindowProjections() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) v FROM lp_subsample GROUP BY ts SUBSAMPLE uniform(3)",
                     """
                             ts	v
@@ -251,7 +248,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:06.000000Z	20.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) v FROM lp_subsample GROUP BY ts SUBSAMPLE cadence(2) ORDER BY v",
                     """
                             ts	v
@@ -261,7 +258,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:03.000000Z	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT ts,v FROM lp_subsample SUBSAMPLE uniform(3) ORDER BY v",
                     """
                             ts	v
@@ -270,7 +267,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:04.000000Z	40.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,row_number() OVER(ORDER BY ts) rn FROM lp_subsample SUBSAMPLE uniform(3)",
                     """
                             ts	rn
@@ -279,7 +276,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:06.000000Z	6
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,v FROM (SELECT ts,v FROM lp_subsample SUBSAMPLE uniform(4)) SUBSAMPLE cadence(2)",
                     """
                             ts	v
@@ -295,7 +292,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
     public void testJoinsCteAndSetOccurrences() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT a.ts,a.v,b.x FROM lp_subsample a ASOF JOIN lp_subsample b SUBSAMPLE uniform(3) ORDER BY b.x",
                     """
                             ts	v	x
@@ -304,7 +301,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:01.000000Z	10.0	60
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT b.ts,a.* FROM lp_subsample a ASOF JOIN lp_subsample b SUBSAMPLE cadence(2)",
                     """
                             ts	id	v	x	ts1
@@ -314,7 +311,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:06.000000Z	6	20.0	50	2024-01-01T00:00:06.000000Z
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "WITH q AS(SELECT ts,v FROM lp_subsample SUBSAMPLE uniform(3)) SELECT * FROM q UNION ALL SELECT * FROM q ORDER BY ts,v",
                     """
                             ts	v
@@ -326,7 +323,7 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                             2024-01-01T00:00:06.000000Z	20.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "(SELECT ts,v FROM lp_subsample SUBSAMPLE uniform(3)) UNION ALL (SELECT ts,v FROM lp_subsample SUBSAMPLE cadence(2)) ORDER BY ts,v",
                     """
                             ts	v
@@ -361,19 +358,19 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                 final String expectedPlan;
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-                    assertResult(retained, expected);
-                    expectedPlan = plan(retained);
+                    assertRowsOnly(retained, expected);
+                    expectedPlan = planText(retained);
                     compiler.clear();
                     try (RecordCursorFactory ignored = compiler.compile("SELECT count() FROM lp_subsample", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(ignored);
                     }
                 }
-                assertResult(retained, expected);
-                TestUtils.assertEquals(expectedPlan, plan(retained));
+                assertRowsOnly(retained, expected);
+                TestUtils.assertEquals(expectedPlan, planText(retained));
                 bindVariableService.setLong(0, 1);
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                      RecordCursorFactory all = compiler.compile("SELECT ts,v FROM lp_subsample", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(retained, print(all));
+                    assertRowsOnly(retained, printFactory(all));
                 }
                 bindVariableService.setLong(0, 0);
                 try (RecordCursor ignored = retained.getCursor(sqlExecutionContext)) {
@@ -382,12 +379,12 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "stride must be at least 1");
                 }
                 bindVariableService.setLong(0, 2);
-                assertResult(retained, expected);
+                assertRowsOnly(retained, expected);
             } finally {
                 Misc.free(retained);
             }
             bindVariableService.setLong(0, 3);
-            assertQueryRows("SELECT ts,v FROM lp_subsample SUBSAMPLE uniform($1)", """
+            assertRowsOnly("SELECT ts,v FROM lp_subsample SUBSAMPLE uniform($1)", """
                     ts	v
                     2024-01-01T00:00:01.000000Z	10.0
                     2024-01-01T00:00:04.000000Z	40.0
@@ -417,10 +414,6 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
         });
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-    }
-
     private void createRows() throws Exception {
         execute("CREATE TABLE lp_subsample(id INT,v DOUBLE,x INT,ts TIMESTAMP) TIMESTAMP(ts)");
         execute("INSERT INTO lp_subsample VALUES(1,10.0,60,'2024-01-01T00:00:01'),"
@@ -444,23 +437,5 @@ public class SubsamplePlanningTest extends AbstractCairoTest {
             }
         }
         return false;
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        return sink.getSink().toString();
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        final StringSink sink = new StringSink();
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-        }
-        return sink.toString();
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

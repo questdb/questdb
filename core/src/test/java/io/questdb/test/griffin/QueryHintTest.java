@@ -24,13 +24,9 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Misc;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -132,10 +128,10 @@ public class QueryHintTest extends AbstractCairoTest {
                 try {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                     explain = compiler.compile("EXPLAIN " + sql, sqlExecutionContext).getRecordCursorFactory();
-                    TestUtils.assertContains(print(explain), "driveByCache: true");
+                    TestUtils.assertContains(printFactory(explain), "driveByCache: true");
                     try (RecordCursorFactory factory = compiler.compile("SELECT l.id lid,r.id rid FROM lp_hint_m l ASOF JOIN lp_hint_s r ON(sym)", sqlExecutionContext).getRecordCursorFactory()) {
-                        TestUtils.assertContains(plan(factory), "AsOf Join Fast");
-                        assertResult(factory, ASOF_ROWS);
+                        TestUtils.assertContains(planText(factory), "AsOf Join Fast");
+                        assertRowsOnly(factory, ASOF_ROWS);
                     }
                     compiler.clear();
                 } catch (Throwable th) {
@@ -145,8 +141,8 @@ public class QueryHintTest extends AbstractCairoTest {
                 }
             }
             try (RecordCursorFactory factory = retained; RecordCursorFactory explanation = explain) {
-                TestUtils.assertContains(plan(factory), "driveByCache: true");
-                assertResult(factory, ASOF_ROWS);
+                TestUtils.assertContains(planText(factory), "driveByCache: true");
+                assertRowsOnly(factory, ASOF_ROWS);
                 TestUtils.assertEquals("""
                         QUERY PLAN
                         SelectedRecord
@@ -159,7 +155,7 @@ public class QueryHintTest extends AbstractCairoTest {
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: lp_hint_s
-                        """, print(explanation));
+                        """, printFactory(explanation));
             }
         });
     }
@@ -277,21 +273,17 @@ public class QueryHintTest extends AbstractCairoTest {
 
     private void assertHintPlan(String sql, String algorithm, String property, String expected) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
-            final String plan = plan(factory);
+            final String plan = planText(factory);
             TestUtils.assertContains(plan, algorithm);
             if (property != null) {
                 TestUtils.assertContains(plan, property);
             }
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
     private void assertNestedHints(String inner, String outer, String algorithm, String expected) throws Exception {
         assertHintPlan("SELECT /*+ " + outer + " */ * FROM (SELECT /*+ " + inner + " */ l.id lid,r.id rid FROM lp_hint_m l ASOF JOIN lp_hint_s r ON(sym))", algorithm, expected);
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createTables() throws Exception {
@@ -301,19 +293,5 @@ public class QueryHintTest extends AbstractCairoTest {
                 + "(3,2,'B','2020-01-01T00:00:03Z'),(4,3,'C','2020-01-01T00:00:04Z')");
         execute("INSERT INTO lp_hint_s VALUES(10,1,'A','2020-01-01T00:00:00.500000Z'),(11,1,'A','2020-01-01T00:00:01Z'),"
                 + "(12,2,'B','2020-01-01T00:00:02Z'),(13,1,'A','2020-01-01T00:00:02.500000Z')");
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        return sink.getSink().toString();
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        final StringSink sink = new StringSink();
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-        }
-        return sink.toString();
     }
 }

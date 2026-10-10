@@ -50,6 +50,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.FunctionBindingHarness.record;
+
 public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
     @Test
     public void testConstantFoldingKeepsOriginAndFullPrecision() throws Exception {
@@ -239,16 +241,6 @@ public class FunctionBinderTimestampFloorUtcTest extends AbstractCairoTest {
 
     private static ExpressionNode literal(String value) {
         return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, value, 0, 1);
-    }
-
-    private static Record record(int expectedIndex, long value) {
-        return new Record() {
-            @Override
-            public long getTimestamp(int columnIndex) {
-                Assert.assertEquals(expectedIndex, columnIndex);
-                return value;
-            }
-        };
     }
 
     private static ExpressionNode variable(String value) {

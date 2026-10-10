@@ -47,6 +47,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.FunctionBindingHarness.constant;
+
 public class FunctionBinderSubsampleTest extends AbstractCairoTest {
     @Test
     public void testConstantValidationPrecedesOverloadSelection() throws Exception {
@@ -189,10 +191,6 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    private static ExpressionNode constant(String token, int position) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, token, 0, position);
     }
 
     private static ExpressionNode membership(int position) {

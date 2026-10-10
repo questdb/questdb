@@ -115,7 +115,7 @@ public final class PhysicalProperties {
      * of a pattern scan that filters in parallel.
      */
     public static Capability supportsLeafTimeFrameCursor(FilterPlan filter) {
-        final ScanPlan scan = LogicalPlans.fusedScan(filter);
+        final ScanPlan scan = GeneratedShapes.fusedScan(filter);
         if (scan == null) {
             return supportsTimeFrameCursor(filter.getInput(), null);
         }
@@ -186,7 +186,7 @@ public final class PhysicalProperties {
         if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
             return computed(isKeyed, ScanDirection.FORWARD, capability(derive(horizon.getMaster(), null), LONG_SEQUENCE));
         }
-        if (LogicalPlans.postingDistinctScan(aggregate) != null) {
+        if (GeneratedShapes.postingDistinctScan(aggregate) != null) {
             return computed(Capability.NO, ScanDirection.FORWARD, Capability.NO);
         }
         final int input = derive(aggregate.getInput(), null);
@@ -211,7 +211,7 @@ public final class PhysicalProperties {
      */
     private static Capability aggregateSharedCursors(AggregatePlan aggregate) {
         if (aggregate.getInput() instanceof HorizonJoinPlan || LogicalPlans.isCount(aggregate)
-                || LogicalPlans.postingDistinctScan(aggregate) != null) {
+                || GeneratedShapes.postingDistinctScan(aggregate) != null) {
             return Capability.NO;
         }
         return switch (aggregate.getAlgorithm()) {
@@ -232,7 +232,7 @@ public final class PhysicalProperties {
         if (aggregate.getInput() instanceof HorizonJoinPlan || timestampIndex < 0) {
             return timestampIndex;
         }
-        if (LogicalPlans.isCount(aggregate) || LogicalPlans.postingDistinctScan(aggregate) != null) {
+        if (LogicalPlans.isCount(aggregate) || GeneratedShapes.postingDistinctScan(aggregate) != null) {
             return -1;
         }
         if (aggregate.getAlgorithm() == null && aggregate.getGroupingExpressions().size() == 1
@@ -357,7 +357,7 @@ public final class PhysicalProperties {
 
     private static int filter(FilterPlan filter) {
         final BoundExpression predicate = filter.getPredicate();
-        final ScanPlan scan = LogicalPlans.fusedScan(filter);
+        final ScanPlan scan = GeneratedShapes.fusedScan(filter);
         if (scan != null) {
             return scan(scan);
         }
@@ -455,7 +455,7 @@ public final class PhysicalProperties {
                 }
             }
             if (filter != null) {
-                properties = filtered(filter, properties, Capability.NO, false, LogicalPlans.isPostJoinFilterFolded(step, filter));
+                properties = filtered(filter, properties, Capability.NO, false, GeneratedShapes.isPostJoinFilterFolded(step, filter));
             }
         }
         return isTimestampIndex ? timestampIndex : properties;
@@ -478,11 +478,11 @@ public final class PhysicalProperties {
     }
 
     private static int latestBy(LatestByPlan latest) {
-        final ScanPlan scan = LogicalPlans.latestByScan(latest);
+        final ScanPlan scan = GeneratedShapes.latestByScan(latest);
         if (scan != null) {
             return scan(scan);
         }
-        final int properties = derive(LogicalPlans.latestByBase(latest), null);
+        final int properties = derive(GeneratedShapes.latestByBase(latest), null);
         return computed(isLightLatestBy(latest), ScanDirection.FORWARD, capability(properties, LONG_SEQUENCE));
     }
 
@@ -525,7 +525,7 @@ public final class PhysicalProperties {
     private static int project(ProjectPlan project, @Nullable LimitPlan sortedLimit) {
         final LogicalPlan input = project.getInput();
         if (sortedLimit == null) {
-            if (input instanceof WindowPlan window && LogicalPlans.isWindowOutputProjection(project, window)) {
+            if (input instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window)) {
                 return window(window);
             }
             if (input instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project)) {
@@ -562,8 +562,8 @@ public final class PhysicalProperties {
         if (sortedLimit == null && input instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project)) {
             final int masterIndex = timestamp(windowJoin.getMaster(), null, false);
             return forwarded(masterIndex == UNKNOWN_TIMESTAMP ? UNKNOWN_TIMESTAMP
-                    : LogicalPlans.windowJoinProjectionTimestampIndex(project, windowJoin.getOutput(), masterIndex, windowJoin.getOutput().getColumnCount()
-                                                                                                                    - windowJoin.getSteps().getQuick(windowJoin.getSteps().size() - 1).getAggregates().size()), isSource);
+                    : GeneratedShapes.windowJoinProjectionTimestampIndex(project, windowJoin.getOutput(), masterIndex, windowJoin.getOutput().getColumnCount()
+                                                                                                                       - windowJoin.getSteps().getQuick(windowJoin.getSteps().size() - 1).getAggregates().size()), isSource);
         }
         if (isSource && project.hasTimestampDeclaration()) {
             final OutputSchema inputOutput = input.getOutput();
@@ -571,7 +571,7 @@ public final class PhysicalProperties {
                     && declared.isDirectReference() && inputOutput.getTimestampIndex() >= 0 && declared.getColumnId() == inputOutput.getTimestampColumnId() ? 0 : -1;
         }
         final int inputIndex = timestamp(input, sortedLimit, false);
-        return forwarded(inputIndex == UNKNOWN_TIMESTAMP ? UNKNOWN_TIMESTAMP : LogicalPlans.projectedTimestampIndex(project, inputIndex), isSource);
+        return forwarded(inputIndex == UNKNOWN_TIMESTAMP ? UNKNOWN_TIMESTAMP : GeneratedShapes.projectedTimestampIndex(project, inputIndex), isSource);
     }
 
     private static int properties(
@@ -727,11 +727,11 @@ public final class PhysicalProperties {
                 }
                 final int type = aggregate.getOutput().getColumnType(columnIndex);
                 final Capability isLong = Capability.of(type == ColumnType.LONG || ColumnType.isTimestamp(type));
-                yield LogicalPlans.postingDistinctScan(aggregate) != null ? Capability.NO : isLong;
+                yield GeneratedShapes.postingDistinctScan(aggregate) != null ? Capability.NO : isLong;
             }
             case ProjectPlan project -> {
                 final LogicalPlan input = project.getInput();
-                if (sortedLimit == null && input instanceof WindowPlan window && LogicalPlans.isWindowOutputProjection(project, window)) {
+                if (sortedLimit == null && input instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window)) {
                     yield Capability.NO;
                 }
                 if (sortedLimit == null && input instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project)) {
@@ -757,7 +757,7 @@ public final class PhysicalProperties {
                 yield and(capability(project(project, sortedLimit), RANDOM_ACCESS),
                         supportsLongTopK(input, sortedLimit, index));
             }
-            case FilterPlan filter -> LogicalPlans.isFusedFilter(filter)
+            case FilterPlan filter -> GeneratedShapes.isFusedFilter(filter)
                     || !LogicalPlans.isConstant(filter.getPredicate()) ? Capability.NO : supportsLongTopK(filter.getInput(), null, columnIndex);
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
@@ -773,12 +773,12 @@ public final class PhysicalProperties {
     private static Capability supportsSharedCursors(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
         return switch (plan) {
             case AggregatePlan aggregate -> aggregateSharedCursors(aggregate);
-            case FilterPlan filter -> LogicalPlans.isFusedFilter(filter) ? Capability.NO
+            case FilterPlan filter -> GeneratedShapes.isFusedFilter(filter) ? Capability.NO
                     : wrapped(filter.getPredicate(), supportsSharedCursors(filter.getInput(), null));
             case ProjectPlan project -> {
                 final LogicalPlan input = project.getInput();
                 yield LogicalPlans.isComputedProjection(project)
-                        || sortedLimit == null && (input instanceof WindowPlan window && LogicalPlans.isWindowOutputProjection(project, window)
+                        || sortedLimit == null && (input instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window)
                         || input instanceof WindowJoinPlan && LogicalPlans.isColumnOnlyProjection(project))
                         ? Capability.NO : supportsSharedCursors(input, sortedLimit);
             }
@@ -799,7 +799,7 @@ public final class PhysicalProperties {
     private static Capability supportsTimeFrameCursor(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
         return switch (plan) {
             case ScanPlan scan -> scanTimeFrame(scan);
-            case FilterPlan filter -> LogicalPlans.fusedScan(filter) instanceof ScanPlan scan ? scanTimeFrame(scan)
+            case FilterPlan filter -> GeneratedShapes.fusedScan(filter) instanceof ScanPlan scan ? scanTimeFrame(scan)
                     : wrapped(filter.getPredicate(), supportsTimeFrameCursor(filter.getInput(), null));
             case ProjectPlan project -> {
                 final LogicalPlan input = project.getInput();
@@ -807,7 +807,7 @@ public final class PhysicalProperties {
                     yield windowJoinTimeFrame(windowJoin);
                 }
                 yield LogicalPlans.isComputedProjection(project)
-                        || sortedLimit == null && input instanceof WindowPlan window && LogicalPlans.isWindowOutputProjection(project, window)
+                        || sortedLimit == null && input instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window)
                         ? Capability.NO : supportsTimeFrameCursor(input, sortedLimit);
             }
             case SortPlan sort -> {
@@ -866,17 +866,17 @@ public final class PhysicalProperties {
                 default -> sort.getOutput().getTimestampIndex();
             };
             case FilterPlan filter -> {
-                final ScanPlan scan = LogicalPlans.fusedScan(filter);
+                final ScanPlan scan = GeneratedShapes.fusedScan(filter);
                 if (scan == null) {
                     yield forwarded(timestamp(filter.getInput(), null, false), isSource);
                 }
                 yield forwarded(scanTimestampIndex(scan), isSource);
             }
             case LatestByPlan latest -> {
-                if (LogicalPlans.latestByScan(latest) != null) {
+                if (GeneratedShapes.latestByScan(latest) != null) {
                     yield forwarded(plan.getOutput().getTimestampIndex(), isSource);
                 }
-                yield forwarded(chooseTimestamp(isLightLatestBy(latest), -1, timestamp(LogicalPlans.latestByBase(latest), null, false)),
+                yield forwarded(chooseTimestamp(isLightLatestBy(latest), -1, timestamp(GeneratedShapes.latestByBase(latest), null, false)),
                         isSource);
             }
             case SetOperationPlan operation -> {

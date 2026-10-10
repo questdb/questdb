@@ -26,9 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.IndexType;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
@@ -36,9 +33,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -51,7 +46,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -62,6 +56,9 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.FunctionBindingHarness.metadata;
+import static io.questdb.test.griffin.FunctionBindingHarness.parser;
 
 
 public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
@@ -75,7 +72,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                         ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO, ColumnType.STRING,
                         ColumnType.VARCHAR, ColumnType.IPv4, ColumnType.UUID}) {
                     final ObjList<Function> constructions = new ObjList<>();
-                    final FunctionParser parser = parser(constructions);
+                    final FunctionParser parser = parser(engine, constructions);
                     final OutputSchema full = schema(type, true);
                     final OutputSchema pruned = schema(type, false);
                     try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
@@ -130,7 +127,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
             for (boolean isMin : new boolean[]{true, false}) {
                 final String name = isMin ? "min" : "max";
                 for (int type : new int[]{ColumnType.DATE, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
-                    final FunctionParser parser = parser(new ObjList<>());
+                    final FunctionParser parser = parser(engine, new ObjList<>());
                     final OutputSchema full = schema(type, true);
                     final OutputSchema pruned = schema(type, false);
                     final int[] lookups = {0, 0};
@@ -191,7 +188,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
     public void testScalarAndNestedAggregatesRemainRejected() throws Exception {
         assertMemoryLeak(() -> {
             final OutputSchema input = schema(ColumnType.INT, false);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(new ObjList<>()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(engine, new ObjList<>()))) {
                 try {
                     binder.bind(call("first"), input, null, sqlExecutionContext);
                     Assert.fail("aggregate accepted as scalar");
@@ -225,7 +222,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
                 for (boolean isFirst : new boolean[]{true, false}) {
                     final String name = isFirst ? "first" : "last";
                     for (boolean isDynamic : new boolean[]{false, true}) {
-                        final FunctionParser parser = parser(new ObjList<>());
+                        final FunctionParser parser = parser(engine, new ObjList<>());
                         try (RecordCursorFactory original = select("SELECT unused,v FROM fb_ordered_symbol");
                              RecordCursorFactory narrowed = select(isDynamic
                                      ? "SELECT v FROM fb_ordered_symbol UNION ALL SELECT v FROM fb_ordered_symbol"
@@ -268,7 +265,7 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
             for (boolean isMin : new boolean[]{true, false}) {
                 final String name = isMin ? "min" : "max";
                 for (int type : new int[]{ColumnType.STRING, ColumnType.VARCHAR}) {
-                    final FunctionParser parser = parser(new ObjList<>());
+                    final FunctionParser parser = parser(engine, new ObjList<>());
                     final OutputSchema full = schema(type, true);
                     final OutputSchema pruned = schema(type, false);
                     try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
@@ -349,15 +346,6 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
         return node;
     }
 
-    private static GenericRecordMetadata metadata(int type, boolean isFull) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        if (isFull) {
-            metadata.add(new TableColumnMetadata("unused", ColumnType.INT));
-        }
-        metadata.add(new TableColumnMetadata("physical", type, IndexType.NONE, 0, false, null));
-        return metadata;
-    }
-
     private static GroupByFunction prepare(Function function, FastGroupByAllocator allocator) {
         final GroupByFunction aggregate = (GroupByFunction) function;
         aggregate.initValueTypes(new ArrayColumnTypes());
@@ -388,18 +376,6 @@ public class FunctionBinderOrdinaryAggregateTest extends AbstractCairoTest {
             Assert.assertNull(function.getSymbol(value));
             function.cursorClosed();
         }
-    }
-
-    private FunctionParser parser(ObjList<Function> constructions) {
-        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
-            @Override
-            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                final Function function = super.createFunction(overload, position, name, args, positions, context);
-                constructions.add(function);
-                return function;
-            }
-        });
     }
 
     private static class ValueRecord implements Record {

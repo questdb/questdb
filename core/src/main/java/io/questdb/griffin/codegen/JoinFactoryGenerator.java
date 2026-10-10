@@ -119,6 +119,7 @@ import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -292,7 +293,7 @@ final class JoinFactoryGenerator {
             outerMetadata.add(new TableColumnMetadata(Chars.toString(projection.getOutput().getColumnName(i)), column.getColumnType(),
                     column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
         }
-        outerMetadata.setTimestampIndex(LogicalPlans.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex(), splitIndex));
+        outerMetadata.setTimestampIndex(GeneratedShapes.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex(), splitIndex));
         return isIdentity ? null : columnIndex;
     }
 
@@ -1946,7 +1947,7 @@ final class JoinFactoryGenerator {
             RecordCursorFactory master,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final ProjectPlan projection = LogicalPlans.temporalSlaveProjection(step.getInput());
+        final ProjectPlan projection = GeneratedShapes.temporalSlaveProjection(step.getInput());
         final PreparedFilter prepared = frame.pushPreparedFilter();
         final RecordCursorFactory factory;
         try {
@@ -1954,7 +1955,7 @@ final class JoinFactoryGenerator {
             frame.isJoinSlaveInput = true;
             final RecordCursorFactory slave;
             try {
-                slave = codeGenerator.generateStolenFilter(frame, LogicalPlans.temporalStolenFilter(step.getInput()), prepared, executionContext);
+                slave = codeGenerator.generateStolenFilter(frame, GeneratedShapes.temporalStolenFilter(step.getInput()), prepared, executionContext);
             } catch (Throwable th) {
                 Misc.free(master, th);
                 throw th;

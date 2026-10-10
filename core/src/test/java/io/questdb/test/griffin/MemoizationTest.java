@@ -124,17 +124,17 @@ public class MemoizationTest extends AbstractCairoTest {
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                     assertMemoizerCount(retained, 1);
-                    assertResult(retained, "value\n4.0\n3.0\n");
+                    assertRowsOnly(retained, "value\n4.0\n3.0\n");
                     try (RecordCursorFactory other = compiler.compile("SELECT d+2.0 AS value FROM lp_memo LIMIT 1", sqlExecutionContext).getRecordCursorFactory()) {
                         assertMemoizerCount(other, 0);
-                        assertResult(other, "value\n5.0\n");
+                        assertRowsOnly(other, "value\n5.0\n");
                     }
                     compiler.clear();
-                    assertResult(retained, "value\n4.0\n3.0\n");
+                    assertRowsOnly(retained, "value\n4.0\n3.0\n");
                 }
-                assertResult(retained, "value\n4.0\n3.0\n");
+                assertRowsOnly(retained, "value\n4.0\n3.0\n");
                 execute("INSERT INTO lp_memo VALUES (5,10.0)");
-                assertResult(retained, "value\n11.0\n4.0\n");
+                assertRowsOnly(retained, "value\n11.0\n4.0\n");
             } finally {
                 Misc.free(retained);
             }
@@ -278,14 +278,10 @@ public class MemoizationTest extends AbstractCairoTest {
         Assert.assertEquals(plan, expected, count);
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private void assertRowsAndMemoizers(String sql, String expected, int memoizerCount) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
             assertMemoizerCount(factory, memoizerCount);
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 

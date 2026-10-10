@@ -56,11 +56,11 @@ public class JitGenerationTest extends AbstractCairoTest {
                                 sqlExecutionContext).getRecordCursorFactory()) {
                             Assert.assertEquals(mode != SqlJitMode.JIT_MODE_DISABLED && JitUtil.isJitSupported(), factory.usesCompiledFilter());
                             compiler.clear();
-                            assertResult(factory, "id\n1\n2\n");
+                            assertRowsOnly(factory, "id\n1\n2\n");
                             bindVariableService.setLong(0, Numbers.LONG_NULL);
-                            assertResult(factory, "id\nnull\n1\n");
+                            assertRowsOnly(factory, "id\nnull\n1\n");
                             bindVariableService.setLong(0, 2147483648L);
-                            assertResult(factory, "id\n1\n");
+                            assertRowsOnly(factory, "id\n1\n");
                         }
                         bindVariableService.clear();
                     }
@@ -115,7 +115,7 @@ public class JitGenerationTest extends AbstractCairoTest {
                         try (RecordCursorFactory declined = compiler.compile(
                                 "SELECT id FROM jf_rows WHERE nullif(id,2)>$1 LIMIT 2", sqlExecutionContext).getRecordCursorFactory()) {
                             Assert.assertFalse(declined.usesCompiledFilter());
-                            assertResult(declined, "id\n3\n4\n");
+                            assertRowsOnly(declined, "id\n3\n4\n");
                         }
                         RecordCursorFactory retained = null;
                         try {
@@ -123,9 +123,9 @@ public class JitGenerationTest extends AbstractCairoTest {
                             Assert.assertEquals(mode != SqlJitMode.JIT_MODE_DISABLED && JitUtil.isJitSupported(), retained.usesCompiledFilter());
                             compiler.clear();
                             bindVariableService.setInt(0, 2);
-                            assertResult(retained, "id\n3\n4\n");
+                            assertRowsOnly(retained, "id\n3\n4\n");
                             bindVariableService.setInt(0, 3);
-                            assertResult(retained, "id\n4\n");
+                            assertRowsOnly(retained, "id\n4\n");
                         } finally {
                             Misc.free(retained);
                         }
@@ -157,11 +157,11 @@ public class JitGenerationTest extends AbstractCairoTest {
                                     sqlExecutionContext).getRecordCursorFactory();
                             Assert.assertFalse(retained.usesCompiledFilter());
                         }
-                        assertResult(retained, "id\n3\n4\n");
+                        assertRowsOnly(retained, "id\n3\n4\n");
                         bindVariableService.setStr(0, "b");
-                        assertResult(retained, "id\n");
+                        assertRowsOnly(retained, "id\n");
                         bindVariableService.setStr(0, "a");
-                        assertResult(retained, "id\n3\n4\n");
+                        assertRowsOnly(retained, "id\n3\n4\n");
                     } finally {
                         Misc.free(retained);
                     }
@@ -173,10 +173,6 @@ public class JitGenerationTest extends AbstractCairoTest {
         });
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-    }
-
     private void assertCompiled(SqlCompilerImpl compiler, String query, String expected, int mode) throws Exception {
         assertCompiled(compiler, query, expected, mode, true);
     }
@@ -184,7 +180,7 @@ public class JitGenerationTest extends AbstractCairoTest {
     private void assertCompiled(SqlCompilerImpl compiler, String query, String expected, int mode, boolean supported) throws Exception {
         try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             Assert.assertEquals(query, supported && mode != SqlJitMode.JIT_MODE_DISABLED && JitUtil.isJitSupported(), factory.usesCompiledFilter());
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 }

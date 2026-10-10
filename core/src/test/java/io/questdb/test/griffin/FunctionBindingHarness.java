@@ -24,16 +24,25 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BoundExpressionRewriter;
-import io.questdb.griffin.bind.FunctionBinder;
+import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.bind.FunctionBinder;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -42,7 +51,11 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import org.junit.Assert;
 
 import java.io.Closeable;
 
@@ -65,6 +78,130 @@ public final class FunctionBindingHarness implements Closeable {
         }
         this.instantiator = binder.getFunctionInstantiator();
         this.rewriter = binder.getExpressionRewriter();
+    }
+
+    public static ExpressionNode binary(String name, ExpressionNode left, ExpressionNode right) {
+        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
+        node.lhs = left;
+        node.rhs = right;
+        node.paramCount = 2;
+        return node;
+    }
+
+    public static ExpressionNode call(String name, ObjList<ExpressionNode> arguments) {
+        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
+        node.paramCount = arguments.size();
+        for (int i = arguments.size() - 1; i >= 0; i--) {
+            node.args.add(arguments.getQuick(i));
+        }
+        return node;
+    }
+
+    public static ExpressionNode cast(ExpressionNode value, String type) {
+        return binary("cast", value, constant(type));
+    }
+
+    public static ExpressionNode constant(String token) {
+        return constant(token, 0);
+    }
+
+    public static ExpressionNode constant(String token, int position) {
+        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, token, 0, position);
+    }
+
+    public static ExpressionNode literal(String token) {
+        return literal(token, 0);
+    }
+
+    public static ExpressionNode literal(String token, int position) {
+        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, token, 0, position);
+    }
+
+    public static GenericRecordMetadata metadata(int type, boolean isFull) {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        if (isFull) {
+            metadata.add(new TableColumnMetadata("unused", ColumnType.INT));
+        }
+        metadata.add(new TableColumnMetadata("physical", type, IndexType.NONE, 0, false, null));
+        return metadata;
+    }
+
+    public static ExpressionNode parameter(String token) {
+        return parameter(token, 0);
+    }
+
+    public static ExpressionNode parameter(String token, int position) {
+        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, token, 0, position);
+    }
+
+    public static FunctionParser parser(CairoEngine engine, ObjList<Function> constructed) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
+            @Override
+            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
+                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
+                final Function function = super.createFunction(overload, position, name, args, positions, context);
+                constructed.add(function);
+                return function;
+            }
+        });
+    }
+
+    public static Record record(int expectedIndex, long value) {
+        return new Record() {
+            @Override
+            public long getTimestamp(int columnIndex) {
+                Assert.assertEquals(expectedIndex, columnIndex);
+                return value;
+            }
+        };
+    }
+
+    public static Record record(int expectedIndex, String value) {
+        final Utf8String bytes = value != null ? new Utf8String(value) : null;
+        return new Record() {
+            @Override
+            public Utf8Sequence getVarcharA(int columnIndex) {
+                Assert.assertEquals(expectedIndex, columnIndex);
+                return bytes;
+            }
+
+            @Override
+            public Utf8Sequence getVarcharB(int columnIndex) {
+                Assert.assertEquals(expectedIndex, columnIndex);
+                return bytes;
+            }
+
+            @Override
+            public int getVarcharSize(int columnIndex) {
+                Assert.assertEquals(expectedIndex, columnIndex);
+                return bytes != null ? bytes.size() : TableUtils.NULL_LEN;
+            }
+        };
+    }
+
+    public static OutputSchema schema(RecordMetadata metadata, int firstId) {
+        final OutputSchema schema = new OutputSchema();
+        for (int i = 0; i < metadata.getColumnCount(); i++) {
+            schema.add(firstId + i, metadata.getColumnName(i), metadata.getColumnType(i), true);
+            schema.setSymbolTableStatic(i, metadata.isSymbolTableStatic(i));
+        }
+        return schema;
+    }
+
+    public static ExpressionNode unary(String name, ExpressionNode argument) {
+        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
+        node.rhs = argument;
+        node.paramCount = 1;
+        return node;
+    }
+
+    public static OutputSchema wideSchema(int type) {
+        final OutputSchema schema = new OutputSchema();
+        for (int i = 0; i < 48; i++) {
+            schema.add(i, "unused" + i, ColumnType.INT, true);
+        }
+        return schema.add(70, "value", type, true);
     }
 
     public BoundExpression bind(ExpressionNode node, OutputSchema input, CharSequence inputAlias, SqlExecutionContext executionContext) throws SqlException {

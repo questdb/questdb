@@ -130,21 +130,21 @@ public class SortPlanningTest extends AbstractCairoTest {
                 bindVariableService.setLong(0, 1);
                 bindVariableService.setLong(1, 3);
                 try (RecordCursorFactory factory = select("SELECT label FROM lp_order_ts ORDER BY id LIMIT $1,$2")) {
-                    assertRows(factory, """
+                    assertRowsOnly(factory, """
                             label
                             b
                             c
                             """);
                     bindVariableService.setLong(0, -3);
                     bindVariableService.setLong(1, -1);
-                    assertRows(factory, """
+                    assertRowsOnly(factory, """
                             label
                             b
                             c
                             """);
                     bindVariableService.setLong(0, 1);
                     bindVariableService.setLong(1, -1);
-                    assertRows(factory, """
+                    assertRowsOnly(factory, """
                             label
                             b
                             c
@@ -168,8 +168,8 @@ public class SortPlanningTest extends AbstractCairoTest {
                     4\tnull
                     1\t7
                     """;
-            assertNestedRows(ordered, expected);
-            assertNestedRows(
+            assertRowsOnly(ordered, expected);
+            assertRowsOnly(
                     "(" + ordered + ") UNION ALL (" + ordered + ")",
                     """
                             k\ttotal
@@ -181,10 +181,10 @@ public class SortPlanningTest extends AbstractCairoTest {
                             1\t7
                             """
             );
-            assertNestedRows("SELECT * FROM (" + ordered + ")", expected);
-            assertNestedRows("WITH q AS (" + ordered + ") SELECT * FROM q", expected);
-            assertNestedRows("DECLARE @q := (" + ordered + ") SELECT * FROM @q", expected);
-            assertNestedRows(
+            assertRowsOnly("SELECT * FROM (" + ordered + ")", expected);
+            assertRowsOnly("WITH q AS (" + ordered + ") SELECT * FROM q", expected);
+            assertRowsOnly("DECLARE @q := (" + ordered + ") SELECT * FROM @q", expected);
+            assertRowsOnly(
                     "SELECT * FROM (" + ordered + ") UNION ALL SELECT * FROM (" + ordered + ")",
                     """
                             k\ttotal
@@ -196,7 +196,7 @@ public class SortPlanningTest extends AbstractCairoTest {
                             1\t7
                             """
             );
-            assertNestedRows(
+            assertRowsOnly(
                     "SELECT * FROM (" + ordered + ") q JOIN lp_order_agg t ON q.k = t.id",
                     """
                             k\ttotal\tid\tk1\ti
@@ -205,8 +205,8 @@ public class SortPlanningTest extends AbstractCairoTest {
                             1\t7\t1\t1\t1
                             """
             );
-            assertNestedRows("SELECT q.* FROM (" + ordered + ") q JOIN lp_order_agg t ON q.k = t.id", expected);
-            assertNestedRows(
+            assertRowsOnly("SELECT q.* FROM (" + ordered + ") q JOIN lp_order_agg t ON q.k = t.id", expected);
+            assertRowsOnly(
                     "SELECT * FROM (SELECT k,sum(i) AS total FROM lp_order_agg GROUP BY k ORDER BY sum(i)+1,sum(i*2),k)",
                     """
                             k\ttotal
@@ -247,10 +247,6 @@ public class SortPlanningTest extends AbstractCairoTest {
                                         Frame forward scan on: lp_order_agg
                     """);
         });
-    }
-
-    private void assertNestedRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void assertSorts(boolean encoded) throws Exception {
@@ -332,11 +328,7 @@ public class SortPlanningTest extends AbstractCairoTest {
             final TextPlanSink plan = new TextPlanSink();
             plan.of(factory, sqlExecutionContext);
             TestUtils.assertContains(plan.getSink(), algorithm);
-            assertRows(factory, expected);
+            assertRowsOnly(factory, expected);
         }
-    }
-
-    private void assertRows(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 }

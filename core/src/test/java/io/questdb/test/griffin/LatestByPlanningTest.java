@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -223,9 +222,9 @@ public class LatestByPlanningTest extends AbstractCairoTest {
                             3	2020-01-02T00:00:00.000000Z
                             """
             );
-            try (RecordCursorFactory factory = compile("SELECT * FROM (" + latest + ") TIMESTAMP(ts)")) {
+            try (RecordCursorFactory factory = select("SELECT * FROM (" + latest + ") TIMESTAMP(ts)")) {
                 Assert.assertEquals(2, factory.getMetadata().getTimestampIndex());
-                TestUtils.assertContains(planOf(factory), "LatestBy light");
+                TestUtils.assertContains(planText(factory), "LatestBy light");
                 final StringSink sink = new StringSink();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
@@ -334,7 +333,7 @@ public class LatestByPlanningTest extends AbstractCairoTest {
                                 4
                                 """
                 );
-                try (RecordCursorFactory unopened = compile(sql)) {
+                try (RecordCursorFactory unopened = select(sql)) {
                     Assert.assertNotNull(unopened);
                 }
             }
@@ -681,7 +680,7 @@ public class LatestByPlanningTest extends AbstractCairoTest {
             createRows(false);
             bindVariableService.setInt(0, 4);
             final String sql = "SELECT id FROM lp_latest WHERE id<$1 LATEST ON ts PARTITION BY s,u";
-            try (RecordCursorFactory factory = compile(sql)) {
+            try (RecordCursorFactory factory = select(sql)) {
                 assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                         .sizeMayVary().returns("id\n1\n2\n3\n");
                 bindVariableService.setInt(0, 5);
@@ -702,7 +701,7 @@ public class LatestByPlanningTest extends AbstractCairoTest {
                             6
                             """
             );
-            try (RecordCursorFactory factory = compile(runtime)) {
+            try (RecordCursorFactory factory = select(runtime)) {
                 bindVariableService.setBoolean(0, false);
                 assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                         .sizeMayVary().returns("id\n");
@@ -943,7 +942,7 @@ public class LatestByPlanningTest extends AbstractCairoTest {
                             4
                             """
             );
-            try (RecordCursorFactory indexed = compile(indexedSql); RecordCursorFactory plain = compile(plainSql)) {
+            try (RecordCursorFactory indexed = select(indexedSql); RecordCursorFactory plain = select(plainSql)) {
                 assertFactory(indexed).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns("id\n4\n");
                 assertFactory(plain).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns("id\n4\n");
                 bindVariableService.setInt(2, 10);
@@ -990,7 +989,7 @@ public class LatestByPlanningTest extends AbstractCairoTest {
                             1
                             """
             );
-            try (RecordCursorFactory factory = compile(nullSql)) {
+            try (RecordCursorFactory factory = select(nullSql)) {
                 // The covering factory declares no random access, while its backup cursor provides it.
                 assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().noRandomAccess()
                         .skipRandomAccessProbe().sizeMayVary().returns("id\n1\n");
@@ -1005,7 +1004,7 @@ public class LatestByPlanningTest extends AbstractCairoTest {
                             3
                             """
             );
-            try (RecordCursorFactory factory = compile(bindSql)) {
+            try (RecordCursorFactory factory = select(bindSql)) {
                 assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().noRandomAccess()
                         .skipRandomAccessProbe().sizeMayVary().returns("id\n3\n");
                 bindVariableService.setStr(0, null);
@@ -1081,26 +1080,14 @@ public class LatestByPlanningTest extends AbstractCairoTest {
     }
 
     private void assertPlanShape(String sql, String shape) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
+        try (RecordCursorFactory factory = select(sql)) {
             TestUtils.assertEquals(shape, PlanShape.of(factory, sqlExecutionContext));
         }
     }
 
     private void assertRows(String sql, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
-            assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-        }
-    }
-
-    private String planOf(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        return sink.getSink().toString();
-    }
-
-    private RecordCursorFactory compile(String sql) throws SqlException {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            return compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+        try (RecordCursorFactory factory = select(sql)) {
+            assertRowsOnly(factory, expected);
         }
     }
 

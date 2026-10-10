@@ -36,7 +36,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
     public void testStaticSymbolComparisonsNullsAndAliases() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s='alpha','alpha'=s,s!='alpha',s<>t,s=t,s=null,null=s,s='a',length(s),s::STRING,s::VARCHAR FROM lp_symbol ORDER BY id",
                     """
                             id	column	column1	column2	column3	column4	column5	column6	column7	length	cast	cast1
@@ -48,7 +48,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                             6	false	false	true	false	true	false	false	false	0	\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (SELECT id,s,t FROM lp_symbol LIMIT 100) WHERE s='alpha' OR s=t ORDER BY id",
                     """
                             id
@@ -58,7 +58,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                             6
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_symbol WHERE t='alpha' OR t='中' ORDER BY id",
                     """
                             id
@@ -67,7 +67,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                             3
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s, count() FROM lp_symbol GROUP BY id,s ORDER BY id",
                     """
                             id	s	count
@@ -79,7 +79,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                             6		1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (SELECT id,s renamed,t FROM lp_symbol LIMIT 100) WHERE renamed=t OR renamed='中' ORDER BY id",
                     """
                             id
@@ -89,7 +89,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                             6
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT l.id FROM lp_symbol l JOIN lp_symbol r ON l.id=r.id WHERE l.s=r.t ORDER BY l.id",
                     """
                             id
@@ -106,7 +106,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
     public void testMembershipLikeRuntimeParametersAndUnicode() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s IN ('alpha','中',null),s NOT IN ('a',null),s LIKE 'a%',s ILIKE 'AL%',s LIKE '%h%',s LIKE 'a_pha',s LIKE '',s ILIKE null FROM lp_symbol ORDER BY id",
                     """
                             id	column	column1	column2	column3	column4	column5	column6	column7
@@ -120,7 +120,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
             );
             bindVariableService.setStr(0, "alpha");
             bindVariableService.setStr(1, "中");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s IN ($1,$2,null),s=$1,s<>$2 FROM lp_symbol ORDER BY id",
                     """
                             id	column	column1	column2
@@ -133,7 +133,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setStr(0, "a%");
-            assertQueryRows("SELECT id,s LIKE $1,s ILIKE $1 FROM lp_symbol ORDER BY id", """
+            assertRowsOnly("SELECT id,s LIKE $1,s ILIKE $1 FROM lp_symbol ORDER BY id", """
                     id	column	column1
                     1	true	true
                     2	false	true
@@ -143,7 +143,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                     6	false	false
                     """);
             bindVariableService.setStr(0, null);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,s LIKE $1,s IN ($1,$2,null) FROM lp_symbol ORDER BY id",
                     """
                             id	column	column1
@@ -162,7 +162,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
     public void testDynamicUnionAndStaticIntersectCapabilities() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT s,s='alpha',s LIKE 'a%',s IN ('中',null),length(s),s::VARCHAR FROM (SELECT s FROM lp_symbol UNION ALL SELECT t FROM lp_symbol)",
                     """
                             s	column	column1	column2	length	cast
@@ -180,7 +180,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                             	false	false	false	0\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT s,s='alpha',s LIKE 'a%',s IN ('中',null) FROM (SELECT s FROM lp_symbol UNION SELECT t FROM lp_symbol)",
                     """
                             s	column	column1	column2
@@ -193,7 +193,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                             b	false	false	false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT s,s='alpha',s LIKE 'a%' FROM (SELECT s FROM lp_symbol INTERSECT SELECT t FROM lp_symbol)",
                     """
                             s	column	column1
@@ -203,7 +203,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
                             	false	false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT s,s='alpha',s LIKE 'a%' FROM (SELECT s FROM lp_symbol EXCEPT SELECT t FROM lp_symbol)",
                     """
                             s	column	column1
@@ -248,7 +248,7 @@ public class SymbolPredicateTest extends AbstractCairoTest {
     public void testNativeSymbolExclusion() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT id FROM lp_symbol WHERE s NOT IN ('alpha','中')", """
+            assertRowsOnly("SELECT id FROM lp_symbol WHERE s NOT IN ('alpha','中')", """
                     id
                     2
                     4
@@ -261,9 +261,5 @@ public class SymbolPredicateTest extends AbstractCairoTest {
     private void createRows() throws SqlException {
         execute("CREATE TABLE lp_symbol(unused INT,id INT,s SYMBOL INDEX,t SYMBOL)");
         execute("INSERT INTO lp_symbol VALUES(81,1,'alpha','alpha'),(82,2,'Alpha','alpha'),(83,3,'中','中'),(84,4,null,null),(85,5,'a','b'),(86,6,'','')");
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

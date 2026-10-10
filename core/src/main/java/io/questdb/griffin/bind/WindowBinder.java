@@ -85,6 +85,7 @@ final class WindowBinder implements Mutable {
     private final FunctionParser functionParser;
     private final IntList windowGroupMembers = new IntList();
     private final IntHashSet windowInheritancePositions = new IntHashSet();
+    private final ArrayColumnTypes windowKeyTypes = new ArrayColumnTypes();
     private int windowLevelCount;
 
     WindowBinder(BindContext ctx, FunctionParser functionParser) {
@@ -155,12 +156,9 @@ final class WindowBinder implements Mutable {
         }
         ctx.scope().aliases.add(input.getColumnName(index));
         project.getExpressions().add(ctx.planNodes.columns.next().of(columnId, input.getColumnType(index), project.getPosition()));
-        output.add(columnId, input.getColumnName(index), input.getColumnType(index),
-                input.getMetadata(index), input.isVisible(index), input.getColumnQualifier(index));
-        final int outputIndex = output.getColumnCount() - 1;
-        output.setSymbolTableStatic(outputIndex, input.isSymbolTableStatic(index));
+        output.addColumnFrom(input, index);
         if (index == input.getTimestampIndex()) {
-            output.setTimestampIndex(outputIndex);
+            output.setTimestampIndex(output.getColumnCount() - 1);
         }
     }
 
@@ -217,22 +215,15 @@ final class WindowBinder implements Mutable {
 
     private void addWindowTranslationColumn(ProjectPlan project, OutputSchema input, int index, CharSequence name) {
         project.getExpressions().add(ctx.planNodes.columns.next().of(input.getColumnId(index), input.getColumnType(index), project.getPosition()));
-        project.getOutput().add(input.getColumnId(index), name, input.getColumnType(index), input.getMetadata(index), input.isVisible(index));
-        final int outputIndex = project.getOutput().getColumnCount() - 1;
-        project.getOutput().setSymbolTableStatic(outputIndex, input.isSymbolTableStatic(index));
+        project.getOutput().addColumnAs(input, index, input.getColumnId(index), name, input.isVisible(index));
         if (index == input.getTimestampIndex()) {
-            project.getOutput().setTimestampIndex(outputIndex);
+            project.getOutput().setTimestampIndex(project.getOutput().getColumnCount() - 1);
         }
     }
 
     private int appendWindowInputExpression(BoundExpression expression, CharSequence name, int position) {
         final BindScope scope = ctx.scope();
-        final ProjectPlan project = ctx.planNodes.projects.next().of(scope.windowInput, position);
-        final OutputSchema output = scope.windowInput.getOutput();
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            project.getExpressions().add(ctx.planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), position));
-        }
-        project.getOutput().copyFrom(output);
+        final ProjectPlan project = ctx.identityProjection(scope.windowInput, position);
         final int id = ctx.planNodes.nextColumnId();
         project.getExpressions().add(expression);
         project.getOutput().add(id, ctx.createOutputName(name), expression.getDataType(), false);
@@ -587,8 +578,7 @@ final class WindowBinder implements Mutable {
         if (!project.getInput().getOutput().hasColumnQualifiers()) {
             return;
         }
-        scope.aliases.clear();
-        scope.aliasSequences.clear();
+        scope.resetAliases();
         final OutputSchema output = project.getOutput();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             final CharSequence name = SqlUtil.createColumnAlias(ctx.characterStore, output.getColumnName(i), -1,
@@ -875,7 +865,8 @@ final class WindowBinder implements Mutable {
     FunctionExpression bindWindowFunction(ExpressionNode expression, WindowSpec spec, OutputSchema input,
                                           QueryModel source, SqlExecutionContext executionContext) throws SqlException {
         try {
-            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            final ArrayColumnTypes keyTypes = windowKeyTypes;
+            keyTypes.clear();
             for (int i = 0, n = spec.getPartitionBy().size(); i < n; i++) {
                 final BoundExpression partition = spec.getPartitionBy().getQuick(i);
                 if (!LogicalPlans.hasOuterColumn(partition)) {
@@ -916,20 +907,15 @@ final class WindowBinder implements Mutable {
         bindScope.windowSelectExpressions.clear();
         bindScope.windowAliasIds.setAll(model.getBottomUpColumns().size(), -1);
         bindScope.windowSelfReferences.clear();
-        bindScope.aliases.clear();
-        bindScope.aliasSequences.clear();
+        bindScope.resetAliases();
         ProjectPlan innerProject = null;
         if (hasPureComputedColumn(model) && model.getNamedWindows().size() == 0
                 && bindScope.outerScopes.size() == 0 && !ctx.hasAggregation(model, source)
                 && !hasProjectionReferences(model, input.getOutput())) {
             innerProject = bindWindowInnerProjection(model, source, input, executionContext);
             bindScope.windowInput = innerProject;
-            bindScope.aliases.clear();
-            bindScope.aliasSequences.clear();
         }
-        for (int i = 0, n = bindScope.windowInput.getOutput().getColumnCount(); i < n; i++) {
-            bindScope.aliases.add(bindScope.windowInput.getOutput().getColumnName(i));
-        }
+        bindScope.resetAliases(bindScope.windowInput.getOutput());
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final ExpressionNode selected = model.getBottomUpColumns().getQuick(i).getAst();
             final ExpressionNode ast = copyWindowSyntax(selected, selected);

@@ -25,10 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -267,7 +264,7 @@ public class TemporalCastTest extends AbstractCairoTest {
                     4	192.168.1.2
                     """);
             Assert.assertEquals(48, count);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,sym::DATE,sym::TIMESTAMP,sym::TIMESTAMP_NS FROM (lp_temporal_cast UNION ALL lp_temporal_cast) ORDER BY id",
                     """
                             id	cast	cast1	cast2
@@ -302,7 +299,7 @@ public class TemporalCastTest extends AbstractCairoTest {
                     3	\t
                     4	1970-01-01T00:00:01.234567Z	1970-01-01T00:00:01.234567890Z
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT (123456789L::TIMESTAMP_NS)::TIMESTAMP,(-123456789L::TIMESTAMP_NS)::TIMESTAMP,"
                             + "(123456L::TIMESTAMP)::TIMESTAMP_NS,(null::TIMESTAMP_NS)::TIMESTAMP FROM lp_temporal_cast LIMIT 1",
                     """
@@ -312,7 +309,7 @@ public class TemporalCastTest extends AbstractCairoTest {
             );
             bindVariableService.setTimestamp(0, 123456);
             bindVariableService.setTimestampNano(1, -123456789L);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT $1::TIMESTAMP_NS,$2::TIMESTAMP FROM lp_temporal_cast LIMIT 1",
                     """
                             cast	cast1
@@ -347,14 +344,14 @@ public class TemporalCastTest extends AbstractCairoTest {
                     3	true	1		1	1	1	1.0	1.0	1970-01-01T00:00:00.000Z	1970-01-01T00:00:00.000000001Z	1
                     4	true	1		1	1	1	1.0	1.0	1970-01-01T00:00:00.000Z	1970-01-01T00:00:00.000000001Z	1
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT (null::DATE)::STRING,(null::DATE)::VARCHAR,(null::TIMESTAMP)::STRING,(null::TIMESTAMP_NS)::VARCHAR,(null::IPv4)::VARCHAR FROM lp_temporal_cast LIMIT 1",
                     """
                             cast	cast1	cast2	cast3	cast4
                             null	null		null	0.0.0.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT dt::STRING,dt::VARCHAR,us::STRING,ns::VARCHAR,ip::VARCHAR FROM lp_temporal_cast ORDER BY id",
                     """
                             cast	cast1	cast2	cast3	cast4
@@ -364,7 +361,7 @@ public class TemporalCastTest extends AbstractCairoTest {
                             1970-01-01T00:02:03.456Z	1970-01-01T00:02:03.456Z	1970-01-01T00:00:01.234567Z	1970-01-01T00:00:01.234567890Z	192.168.1.2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT '2000-01-02T03:04:05.123Z'::DATE,'2000-01-02T03:04:05.123456789Z'::VARCHAR::TIMESTAMP_NS,''::STRING::IPv4,''::VARCHAR::IPv4,'127.0.0.1'::STRING::IPv4,'255.255.255.255'::VARCHAR::IPv4 FROM lp_temporal_cast LIMIT 1",
                     """
                             cast	cast1	cast2	cast3	cast4	cast5
@@ -380,7 +377,7 @@ public class TemporalCastTest extends AbstractCairoTest {
             createRows();
             assertQuery("SELECT 'not-an-ip'::STRING::IPv4 FROM lp_temporal_cast").noLeakCheck().fails(18, "invalid IPv4 constant");
             assertQuery("SELECT 'not-an-ip'::VARCHAR::IPv4 FROM lp_temporal_cast").noLeakCheck().fails(18, "invalid IPv4 constant");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT s::IPv4,v::IPv4,s::DATE,v::DATE,sym::DATE,v::TIMESTAMP_NS FROM lp_temporal_cast ORDER BY id",
                     """
                             cast	cast1	cast2	cast3	cast4	cast5
@@ -396,7 +393,7 @@ public class TemporalCastTest extends AbstractCairoTest {
             for (int i = 0; i < targets.size(); i++) {
                 final String sql = "SELECT c::" + targets.getQuick(i) + " FROM lp_bad_temporal_char";
                 try (RecordCursorFactory factory = select(sql)) {
-                    print(factory);
+                    printFactory(factory);
                     Assert.fail(sql);
                 } catch (ImplicitCastException e) {
                     TestUtils.assertEquals("inconvertible value: x [CHAR -> " + targets.getQuick(i) + "]", e.getFlyweightMessage());
@@ -440,7 +437,7 @@ public class TemporalCastTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = retained) {
                 assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
             }
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_temporal_cast WHERE i64::DATE>0::DATE ORDER BY id",
                     """
                             id
@@ -448,7 +445,7 @@ public class TemporalCastTest extends AbstractCairoTest {
                             4
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT dt::INT k,sum(i32::DATE::LONG) total FROM lp_temporal_cast GROUP BY 1 ORDER BY k",
                     """
                             k	total
@@ -543,7 +540,7 @@ public class TemporalCastTest extends AbstractCairoTest {
     public void testTimestampToLongRetainsEpochUnitsAndCompilerLifetime() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,us::LONG u,ns::LONG n FROM lp_temporal_cast ORDER BY id",
                     """
                             id	u	n
@@ -553,7 +550,7 @@ public class TemporalCastTest extends AbstractCairoTest {
                             4	1234567	1234567890
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT (1234567L::TIMESTAMP)::LONG,(1234567L::TIMESTAMP_NS)::LONG,"
                             + "(-1L::TIMESTAMP_NS)::LONG,(NULL::TIMESTAMP)::LONG FROM lp_temporal_cast LIMIT 1",
                     """
@@ -593,24 +590,6 @@ public class TemporalCastTest extends AbstractCairoTest {
         });
     }
 
-    private void assertCastQuery(String sql, String expectedTypes, String expectedRows) throws Exception {
-        final int jitMode = sqlExecutionContext.getJitMode();
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        try (RecordCursorFactory factory = select(sql)) {
-            final StringSink types = new StringSink();
-            for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
-                if (i > 0) {
-                    types.put(',');
-                }
-                types.put(ColumnType.nameOf(factory.getMetadata().getColumnType(i)));
-            }
-            TestUtils.assertEquals(sql, expectedTypes, types);
-            assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expectedRows);
-        } finally {
-            sqlExecutionContext.setJitMode(jitMode);
-        }
-    }
-
     private int assertCasts(String source, ObjList<String> targets, String expectedTypes, String expectedRows) throws Exception {
         final StringSink sql = new StringSink();
         sql.put("SELECT id");
@@ -631,17 +610,5 @@ public class TemporalCastTest extends AbstractCairoTest {
                 (99,3,true,0,'0',0,null,null,null,null,null,null,null,null,null,null,null),
                 (99,4,false,127,'1',32767,2147483647,9223372036854,1e30,1e30,123456::DATE,1234567::TIMESTAMP,1234567890::TIMESTAMP_NS,'192.168.1.2','192.168.1.2','2020-01-01T00:00:00.000Z','192.168.1.2')
                 """);
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-            return sink.toString();
-        }
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

@@ -87,6 +87,7 @@ import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
@@ -410,7 +411,7 @@ final class ScanFactoryGenerator {
         }
         frame.latestPrefixes.clear();
         if (scan.getWithin() != null) {
-            LogicalPlans.withinPrefixes(scan.getWithin(), scan.getOutput(), frame.latestPrefixes);
+            GeneratedShapes.withinPrefixes(scan.getWithin(), scan.getOutput(), frame.latestPrefixes);
         }
         final BoundExpression residual = scan.getResidual();
         final CursorExpression keySubquery = scan.getKeySubquery();
@@ -876,7 +877,7 @@ final class ScanFactoryGenerator {
      */
     RecordCursorFactory generatePostingDistinct(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext)
             throws SqlException {
-        final ScanPlan scan = LogicalPlans.postingDistinctScan(aggregate);
+        final ScanPlan scan = GeneratedShapes.postingDistinctScan(aggregate);
         final BoundExpression predicate = aggregate.getInput() instanceof FilterPlan filter ? filter.getPredicate() : null;
         final RecordCursorFactory factory;
         try {

@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.mp.SCSequence;
@@ -947,5 +948,47 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     int getTimestampType() {
         return timestampType;
+    }
+
+    /**
+     * Fills {@code createColumnModelMap} with a model per column of {@code columns}, the view's output named at
+     * {@code positions}: typed by the SELECT the statement generates later, indexed as the statement's INDEX
+     * clauses say. Returns the model of the TIMESTAMP clause's column, which must be one of them, or null without
+     * the clause.
+     */
+    CreateTableColumnModel initColumnModels(
+            LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
+            @Transient OutputSchema columns,
+            @Transient IntList positions
+    ) throws SqlException {
+        createColumnModelMap.clear();
+        for (int i = 0, n = columns.getColumnCount(); i < n; i++) {
+            final String columnName = Chars.toString(columns.getColumnName(i));
+            final int position = positions.getQuick(i);
+            final CreateTableColumnModel model = CreateTableColumnModel.FACTORY.newInstance();
+            model.setColumnNamePos(position);
+            model.setColumnType(ColumnType.UNDEFINED);
+            final TableColumnMetadata augColumnMetadata = augmentedColumnMetadata.get(columnName);
+            if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
+                model.setIndexType(augColumnMetadata.getIndexType(), position, augColumnMetadata.getIndexValueBlockCapacity());
+            }
+            createColumnModelMap.put(columnName, model);
+        }
+        if (timestampColumnName == null) {
+            return null;
+        }
+        final CreateTableColumnModel timestampModel = createColumnModelMap.get(timestampColumnName);
+        if (timestampModel == null) {
+            throw SqlException.position(timestampColumnNamePosition)
+                    .put("TIMESTAMP column does not exist [name=")
+                    .put(timestampColumnName).put(']');
+        }
+        final int timestampType = timestampModel.getColumnType();
+        if (!ColumnType.isTimestamp(timestampType) && timestampType != ColumnType.UNDEFINED) {
+            throw SqlException.position(timestampColumnNamePosition)
+                    .put("TIMESTAMP column expected [actual=")
+                    .put(ColumnType.nameOf(timestampType)).put(']');
+        }
+        return timestampModel;
     }
 }

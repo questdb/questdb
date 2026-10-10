@@ -106,8 +106,7 @@ public class DeferredSingleSymbolFilterOwnershipTest extends AbstractCairoTest {
     }
 
     private void assertRows(DeferredSingleSymbolFilterPageFrameRecordCursorFactory factory) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary()
-                .returns("id\ts\n1\tA\n3\tA\n");
+        assertRowsOnly(factory, "id\ts\n1\tA\n3\tA\n");
     }
 
     private DeferredSingleSymbolFilterPageFrameRecordCursorFactory createFactory(

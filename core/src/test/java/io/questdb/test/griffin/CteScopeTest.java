@@ -49,15 +49,15 @@ public class CteScopeTest extends AbstractCairoTest {
                             SELECT * FROM (SELECT * FROM q UNION ALL SELECT * FROM q) ORDER BY id,value
                             """, sqlExecutionContext).getRecordCursorFactory();
                     Assert.assertNotNull(compiler.getPlanForTesting());
-                    assertResult(retained, "id\tvalue\n1\t11\n1\t11\n3\t31\n3\t31\n4\t41\n4\t41\n");
+                    assertRowsOnly(retained, "id\tvalue\n1\t11\n1\t11\n3\t31\n3\t31\n4\t41\n4\t41\n");
                     try (RecordCursorFactory other = compiler.compile(
                             "WITH q AS (SELECT id FROM lp_with WHERE id=2) SELECT * FROM q", sqlExecutionContext
                     ).getRecordCursorFactory()) {
-                        assertResult(other, "id\n2\n");
+                        assertRowsOnly(other, "id\n2\n");
                     }
                     compiler.clear();
                 }
-                assertResult(retained, "id\tvalue\n1\t11\n1\t11\n3\t31\n3\t31\n4\t41\n4\t41\n");
+                assertRowsOnly(retained, "id\tvalue\n1\t11\n1\t11\n3\t31\n3\t31\n4\t41\n4\t41\n");
             } finally {
                 Misc.free(retained);
             }
@@ -147,7 +147,7 @@ public class CteScopeTest extends AbstractCairoTest {
                         "WITH q AS (SELECT abs(id) AS value FROM lp_with WHERE id=1) SELECT * FROM q", sqlExecutionContext
                 ).getRecordCursorFactory()) {
                     Assert.assertNotNull(compiler.getPlanForTesting());
-                    assertResult(factory, "value\n1\n");
+                    assertRowsOnly(factory, "value\n1\n");
                 }
             }
         });
@@ -199,17 +199,13 @@ public class CteScopeTest extends AbstractCairoTest {
         }
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private void assertWith(String sql, String expected) throws Exception {
         try (
                 SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
         ) {
             Assert.assertNotNull(compiler.getPlanForTesting());
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 

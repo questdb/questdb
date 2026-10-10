@@ -135,12 +135,6 @@ public final class BindContext implements Mutable {
         isSetOperationBranch = false;
     }
 
-    private static void addWindowBindingColumn(OutputSchema windowBindingSchema, OutputSchema input, int index, boolean isReferenceable) {
-        windowBindingSchema.add(input.getColumnId(index), input.getColumnName(index), input.getColumnType(index),
-                input.getMetadata(index), isReferenceable, input.getColumnQualifier(index));
-        windowBindingSchema.setSymbolTableStatic(index, input.isSymbolTableStatic(index));
-    }
-
     private static boolean hasVisibleColumn(OutputSchema schema, CharSequence name) {
         for (int i = 0, n = schema.getColumnCount(); i < n; i++) {
             if (schema.isVisible(i) && Chars.equalsIgnoreCase(schema.getColumnName(i), name)) {
@@ -163,6 +157,26 @@ public final class BindContext implements Mutable {
         return -1;
     }
 
+    /**
+     * The first column reference of the expression in operand order, or null when it has none.
+     */
+    static ExpressionNode firstColumnReference(ExpressionNode expression) {
+        if (expression == null || expression.type == ExpressionNode.LITERAL) {
+            return expression;
+        }
+        if (expression.paramCount < 3) {
+            final ExpressionNode left = firstColumnReference(expression.lhs);
+            return left != null ? left : firstColumnReference(expression.rhs);
+        }
+        for (int i = 0, n = expression.args.size(); i < n; i++) {
+            final ExpressionNode column = firstColumnReference(expression.args.getQuick(i));
+            if (column != null) {
+                return column;
+            }
+        }
+        return null;
+    }
+
     static int getColumnIndexQuiet(OutputSchema schema, CharSequence name) {
         final int index = schema.getColumnIndexQuiet(name);
         return index >= 0 || !SqlUtil.isQuoteProtectedAlias(name)
@@ -170,44 +184,12 @@ public final class BindContext implements Mutable {
     }
 
     static boolean hasColumnReference(ExpressionNode expression) {
-        if (expression == null) {
-            return false;
-        }
-        if (expression.type == ExpressionNode.LITERAL) {
-            return true;
-        }
-        if (expression.paramCount < 3) {
-            return hasColumnReference(expression.lhs) || hasColumnReference(expression.rhs);
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (hasColumnReference(expression.args.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
+        return firstColumnReference(expression) != null;
     }
 
     static boolean hasComputedProjection(ProjectPlan project) {
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    static boolean hasLiteral(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            return true;
-        }
-        if (hasLiteral(node.lhs) || hasLiteral(node.rhs)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasLiteral(node.args.getQuick(i))) {
                 return true;
             }
         }
@@ -221,6 +203,11 @@ public final class BindContext implements Mutable {
             }
         }
         return true;
+    }
+
+    static boolean isSameColumn(ExpressionNode left, ExpressionNode right, OutputSchema input, QueryModel source) {
+        final int index = FunctionBinder.findColumn(left, input, sourceAlias(source));
+        return index >= 0 && index == FunctionBinder.findColumn(right, input, sourceAlias(source));
     }
 
     static boolean isRowCount(ExpressionNode expression) {
@@ -392,6 +379,20 @@ public final class BindContext implements Mutable {
         return isSetOperationBranch || source.getSubsample() != null;
     }
 
+    /**
+     * Projects every column of the input unchanged, under its own id and name, with the input's designated
+     * timestamp.
+     */
+    ProjectPlan identityProjection(LogicalPlan input, int position) {
+        final ProjectPlan project = planNodes.projects.next().of(input, position);
+        final OutputSchema output = input.getOutput();
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            project.getExpressions().add(planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), position));
+        }
+        project.getOutput().copyFrom(output);
+        return project;
+    }
+
     void inheritTimestampBinding(int inputId, int outputId) {
         final BindScope scope = scopes.current();
         if (scope.intrinsicTimestampColumnIds.contains(inputId)) {
@@ -511,7 +512,7 @@ public final class BindContext implements Mutable {
         final OutputSchema windowBindingSchema = scopes.current().windowBindingSchema;
         windowBindingSchema.clear();
         for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-            addWindowBindingColumn(windowBindingSchema, input, i, true);
+            windowBindingSchema.addColumnAs(input, i, input.getColumnId(i), input.getColumnName(i), true, input.getColumnQualifier(i));
         }
         windowBindingSchema.setTimestampIndex(input.getTimestampIndex());
         return windowBindingSchema;
@@ -524,7 +525,8 @@ public final class BindContext implements Mutable {
         final OutputSchema windowBindingSchema = scopes.current().windowBindingSchema;
         windowBindingSchema.clear();
         for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-            addWindowBindingColumn(windowBindingSchema, input, i, input.isVisible(i) || !hasVisibleColumn(input, input.getColumnName(i)));
+            windowBindingSchema.addColumnAs(input, i, input.getColumnId(i), input.getColumnName(i),
+                    input.isVisible(i) || !hasVisibleColumn(input, input.getColumnName(i)), input.getColumnQualifier(i));
         }
         windowBindingSchema.setTimestampIndex(input.getTimestampIndex());
         return windowBindingSchema;

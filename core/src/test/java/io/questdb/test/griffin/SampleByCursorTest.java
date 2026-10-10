@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.std.Misc;
@@ -47,7 +46,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 createRows(table, type);
                 {
                     final String fill = "";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -56,7 +55,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -69,7 +68,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 }
                 {
                     final String fill = " FILL(NONE)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -78,7 +77,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -91,7 +90,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 }
                 {
                     final String fill = " FILL(PREV)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -101,7 +100,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -118,7 +117,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 }
                 {
                     final String fill = " FILL(NULL)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -128,7 +127,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -145,7 +144,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 }
                 {
                     final String fill = " FILL(42.0)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -155,7 +154,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -170,13 +169,13 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     """
                     );
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,sum(v) total FROM " + table + " WHERE id<0 SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION",
                         """
                                 ts	total
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT hour(ts),count(),first(ts),last(ts) FROM " + table + " SAMPLE BY 2h ALIGN TO FIRST OBSERVATION",
                         """
                                 hour	count	first	last
@@ -191,7 +190,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 createRows(table, type);
                 {
                     final String fill = "";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -200,7 +199,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -213,7 +212,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 }
                 {
                     final String fill = " FILL(NONE)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -222,7 +221,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -235,7 +234,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 }
                 {
                     final String fill = " FILL(PREV)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -245,7 +244,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -262,7 +261,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 }
                 {
                     final String fill = " FILL(NULL)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -272,7 +271,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -289,7 +288,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 }
                 {
                     final String fill = " FILL(42.0)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION",
                             """
                                     ts	total
@@ -299,7 +298,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     2024-01-01T03:15:00.000000000Z	7.0
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,k,sum(v) total FROM " + table + " SAMPLE BY 1h" + fill + " ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                             """
                                     ts	k	total
@@ -314,13 +313,13 @@ public class SampleByCursorTest extends AbstractCairoTest {
                                     """
                     );
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,sum(v) total FROM " + table + " WHERE id<0 SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION",
                         """
                                 ts	total
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT hour(ts),count(),first(ts),last(ts) FROM " + table + " SAMPLE BY 2h ALIGN TO FIRST OBSERVATION",
                         """
                                 hour	count	first	last
@@ -336,7 +335,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
     public void testLinearAndMixedValuesKeepTheirFactories() throws Exception {
         assertMemoryLeak(() -> {
             createRows("lp_sample_cursor", "TIMESTAMP");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR",
                     """
                             ts	sum
@@ -346,7 +345,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z	7.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,k,sum(v) FROM lp_sample_cursor SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION ORDER BY ts,k",
                     """
                             ts	k	sum
@@ -360,7 +359,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	b	7.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) a,count() b FROM lp_sample_cursor SAMPLE BY 1h FILL(42.0,0) ALIGN TO FIRST OBSERVATION",
                     """
                             ts	a	b
@@ -370,7 +369,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	7.0	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) a,sum(v) b FROM lp_sample_cursor SAMPLE BY 1h FILL(NULL,42.0) ALIGN TO FIRST OBSERVATION",
                     """
                             ts	a	b
@@ -380,7 +379,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	7.0	7.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) a,max(v) b FROM lp_sample_cursor SAMPLE BY 1h FILL(LINEAR,42.0) ALIGN TO FIRST OBSERVATION",
                     """
                             ts	a	b
@@ -390,7 +389,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	7.0	7.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(id*2) total FROM lp_sample_cursor SAMPLE BY 1h FILL(42) ALIGN TO FIRST OBSERVATION",
                     """
                             ts	total
@@ -407,7 +406,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
     public void testConstantExpressionStrideAndIndexedFirstLast() throws Exception {
         assertMemoryLeak(() -> {
             createRows("lp_sample_cursor", "TIMESTAMP");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY (1+0) h ALIGN TO CALENDAR",
                     """
                             ts	sum
@@ -416,7 +415,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z	7.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,count() FROM lp_sample_cursor SAMPLE BY (1+1)*30 m ALIGN TO FIRST OBSERVATION",
                     """
                             ts	count
@@ -425,7 +424,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,first(v) first_v,last(v) last_v FROM lp_sample_cursor WHERE k='a' SAMPLE BY 1h ALIGN TO FIRST OBSERVATION",
                     """
                             ts	first_v	last_v
@@ -433,7 +432,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T02:15:00.000000Z	5.0	5.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,first(v) first_v,last(v) last_v FROM lp_sample_cursor WHERE k='a' SAMPLE BY 1h FILL(NONE) ALIGN TO FIRST OBSERVATION",
                     """
                             ts	first_v	last_v
@@ -441,7 +440,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T02:15:00.000000Z	5.0	5.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,k,first(v),last(v) FROM lp_sample_cursor WHERE k='a' SAMPLE BY (1+0) h ALIGN TO CALENDAR",
                     """
                             ts	k	first	last
@@ -456,7 +455,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
     public void testComputedKeysUseRawInputAndUserOrderFollowsSampling() throws Exception {
         assertMemoryLeak(() -> {
             createRows("lp_sample_cursor", "TIMESTAMP");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,id%2 parity,sum(v) FROM lp_sample_cursor SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION ORDER BY ts,parity",
                     """
                             ts	parity	sum
@@ -470,7 +469,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	1	5.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT hour(ts) h,count() FROM lp_sample_cursor SAMPLE BY 2h ALIGN TO FIRST OBSERVATION ORDER BY h",
                     """
                             h	count
@@ -478,7 +477,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT count() ts FROM lp_sample_cursor SAMPLE BY 1h ALIGN TO FIRST OBSERVATION",
                     """
                             ts
@@ -487,7 +486,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CAST(ts AS TIMESTAMP) bucket,count() FROM lp_sample_cursor SAMPLE BY 1h ALIGN TO FIRST OBSERVATION",
                     """
                             bucket	count
@@ -496,14 +495,14 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,count() FROM lp_sample_cursor SAMPLE BY 1h ALIGN TO FIRST OBSERVATION ORDER BY ts DESC LIMIT 1",
                     """
                             ts	count
                             2024-01-01T03:15:00.000000Z	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,count() FROM lp_sample_cursor SAMPLE BY 1h ALIGN TO FIRST OBSERVATION LIMIT -2",
                     """
                             ts	count
@@ -511,7 +510,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,count() FROM lp_sample_cursor SAMPLE BY 1h ALIGN TO FIRST OBSERVATION LIMIT 0",
                     """
                             ts	count
@@ -531,7 +530,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                     ('b', 'z', 3.0, '2024-01-01T01:20:00'),
                     ('a', 'w', 4.0, '2024-01-01T04:10:00')
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts, k, first(s) s, sum(v) v FROM lp_fill_rows SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION",
                     """
                             ts	k	s	v
@@ -547,7 +546,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T04:10:00.000000Z	b	z	3.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts, k, first(s) s, sum(v) v FROM lp_fill_rows SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO FIRST OBSERVATION",
                     """
                             ts	k	s	v
@@ -563,7 +562,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T04:10:00.000000Z	b	z	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts, first(s) s FROM lp_fill_rows WHERE k = 'b' SAMPLE BY (0+1)h FROM '2024-01-01' TO '2024-01-01T04:00' FILL(PREV)",
                     """
                             ts	s
@@ -584,24 +583,24 @@ public class SampleByCursorTest extends AbstractCairoTest {
             bindVariableService.setTimestamp(1, MicrosFormatUtils.parseTimestamp("2024-01-01T04:00:00.000000Z"));
             final String sql = "SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY 1h FROM $1 TO $2 FILL(NONE) ALIGN TO CALENDAR";
             try (RecordCursorFactory factory = select(sql)) {
-                assertResult(factory, """
+                assertRowsOnly(factory, """
                         ts	sum
                         2024-01-01T00:15:00.000000Z	4.0
                         2024-01-01T02:15:00.000000Z	5.0
                         2024-01-01T03:15:00.000000Z	7.0
                         """);
                 bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp("2024-01-01T01:15:00.000000Z"));
-                assertResult(factory, """
+                assertRowsOnly(factory, """
                         ts	sum
                         2024-01-01T02:15:00.000000Z	5.0
                         2024-01-01T03:15:00.000000Z	7.0
                         """);
                 bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp("2024-01-01T05:00:00.000000Z"));
-                assertResult(factory, """
+                assertRowsOnly(factory, """
                         ts	sum
                         """);
             }
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) FROM (SELECT * FROM lp_sample_cursor) TIMESTAMP(ts) SAMPLE BY 1h FROM '2024-01-01T00:15:00' TO '2024-01-01T04:00:00'",
                     """
                             ts	sum
@@ -610,7 +609,7 @@ public class SampleByCursorTest extends AbstractCairoTest {
                             2024-01-01T03:15:00.000000Z	7.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) FROM (SELECT * FROM lp_sample_cursor WHERE id>0) SAMPLE BY 1h FROM '2024-01-01T00:15:00' TO '2024-01-01T04:00:00'",
                     """
                             ts	sum
@@ -625,12 +624,12 @@ public class SampleByCursorTest extends AbstractCairoTest {
                     2024-01-01T02:15:00.000000Z	5.0
                     2024-01-01T03:15:00.000000Z	7.0
                     """;
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY (1+0) h FROM '2024-01-01T06:00:00' TO '2024-01-01T10:00:00'"
                             + " ALIGN TO CALENDAR TIME ZONE 'Asia/Kathmandu'",
                     kathmandu
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY 1h FROM '2024-01-01T06:00:00' TO '2024-01-01T10:00:00'"
                             + " ALIGN TO CALENDAR TIME ZONE 'Asia/Kathmandu'",
                     kathmandu
@@ -660,16 +659,16 @@ public class SampleByCursorTest extends AbstractCairoTest {
                 final String plan;
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     retained = compiler.compile("SELECT ts,sum(v) total FROM lp_sample_cursor SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION", sqlExecutionContext).getRecordCursorFactory();
-                    plan = planOf(retained);
+                    plan = planText(retained);
                     compiler.clear();
                     try (RecordCursorFactory ignored = compiler.compile("SELECT ts,count() FROM lp_sample_cursor SAMPLE BY 1h", sqlExecutionContext).getRecordCursorFactory()) {
                         compiler.clear();
                     }
                 }
-                Assert.assertEquals(plan, planOf(retained));
-                assertResult(retained, "ts\ttotal\n2024-01-01T00:15:00.000000Z\t4.0\n2024-01-01T01:15:00.000000Z\t4.0\n2024-01-01T02:15:00.000000Z\t5.0\n2024-01-01T03:15:00.000000Z\t7.0\n");
+                Assert.assertEquals(plan, planText(retained));
+                assertRowsOnly(retained, "ts\ttotal\n2024-01-01T00:15:00.000000Z\t4.0\n2024-01-01T01:15:00.000000Z\t4.0\n2024-01-01T02:15:00.000000Z\t5.0\n2024-01-01T03:15:00.000000Z\t7.0\n");
                 execute("INSERT INTO lp_sample_cursor VALUES(5,'a',9.0,'2024-01-01T04:15:00')");
-                assertResult(retained, "ts\ttotal\n2024-01-01T00:15:00.000000Z\t4.0\n2024-01-01T01:15:00.000000Z\t4.0\n2024-01-01T02:15:00.000000Z\t5.0\n2024-01-01T03:15:00.000000Z\t7.0\n2024-01-01T04:15:00.000000Z\t9.0\n");
+                assertRowsOnly(retained, "ts\ttotal\n2024-01-01T00:15:00.000000Z\t4.0\n2024-01-01T01:15:00.000000Z\t4.0\n2024-01-01T02:15:00.000000Z\t5.0\n2024-01-01T03:15:00.000000Z\t7.0\n2024-01-01T04:15:00.000000Z\t9.0\n");
             } finally {
                 Misc.free(retained);
             }
@@ -691,24 +690,10 @@ public class SampleByCursorTest extends AbstractCairoTest {
         });
     }
 
-    private void assertResult(RecordCursorFactory factory, String rows) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(rows);
-    }
-
     private void createRows(String table, String type) throws SqlException {
         execute("CREATE TABLE " + table + "(id INT,k SYMBOL INDEX,v DOUBLE,ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO " + table + " VALUES(1,'a',1.0,'2024-01-01T00:15:00'),"
                 + "(2,'b',3.0,'2024-01-01T00:35:00'),(3,'a',5.0,'2024-01-01T02:15:00'),"
                 + "(4,'b',7.0,'2024-01-01T03:35:00')");
-    }
-
-    private String planOf(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        return sink.getSink().toString();
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

@@ -69,153 +69,153 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             names.add("pg_catalog.pg_roles");
             {
                 final int i = 0;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         objoid	classoid	objsubid	description
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         objoid	classoid	objsubid	description
                         """);
             }
             {
                 final int i = 1;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         oid	enumtypid	enumsortorder	enumlabel
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         oid	enumtypid	enumsortorder	enumlabel
                         """);
             }
             {
                 final int i = 2;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         indexrelid	indrelid	indnatts	indnkeyatts	indisunique	indnullsnotdistinct	indisprimary	indisexclusion	indimmediate	indisclustered	indisvalid	indcheckxmin	indisready	indislive	indisreplident	indkey	indcollation	indclass	indoption	indexprs	indpred
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         indexrelid	indrelid	indnatts	indnkeyatts	indisunique	indnullsnotdistinct	indisprimary	indisexclusion	indimmediate	indisclustered	indisvalid	indcheckxmin	indisready	indislive	indisreplident	indkey	indcollation	indclass	indoption	indexprs	indpred
                         """);
             }
             {
                 final int i = 3;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         inhrelid	inhparent	inhseqno
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         inhrelid	inhparent	inhseqno
                         """);
             }
             {
                 final int i = 4;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         locktype	database	relation	page	tuple	virtualxid	transactionid	classid	objid	objsubid	virtualtransaction	pid	mode	granted	fastpath	waitstart
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         locktype	database	relation	page	tuple	virtualxid	transactionid	classid	objid	objsubid	virtualtransaction	pid	mode	granted	fastpath	waitstart
                         """);
             }
             {
                 final int i = 5;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         rngtypid	rngsubtype	rngcollation	rngsubopc	rngcanonical	rngsubdiff
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         rngtypid	rngsubtype	rngcollation	rngsubopc	rngcanonical	rngsubdiff
                         """);
             }
             {
                 final int i = 6;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         rolname	rolsuper	rolinherit	rolcreaterole	rolcreatedb	rolcanlogin	rolreplication	rolconnlimit	rolpassword	rolvaliduntil	rolbypassrls	rolconfig	oid
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         rolname	rolsuper	rolinherit	rolcreaterole	rolcreatedb	rolcanlogin	rolreplication	rolconnlimit	rolpassword	rolvaliduntil	rolbypassrls	rolconfig	oid
                         """);
             }
             {
                 final int i = 7;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         objoid	classoid	description
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         objoid	classoid	description
                         """);
             }
             {
                 final int i = 8;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         constraint_catalog	constraint_schema	constraint_name	table_catalog	table_schema	table_name	column_name	ordinal_position	position_in_unique_constraint
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         constraint_catalog	constraint_schema	constraint_name	table_catalog	table_schema	table_name	column_name	ordinal_position	position_in_unique_constraint
                         """);
             }
             {
                 final int i = 9;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         constraint_catalog	constraint_schema	constraint_name	unique_constraint_catalog	unique_constraint_schema	unique_constraint_name	match_option	update_rule	delete_rule
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         constraint_catalog	constraint_schema	constraint_name	unique_constraint_catalog	unique_constraint_schema	unique_constraint_name	match_option	update_rule	delete_rule
                         """);
             }
             {
                 final int i = 10;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         constraint_catalog	constraint_schema	constraint_name	table_catalog	table_schema	table_name	constraint_type	is_deferrable	initially_deferred	enforced	nulls_distinct
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         constraint_catalog	constraint_schema	constraint_name	table_catalog	table_schema	table_name	constraint_type	is_deferrable	initially_deferred	enforced	nulls_distinct
                         """);
             }
             {
                 final int i = 11;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         objoid	classoid	objsubid	description
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         objoid	classoid	objsubid	description
                         """);
             }
             {
                 final int i = 12;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         indexrelid	indrelid	indnatts	indnkeyatts	indisunique	indnullsnotdistinct	indisprimary	indisexclusion	indimmediate	indisclustered	indisvalid	indcheckxmin	indisready	indislive	indisreplident	indkey	indcollation	indclass	indoption	indexprs	indpred
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         indexrelid	indrelid	indnatts	indnkeyatts	indisunique	indnullsnotdistinct	indisprimary	indisexclusion	indimmediate	indisclustered	indisvalid	indcheckxmin	indisready	indislive	indisreplident	indkey	indcollation	indclass	indoption	indexprs	indpred
                         """);
             }
             {
                 final int i = 13;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         inhrelid	inhparent	inhseqno
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         inhrelid	inhparent	inhseqno
                         """);
             }
             {
                 final int i = 14;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         locktype	database	relation	page	tuple	virtualxid	transactionid	classid	objid	objsubid	virtualtransaction	pid	mode	granted	fastpath	waitstart
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         locktype	database	relation	page	tuple	virtualxid	transactionid	classid	objid	objsubid	virtualtransaction	pid	mode	granted	fastpath	waitstart
                         """);
             }
             {
                 final int i = 15;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "()", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "()", """
                         rolname	rolsuper	rolinherit	rolcreaterole	rolcreatedb	rolcanlogin	rolreplication	rolconnlimit	rolpassword	rolvaliduntil	rolbypassrls	rolconfig	oid
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i), """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i), """
                         rolname	rolsuper	rolinherit	rolcreaterole	rolcreatedb	rolcanlogin	rolreplication	rolconnlimit	rolpassword	rolvaliduntil	rolbypassrls	rolconfig	oid
                         """);
             }
-            assertQueryRows("SELECT count() FROM pg_catalog.pg_locks()", """
+            assertRowsOnly("SELECT count() FROM pg_catalog.pg_locks()", """
                     count
                     0
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT 7 AS answer FROM information_schema.table_constraints()",
                     """
                             answer
@@ -230,13 +230,13 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             createTables();
             execute("CREATE VIEW lp_catalogue_view AS (SELECT id FROM lp_catalogue_a)");
             drainWalAndViewQueues();
-            assertQueryRows("SELECT table_name FROM all_tables() ORDER BY table_name", """
+            assertRowsOnly("SELECT table_name FROM all_tables() ORDER BY table_name", """
                     table_name
                     lp_catalogue_a
                     lp_catalogue_b
                     lp_catalogue_view
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT table_name,table_type,is_insertable_into FROM information_schema.tables ORDER BY table_name",
                     """
                             table_name	table_type	is_insertable_into
@@ -245,7 +245,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                             lp_catalogue_view	VIEW	false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT table_name,column_name,data_type,ordinal_position FROM information_schema.columns() ORDER BY table_name,ordinal_position",
                     """
                             table_name	column_name	data_type	ordinal_position
@@ -256,7 +256,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                             lp_catalogue_view	id	integer	0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT table_name,column_name,data_type FROM information_schema.questdb_columns ORDER BY table_name,ordinal_position",
                     """
                             table_name	column_name	data_type
@@ -267,14 +267,14 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                             lp_catalogue_view	id	INT
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT view_name,view_sql,view_status FROM views() ORDER BY view_name",
                     """
                             view_name	view_sql	view_status
                             lp_catalogue_view	SELECT id FROM lp_catalogue_a	valid
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT name,signature,runtime_constant,type FROM functions() WHERE name='abs' ORDER BY signature",
                     """
                             name	signature	runtime_constant	type
@@ -285,7 +285,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                             abs	abs(Ξ)	false	STANDARD
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.table_name,c.column_name,c.data_type FROM information_schema.tables t "
                             + "JOIN information_schema.questdb_columns c ON t.table_name=c.table_name "
                             + "WHERE t.is_insertable_into ORDER BY t.table_name,c.ordinal_position",
@@ -297,11 +297,11 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                             lp_catalogue_b	id	LONG
                             """
             );
-            assertQueryRows("SELECT count() FROM all_tables()", """
+            assertRowsOnly("SELECT count() FROM all_tables()", """
                     count
                     3
                     """);
-            assertQueryRows("SELECT 7 AS answer FROM views()", """
+            assertRowsOnly("SELECT 7 AS answer FROM views()", """
                     answer
                     7
                     """);
@@ -312,31 +312,31 @@ public class CatalogueQueryTest extends AbstractCairoTest {
     public void testExplainRetainsExistingCatalogueFactories() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertQueryRows("EXPLAIN SELECT * FROM pg_namespace()", """
+            assertRowsOnly("EXPLAIN SELECT * FROM pg_namespace()", """
                     QUERY PLAN
                     GenericRecord
                     """);
-            assertQueryRows("EXPLAIN SELECT * FROM pg_catalog.pg_database()", """
+            assertRowsOnly("EXPLAIN SELECT * FROM pg_catalog.pg_database()", """
                     QUERY PLAN
                     pg_database()
                     """);
-            assertQueryRows("EXPLAIN SELECT * FROM pg_catalog.pg_locks()", """
+            assertRowsOnly("EXPLAIN SELECT * FROM pg_catalog.pg_locks()", """
                     QUERY PLAN
                     Empty table
                     """);
-            assertQueryRows("EXPLAIN SELECT * FROM information_schema.tables()", """
+            assertRowsOnly("EXPLAIN SELECT * FROM information_schema.tables()", """
                     QUERY PLAN
                     information_schema.tables
                     """);
-            assertQueryRows("EXPLAIN SELECT * FROM information_schema.columns()", """
+            assertRowsOnly("EXPLAIN SELECT * FROM information_schema.columns()", """
                     QUERY PLAN
                     information_schema.columns()
                     """);
-            assertQueryRows("EXPLAIN SELECT * FROM views()", """
+            assertRowsOnly("EXPLAIN SELECT * FROM views()", """
                     QUERY PLAN
                     views()
                     """);
-            assertQueryRows("EXPLAIN SELECT * FROM functions()", """
+            assertRowsOnly("EXPLAIN SELECT * FROM functions()", """
                     QUERY PLAN
                     functions()
                     """);
@@ -420,11 +420,11 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), messages.getQuick(i));
                     }
                     try (RecordCursorFactory factory = compiler.compile("SELECT 7 AS answer FROM pg_database()", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, "answer\n7\n");
+                        assertRowsOnly(factory, "answer\n7\n");
                     }
                 }
             }
-            assertQueryRows("SELECT * FROM information_schema._pg_expandarray(1)", """
+            assertRowsOnly("SELECT * FROM information_schema._pg_expandarray(1)", """
                     x	n
                     """);
         });
@@ -466,7 +466,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                     7
                     7
                     """, 18);
-            assertQueryRows("EXPLAIN SELECT * FROM table_partitions('lp_meta_nano')", """
+            assertRowsOnly("EXPLAIN SELECT * FROM table_partitions('lp_meta_nano')", """
                     QUERY PLAN
                     show_partitions of: lp_meta_nano
                     """);
@@ -497,7 +497,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             createPartitionTable("lp_meta_identity", "TIMESTAMP", "000001", "000009");
             final String sql = "SELECT name,minTimestamp FROM table_partitions('lp_meta_identity') ORDER BY name";
             try (RecordCursorFactory factory = compileRetained(sql)) {
-                assertResult(factory, """
+                assertRowsOnly(factory, """
                         name	minTimestamp
                         2020-01-01	2020-01-01T00:00:00.000001Z
                         2020-01-02	2020-01-02T00:00:00.000009Z
@@ -509,7 +509,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                 TestUtils.assertContains(cursorError(factory, TableReferenceOutOfDateException.class), "cached query plan cannot be used");
                 Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, factory.getMetadata().getColumnType(1));
                 assertPartitionMetadata("lp_meta_identity", ColumnType.TIMESTAMP_NANO);
-                assertQueryRows(sql, """
+                assertRowsOnly(sql, """
                         name	minTimestamp
                         2020-01-01	2020-01-01T00:00:00.000000001Z
                         2020-01-02	2020-01-02T00:00:00.000000009Z
@@ -528,20 +528,20 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                 final String source = "pg_class";
                 for (String suffix : new String[]{"", "()"}) {
                     final String sql = "SELECT * FROM " + source + suffix + " ORDER BY 1,2";
-                    assertQueryRows(sql, """
+                    assertRowsOnly(sql, """
                             oid	relname	relnamespace	reltype	reloftype	relowner	relam	relfilenode	reltablespace	relpages	reltuples	relallvisible	reltoastrelid	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relfrozenxid	relminmxid	relacl	reloptions	relpartbound	relhasoids	xmin
                             1	lp_catalogue_a	2200	0	0	0	0	0	0	false	-1.0	0	0	false	false	p	r	0	0	false	false	false	false	false	true	d	false	0	0	0				false	0
                             2	lp_catalogue_b	2200	0	0	0	0	0	0	false	-1.0	0	0	false	false	p	r	0	0	false	false	false	false	false	true	d	false	0	0	0				false	0
                             1259	pg_class	11	0	0	0	0	0	0	false	-1.0	0	0	false	false	u	r	0	0	false	false	false	false	false	false	d	false	0	0	0				false	0
                             """);
-                    assertQueryRows("EXPLAIN " + sql, """
+                    assertRowsOnly("EXPLAIN " + sql, """
                             QUERY PLAN
                             Encode sort
                               keys: [oid, relname]
                                 pg_class
                             """);
                 }
-                assertQueryRows("SELECT count() FROM " + source + "()", """
+                assertRowsOnly("SELECT count() FROM " + source + "()", """
                         count
                         3
                         """);
@@ -550,20 +550,20 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                 final String source = "pg_catalog.pg_class";
                 for (String suffix : new String[]{"", "()"}) {
                     final String sql = "SELECT * FROM " + source + suffix + " ORDER BY 1,2";
-                    assertQueryRows(sql, """
+                    assertRowsOnly(sql, """
                             oid	relname	relnamespace	reltype	reloftype	relowner	relam	relfilenode	reltablespace	relpages	reltuples	relallvisible	reltoastrelid	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relfrozenxid	relminmxid	relacl	reloptions	relpartbound	relhasoids	xmin
                             1	lp_catalogue_a	2200	0	0	0	0	0	0	false	-1.0	0	0	false	false	p	r	0	0	false	false	false	false	false	true	d	false	0	0	0				false	0
                             2	lp_catalogue_b	2200	0	0	0	0	0	0	false	-1.0	0	0	false	false	p	r	0	0	false	false	false	false	false	true	d	false	0	0	0				false	0
                             1259	pg_class	11	0	0	0	0	0	0	false	-1.0	0	0	false	false	u	r	0	0	false	false	false	false	false	false	d	false	0	0	0				false	0
                             """);
-                    assertQueryRows("EXPLAIN " + sql, """
+                    assertRowsOnly("EXPLAIN " + sql, """
                             QUERY PLAN
                             Encode sort
                               keys: [oid, relname]
                                 pg_class
                             """);
                 }
-                assertQueryRows("SELECT count() FROM " + source + "()", """
+                assertRowsOnly("SELECT count() FROM " + source + "()", """
                         count
                         3
                         """);
@@ -572,21 +572,21 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                 final String source = "pg_attribute";
                 for (String suffix : new String[]{"", "()"}) {
                     final String sql = "SELECT * FROM " + source + suffix + " ORDER BY 1,2";
-                    assertQueryRows(sql, """
+                    assertRowsOnly(sql, """
                             attrelid	attname	attnum	atttypid	attnotnull	atttypmod	attlen	attidentity	attisdropped	atthasdef
                             1	id	1	23	false	-1	4		false	true
                             1	label	2	1043	false	-1	-1		false	true
                             1	ts	3	1114	false	-1	8		false	true
                             2	id	1	20	false	-1	8		false	true
                             """);
-                    assertQueryRows("EXPLAIN " + sql, """
+                    assertRowsOnly("EXPLAIN " + sql, """
                             QUERY PLAN
                             Encode sort
                               keys: [attrelid, attname]
                                 pg_attribute()
                             """);
                 }
-                assertQueryRows("SELECT count() FROM " + source + "()", """
+                assertRowsOnly("SELECT count() FROM " + source + "()", """
                         count
                         4
                         """);
@@ -595,21 +595,21 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                 final String source = "pg_catalog.pg_attribute";
                 for (String suffix : new String[]{"", "()"}) {
                     final String sql = "SELECT * FROM " + source + suffix + " ORDER BY 1,2";
-                    assertQueryRows(sql, """
+                    assertRowsOnly(sql, """
                             attrelid	attname	attnum	atttypid	attnotnull	atttypmod	attlen	attidentity	attisdropped	atthasdef
                             1	id	1	23	false	-1	4		false	true
                             1	label	2	1043	false	-1	-1		false	true
                             1	ts	3	1114	false	-1	8		false	true
                             2	id	1	20	false	-1	8		false	true
                             """);
-                    assertQueryRows("EXPLAIN " + sql, """
+                    assertRowsOnly("EXPLAIN " + sql, """
                             QUERY PLAN
                             Encode sort
                               keys: [attrelid, attname]
                                 pg_attribute()
                             """);
                 }
-                assertQueryRows("SELECT count() FROM " + source + "()", """
+                assertRowsOnly("SELECT count() FROM " + source + "()", """
                         count
                         4
                         """);
@@ -618,7 +618,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                 final String source = "pg_attrdef";
                 for (String suffix : new String[]{"", "()"}) {
                     final String sql = "SELECT * FROM " + source + suffix + " ORDER BY 1,2";
-                    assertQueryRows(sql, """
+                    assertRowsOnly(sql, """
                             adrelid	adnum	adbin
                             1	1\t
                             1	2\t
@@ -626,14 +626,14 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                             1	4\t
                             2	1\t
                             """);
-                    assertQueryRows("EXPLAIN " + sql, """
+                    assertRowsOnly("EXPLAIN " + sql, """
                             QUERY PLAN
                             Encode sort
                               keys: [adrelid, adnum]
                                 pg_attrdef()
                             """);
                 }
-                assertQueryRows("SELECT count() FROM " + source + "()", """
+                assertRowsOnly("SELECT count() FROM " + source + "()", """
                         count
                         5
                         """);
@@ -642,7 +642,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                 final String source = "pg_catalog.pg_attrdef";
                 for (String suffix : new String[]{"", "()"}) {
                     final String sql = "SELECT * FROM " + source + suffix + " ORDER BY 1,2";
-                    assertQueryRows(sql, """
+                    assertRowsOnly(sql, """
                             adrelid	adnum	adbin
                             1	1\t
                             1	2\t
@@ -650,14 +650,14 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                             1	4\t
                             2	1\t
                             """);
-                    assertQueryRows("EXPLAIN " + sql, """
+                    assertRowsOnly("EXPLAIN " + sql, """
                             QUERY PLAN
                             Encode sort
                               keys: [adrelid, adnum]
                                 pg_attrdef()
                             """);
                 }
-                assertQueryRows("SELECT count() FROM " + source + "()", """
+                assertRowsOnly("SELECT count() FROM " + source + "()", """
                         count
                         5
                         """);
@@ -666,7 +666,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                 final String source = "pg_proc";
                 for (String suffix : new String[]{"", "()"}) {
                     final String sql = "SELECT * FROM " + source + suffix + " ORDER BY 1,2";
-                    assertQueryRows(sql, """
+                    assertRowsOnly(sql, """
                             oid	proname	pronamespace	proowner	prolang	procost	prorows	provariadic	prosupport	prokind	prosecdef	proleakproof	proisstrict	proretset	provolatile	proparallel	pronargs	pronargdefaults	prorettype	prosrc	probin
                             0	internal_recv	2200	0	0	0.0	0.0	0	0	f	false	false	true	false	i	s	1	0	2281	internalrecv\t
                             2400	array_recv	2200	0	0	0.0	0.0	0	0	f	false	false	true	false	i	s	1	0	1022	array_recv\t
@@ -686,14 +686,14 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                             2961	uuid_recv	2200	0	0	0.0	0.0	0	0	f	false	false	true	false	i	s	1	0	2950	uuidrecv\t
                             3823	numeric_recv	2200	0	0	0.0	0.0	0	0	f	false	false	true	false	i	s	1	0	1700	numericrecv\t
                             """);
-                    assertQueryRows("EXPLAIN " + sql, """
+                    assertRowsOnly("EXPLAIN " + sql, """
                             QUERY PLAN
                             Encode sort
                               keys: [oid, proname]
                                 GenericRecord
                             """);
                 }
-                assertQueryRows("SELECT count() FROM " + source + "()", """
+                assertRowsOnly("SELECT count() FROM " + source + "()", """
                         count
                         17
                         """);
@@ -701,13 +701,13 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             {
                 final String sql = "SELECT c.relname,a.attname,a.attnum FROM pg_class c JOIN pg_attribute a ON c.oid=a.attrelid "
                         + "WHERE c.relname='lp_catalogue_a' ORDER BY a.attnum";
-                assertQueryRows(sql, """
+                assertRowsOnly(sql, """
                         relname	attname	attnum
                         lp_catalogue_a	id	1
                         lp_catalogue_a	label	2
                         lp_catalogue_a	ts	3
                         """);
-                assertQueryRows("EXPLAIN " + sql, """
+                assertRowsOnly("EXPLAIN " + sql, """
                         QUERY PLAN
                         Encode sort
                           keys: [attnum]
@@ -723,14 +723,14 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             {
                 final String sql = "SELECT d.adnum,d.adbin FROM pg_catalog.pg_attrdef d JOIN pg_catalog.pg_class c ON d.adrelid=c.oid "
                         + "WHERE c.relname='lp_catalogue_a' ORDER BY d.adnum";
-                assertQueryRows(sql, """
+                assertRowsOnly(sql, """
                         adnum	adbin
                         1\t
                         2\t
                         3\t
                         4\t
                         """);
-                assertQueryRows("EXPLAIN " + sql, """
+                assertRowsOnly("EXPLAIN " + sql, """
                         QUERY PLAN
                         Encode sort
                           keys: [adnum]
@@ -745,13 +745,13 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             }
             {
                 final String sql = "SELECT proname,prosrc FROM pg_proc() WHERE proisstrict ORDER BY proname LIMIT 3";
-                assertQueryRows(sql, """
+                assertRowsOnly(sql, """
                         proname	prosrc
                         array_recv	array_recv
                         array_recv	array_recv
                         binary_recv	binaryrecv
                         """);
-                assertQueryRows("EXPLAIN " + sql, """
+                assertRowsOnly("EXPLAIN " + sql, """
                         QUERY PLAN
                         Limit value: 3 skip-rows-max: 0 take-rows-max: 3
                             Encode sort
@@ -764,11 +764,11 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             {
                 final String sql = "SELECT a.relname,b.relname FROM pg_class a JOIN pg_class b ON a.oid=b.oid "
                         + "WHERE a.relname='lp_catalogue_a'";
-                assertQueryRows(sql, """
+                assertRowsOnly(sql, """
                         relname	relname1
                         lp_catalogue_a	lp_catalogue_a
                         """);
-                assertQueryRows("EXPLAIN " + sql, """
+                assertRowsOnly("EXPLAIN " + sql, """
                         QUERY PLAN
                         SelectedRecord
                             Hash Join
@@ -782,7 +782,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = compileRetained(
                     "SELECT c.relname,a.attname FROM pg_class c JOIN pg_attribute a ON c.oid=a.attrelid "
                             + "WHERE c.relname='lp_catalogue_a' ORDER BY a.attnum")) {
-                assertResult(factory, "relname\tattname\nlp_catalogue_a\tid\nlp_catalogue_a\tlabel\nlp_catalogue_a\tts\n");
+                assertRowsOnly(factory, "relname\tattname\nlp_catalogue_a\tid\nlp_catalogue_a\tlabel\nlp_catalogue_a\tts\n");
             }
         });
     }
@@ -800,16 +800,16 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                     RecordCursorFactory defaults = compileRetained(
                             "SELECT adnum FROM pg_attrdef() WHERE adrelid=" + tableId + " ORDER BY adnum")
             ) {
-                assertResult(classes, "relname\nlp_pg_refresh\n");
-                assertResult(attributes, "attname\nid\nlabel\n");
-                assertResult(defaults, "adnum\n1\n2\n");
+                assertRowsOnly(classes, "relname\nlp_pg_refresh\n");
+                assertRowsOnly(attributes, "attname\nid\nlabel\n");
+                assertRowsOnly(defaults, "adnum\n1\n2\n");
                 execute("ALTER TABLE lp_pg_refresh ADD COLUMN qty LONG");
-                assertResult(attributes, "attname\nid\nlabel\nqty\n");
-                assertResult(defaults, "adnum\n1\n2\n3\n");
-                assertResult(attributes, "attname\nid\nlabel\nqty\n");
+                assertRowsOnly(attributes, "attname\nid\nlabel\nqty\n");
+                assertRowsOnly(defaults, "adnum\n1\n2\n3\n");
+                assertRowsOnly(attributes, "attname\nid\nlabel\nqty\n");
                 execute("ALTER TABLE lp_pg_refresh DROP COLUMN qty");
-                assertResult(attributes, "attname\nid\nlabel\n");
-                assertResult(classes, "relname\nlp_pg_refresh\n");
+                assertRowsOnly(attributes, "attname\nid\nlabel\n");
+                assertRowsOnly(classes, "relname\nlp_pg_refresh\n");
             }
             execute("DROP TABLE lp_pg_refresh");
         });
@@ -825,22 +825,22 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                     RecordCursorFactory partitions = compileRetained(partitionSql);
                     RecordCursorFactory storage = compileRetained(storageSql)
             ) {
-                assertResult(partitions, "name\tnumRows\tdetached\tactive\n2020-01-01\t1\tfalse\tfalse\n2020-01-02\t1\tfalse\ttrue\n");
-                assertResult(storage, "tableName\tpartitionCount\trowCount\nlp_meta_refresh\t2\t2\n");
+                assertRowsOnly(partitions, "name\tnumRows\tdetached\tactive\n2020-01-01\t1\tfalse\tfalse\n2020-01-02\t1\tfalse\ttrue\n");
+                assertRowsOnly(storage, "tableName\tpartitionCount\trowCount\nlp_meta_refresh\t2\t2\n");
 
                 execute("INSERT INTO lp_meta_refresh VALUES(3,'2020-01-02T00:00:01Z'),(4,'2020-01-03T00:00:00Z')");
                 execute("CREATE TABLE lp_meta_extra(id INT)");
                 execute("INSERT INTO lp_meta_extra VALUES(1)");
                 engine.releaseAllWriters();
-                assertResult(partitions, "name\tnumRows\tdetached\tactive\n2020-01-01\t1\tfalse\tfalse\n2020-01-02\t2\tfalse\tfalse\n2020-01-03\t1\tfalse\ttrue\n");
-                assertResult(storage, "tableName\tpartitionCount\trowCount\nlp_meta_extra\t1\t1\nlp_meta_refresh\t3\t4\n");
+                assertRowsOnly(partitions, "name\tnumRows\tdetached\tactive\n2020-01-01\t1\tfalse\tfalse\n2020-01-02\t2\tfalse\tfalse\n2020-01-03\t1\tfalse\ttrue\n");
+                assertRowsOnly(storage, "tableName\tpartitionCount\trowCount\nlp_meta_extra\t1\t1\nlp_meta_refresh\t3\t4\n");
 
                 execute("ALTER TABLE lp_meta_refresh DETACH PARTITION LIST '2020-01-01'");
                 execute("ALTER TABLE lp_meta_refresh DROP PARTITION LIST '2020-01-02'");
                 execute("DROP TABLE lp_meta_extra");
                 engine.releaseAllWriters();
-                assertResult(partitions, "name\tnumRows\tdetached\tactive\n2020-01-01.detached\t1\ttrue\tfalse\n2020-01-03\t1\tfalse\ttrue\n");
-                assertResult(storage, "tableName\tpartitionCount\trowCount\nlp_meta_refresh\t1\t1\n");
+                assertRowsOnly(partitions, "name\tnumRows\tdetached\tactive\n2020-01-01.detached\t1\ttrue\tfalse\n2020-01-03\t1\tfalse\ttrue\n");
+                assertRowsOnly(storage, "tableName\tpartitionCount\trowCount\nlp_meta_refresh\t1\t1\n");
             }
         });
     }
@@ -875,7 +875,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                     7
                     7
                     """, 6);
-            assertQueryRows("EXPLAIN SELECT * FROM table_storage()", """
+            assertRowsOnly("EXPLAIN SELECT * FROM table_storage()", """
                     QUERY PLAN
                     table_storage()
                     """);
@@ -895,25 +895,25 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                     RecordCursorFactory views = compileRetained(
                             "SELECT view_name FROM views() ORDER BY view_name")
             ) {
-                assertResult(tables, "table_name\nlp_catalogue_a\n");
-                assertResult(columns, "column_name\tdata_type\nid\tINT\n");
-                assertResult(views, "view_name\n");
+                assertRowsOnly(tables, "table_name\nlp_catalogue_a\n");
+                assertRowsOnly(columns, "column_name\tdata_type\nid\tINT\n");
+                assertRowsOnly(views, "view_name\n");
 
                 execute("CREATE TABLE lp_catalogue_b (id LONG)");
                 execute("ALTER TABLE lp_catalogue_a ADD COLUMN label STRING");
                 execute("CREATE VIEW lp_catalogue_view AS (SELECT id FROM lp_catalogue_a)");
                 drainWalAndViewQueues();
-                assertResult(tables, "table_name\nlp_catalogue_a\nlp_catalogue_b\nlp_catalogue_view\n");
-                assertResult(columns, "column_name\tdata_type\nid\tINT\nlabel\tSTRING\n");
-                assertResult(views, "view_name\nlp_catalogue_view\n");
+                assertRowsOnly(tables, "table_name\nlp_catalogue_a\nlp_catalogue_b\nlp_catalogue_view\n");
+                assertRowsOnly(columns, "column_name\tdata_type\nid\tINT\nlabel\tSTRING\n");
+                assertRowsOnly(views, "view_name\nlp_catalogue_view\n");
 
                 execute("DROP VIEW lp_catalogue_view");
                 drainWalAndViewQueues();
                 execute("DROP TABLE lp_catalogue_b");
                 execute("ALTER TABLE lp_catalogue_a DROP COLUMN label");
-                assertResult(tables, "table_name\nlp_catalogue_a\n");
-                assertResult(columns, "column_name\tdata_type\nid\tINT\n");
-                assertResult(views, "view_name\n");
+                assertRowsOnly(tables, "table_name\nlp_catalogue_a\n");
+                assertRowsOnly(columns, "column_name\tdata_type\nid\tINT\n");
+                assertRowsOnly(views, "view_name\n");
             }
             execute("DROP TABLE lp_catalogue_a");
         });
@@ -935,12 +935,12 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             names.add("information_schema.character_sets");
             {
                 final int i = 0;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         nspname	oid	xmin	nspowner
                         pg_catalog	11	0	1
                         public	2200	0	1
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         nspname	oid	xmin	nspowner
                         pg_catalog	11	0	1
                         public	2200	0	1
@@ -948,12 +948,12 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             }
             {
                 final int i = 1;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         nspname	oid	xmin	nspowner
                         pg_catalog	11	0	1
                         public	2200	0	1
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         nspname	oid	xmin	nspowner
                         pg_catalog	11	0	1
                         public	2200	0	1
@@ -961,29 +961,29 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             }
             {
                 final int i = 2;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         oid	datname	datdba	encoding	datcollate	datctype	datistemplate	datallowconn	datconnlimit	datlastsysoid	datfrozenxid	datminmxid	dattablespace	datacl
                         1	qdb	2	0	en_US.UTF-8	en_US.UTF-8	false	true	-1	1	-1	0	3\t
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         oid	datname	datdba	encoding	datcollate	datctype	datistemplate	datallowconn	datconnlimit	datlastsysoid	datfrozenxid	datminmxid	dattablespace	datacl
                         1	qdb	2	0	en_US.UTF-8	en_US.UTF-8	false	true	-1	1	-1	0	3\t
                         """);
             }
             {
                 final int i = 3;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         oid	datname	datdba	encoding	datcollate	datctype	datistemplate	datallowconn	datconnlimit	datlastsysoid	datfrozenxid	datminmxid	dattablespace	datacl
                         1	qdb	2	0	en_US.UTF-8	en_US.UTF-8	false	true	-1	1	-1	0	3\t
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         oid	datname	datdba	encoding	datcollate	datctype	datistemplate	datallowconn	datconnlimit	datlastsysoid	datfrozenxid	datminmxid	dattablespace	datacl
                         1	qdb	2	0	en_US.UTF-8	en_US.UTF-8	false	true	-1	1	-1	0	3\t
                         """);
             }
             {
                 final int i = 4;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         word	catcode	barelabel	catdesc	baredesc
                         add		false	\t
                         all		false	\t
@@ -1076,7 +1076,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                         with		false	\t
                         writer		false	\t
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         word	catcode	barelabel	catdesc	baredesc
                         add		false	\t
                         all		false	\t
@@ -1172,7 +1172,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             }
             {
                 final int i = 5;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         word	catcode	barelabel	catdesc	baredesc
                         add		false	\t
                         all		false	\t
@@ -1265,7 +1265,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                         with		false	\t
                         writer		false	\t
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         word	catcode	barelabel	catdesc	baredesc
                         add		false	\t
                         all		false	\t
@@ -1361,29 +1361,29 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             }
             {
                 final int i = 6;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         oid	extname	extowner	extnamespace	extrelocatable	extversion	extconfig	extcondition
                         1	questdb	1	1	false	[DEVELOPMENT]	\t
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         oid	extname	extowner	extnamespace	extrelocatable	extversion	extconfig	extcondition
                         1	questdb	1	1	false	[DEVELOPMENT]	\t
                         """);
             }
             {
                 final int i = 7;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         oid	extname	extowner	extnamespace	extrelocatable	extversion	extconfig	extcondition
                         1	questdb	1	1	false	[DEVELOPMENT]	\t
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         oid	extname	extowner	extnamespace	extrelocatable	extversion	extconfig	extcondition
                         1	questdb	1	1	false	[DEVELOPMENT]	\t
                         """);
             }
             {
                 final int i = 8;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         keyword
                         add
                         all
@@ -1476,7 +1476,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                         with
                         writer
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         keyword
                         add
                         all
@@ -1572,23 +1572,23 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             }
             {
                 final int i = 9;
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + "() ORDER BY 1", """
                         character_set_catalog	character_set_schema	character_set_name	character_repertoire	form_of_use	default_collate_catalog	default_collate_schema	default_collate_name\s
                         		UTF8	UCS	UTF8	public	public	en_US.utf8
                         """);
-                assertQueryRows("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
+                assertRowsOnly("SELECT * FROM " + names.getQuick(i) + " ORDER BY 1", """
                         character_set_catalog	character_set_schema	character_set_name	character_repertoire	form_of_use	default_collate_catalog	default_collate_schema	default_collate_name\s
                         		UTF8	UCS	UTF8	public	public	en_US.utf8
                         """);
             }
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT p.nspname AS name,p.oid+1 AS next_id FROM pg_catalog.pg_namespace p WHERE p.oid>0 ORDER BY next_id DESC LIMIT 1",
                     """
                             name	next_id
                             public	2201
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT a.nspname AS a,b.nspname AS b FROM pg_namespace() a CROSS JOIN pg_namespace() b ORDER BY a,b",
                     """
                             a	b
@@ -1598,11 +1598,11 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                             public	public
                             """
             );
-            assertQueryRows("SELECT count() FROM pg_database()", """
+            assertRowsOnly("SELECT count() FROM pg_database()", """
                     count
                     1
                     """);
-            assertQueryRows("SELECT 7 AS answer FROM pg_database()", """
+            assertRowsOnly("SELECT 7 AS answer FROM pg_database()", """
                     answer
                     7
                     """);
@@ -1614,15 +1614,15 @@ public class CatalogueQueryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pg_database (id INT)");
             execute("INSERT INTO pg_database VALUES (42)");
-            assertQueryRows("SELECT id FROM pg_database", """
+            assertRowsOnly("SELECT id FROM pg_database", """
                     id
                     42
                     """);
-            assertQueryRows("SELECT datname FROM pg_database()", """
+            assertRowsOnly("SELECT datname FROM pg_database()", """
                     datname
                     qdb
                     """);
-            assertQueryRows("SELECT datname FROM pg_catalog.pg_database", """
+            assertRowsOnly("SELECT datname FROM pg_catalog.pg_database", """
                     datname
                     qdb
                     """);
@@ -1635,7 +1635,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
         ) {
             assertSourceColumnCount(sql, compiler, sourceColumnCount);
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
@@ -1684,10 +1684,6 @@ public class CatalogueQueryTest extends AbstractCairoTest {
         }
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private RecordCursorFactory compileRetained(String sql) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
@@ -1698,7 +1694,7 @@ public class CatalogueQueryTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
                 }
                 try (RecordCursorFactory other = compiler.compile("SELECT 7 AS answer FROM pg_database()", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(other, "answer\n7\n");
+                    assertRowsOnly(other, "answer\n7\n");
                 }
                 compiler.clear();
                 return factory;
@@ -1728,9 +1724,5 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             Assert.assertEquals(type, e.getClass());
             return ((FlyweightMessageContainer) e).getFlyweightMessage().toString();
         }
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

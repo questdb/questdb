@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
@@ -48,7 +47,7 @@ public class SqlSubsampleFilterFusionTest extends AbstractCairoTest {
                 final CachedWindowLightRecordCursorFactory window = findWindow(factory);
                 final WindowFunction keep = window.getSingleRowSelectingFunction();
                 Assert.assertNotNull(keep);
-                TestUtils.assertContains(plan(factory), "CachedWindowLightSelect");
+                TestUtils.assertContains(planText(factory), "CachedWindowLightSelect");
                 assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns("id\tflag\n1\ttrue\n3\ttrue\n5\ttrue\n");
             }
         });
@@ -66,7 +65,7 @@ public class SqlSubsampleFilterFusionTest extends AbstractCairoTest {
                     ).getRecordCursorFactory()) {
                         final CachedWindowLightRecordCursorFactory window = findWindow(factory);
                         Assert.assertNull(window.getSingleRowSelectingFunction());
-                        final String plan = plan(factory);
+                        final String plan = planText(factory);
                         TestUtils.assertContains(plan, "Filter");
                         TestUtils.assertContains(plan, "CachedWindowLight");
                         Assert.assertFalse(plan.contains("CachedWindowLightSelect"));
@@ -93,12 +92,6 @@ public class SqlSubsampleFilterFusionTest extends AbstractCairoTest {
         expression.setSubsampleKeepFlag(false);
         spec.of(expression);
         Assert.assertFalse(spec.isSubsampleKeepFlag());
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        return sink.getSink().toString();
     }
 
     private static CachedWindowLightRecordCursorFactory findWindow(RecordCursorFactory factory) {

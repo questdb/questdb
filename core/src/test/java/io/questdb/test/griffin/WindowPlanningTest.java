@@ -26,11 +26,9 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Misc;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -41,7 +39,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
     public void testStreamingAndCachedRankingUseBoundKeys() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,row_number() OVER() rn FROM lp_window ORDER BY id",
                     """
                             id	rn
@@ -52,7 +50,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	5
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,row_number() OVER(PARTITION BY k ORDER BY ts) rn,"
                             + "rank() OVER(ORDER BY v) r,dense_rank() OVER(ORDER BY v) dr FROM lp_window ORDER BY id",
                     """
@@ -64,7 +62,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	2	2	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,rank() OVER(PARTITION BY k ORDER BY v,id DESC) r FROM lp_window ORDER BY id",
                     """
                             id	r
@@ -75,7 +73,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,row_number() OVER() rn FROM lp_window ORDER BY row_number() OVER() DESC",
                     """
                             id	rn
@@ -86,7 +84,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             1	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,sum(v) OVER() s FROM lp_window ORDER BY sum(v) OVER(),id",
                     """
                             id	s
@@ -97,7 +95,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	9.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_window ORDER BY abs(row_number() OVER()) DESC",
                     """
                             id
@@ -115,7 +113,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
     public void testRowsRangeNullTreatmentAndBothTimestampPrecisions() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,sum(v) OVER(PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) s,"
                             + "avg(v) OVER(PARTITION BY k) a,count(v) OVER() c FROM lp_window ORDER BY id",
                     """
@@ -127,7 +125,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	4.0	2.0	4
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,min(v) OVER(ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) mn,"
                             + "max(v) OVER(ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) mx FROM lp_window ORDER BY id",
                     """
@@ -139,7 +137,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	1.0	4.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,sum(v) OVER(ORDER BY ts RANGE BETWEEN 2 SECOND PRECEDING AND CURRENT ROW) s FROM lp_window ORDER BY id",
                     """
                             id	s
@@ -152,7 +150,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
             );
             execute("CREATE TABLE lp_window_ns(id INT,v DOUBLE,ts TIMESTAMP_NS) TIMESTAMP(ts)");
             execute("INSERT INTO lp_window_ns SELECT id,v,ts::TIMESTAMP_NS FROM lp_window");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,sum(v) OVER(ORDER BY ts RANGE BETWEEN 2 SECOND PRECEDING AND CURRENT ROW) s FROM lp_window_ns ORDER BY id",
                     """
                             id	s
@@ -163,7 +161,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	6.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,first_value(v) IGNORE NULLS OVER(ORDER BY ts) f,"
                             + "last_value(v) IGNORE NULLS OVER(ORDER BY ts) l FROM lp_window ORDER BY id",
                     """
@@ -182,7 +180,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
     public void testLeadLagNthAndComputedKeys() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,lag(v,2,0.0) OVER(PARTITION BY k ORDER BY ts) l,"
                             + "lead(v) OVER(PARTITION BY k ORDER BY ts) n FROM lp_window ORDER BY id",
                     """
@@ -194,7 +192,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	0.0	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,nth_value(v,2) OVER(ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n FROM lp_window ORDER BY id",
                     """
                             id	n
@@ -205,7 +203,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	2.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,v+id x,rank() OVER(PARTITION BY id%2 ORDER BY x,id DESC) r FROM lp_window ORDER BY id",
                     """
                             id	x	r
@@ -216,7 +214,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	7.0	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT *,v+id x,row_number() OVER(ORDER BY x) rn FROM lp_window ORDER BY id",
                     """
                             id	k	v	ts	x	rn
@@ -234,7 +232,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
     public void testNamedWindowsInheritanceAndIndependentOccurrences() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,sum(v) OVER w2 s,avg(v) OVER w2 a FROM lp_window "
                             + "WINDOW w AS(PARTITION BY k),w2 AS(w ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) ORDER BY id",
                     """
@@ -246,7 +244,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	4.0	2.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "WITH q AS(SELECT id,row_number() OVER w rn FROM lp_window WINDOW w AS(ORDER BY ts)) "
                             + "SELECT id,rn FROM q UNION ALL SELECT id,rn FROM q ORDER BY id,rn",
                     """
@@ -270,7 +268,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
     public void testJoinDuplicateColumnNamesUnderWindow() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT a.id, b.id, a.k, b.k, sum(b.v) OVER (PARTITION BY a.k ORDER BY b.id) s "
                             + "FROM lp_window a JOIN lp_window b ON a.id = b.id ORDER BY a.id",
                     """
@@ -282,7 +280,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	5	b	b	4.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT a.id + b.id x, a.k, b.k, row_number() OVER (PARTITION BY b.k ORDER BY a.id DESC) rn "
                             + "FROM lp_window a JOIN lp_window b ON a.id = b.id ORDER BY x",
                     """
@@ -301,7 +299,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
     public void testNestedWindowsScalarWrappersAndSelectAliases() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,abs(sum(v) OVER()-avg(v) OVER()) d,row_number() OVER()+1 n FROM lp_window ORDER BY id",
                     """
                             id	d	n
@@ -312,7 +310,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	6.75	6
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,sum(sum(v) OVER()) OVER() s FROM lp_window ORDER BY id",
                     """
                             id	s
@@ -323,7 +321,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             5	45.0
                             """
             );
-            assertQueryRows("SELECT v x,sum(x) OVER() s FROM lp_window ORDER BY id", """
+            assertRowsOnly("SELECT v x,sum(x) OVER() s FROM lp_window ORDER BY id", """
                     x	s
                     1.0	9.0
                     2.0	9.0
@@ -331,7 +329,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                     4.0	9.0
                     2.0	9.0
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT v+id x,lag(x) OVER(ORDER BY ts) l FROM lp_window ORDER BY id",
                     """
                             x	l
@@ -342,7 +340,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             7.0	8.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,v s,row_number() OVER() rn FROM (SELECT k,sum(v) v FROM lp_window GROUP BY k)",
                     """
                             k	s	rn
@@ -357,11 +355,11 @@ public class WindowPlanningTest extends AbstractCairoTest {
     public void testAggregateOverWindowAndDistinctWindowResults() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT sum(sum(v) OVER()+sum(v) OVER()) s FROM lp_window", """
+            assertRowsOnly("SELECT sum(sum(v) OVER()+sum(v) OVER()) s FROM lp_window", """
                     s
                     90.0
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,max(avg(v) OVER()) m FROM lp_window GROUP BY k ORDER BY k",
                     """
                             k	m
@@ -369,7 +367,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             b	2.25
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT k,sum(v) OVER(PARTITION BY k) s FROM lp_window ORDER BY k",
                     """
                             k	s
@@ -377,7 +375,7 @@ public class WindowPlanningTest extends AbstractCairoTest {
                             b	4.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,v,row_number() OVER(ORDER BY v DESC) rn FROM (SELECT k,sum(v) v FROM lp_window GROUP BY k) ORDER BY k",
                     """
                             k	v	rn
@@ -432,15 +430,15 @@ public class WindowPlanningTest extends AbstractCairoTest {
                 final String expectedPlan;
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-                    expectedPlan = plan(retained);
-                    assertResult(retained, expected);
+                    expectedPlan = planText(retained);
+                    assertRowsOnly(retained, expected);
                     try (RecordCursorFactory ignored = compiler.compile("SELECT count() FROM lp_window", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(ignored);
                     }
                     compiler.clear();
                 }
-                assertResult(retained, expected);
-                TestUtils.assertEquals(expectedPlan, plan(retained));
+                assertRowsOnly(retained, expected);
+                TestUtils.assertEquals(expectedPlan, planText(retained));
             } finally {
                 Misc.free(retained);
             }
@@ -466,8 +464,8 @@ public class WindowPlanningTest extends AbstractCairoTest {
                 final String expectedPlan;
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-                    expectedPlan = plan(retained);
-                    assertResult(retained, expected);
+                    expectedPlan = planText(retained);
+                    assertRowsOnly(retained, expected);
                     compiler.clear();
                     try (RecordCursorFactory ignored = compiler.compile(
                             "SELECT id,row_number() OVER(ORDER BY id DESC) other FROM lp_window", sqlExecutionContext
@@ -475,16 +473,12 @@ public class WindowPlanningTest extends AbstractCairoTest {
                         Assert.assertNotNull(ignored);
                     }
                 }
-                assertResult(retained, expected);
-                TestUtils.assertEquals(expectedPlan, plan(retained));
+                assertRowsOnly(retained, expected);
+                TestUtils.assertEquals(expectedPlan, planText(retained));
             } finally {
                 Misc.free(retained);
             }
         });
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {
@@ -507,19 +501,5 @@ public class WindowPlanningTest extends AbstractCairoTest {
             }
         }
         return false;
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        final StringSink text = new StringSink();
-        for (int i = 1, n = sink.getLineCount(); i <= n; i++) {
-            text.put(sink.getLine(i)).put('\n');
-        }
-        return text.toString();
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

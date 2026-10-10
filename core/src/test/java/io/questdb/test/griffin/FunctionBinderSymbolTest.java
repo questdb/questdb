@@ -29,24 +29,25 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.FunctionResolver;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.Chars;
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.FunctionBindingHarness.binary;
+import static io.questdb.test.griffin.FunctionBindingHarness.call;
+import static io.questdb.test.griffin.FunctionBindingHarness.constant;
+import static io.questdb.test.griffin.FunctionBindingHarness.literal;
+import static io.questdb.test.griffin.FunctionBindingHarness.parser;
+import static io.questdb.test.griffin.FunctionBindingHarness.schema;
 
 public class FunctionBinderSymbolTest extends AbstractCairoTest {
     @Test
@@ -99,7 +100,7 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
             execute("CREATE TABLE fb_symbol(s SYMBOL,t SYMBOL)");
             execute("INSERT INTO fb_symbol VALUES('alpha','alpha'),('beta','gamma'),(null,null)");
             final ObjList<Function> constructed = new ObjList<>();
-            final FunctionParser parser = parser(constructed);
+            final FunctionParser parser = parser(engine, constructed);
             try (RecordCursorFactory dynamic = select("SELECT s,t FROM fb_symbol UNION ALL SELECT t,s FROM fb_symbol");
                  FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 Assert.assertFalse(dynamic.getMetadata().isSymbolTableStatic(0));
@@ -150,7 +151,7 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
             execute("CREATE TABLE fb_symbol(unused INT,s SYMBOL,t SYMBOL)");
             execute("INSERT INTO fb_symbol VALUES(1,'alpha','alpha'),(2,'beta','gamma'),(3,null,null)");
             final ObjList<Function> constructed = new ObjList<>();
-            final FunctionParser parser = parser(constructed);
+            final FunctionParser parser = parser(engine, constructed);
             try (RecordCursorFactory original = select("SELECT unused,s,t FROM fb_symbol");
                  RecordCursorFactory narrowed = select("SELECT s,t FROM fb_symbol");
                  FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
@@ -197,7 +198,7 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
             try {
                 for (boolean isDynamic : new boolean[]{false, true}) {
                     final ObjList<Function> constructed = new ObjList<>();
-                    final FunctionParser parser = parser(constructed);
+                    final FunctionParser parser = parser(engine, constructed);
                     try (RecordCursorFactory original = select("SELECT unused,s FROM fb_symbol");
                          RecordCursorFactory narrowed = select(isDynamic
                                  ? "SELECT s FROM fb_symbol UNION ALL SELECT s FROM fb_symbol"
@@ -247,56 +248,10 @@ public class FunctionBinderSymbolTest extends AbstractCairoTest {
         });
     }
 
-    private static ExpressionNode binary(String name, ExpressionNode left, ExpressionNode right) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
-        node.lhs = left;
-        node.rhs = right;
-        node.paramCount = 2;
-        return node;
-    }
-
-    private static ExpressionNode call(String name, ObjList<ExpressionNode> arguments) {
-        final ExpressionNode expression = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
-        expression.paramCount = arguments.size();
-        for (int i = arguments.size() - 1; i >= 0; i--) {
-            expression.args.add(arguments.getQuick(i));
-        }
-        return expression;
-    }
-
-    private static ExpressionNode constant(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, token, 0, 0);
-    }
-
-    private static ExpressionNode literal(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, token, 0, 0);
-    }
-
-    private static OutputSchema schema(RecordMetadata metadata, int firstId) {
-        final OutputSchema schema = new OutputSchema();
-        for (int i = 0; i < metadata.getColumnCount(); i++) {
-            schema.add(firstId + i, metadata.getColumnName(i), metadata.getColumnType(i), true);
-            schema.setSymbolTableStatic(i, metadata.isSymbolTableStatic(i));
-        }
-        return schema;
-    }
-
     private static boolean symbolsEqual(Record record) {
         final CharSequence left = record.getSymA(0);
         final CharSequence right = record.getSymB(1);
         return left == null ? right == null : Chars.equalsNc(left, right);
-    }
-
-    private FunctionParser parser(ObjList<Function> constructed) {
-        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
-            @Override
-            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                final Function result = super.createFunction(overload, position, name, args, positions, context);
-                constructed.add(result);
-                return result;
-            }
-        });
     }
 
 }

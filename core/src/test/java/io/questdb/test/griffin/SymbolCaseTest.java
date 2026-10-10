@@ -53,7 +53,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
             {
                 final int i = 0;
                 final String expression = expressions.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM lp_sym_case ORDER BY id",
                         """
                                 id	val
@@ -63,7 +63,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                                 4	-1
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                         """
                                 id	val
@@ -81,7 +81,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
             {
                 final int i = 1;
                 final String expression = expressions.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM lp_sym_case ORDER BY id",
                         """
                                 id	val
@@ -91,7 +91,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                                 4	40
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                         """
                                 id	val
@@ -109,7 +109,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
             {
                 final int i = 2;
                 final String expression = expressions.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM lp_sym_case ORDER BY id",
                         """
                                 id	val
@@ -119,7 +119,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                                 4\t
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                         """
                                 id	val
@@ -137,7 +137,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
             {
                 final int i = 3;
                 final String expression = expressions.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM lp_sym_case ORDER BY id",
                         """
                                 id	val
@@ -147,7 +147,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                                 4\t
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                         """
                                 id	val
@@ -165,7 +165,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
             {
                 final int i = 4;
                 final String expression = expressions.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM lp_sym_case ORDER BY id",
                         """
                                 id	val
@@ -175,7 +175,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                                 4	last
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                         """
                                 id	val
@@ -193,7 +193,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
             {
                 final int i = 5;
                 final String expression = expressions.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM lp_sym_case ORDER BY id",
                         """
                                 id	val
@@ -203,7 +203,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                                 4	四
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                         """
                                 id	val
@@ -221,7 +221,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
             {
                 final int i = 6;
                 final String expression = expressions.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM lp_sym_case ORDER BY id",
                         """
                                 id	val
@@ -231,7 +231,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                                 4	四
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                         """
                                 id	val
@@ -249,7 +249,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
             {
                 final int i = 7;
                 final String expression = expressions.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM lp_sym_case ORDER BY id",
                         """
                                 id	val
@@ -259,7 +259,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                                 4	3
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                         """
                                 id	val
@@ -277,7 +277,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
             {
                 final int i = 8;
                 final String expression = expressions.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM lp_sym_case ORDER BY id",
                         """
                                 id	val
@@ -287,7 +287,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                                 4\t
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + expression + " val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                         """
                                 id	val
@@ -317,7 +317,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
     public void testDiscardedNativeBranchesAndFailureRecovery() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE active WHEN true THEN true WHEN false THEN false ELSE id IN (1,2,3) END val FROM lp_sym_case ORDER BY id",
                     """
                             id	val
@@ -327,7 +327,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                             4	false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE label WHEN null THEN id IN (1,2,3) WHEN null THEN true ELSE false END val FROM lp_sym_case ORDER BY id",
                     """
                             id	val
@@ -337,7 +337,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                             4	false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE s WHEN null THEN id IN (1,2,3) WHEN null THEN true ELSE false END val FROM lp_sym_case ORDER BY id",
                     """
                             id	val
@@ -347,7 +347,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                             4	false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE s WHEN null THEN id IN (1,2,3) WHEN null THEN true ELSE false END val FROM (lp_sym_case UNION ALL lp_sym_case) ORDER BY id",
                     """
                             id	val
@@ -369,7 +369,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "duplicate branch");
                     }
                     try (RecordCursorFactory factory = compiler.compile("SELECT CASE s WHEN 'a' THEN 1 ELSE 0 END val FROM lp_sym_case ORDER BY id", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, "val\n1\n0\n0\n0\n");
+                        assertRowsOnly(factory, "val\n1\n0\n0\n0\n");
                     }
                 }
             }
@@ -380,7 +380,7 @@ public class SymbolCaseTest extends AbstractCairoTest {
     public void testMixedTextBranchesInAggregatesAndScalarFilters() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CASE WHEN active THEN s ELSE label END k,count() FROM lp_sym_case GROUP BY 1 ORDER BY k",
                     """
                             k	count
@@ -390,21 +390,21 @@ public class SymbolCaseTest extends AbstractCairoTest {
                             second	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT sum(CASE s WHEN 'a' THEN id ELSE 0 END) FROM lp_sym_case",
                     """
                             sum
                             1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (lp_sym_case LIMIT 4) WHERE CASE s WHEN 'a' THEN true ELSE false END ORDER BY id",
                     """
                             id
                             1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE v WHEN '中' THEN s ELSE label END val FROM lp_sym_case ORDER BY id",
                     """
                             id	val
@@ -439,23 +439,15 @@ public class SymbolCaseTest extends AbstractCairoTest {
                 }
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, "id\tval\n1\t10\n2\t-1\n3\t-1\n4\t-1\n");
+                assertRowsOnly(factory, "id\tval\n1\t10\n2\t-1\n3\t-1\n4\t-1\n");
                 execute("INSERT INTO lp_sym_case VALUES(5,'new','other','new','新',true)");
-                assertResult(factory, "id\tval\n1\t10\n2\t-1\n3\t-1\n4\t-1\n5\t20\n");
+                assertRowsOnly(factory, "id\tval\n1\t10\n2\t-1\n3\t-1\n4\t-1\n5\t20\n");
             }
         });
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {
         execute("CREATE TABLE lp_sym_case(id INT,s SYMBOL,t SYMBOL,label STRING,v VARCHAR,active BOOLEAN)");
         execute("INSERT INTO lp_sym_case VALUES(1,'a','x','first','一',true),(2,'b','y','second','中',false),(3,null,'z',null,null,true),(4,'c',null,'last','四',false)");
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

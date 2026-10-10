@@ -63,6 +63,7 @@ import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -330,7 +331,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * not carry; a scan builds it exactly where its access path is empty.
      */
     private static RecordCursorFactory verifyPhysicalProperties(LogicalPlan plan, RecordCursorFactory factory) {
-        final ScanPlan scan = plan instanceof LatestByPlan latest ? LogicalPlans.latestByScan(latest) : LogicalPlans.scanThroughFilter(plan);
+        final ScanPlan scan = plan instanceof LatestByPlan latest ? GeneratedShapes.latestByScan(latest) : LogicalPlans.scanThroughFilter(plan);
         if (scan == null && factory instanceof EmptyTableRecordCursorFactory) {
             return factory;
         }
@@ -354,7 +355,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final LogicalPlan input = plan.inputAt(0);
         final BoundExpression residual = plan instanceof FilterPlan filter ? filter.getPredicate() : null;
         final RecordCursorFactory base;
-        if (plan instanceof FilterPlan filter && residual != null && LogicalPlans.fusedScan(filter) instanceof ScanPlan scan) {
+        if (plan instanceof FilterPlan filter && residual != null && GeneratedShapes.fusedScan(filter) instanceof ScanPlan scan) {
             return scanGenerator.generateFiltered(frame, scan, residual, executionContext);
         } else if (plan instanceof LimitPlan limit && input instanceof DistinctPlan distinct) {
             base = aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext);
@@ -497,11 +498,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         final RecordCursorFactory factory = switch (plan) {
             case WindowPlan window -> windowGenerator.generateWindow(frame, window, null, executionContext);
-            case ProjectPlan project when project.inputAt(0) instanceof WindowPlan window && LogicalPlans.isWindowOutputProjection(project, window) ->
+            case ProjectPlan project when project.inputAt(0) instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window) ->
                     windowGenerator.generateWindow(frame, window, project, executionContext);
             case ProjectPlan project when project.inputAt(0) instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ->
                     joinGenerator.generateWindowJoin(frame, windowJoin, project, executionContext);
-            case LatestByPlan latest when LogicalPlans.latestByScan(latest) instanceof ScanPlan scan ->
+            case LatestByPlan latest when GeneratedShapes.latestByScan(latest) instanceof ScanPlan scan ->
                     scanGenerator.generateLatestBy(frame, latest, scan, executionContext);
             case LatestByPlan latest -> latestByGenerator.generateLatestBy(frame, latest, executionContext);
             case SampleByPlan sample -> sampleByGenerator.generateSampleBy(frame, sample, executionContext);
@@ -514,7 +515,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case DistinctPlan distinct -> aggregateGenerator.generateDistinct(frame, distinct, null, executionContext);
             case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getInput()) ->
                     sortGenerator.generateSortedLimit(frame, limit.getInput(), limit, executionContext);
-            case AggregatePlan aggregate when LogicalPlans.postingDistinctScan(aggregate) != null ->
+            case AggregatePlan aggregate when GeneratedShapes.postingDistinctScan(aggregate) != null ->
                     scanGenerator.generatePostingDistinct(frame, aggregate, executionContext);
             case AggregatePlan aggregate -> aggregateGenerator.generateAggregate(frame, aggregate, executionContext);
             case JoinPlan join -> joinGenerator.generateJoin(frame, join, executionContext);
@@ -533,20 +534,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     RecordCursorFactory generateSource(GenerationFrame frame, LogicalPlan source, @Nullable PreparedFilter stolen,
                                        SqlExecutionContext executionContext) throws SqlException {
         return stolen != null
-                ? generateStolenFilter(frame, LogicalPlans.stolenFilter(source), stolen, executionContext)
+                ? generateStolenFilter(frame, GeneratedShapes.stolenFilter(source), stolen, executionContext)
                 : generate(frame, source, executionContext);
     }
 
     /**
-     * Builds the factory under a filter node a parallel consumer steals, without the filter, and prepares the filter
-     * over it in {@code target}, which owns the filter function from then on, also on failure. The caller owns the
-     * returned factory.
+     * Builds the factory under {@code filter}, the node the plan records a parallel consumer steals, without the
+     * filter, and prepares the filter over it in {@code target}, which owns the filter function from then on, also on
+     * failure. The caller owns the returned factory.
      */
-    RecordCursorFactory generateStolenFilter(GenerationFrame frame, FilterPlan filter, PreparedFilter target, SqlExecutionContext executionContext)
+    RecordCursorFactory generateStolenFilter(GenerationFrame frame, @Nullable FilterPlan filter, PreparedFilter target, SqlExecutionContext executionContext)
             throws SqlException {
+        if (filter == null) {
+            throw new IllegalStateException("stolen filter is not planned");
+        }
         final LogicalPlan input = filter.getInput();
         final BoundExpression predicate = filter.getPredicate();
-        final ScanPlan scan = LogicalPlans.fusedScan(filter);
+        final ScanPlan scan = GeneratedShapes.fusedScan(filter);
         final RecordCursorFactory leaf;
         if (scan != null) {
             leaf = scanGenerator.generateStolenFilter(frame, scan, predicate, target, executionContext);

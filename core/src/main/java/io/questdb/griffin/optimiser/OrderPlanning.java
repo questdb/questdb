@@ -35,6 +35,7 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
@@ -382,20 +383,20 @@ final class OrderPlanning implements OptimiserPass {
         switch (plan) {
             case WindowPlan window -> requireWindow(window, orderColumnId, direction, order,
                     window.isSelectOrdered() && order != null && order.getInput() == plan, isRowOrderRequired);
-            case ProjectPlan project when project.getInput() instanceof WindowPlan window && LogicalPlans.isWindowOutputProjection(project, window) ->
+            case ProjectPlan project when project.getInput() instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window) ->
                     requireWindow(window, LogicalPlans.projectedSourceColumnId(project, orderColumnId), direction, projectedOrder(project, order),
                             window.isSelectOrdered() && order != null && order.getInput() == plan, isRowOrderRequired);
             case ProjectPlan project when project.getInput() instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ->
                     requireWindowJoin(windowJoin);
             case LatestByPlan latest -> {
-                final ScanPlan scan = LogicalPlans.latestByScan(latest);
+                final ScanPlan scan = GeneratedShapes.latestByScan(latest);
                 if (scan != null) {
                     requireScan(scan, SortDirection.DESCENDING, null, null, true);
                 } else {
-                    requireNothing(LogicalPlans.latestByBase(latest));
+                    requireNothing(GeneratedShapes.latestByBase(latest));
                 }
             }
-            case SampleByPlan sample -> requireNothing(LogicalPlans.sampleByBase(sample));
+            case SampleByPlan sample -> requireNothing(GeneratedShapes.sampleByBase(sample));
             case FillPlan fill -> requireNothing(fill.getInput());
             case ScanPlan scan ->
                     requireScan(scan, orderColumnId >= 0 ? scanDirection(scan, orderColumnId, direction) : SortDirection.ASCENDING,
@@ -444,7 +445,7 @@ final class OrderPlanning implements OptimiserPass {
             }
             inputOrder = projectedOrder(rename, inputOrder);
         }
-        require(LogicalPlans.aggregateBase(aggregate), inputOrderColumnId,
+        require(GeneratedShapes.aggregateBase(aggregate), inputOrderColumnId,
                 inputOrderColumnId < 0 ? null : direction, inputOrder, null, isInputRowOrderRequired);
     }
 
@@ -532,11 +533,11 @@ final class OrderPlanning implements OptimiserPass {
                 }
                 inputOrderColumnId = LogicalPlans.projectedSourceColumnId(project, orderColumnId);
                 inputDirection = inputOrderColumnId < 0 ? null : direction;
-                if (LogicalPlans.hasNativeFilterInput(project)) {
+                if (GeneratedShapes.hasNativeFilterInput(project)) {
                     inputOrder = projectedOrder(project, order);
                     inputLimit = order == null || inputOrder != null ? limit : null;
                 } else if (project.getInput() instanceof AggregatePlan || project.getInput() instanceof WindowPlan
-                        || LogicalPlans.hasOrderedJoinMasterInput(project)) {
+                        || GeneratedShapes.hasOrderedJoinMasterInput(project)) {
                     inputOrder = projectedOrder(project, order);
                 }
             }

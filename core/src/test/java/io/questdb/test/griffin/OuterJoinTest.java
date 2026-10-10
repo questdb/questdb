@@ -26,8 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.TextPlanSink;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -447,7 +445,7 @@ public class OuterJoinTest extends AbstractCairoTest {
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                 try {
-                    expectedPlan = plan(retained);
+                    expectedPlan = planText(retained);
                     try (RecordCursorFactory ignored = compiler.compile("SELECT count() FROM lp_outer_l", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(compiler.getPlanForTesting());
                     }
@@ -458,7 +456,7 @@ public class OuterJoinTest extends AbstractCairoTest {
             }
             try (RecordCursorFactory factory = retained) {
                 assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-                TestUtils.assertEquals(expectedPlan, plan(factory));
+                TestUtils.assertEquals(expectedPlan, planText(factory));
             }
         });
     }
@@ -531,7 +529,7 @@ public class OuterJoinTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
                 if (expectedPlan != null) {
-                    TestUtils.assertContains(plan(factory), expectedPlan);
+                    TestUtils.assertContains(planText(factory), expectedPlan);
                 }
             }
         }
@@ -551,15 +549,5 @@ public class OuterJoinTest extends AbstractCairoTest {
                 + "(3,3,30,'c','2020-01-03'),(4,null,null,null,'2020-01-04'),(5,5,50,'e','2020-01-05')");
         execute("INSERT INTO lp_outer_r VALUES (10,1,11,'a','2020-01-01'),(11,1,12,'a','2020-01-02'),"
                 + "(12,3,31,'c','2020-01-03'),(13,null,null,null,'2020-01-04'),(14,6,60,'f','2020-01-05')");
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        final StringSink text = new StringSink();
-        for (int i = 1, n = sink.getLineCount(); i <= n; i++) {
-            text.put(sink.getLine(i)).put('\n');
-        }
-        return text.toString();
     }
 }

@@ -24,8 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
@@ -33,7 +31,6 @@ import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
-import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
@@ -41,6 +38,8 @@ import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.PlanShape.assertPlanned;
 
 /**
  * Pins the order-sensitive operator decisions operator planning records on the plan, and the factories the generator
@@ -137,7 +136,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             sqlExecutionContext.pushTimestampRequiredFlag(true);
             try {
                 // The aggregate reads the direction of its input for its order-sensitive functions, which fixes the master.
-                assertPlanned(sql, JoinPlan.class,
+                assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
                         join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
             } finally {
                 sqlExecutionContext.popTimestampRequiredFlag();
@@ -160,7 +159,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             final String sql = "SELECT k, v FROM (" + SWAPPABLE_JOIN + ")";
             sqlExecutionContext.pushTimestampRequiredFlag(true);
             try {
-                assertPlanned(sql, JoinPlan.class,
+                assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
                         join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
             } finally {
                 sqlExecutionContext.popTimestampRequiredFlag();
@@ -225,9 +224,9 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             final String sampleByRows = "SELECT ts, sym, first(i) f FROM a SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION";
             final String sorted = "SELECT ts, sym, first(i) f FROM a SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
             final String inputOrder = "SELECT ts, sym, first(i) f FROM a WHERE sym = 'S' SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION";
-            assertPlanned(sampleByRows, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SAMPLE_BY_ROWS, fill.getAlgorithm()));
-            assertPlanned(sorted, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SORTED, fill.getAlgorithm()));
-            assertPlanned(inputOrder, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.INPUT_ORDER, fill.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, sampleByRows, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SAMPLE_BY_ROWS, fill.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, sorted, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SORTED, fill.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, inputOrder, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.INPUT_ORDER, fill.getAlgorithm()));
             final String prevRows = """
                     ts\tsym\tf
                     2024-01-01T00:00:00.000000Z\tS\t1
@@ -315,8 +314,8 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             final String ascending = "SELECT * FROM (SELECT * FROM t WHERE x > 0) LATEST ON ts PARTITION BY x";
-            assertPlanned(ascending, LatestByPlan.class, latest -> Assert.assertEquals(LatestByPlan.Algorithm.ASCENDING_LIGHT, latest.getAlgorithm()));
-            assertPlanned("SELECT * FROM (SELECT * FROM t ORDER BY ts DESC) LATEST ON ts PARTITION BY x", LatestByPlan.class,
+            assertPlanned(engine, sqlExecutionContext, ascending, LatestByPlan.class, latest -> Assert.assertEquals(LatestByPlan.Algorithm.ASCENDING_LIGHT, latest.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, "SELECT * FROM (SELECT * FROM t ORDER BY ts DESC) LATEST ON ts PARTITION BY x", LatestByPlan.class,
                     latest -> Assert.assertEquals(LatestByPlan.Algorithm.LIGHT, latest.getAlgorithm()));
             assertQuery(ascending)
                     .expectSize()
@@ -344,9 +343,9 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             createTables();
             final String unordered = "SELECT a.x, b.y FROM t a JOIN u b ON a.x = b.x";
             final String ordered = unordered + " ORDER BY a.ts";
-            assertPlanned(unordered, JoinPlan.class,
+            assertPlanned(engine, sqlExecutionContext, unordered, JoinPlan.class,
                     join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
-            assertPlanned(ordered, JoinPlan.class,
+            assertPlanned(engine, sqlExecutionContext, ordered, JoinPlan.class,
                     join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
             // The smaller master drives the hash join from its slave unless a consumer reads the master's order.
             assertQuery(unordered)
@@ -416,8 +415,8 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             final String sql = "SELECT * FROM t WHERE x > 1 LIMIT 2";
-            assertPlanned(sql, LimitPlan.class, limit -> Assert.assertEquals(LimitPlan.Application.INPUT, limit.getApplication()));
-            assertPlanned("SELECT * FROM t LIMIT 2", LimitPlan.class, limit -> Assert.assertEquals(LimitPlan.Application.OPERATOR, limit.getApplication()));
+            assertPlanned(engine, sqlExecutionContext, sql, LimitPlan.class, limit -> Assert.assertEquals(LimitPlan.Application.INPUT, limit.getApplication()));
+            assertPlanned(engine, sqlExecutionContext, "SELECT * FROM t LIMIT 2", LimitPlan.class, limit -> Assert.assertEquals(LimitPlan.Application.OPERATOR, limit.getApplication()));
             assertQuery(sql)
                     .timestamp("ts")
                     .withPlan("""
@@ -446,9 +445,9 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                     FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(2)) offsets
                     ORDER BY order_ts + usec_offs
                     """;
-            assertPlanned(sql, JoinPlan.class,
+            assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
                     join -> Assert.assertEquals(JoinInput.Algorithm.MARKOUT, join.getOrderedInputs().getQuick(1).getAlgorithm()));
-            assertPlanned(sql, SortPlan.class, sort -> Assert.assertEquals(SortPlan.Algorithm.INPUT_ORDER, sort.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, sql, SortPlan.class, sort -> Assert.assertEquals(SortPlan.Algorithm.INPUT_ORDER, sort.getAlgorithm()));
             assertQuery(sql)
                     .noRandomAccess()
                     .expectSize()
@@ -478,7 +477,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSwappableJoinTables();
             final String sql = SWAPPABLE_JOIN + " ORDER BY ts";
-            assertPlanned(sql, JoinPlan.class,
+            assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
                     join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
             assertQuery(sql)
                     .timestamp("ts")
@@ -507,10 +506,10 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             final String fillNone = "SELECT ts, sym, first(i) f FROM a SAMPLE BY 1h ALIGN TO FIRST OBSERVATION";
             final String interpolate = "SELECT ts, first(i) f FROM a SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION";
             final String fillValue = "SELECT ts, first(i) f, last(i) l FROM a SAMPLE BY 1h FILL(LINEAR, 42) ALIGN TO FIRST OBSERVATION";
-            assertPlanned(firstLast, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FIRST_LAST_INDEX, sample.getAlgorithm()));
-            assertPlanned(fillNone, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FILL_NONE, sample.getAlgorithm()));
-            assertPlanned(interpolate, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.INTERPOLATE, sample.getAlgorithm()));
-            assertPlanned(fillValue, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FILL_VALUE, sample.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, firstLast, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FIRST_LAST_INDEX, sample.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, fillNone, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FILL_NONE, sample.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, interpolate, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.INTERPOLATE, sample.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, fillValue, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FILL_VALUE, sample.getAlgorithm()));
             assertQuery(firstLast)
                     .timestamp("ts")
                     .noRandomAccess()
@@ -587,10 +586,10 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             execute("ALTER TABLE p CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
             drainWalQueue();
             final String parquet = "SELECT ts, sym, first(i) f FROM p WHERE sym = 'S' SAMPLE BY 1d ALIGN TO FIRST OBSERVATION";
-            assertPlanned(parquet, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FIRST_LAST_INDEX, sample.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, parquet, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FIRST_LAST_INDEX, sample.getAlgorithm()));
             execute("ALTER TABLE p ALTER COLUMN i TYPE LONG");
             drainWalQueue();
-            assertPlanned(parquet, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FILL_NONE, sample.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, parquet, SampleByPlan.class, sample -> Assert.assertEquals(SampleByPlan.Algorithm.FILL_NONE, sample.getAlgorithm()));
             assertQuery(parquet)
                     .timestamp("ts")
                     .noRandomAccess()
@@ -702,7 +701,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     public void testSwappableJoinDeclaresNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createSwappableJoinTables();
-            assertPlanned(SWAPPABLE_JOIN, JoinPlan.class,
+            assertPlanned(engine, sqlExecutionContext, SWAPPABLE_JOIN, JoinPlan.class,
                     join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
             assertQuery(SWAPPABLE_JOIN)
                     .noRandomAccess()
@@ -800,7 +799,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     public void testTimestampOrderAggregateFlags() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertPlanned("SELECT twap(x, ts), sparkline(x), sum(x) FROM t", AggregatePlan.class, aggregate -> {
+            assertPlanned(engine, sqlExecutionContext, "SELECT twap(x, ts), sparkline(x), sum(x) FROM t", AggregatePlan.class, aggregate -> {
                 final int mask = BoundExpression.ASCENDING_TIMESTAMP | BoundExpression.TIMESTAMP_ARGUMENT;
                 Assert.assertEquals(mask, aggregate.getAggregates().getQuick(0).getFunctionFlags() & mask);
                 Assert.assertEquals(BoundExpression.ASCENDING_TIMESTAMP, aggregate.getAggregates().getQuick(1).getFunctionFlags() & mask);
@@ -883,7 +882,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             final String sql = "SELECT * FROM (SELECT ts, x FROM t UNION ALL SELECT ts, x FROM t WHERE x > 2) ORDER BY ts DESC";
-            assertPlanned(sql, SetOperationPlan.class, union -> {
+            assertPlanned(engine, sqlExecutionContext, sql, SetOperationPlan.class, union -> {
                 Assert.assertTrue(union.isMerged());
                 Assert.assertNull(union.getRightBranchSort());
             });
@@ -987,7 +986,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             createKeyedTable();
             execute("CREATE TABLE v AS (SELECT (x * 1_000_000)::TIMESTAMP ts, 1::INT k FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY");
             final String join = "SELECT * FROM ((SELECT k, max(ts) ts FROM (SELECT * FROM v ORDER BY ts DESC) GROUP BY k) TIMESTAMP(ts)) a ASOF JOIN t b";
-            assertPlanned(join, AggregatePlan.class, aggregate -> Assert.assertEquals(AggregatePlan.Algorithm.VECTORISED, aggregate.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, join, AggregatePlan.class, aggregate -> Assert.assertEquals(AggregatePlan.Algorithm.VECTORISED, aggregate.getAlgorithm()));
             assertQuery(join)
                     .noLeakCheck()
                     .expectSize()
@@ -1011,10 +1010,10 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             execute("ALTER TABLE p CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
             drainWalQueue();
             final String keyed = "SELECT k, sum(d) FROM p";
-            assertPlanned(keyed, AggregatePlan.class, aggregate -> Assert.assertEquals(AggregatePlan.Algorithm.VECTORISED, aggregate.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, keyed, AggregatePlan.class, aggregate -> Assert.assertEquals(AggregatePlan.Algorithm.VECTORISED, aggregate.getAlgorithm()));
             execute("ALTER TABLE p ALTER COLUMN d TYPE DOUBLE");
             drainWalQueue();
-            assertPlanned(keyed, AggregatePlan.class, aggregate -> Assert.assertEquals(AggregatePlan.Algorithm.PARALLEL, aggregate.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, keyed, AggregatePlan.class, aggregate -> Assert.assertEquals(AggregatePlan.Algorithm.PARALLEL, aggregate.getAlgorithm()));
             assertQuery("SELECT * FROM ((SELECT k, max(ts) ts FROM (SELECT * FROM p ORDER BY ts DESC) GROUP BY k) TIMESTAMP(ts)) a ASOF JOIN t b")
                     .noLeakCheck()
                     .fails(106, "left side of time series join doesn't have ASC timestamp order");
@@ -1029,7 +1028,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             final String cached = "SELECT ts, c, sum(c) OVER (ORDER BY c) s FROM (SELECT ts, count() c FROM t SAMPLE BY 1d ALIGN TO FIRST OBSERVATION)";
-            assertPlanned(cached, WindowPlan.class, window -> Assert.assertEquals(WindowPlan.Algorithm.CACHED, window.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, cached, WindowPlan.class, window -> Assert.assertEquals(WindowPlan.Algorithm.CACHED, window.getAlgorithm()));
             assertQuery(cached)
                     .timestamp("ts")
                     .expectSize()
@@ -1057,11 +1056,11 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             createTables();
             final String delivered = "SELECT ts, x, sum(x) OVER (ORDER BY ts) s FROM t";
             final String reordered = "SELECT ts, x, sum(x) OVER (ORDER BY x) s FROM t";
-            assertPlanned(delivered, WindowPlan.class, window -> {
+            assertPlanned(engine, sqlExecutionContext, delivered, WindowPlan.class, window -> {
                 Assert.assertTrue(window.getSpecs().getQuick(0).isOrderDelivered());
                 Assert.assertEquals(WindowPlan.Algorithm.STREAMING, window.getAlgorithm());
             });
-            assertPlanned(reordered, WindowPlan.class, window -> {
+            assertPlanned(engine, sqlExecutionContext, reordered, WindowPlan.class, window -> {
                 Assert.assertFalse(window.getSpecs().getQuick(0).isOrderDelivered());
                 Assert.assertEquals(WindowPlan.Algorithm.CACHED_LIGHT, window.getAlgorithm());
             });
@@ -1122,7 +1121,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: b
                     """;
-            assertPlanned(sql, JoinPlan.class,
+            assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
                     join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
             assertQuery(sql)
                     .noRandomAccess()
@@ -1151,7 +1150,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                             1970-01-01T00:00:02.000000Z\t1\t10\t10
                             """);
             final String ordered = sql + " ORDER BY ts";
-            assertPlanned(ordered, JoinPlan.class,
+            assertPlanned(engine, sqlExecutionContext, ordered, JoinPlan.class,
                     join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
             assertQuery(ordered)
                     .timestamp("ts")
@@ -1183,19 +1182,8 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
         });
     }
 
-    private static <T extends LogicalPlan> void assertPlanned(String sql, Class<T> type, PlanAssertion<T> assertion) throws Exception {
-        try (
-                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
-        ) {
-            final LogicalPlan found = find(compiler.getPlanForTesting(), type);
-            Assert.assertNotNull(found);
-            assertion.check(type.cast(found));
-        }
-    }
-
     private static void assertSortAlgorithm(SortPlan.Algorithm expected, String sql) throws Exception {
-        assertPlanned(sql, SortPlan.class, sort -> Assert.assertEquals(expected, sort.getAlgorithm()));
+        assertPlanned(engine, sqlExecutionContext, sql, SortPlan.class, sort -> Assert.assertEquals(expected, sort.getAlgorithm()));
     }
 
     private static void createKeyedTable() throws Exception {
@@ -1260,29 +1248,6 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                 """);
     }
 
-    private static LogicalPlan find(LogicalPlan plan, Class<? extends LogicalPlan> type) {
-        if (type.isInstance(plan)) {
-            return plan;
-        }
-        if (plan instanceof JoinPlan join) {
-            for (int i = 0, n = join.getOrderedInputs().size(); i < n; i++) {
-                final LogicalPlan input = join.getOrderedInputs().getQuick(i).getInput();
-                final LogicalPlan found = input == null ? null : find(input, type);
-                if (found != null) {
-                    return found;
-                }
-            }
-            return null;
-        }
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final LogicalPlan found = find(plan.inputAt(i), type);
-            if (found != null) {
-                return found;
-            }
-        }
-        return null;
-    }
-
     private static String temporalPlan(String join) {
         return "SelectedRecord\n    " + join + """
                 
@@ -1296,17 +1261,12 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     private void assertTemporalJoin(JoinInput.Algorithm expected, String sql, String plan, String rows) throws Exception {
-        assertPlanned(sql, JoinPlan.class, join -> Assert.assertEquals(expected, join.getOrderedInputs().getQuick(1).getAlgorithm()));
+        assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class, join -> Assert.assertEquals(expected, join.getOrderedInputs().getQuick(1).getAlgorithm()));
         assertQuery(sql)
                 .timestamp("ts")
                 .noRandomAccess()
                 .expectSize()
                 .withPlan(plan)
                 .returns(rows);
-    }
-
-    @FunctionalInterface
-    private interface PlanAssertion<T> {
-        void check(T plan);
     }
 }

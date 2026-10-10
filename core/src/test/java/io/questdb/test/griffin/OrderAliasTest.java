@@ -41,13 +41,13 @@ public class OrderAliasTest extends AbstractCairoTest {
     public void testAliasExpressionsKeepSourcePrecedenceAndHiddenDependencies() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT d+1.0 v FROM oa_u ORDER BY v+1.0", "v\n2.0\n2.0\n3.0\n4.0\n");
-            assertRows("SELECT d+1.0 v FROM oa_t ORDER BY v+1.0", "v\n4.0\n3.0\n2.0\n2.0\n");
-            assertRows("SELECT d+1.0 v FROM oa_t ORDER BY v", "v\n2.0\n2.0\n3.0\n4.0\n");
-            assertRows("SELECT d+1.0 v FROM oa_t ORDER BY oa_t.v+1.0", "v\n4.0\n3.0\n2.0\n2.0\n");
-            assertRows("SELECT d+1.0 v FROM oa_u ORDER BY v-id", "v\n2.0\n3.0\n2.0\n4.0\n");
-            assertRows("SELECT d+1.0 v FROM oa_u ORDER BY id+1.0,v+1.0", "v\n2.0\n4.0\n3.0\n2.0\n");
-            assertRows("SELECT d+1.0 v,id FROM oa_u ORDER BY v+1.0,oa_u.id", "v\tid\n2.0\t1\n2.0\t4\n3.0\t3\n4.0\t2\n");
+            assertRowsOnly("SELECT d+1.0 v FROM oa_u ORDER BY v+1.0", "v\n2.0\n2.0\n3.0\n4.0\n");
+            assertRowsOnly("SELECT d+1.0 v FROM oa_t ORDER BY v+1.0", "v\n4.0\n3.0\n2.0\n2.0\n");
+            assertRowsOnly("SELECT d+1.0 v FROM oa_t ORDER BY v", "v\n2.0\n2.0\n3.0\n4.0\n");
+            assertRowsOnly("SELECT d+1.0 v FROM oa_t ORDER BY oa_t.v+1.0", "v\n4.0\n3.0\n2.0\n2.0\n");
+            assertRowsOnly("SELECT d+1.0 v FROM oa_u ORDER BY v-id", "v\n2.0\n3.0\n2.0\n4.0\n");
+            assertRowsOnly("SELECT d+1.0 v FROM oa_u ORDER BY id+1.0,v+1.0", "v\n2.0\n4.0\n3.0\n2.0\n");
+            assertRowsOnly("SELECT d+1.0 v,id FROM oa_u ORDER BY v+1.0,oa_u.id", "v\tid\n2.0\t1\n2.0\t4\n3.0\t3\n4.0\t2\n");
         });
     }
 
@@ -60,9 +60,9 @@ public class OrderAliasTest extends AbstractCairoTest {
             assertQuery("SELECT DISTINCT d AS x FROM oa_t ORDER BY v+1.0").noLeakCheck().fails(42, "ORDER BY expressions must appear in select list. Invalid column: v");
             assertQuery("SELECT DISTINCT d+1.0 v, max(id) OVER () m FROM oa_t ORDER BY v+1.0").noLeakCheck().fails(62, "ORDER BY expressions must appear in select list. Invalid column: v");
             assertQuery("SELECT DISTINCT d+1.0 v, max(id) OVER () m FROM oa_u ORDER BY id+1.0").noLeakCheck().fails(62, "ORDER BY expressions must appear in select list. Invalid column: id");
-            assertRows("SELECT DISTINCT d+1.0 v, max(id) OVER () m FROM oa_u ORDER BY v+1.0", "v\tm\n2.0\t4\n3.0\t4\n4.0\t4\n");
-            assertRows("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY v+1.0", "v\n2.0\n3.0\n4.0\n");
-            assertRows("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY abs(v) DESC", "v\n4.0\n3.0\n2.0\n");
+            assertRowsOnly("SELECT DISTINCT d+1.0 v, max(id) OVER () m FROM oa_u ORDER BY v+1.0", "v\tm\n2.0\t4\n3.0\t4\n4.0\t4\n");
+            assertRowsOnly("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY v+1.0", "v\n2.0\n3.0\n4.0\n");
+            assertRowsOnly("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY abs(v) DESC", "v\n4.0\n3.0\n2.0\n");
             assertQuery("SELECT DISTINCT d+1.0 v FROM oa_u ORDER BY v-id").noLeakCheck().fails(45, "ORDER BY expressions must appear in select list. Invalid column: id");
         });
     }
@@ -71,13 +71,13 @@ public class OrderAliasTest extends AbstractCairoTest {
     public void testOrderByColumnReadingEarlierAlias() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT v, v2 FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "v\tv2\n2.0\t2.0\n2.0\t2.0\n3.0\t3.0\n4.0\t4.0\n");
-            assertRows("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2 DESC)", "v\n4.0\n3.0\n2.0\n2.0\n");
-            assertRows("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2) WHERE v > 2.0 LIMIT 1", "v\n3.0\n");
-            assertRows("SELECT lag(v) OVER () prev FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "prev\nnull\n2.0\n2.0\n3.0\n");
-            assertRows("SELECT row_number() OVER () rn, sum(v) OVER () total FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)",
+            assertRowsOnly("SELECT v, v2 FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "v\tv2\n2.0\t2.0\n2.0\t2.0\n3.0\t3.0\n4.0\t4.0\n");
+            assertRowsOnly("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2 DESC)", "v\n4.0\n3.0\n2.0\n2.0\n");
+            assertRowsOnly("SELECT v FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2) WHERE v > 2.0 LIMIT 1", "v\n3.0\n");
+            assertRowsOnly("SELECT lag(v) OVER () prev FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)", "prev\nnull\n2.0\n2.0\n3.0\n");
+            assertRowsOnly("SELECT row_number() OVER () rn, sum(v) OVER () total FROM (SELECT d + 1.0 v, v v2 FROM oa_u ORDER BY v2)",
                     "rn\ttotal\n1\t11.0\n2\t11.0\n3\t11.0\n4\t11.0\n");
-            assertRows("SELECT count() FROM (SELECT r, lag(r) OVER () prev FROM (SELECT rnd_int(1, 1_000_000, 0) r, r r2 FROM long_sequence(20) ORDER BY r2)) WHERE prev > r",
+            assertRowsOnly("SELECT count() FROM (SELECT r, lag(r) OVER () prev FROM (SELECT rnd_int(1, 1_000_000, 0) r, r r2 FROM long_sequence(20) ORDER BY r2)) WHERE prev > r",
                     "count\n0\n");
         });
     }
@@ -88,7 +88,7 @@ public class OrderAliasTest extends AbstractCairoTest {
             execute("CREATE TABLE oa_ts(d DOUBLE,ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO oa_ts VALUES(3,'2020-01-01T00:00:01'),(1,'2020-01-01T00:00:02'),(2,'2020-01-01T00:00:03')");
             final String sql = "SELECT ts,d+1.0 v FROM oa_ts ORDER BY ts,v+1.0 LIMIT 2";
-            assertRows(sql, "ts\tv\n2020-01-01T00:00:01.000000Z\t4.0\n2020-01-01T00:00:02.000000Z\t2.0\n");
+            assertRowsOnly(sql, "ts\tv\n2020-01-01T00:00:01.000000Z\t4.0\n2020-01-01T00:00:02.000000Z\t2.0\n");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                     LogicalPlan plan = compiler.getPlanForTesting();
@@ -99,7 +99,7 @@ public class OrderAliasTest extends AbstractCairoTest {
                     Assert.assertEquals(0, factory.getMetadata().getTimestampIndex());
                 }
             }
-            assertRows("SELECT a.ts,a.v,b.d FROM (SELECT ts,d+1.0 v FROM oa_ts ORDER BY ts,v+1.0 LIMIT 2) a TIMESTAMP(ts) ASOF JOIN oa_ts b",
+            assertRowsOnly("SELECT a.ts,a.v,b.d FROM (SELECT ts,d+1.0 v FROM oa_ts ORDER BY ts,v+1.0 LIMIT 2) a TIMESTAMP(ts) ASOF JOIN oa_ts b",
                     "ts\tv\td\n2020-01-01T00:00:01.000000Z\t4.0\t3.0\n2020-01-01T00:00:02.000000Z\t2.0\t1.0\n");
         });
     }
@@ -148,8 +148,8 @@ public class OrderAliasTest extends AbstractCairoTest {
     public void testSelectedAndRepeatedOrderingExpressionsReuseValues() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT d+1.0 v FROM oa_u ORDER BY d+1.0 DESC,d+1.0 ASC", "v\n4.0\n3.0\n2.0\n2.0\n");
-            assertRows("SELECT d+1.0 v FROM oa_u ORDER BY v+1.0 ASC,v+1.0 DESC", "v\n2.0\n2.0\n3.0\n4.0\n");
+            assertRowsOnly("SELECT d+1.0 v FROM oa_u ORDER BY d+1.0 DESC,d+1.0 ASC", "v\n4.0\n3.0\n2.0\n2.0\n");
+            assertRowsOnly("SELECT d+1.0 v FROM oa_u ORDER BY v+1.0 ASC,v+1.0 DESC", "v\n2.0\n2.0\n3.0\n4.0\n");
             final boolean wasMemoizationEnabled = SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION;
             SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
@@ -193,7 +193,7 @@ public class OrderAliasTest extends AbstractCairoTest {
     public void testSetOrderUsesOnlyCombinedOutputScope() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT d+1.0 v FROM oa_u UNION ALL SELECT d+2.0 w FROM oa_u ORDER BY v+1.0",
+            assertRowsOnly("SELECT d+1.0 v FROM oa_u UNION ALL SELECT d+2.0 w FROM oa_u ORDER BY v+1.0",
                     "v\n2.0\n2.0\n3.0\n3.0\n3.0\n4.0\n4.0\n5.0\n");
             assertQuery("SELECT d+1.0 v FROM oa_u UNION ALL SELECT d+2.0 w FROM oa_u ORDER BY w+1.0").noLeakCheck().fails(69, "Invalid column: w");
             assertQuery("SELECT d+1.0 v FROM oa_u UNION ALL SELECT d+2.0 w FROM oa_u ORDER BY d+1.0").noLeakCheck().fails(69, "Invalid column: d");
@@ -212,10 +212,6 @@ public class OrderAliasTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, actual);
             }
         }
-    }
-
-    private void assertRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

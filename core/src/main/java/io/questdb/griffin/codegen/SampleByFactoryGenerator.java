@@ -44,7 +44,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
@@ -76,6 +75,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.std.BytecodeAssembler;
@@ -825,7 +825,7 @@ final class SampleByFactoryGenerator {
     }
 
     RecordCursorFactory generateSampleBy(GenerationFrame frame, SampleByPlan sample, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory base = codeGenerator.generate(frame, LogicalPlans.sampleByBase(sample), executionContext);
+        final RecordCursorFactory base = codeGenerator.generate(frame, GeneratedShapes.sampleByBase(sample), executionContext);
         return generateSampleBy(frame, sample, base, executionContext);
     }
 

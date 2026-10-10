@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
@@ -72,16 +71,16 @@ public class DerivedSourceTest extends AbstractCairoTest {
                             FROM (SELECT id+1 AS adjusted,label,ts FROM lp_nested ORDER BY ts DESC LIMIT 3) q
                             WHERE q.adjusted>2 ORDER BY q.adjusted
                             """, sqlExecutionContext).getRecordCursorFactory();
-                    assertResult(retained, "adjusted\tlabel\n3\tb\n5\td\n");
+                    assertRowsOnly(retained, "adjusted\tlabel\n3\tb\n5\td\n");
                     try (RecordCursorFactory other = compiler.compile(
                             "SELECT id+2 AS later FROM (SELECT id FROM lp_nested WHERE active) ORDER BY later", sqlExecutionContext
                     ).getRecordCursorFactory()) {
-                        assertResult(other, "later\n4\n5\n6\n");
+                        assertRowsOnly(other, "later\n4\n5\n6\n");
                     }
                     compiler.clear();
-                    assertResult(retained, "adjusted\tlabel\n3\tb\n5\td\n");
+                    assertRowsOnly(retained, "adjusted\tlabel\n3\tb\n5\td\n");
                 }
-                assertResult(retained, "adjusted\tlabel\n3\tb\n5\td\n");
+                assertRowsOnly(retained, "adjusted\tlabel\n3\tb\n5\td\n");
             } finally {
                 Misc.free(retained);
             }
@@ -171,12 +170,8 @@ public class DerivedSourceTest extends AbstractCairoTest {
             }
             Assert.assertEquals(expectedSourceColumnCount, source.getOutput().getColumnCount());
             Assert.assertEquals(-1, source.getOutput().getColumnIndexQuiet("unused"));
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

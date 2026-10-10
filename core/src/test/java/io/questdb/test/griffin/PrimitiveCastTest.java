@@ -24,11 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -166,7 +162,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             6	0	-	0	null	null	-1.5	-1.5
                             """
             )));
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,symbol_value::BYTE,symbol_value::CHAR,symbol_value::SHORT,symbol_value::INT,symbol_value::LONG,symbol_value::FLOAT,symbol_value::DOUBLE FROM (lp_cast UNION ALL lp_cast) ORDER BY id",
                     """
                             id	cast	cast1	cast2	cast3	cast4	cast5	cast6
@@ -191,7 +187,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
     public void testConstantCharCaseBranchesPreserveTextTypesAndNativeChildren() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CASE WHEN id IN (1,2,3) THEN str_value ELSE '0' END val FROM lp_cast ORDER BY id",
                     """
                             val
@@ -203,7 +199,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CASE WHEN id IN (1,2,3) THEN '中' ELSE varchar_value END val FROM lp_cast ORDER BY id",
                     """
                             val
@@ -215,7 +211,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             true
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CASE WHEN id IN (1,2,3) THEN symbol_value ELSE '''' END val FROM lp_cast ORDER BY id",
                     """
                             val
@@ -227,7 +223,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             '
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CASE id WHEN 1 THEN '0' WHEN 2 THEN str_value ELSE '中' END val FROM lp_cast ORDER BY id",
                     """
                             val
@@ -239,7 +235,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             中
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CASE id WHEN 1 THEN varchar_value ELSE '''' END val FROM lp_cast ORDER BY id",
                     """
                             val
@@ -251,7 +247,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             '
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CASE id WHEN 1 THEN '0' ELSE symbol_value END val FROM lp_cast ORDER BY id",
                     """
                             val
@@ -263,7 +259,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             -1.5
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT CASE WHEN id>0 THEN char_value WHEN id<0 THEN '0' ELSE str_value END val FROM lp_cast ORDER BY id",
                     """
                             val
@@ -388,7 +384,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             6	false	1	1	1	1	1	1.0	1.0
                             """
             )));
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT (null::CHAR)::STRING,(null::CHAR)::VARCHAR,
                                    (null::INT)::STRING,(null::INT)::VARCHAR,
@@ -403,7 +399,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             		null	null	null	null	NaN	NaN	NaN	NaN	null\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT (CASE true WHEN true THEN true WHEN false THEN false ELSE id IN (1,2,3) END)::VARCHAR val FROM lp_cast ORDER BY id",
                     """
                             val
@@ -440,12 +436,12 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                     try (RecordCursorFactory recovered = compiler.compile("SELECT int_value::STRING FROM lp_cast", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(recovered);
                     }
-                    assertResult(factoryBeforeReset, expected);
+                    assertRowsOnly(factoryBeforeReset, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         });
     }
@@ -465,7 +461,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                     }
                 }
             }
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,c::STRING,c::VARCHAR FROM lp_cast_bad ORDER BY id",
                     """
                             id	cast	cast1
@@ -480,7 +476,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
     public void testNestedCastsInFiltersAndAggregates() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_cast WHERE str_value::INT>0 OR int_value::BOOLEAN ORDER BY id",
                     """
                             id
@@ -490,7 +486,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             6
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT short_value::BYTE k,sum((int_value::STRING)::LONG) total FROM lp_cast GROUP BY 1 ORDER BY k",
                     """
                             k	total
@@ -499,7 +495,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             1	65538
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT val FROM (SELECT id,(int_value::VARCHAR)::SHORT val FROM lp_cast) WHERE val>0 ORDER BY val,id",
                     """
                             val
@@ -508,7 +504,7 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                             1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,(CASE WHEN id IN (1,2,3) THEN str_value ELSE '0' END)::DOUBLE val FROM lp_cast ORDER BY id",
                     """
                             id	val
@@ -645,11 +641,11 @@ public class PrimitiveCastTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 bindVariableService.setInt(4, 17);
                 try (RecordCursorFactory factory = compiler.compile("SELECT $5::VARCHAR val FROM lp_cast LIMIT 1", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "val\n17\n");
+                    assertRowsOnly(factory, "val\n17\n");
                     bindVariableService.setInt(4, Numbers.INT_NULL);
-                    assertResult(factory, "val\n\n");
+                    assertRowsOnly(factory, "val\n\n");
                     bindVariableService.setInt(4, -12);
-                    assertResult(factory, "val\n-12\n");
+                    assertRowsOnly(factory, "val\n-12\n");
                 }
             }
             bindVariableService.setBoolean(0, false);
@@ -768,29 +764,11 @@ public class PrimitiveCastTest extends AbstractCairoTest {
         });
     }
 
-    private void assertCastQuery(String sql, String expectedTypes, String expectedRows) throws Exception {
-        final int jitMode = sqlExecutionContext.getJitMode();
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        try (RecordCursorFactory factory = select(sql)) {
-            final StringSink types = new StringSink();
-            for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
-                if (i > 0) {
-                    types.put(',');
-                }
-                types.put(ColumnType.nameOf(factory.getMetadata().getColumnType(i)));
-            }
-            TestUtils.assertEquals(sql, expectedTypes, types);
-            assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expectedRows);
-        } finally {
-            sqlExecutionContext.setJitMode(jitMode);
-        }
-    }
-
     private void assertCastError(String sql, String message) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
             for (int reopen = 0; reopen < 2; reopen++) {
                 try {
-                    print(factory);
+                    printFactory(factory);
                     Assert.fail(sql);
                 } catch (ImplicitCastException e) {
                     TestUtils.assertEquals(message, e.getFlyweightMessage());
@@ -821,10 +799,6 @@ public class PrimitiveCastTest extends AbstractCairoTest {
         return count;
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private void assertUnknownFunction(SqlCompilerImpl compiler, String sql) throws Exception {
         try (RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             Assert.fail(sql);
@@ -844,17 +818,5 @@ public class PrimitiveCastTest extends AbstractCairoTest {
                 (95,5,true,0,'1',0,null,null,null,null,null,null,null),
                 (96,6,false,-1,'0',32_767,-2_147_483_647,9_223_372_036_854_775_807,0.5,-0.5,'999999999999999999999999','true','-1.5')
                 """);
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-            return sink.toString();
-        }
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

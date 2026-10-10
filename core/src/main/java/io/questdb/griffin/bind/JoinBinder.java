@@ -732,8 +732,7 @@ final class JoinBinder implements Mutable {
         final int outputCount = model.getUnnestOutputColumnCount();
         final int totalColumns = outputCount + (model.isUnnestOrdinality() ? 1 : 0);
         int aliasIndex = 0;
-        scope.aliases.clear();
-        scope.aliasSequences.clear();
+        scope.resetAliases();
         for (int i = 0, n = model.getUnnestExpressions().size(); i < n; i++) {
             final ExpressionNode expression = model.getUnnestExpressions().getQuick(i);
             final BoundExpression bound;
@@ -949,7 +948,7 @@ final class JoinBinder implements Mutable {
                         prefixStart--;
                     }
                     // A LEFT join whose ON reads no column stays unanchored, so it trails the order.
-                    if (slave.getJoinType() != JoinKind.LEFT_OUTER || hasLiteral(onCriteria)) {
+                    if (slave.getJoinType() != JoinKind.LEFT_OUTER || hasColumnReference(onCriteria)) {
                         joinGraphBuilder.addOrderingConstraint(prefixStart, i);
                     }
                     if (isForwardLeftJoin) {
@@ -1424,11 +1423,7 @@ final class JoinBinder implements Mutable {
     }
 
     void addJoinOutput(JoinPlan join, OutputSchema output, CharSequence alias) {
-        final OutputSchema target = join.getOutput();
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            target.add(output.getColumnId(i), output.getColumnName(i), output.getColumnType(i), output.getMetadata(i), output.isVisible(i), alias);
-            target.setSymbolTableStatic(target.getColumnCount() - 1, output.isSymbolTableStatic(i));
-        }
+        join.getOutput().addColumnsFrom(output, alias);
     }
 
     LogicalPlan bindJoins(QueryModel source, ExpressionNode where, SqlExecutionContext executionContext) throws SqlException {

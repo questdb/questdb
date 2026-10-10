@@ -165,14 +165,14 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     retained = compiler.compile("SELECT id FROM (SELECT ta ts,id FROM lp_sp_a UNION ALL SELECT tb ts,id FROM lp_sp_b)"
                             + " WHERE ts>=$1 AND hour(ts)=0 ORDER BY id", sqlExecutionContext).getRecordCursorFactory();
-                    assertRows(retained, "id\n2\n2\n2\n3\n3\n4\n4\n5\n");
+                    assertRowsOnly(retained, "id\n2\n2\n2\n3\n3\n4\n4\n5\n");
                     try (RecordCursorFactory ignored = compiler.compile("SELECT id FROM lp_sp_a WHERE id>1", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(ignored);
                     }
                     compiler.clear();
                 }
                 bindVariableService.setTimestamp(0, 1_704_240_000_000_000L);
-                assertRows(retained, "id\n3\n3\n4\n4\n5\n");
+                assertRowsOnly(retained, "id\n3\n3\n4\n4\n5\n");
             } finally {
                 Misc.free(retained);
             }
@@ -202,7 +202,7 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
         final int jitMode = sqlExecutionContext.getJitMode();
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         try (RecordCursorFactory factory = select(sql)) {
-            assertRows(factory, expected);
+            assertRowsOnly(factory, expected);
             final TextPlanSink sink = new TextPlanSink();
             sink.of(factory, sqlExecutionContext);
             int count = 0;
@@ -221,13 +221,9 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 Assert.assertEquals(expectedResiduals, countSetResiduals(compiler.getPlanForTesting()));
-                assertRows(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         }
-    }
-
-    private void assertRows(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

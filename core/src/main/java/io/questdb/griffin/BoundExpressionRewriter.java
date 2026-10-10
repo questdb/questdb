@@ -59,7 +59,6 @@ public final class BoundExpressionRewriter implements Mutable {
     private final ObjectPool<ObjList<BoundExpression>> rewriteArguments;
     private final ObjectPool<TypeExpression> types;
     private boolean isReplacementPlaced;
-    private BoundExpression splitRemainder;
 
     /**
      * Allocates descriptions from the given pools, which their owner empties, and retargets the given preparations;
@@ -94,7 +93,6 @@ public final class BoundExpressionRewriter implements Mutable {
     @Override
     public void clear() {
         rewriteArguments.clear();
-        splitRemainder = null;
     }
 
     /**
@@ -197,13 +195,6 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
-     * The conjuncts the last {@link #splitConjuncts} left: those that failed its test, in their AND tree shape.
-     */
-    public BoundExpression getSplitRemainder() {
-        return splitRemainder;
-    }
-
-    /**
      * Copies the expression with the value itself at the first reference to the column, so its preparation is
      * adopted there, and its own copy at every further reference; preparations of rewritten calls stay with the
      * original.
@@ -299,24 +290,27 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
-     * Splits the AND tree in one walk, seeing each conjunct once, left to right: returns the conjuncts that pass the
-     * test and leaves those that fail for {@link #getSplitRemainder}, each side in its tree shape as
+     * Splits the AND tree in one walk, seeing each conjunct once, left to right: leaves the conjuncts that pass the
+     * test as the matched side of {@code split} and those that fail as its remainder, each side in its tree shape as
      * {@link #retainConjuncts} builds it. The test must not split.
      */
-    public BoundExpression splitConjuncts(BoundExpression predicate, ConjunctTest test) throws SqlException {
+    public void splitConjuncts(BoundExpression predicate, ConjunctTest test, ConjunctSplit split) throws SqlException {
         if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && call.isAnd()) {
-            final BoundExpression leftMatches = splitConjuncts(call.argumentAt(0), test);
-            final BoundExpression leftRemainder = splitRemainder;
-            final BoundExpression rightMatches = splitConjuncts(call.argumentAt(1), test);
-            splitRemainder = replaceConjunction(call, leftRemainder, splitRemainder);
-            return replaceConjunction(call, leftMatches, rightMatches);
+            splitConjuncts(call.argumentAt(0), test, split);
+            final BoundExpression leftMatches = split.matched;
+            final BoundExpression leftRemainder = split.remainder;
+            splitConjuncts(call.argumentAt(1), test, split);
+            split.remainder = replaceConjunction(call, leftRemainder, split.remainder);
+            split.matched = replaceConjunction(call, leftMatches, split.matched);
+            return;
         }
         if (predicate == null || test.test(predicate)) {
-            splitRemainder = null;
-            return predicate;
+            split.matched = predicate;
+            split.remainder = null;
+        } else {
+            split.matched = null;
+            split.remainder = predicate;
         }
-        splitRemainder = predicate;
-        return null;
     }
 
     /**
@@ -587,6 +581,29 @@ public final class BoundExpressionRewriter implements Mutable {
             args.add(unwrapProjectedOffsets(call.argumentAt(i)));
         }
         return functions.next().of(call, args);
+    }
+
+    /**
+     * The two sides {@link #splitConjuncts} leaves: the conjuncts that passed its test and those that failed, each in
+     * its AND tree shape, null where empty. The caller owns it and reads it before its next split.
+     */
+    public static final class ConjunctSplit implements Mutable {
+        private BoundExpression matched;
+        private BoundExpression remainder;
+
+        @Override
+        public void clear() {
+            matched = null;
+            remainder = null;
+        }
+
+        public BoundExpression getMatched() {
+            return matched;
+        }
+
+        public BoundExpression getRemainder() {
+            return remainder;
+        }
     }
 
     /**

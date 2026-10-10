@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
@@ -80,6 +81,23 @@ public final class OutputSchema implements Mutable {
     }
 
     /**
+     * Appends column {@code index} of {@code source} under {@code columnId}, {@code name} and {@code isVisible},
+     * with the source's type, nested schema, symbol-table capability and name protection, and no qualifier.
+     */
+    public void addColumnAs(OutputSchema source, int index, int columnId, CharSequence name, boolean isVisible) {
+        addColumnAs(source, index, columnId, name, isVisible, null);
+    }
+
+    /**
+     * Appends column {@code index} of {@code source} under {@code columnId}, {@code name}, {@code isVisible} and
+     * {@code qualifier}, with the source's type, nested schema, symbol-table capability and name protection.
+     */
+    public void addColumnAs(OutputSchema source, int index, int columnId, CharSequence name, boolean isVisible, CharSequence qualifier) {
+        add(columnId, name, source.getColumnType(index), source.getMetadata(index), isVisible, qualifier);
+        columnFlags.setQuick(getColumnCount() - 1, source.columnFlags.getQuick(index) & ~VISIBLE | (isVisible ? VISIBLE : 0));
+    }
+
+    /**
      * Appends column {@code index} of {@code source} with every attribute: id, name, qualifier, type, nested
      * schema, visibility, symbol-table capability and name protection. The designated timestamp is not touched.
      */
@@ -87,6 +105,15 @@ public final class OutputSchema implements Mutable {
         add(source.getColumnId(index), source.getColumnName(index), source.getColumnType(index), source.getMetadata(index),
                 source.isVisible(index), source.getColumnQualifier(index));
         columnFlags.setQuick(getColumnCount() - 1, source.columnFlags.getQuick(index));
+    }
+
+    /**
+     * Appends column {@code index} of {@code metadata} under {@code columnId}, visible, with its name, type and
+     * symbol-table capability.
+     */
+    public void addColumnFrom(RecordMetadata metadata, int index, int columnId) {
+        add(columnId, metadata.getColumnName(index), metadata.getColumnType(index), true);
+        setSymbolTableStatic(getColumnCount() - 1, metadata.isSymbolTableStatic(index));
     }
 
     /**
@@ -99,13 +126,19 @@ public final class OutputSchema implements Mutable {
     }
 
     /**
-     * Appends every column of {@code source} under {@code qualifier}, the other attributes kept as
-     * {@link #addColumnFrom} keeps them.
+     * Appends every column of {@code source} to a join scope: under {@code qualifier}, or under its own qualifier
+     * when {@code qualifier} is null, and without name protection, which guards a projection's own alias only; a
+     * join scope names its inputs' columns bare, so that the composed reference resolves. The other attributes are
+     * kept as {@link #addColumnFrom} keeps them.
      */
     public void addColumnsFrom(OutputSchema source, CharSequence qualifier) {
         for (int i = 0, n = source.getColumnCount(); i < n; i++) {
             addColumnFrom(source, i);
-            columnQualifiers.setQuick(getColumnCount() - 1, qualifier);
+            final int index = getColumnCount() - 1;
+            columnFlags.setQuick(index, columnFlags.getQuick(index) & ~NAME_PROTECTED);
+            if (qualifier != null) {
+                columnQualifiers.setQuick(index, qualifier);
+            }
         }
     }
 
@@ -243,6 +276,21 @@ public final class OutputSchema implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Whether {@code metadata} has the schema's column count and types, in order.
+     */
+    public boolean hasColumnTypesOf(RecordMetadata metadata) {
+        if (metadata.getColumnCount() != getColumnCount()) {
+            return false;
+        }
+        for (int i = 0, n = getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) != getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public boolean isNameProtected(int index) {

@@ -43,7 +43,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
@@ -64,6 +63,7 @@ import io.questdb.griffin.engine.window.WindowMapState;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -622,7 +622,7 @@ final class WindowFactoryGenerator {
                 metadata.add(sources.getQuick(i) >= 0 ? outputColumns.getQuick(i) : windowMetadata.getQuick(i));
             }
             metadata.setTimestampIndex(projection == null ? inputMetadata.getTimestampIndex()
-                    : LogicalPlans.projectedTimestampIndex(projection, inputMetadata.getTimestampIndex()));
+                    : GeneratedShapes.projectedTimestampIndex(projection, inputMetadata.getTimestampIndex()));
             if (isStreaming) {
                 if (!isLiveView) {
                     final RecordCursorFactory ownedBase = base;

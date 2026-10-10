@@ -51,7 +51,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
             bindVariableService.setLong("end", 4);
             {
                 final String limit = "1+2";
-                assertQueryRows("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
+                assertRowsOnly("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
                         id
                         1
                         2
@@ -60,7 +60,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
             }
             {
                 final String limit = "-$1";
-                assertQueryRows("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
+                assertRowsOnly("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
                         id
                         3
                         4
@@ -68,7 +68,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
             }
             {
                 final String limit = "$1,:end";
-                assertQueryRows("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
+                assertRowsOnly("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
                         id
                         3
                         4
@@ -76,7 +76,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
             }
             {
                 final String limit = "0,1+$1";
-                assertQueryRows("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
+                assertRowsOnly("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
                         id
                         1
                         2
@@ -85,7 +85,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
             }
             {
                 final String limit = "nullif(1,1)";
-                assertQueryRows("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
+                assertRowsOnly("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
                         id
                         1
                         2
@@ -95,7 +95,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
             }
             {
                 final String limit = "-3,-1";
-                assertQueryRows("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
+                assertRowsOnly("SELECT id FROM lp_limit ORDER BY id LIMIT " + limit, """
                         id
                         2
                         3
@@ -113,14 +113,14 @@ public class LimitPlanningTest extends AbstractCairoTest {
             try {
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     factory = compiler.compile("SELECT id FROM lp_limit ORDER BY id LIMIT $1+1", sqlExecutionContext).getRecordCursorFactory();
-                    assertRows(factory, "id\n1\n2\n3\n");
+                    assertRowsOnly(factory, "id\n1\n2\n3\n");
                     try (RecordCursorFactory other = compiler.compile("SELECT id FROM lp_limit LIMIT 1", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertRows(other, "id\n1\n");
+                        assertRowsOnly(other, "id\n1\n");
                     }
                     compiler.clear();
                 }
                 bindVariableService.setLong(0, 1);
-                assertRows(factory, "id\n1\n2\n");
+                assertRowsOnly(factory, "id\n1\n2\n");
             } finally {
                 Misc.free(factory);
             }
@@ -188,7 +188,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createRows();
             bindVariableService.setLong(0, 3);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (SELECT id,ts FROM lp_limit LIMIT $1) WHERE id>1 ORDER BY ts DESC",
                     """
                             id
@@ -196,7 +196,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
                             2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_limit UNION ALL SELECT id FROM lp_limit ORDER BY id LIMIT $1+1",
                     """
                             id
@@ -219,13 +219,13 @@ public class LimitPlanningTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_limit ORDER BY id LIMIT $1,$2", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertRows(factory, "id\n2\n3\n");
+                    assertRowsOnly(factory, "id\n2\n3\n");
                     bindVariableService.setLong(0, -3);
                     bindVariableService.setLong(1, -1);
-                    assertRows(factory, "id\n2\n3\n");
+                    assertRowsOnly(factory, "id\n2\n3\n");
                     bindVariableService.setLong(0, 0);
                     bindVariableService.setLong(1, 4);
-                    assertRows(factory, "id\n1\n2\n3\n4\n");
+                    assertRowsOnly(factory, "id\n1\n2\n3\n4\n");
                 }
             }
         });
@@ -244,7 +244,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
                     Assert.assertEquals(ColumnType.LONG, bindVariableService.getFunction(1).getType());
                     bindVariableService.setLong(0, 1);
                     bindVariableService.setLong(1, 2);
-                    assertRows(factory, "id\n2\n");
+                    assertRowsOnly(factory, "id\n2\n");
                 }
             }
         });
@@ -260,7 +260,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
                 assertLimitFailsOnCompilerReuse(compiler, "id", 30, "Invalid column: id");
                 assertLimitFailsOnCompilerReuse(compiler, "1+2,1.5", 34, "invalid type: DOUBLE");
                 try (RecordCursorFactory factory = compiler.compile("SELECT id FROM lp_limit LIMIT 1", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertRows(factory, "id\n1\n");
+                    assertRowsOnly(factory, "id\n1\n");
                 }
             }
         });
@@ -278,16 +278,8 @@ public class LimitPlanningTest extends AbstractCairoTest {
         }
     }
 
-    private void assertRows(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private void createRows() throws SqlException {
         execute("CREATE TABLE lp_limit (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
         execute("INSERT INTO lp_limit VALUES (1,0),(2,1),(3,2),(4,3)");
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

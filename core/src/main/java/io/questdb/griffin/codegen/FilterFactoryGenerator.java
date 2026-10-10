@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.jit.CompiledCountOnlyFilter;
@@ -371,7 +372,7 @@ final class FilterFactoryGenerator {
             SqlExecutionContext executionContext
     ) throws SqlException {
         return generate(frame, predicate, step.getOutput(), base, filter, frame.functionInstantiator, executionContext, false, false, null,
-                false, LogicalPlans.isPostJoinFilterFolded(step, predicate));
+                false, GeneratedShapes.isPostJoinFilterFolded(step, predicate));
     }
 
     /**

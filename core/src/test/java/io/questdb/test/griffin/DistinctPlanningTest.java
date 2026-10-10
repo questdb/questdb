@@ -42,42 +42,42 @@ public class DistinctPlanningTest extends AbstractCairoTest {
     public void testComputedOrderExpressionsPreserveDirectDistinctTuple() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT DISTINCT id+1 AS v, max(id) OVER () m FROM lp_distinct ORDER BY id+1", """
+            assertRowsOnly("SELECT DISTINCT id+1 AS v, max(id) OVER () m FROM lp_distinct ORDER BY id+1", """
                     v	m
                     null	3
                     2	3
                     3	3
                     4	3
                     """);
-            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id+1", """
+            assertRowsOnly("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id+1", """
                     id	m
                     null	3
                     1	3
                     2	3
                     3	3
                     """);
-            assertQueryRows("SELECT DISTINCT id AS v, max(id) OVER () m FROM lp_distinct ORDER BY v+1", """
+            assertRowsOnly("SELECT DISTINCT id AS v, max(id) OVER () m FROM lp_distinct ORDER BY v+1", """
                     v	m
                     null	3
                     1	3
                     2	3
                     3	3
                     """);
-            assertQueryRows("SELECT DISTINCT id+1 AS v, max(id) OVER () m FROM lp_distinct ORDER BY v DESC", """
+            assertRowsOnly("SELECT DISTINCT id+1 AS v, max(id) OVER () m FROM lp_distinct ORDER BY v DESC", """
                     v	m
                     4	3
                     3	3
                     2	3
                     null	3
                     """);
-            assertQueryRows("SELECT DISTINCT id AS v, max(id) OVER () m FROM lp_distinct ORDER BY lp_distinct.id", """
+            assertRowsOnly("SELECT DISTINCT id AS v, max(id) OVER () m FROM lp_distinct ORDER BY lp_distinct.id", """
                     v	m
                     null	3
                     1	3
                     2	3
                     3	3
                     """);
-            assertQueryRows("SELECT DISTINCT sym,id, max(id) OVER () m FROM lp_distinct ORDER BY 2,1", """
+            assertRowsOnly("SELECT DISTINCT sym,id, max(id) OVER () m FROM lp_distinct ORDER BY 2,1", """
                     sym	id	m
                     	null	3
                     A	1	3
@@ -92,7 +92,7 @@ public class DistinctPlanningTest extends AbstractCairoTest {
     public void testEqualityTupleSurvivesOuterPruningAndFilter() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (SELECT DISTINCT id,sym, max(id) OVER () m FROM lp_distinct) ORDER BY id",
                     """
                             id
@@ -103,7 +103,7 @@ public class DistinctPlanningTest extends AbstractCairoTest {
                             3
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (SELECT DISTINCT id,sym, max(id) OVER () m FROM lp_distinct) WHERE id>1 ORDER BY id",
                     """
                             id
@@ -111,7 +111,7 @@ public class DistinctPlanningTest extends AbstractCairoTest {
                             3
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT 7 AS v FROM (SELECT DISTINCT id,sym, max(id) OVER () m FROM lp_distinct)",
                     """
                             v
@@ -129,7 +129,7 @@ public class DistinctPlanningTest extends AbstractCairoTest {
     public void testGenericDistinctNullsSymbolsAndVariableColumns() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT DISTINCT id,sym,label,note, max(id) OVER () m FROM lp_distinct ORDER BY id,sym",
                     """
                             id	sym	label	note	m
@@ -140,7 +140,7 @@ public class DistinctPlanningTest extends AbstractCairoTest {
                             3	C	c	café	3
                             """
             );
-            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct", """
+            assertRowsOnly("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct", """
                     id	m
                     3	3
                     1	3
@@ -155,22 +155,22 @@ public class DistinctPlanningTest extends AbstractCairoTest {
     public void testLimitAdviceDoesNotReplaceLimit() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT 2", """
+            assertRowsOnly("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT 2", """
                     id	m
                     3	3
                     1	3
                     """);
-            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT 1,3", """
+            assertRowsOnly("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT 1,3", """
                     id	m
                     1	3
                     null	3
                     """);
-            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT -2", """
+            assertRowsOnly("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct LIMIT -2", """
                     id	m
                     null	3
                     2	3
                     """);
-            assertQueryRows("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id LIMIT 2", """
+            assertRowsOnly("SELECT DISTINCT id, max(id) OVER () m FROM lp_distinct ORDER BY id LIMIT 2", """
                     id	m
                     null	3
                     1	3
@@ -220,7 +220,7 @@ public class DistinctPlanningTest extends AbstractCairoTest {
     public void testTimeSeriesDistinctKeepsInputOrderAndFactoryChoice() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct", """
+            assertRowsOnly("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct", """
                     ts	id	m
                     2020-01-01T00:00:00.000000Z	3	3
                     2020-01-01T00:00:01.000000Z	1	3
@@ -228,7 +228,7 @@ public class DistinctPlanningTest extends AbstractCairoTest {
                     2020-01-01T00:00:03.000000Z	2	3
                     2020-01-01T00:00:04.000000Z	3	3
                     """);
-            assertQueryRows("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct ORDER BY ts", """
+            assertRowsOnly("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct ORDER BY ts", """
                     ts	id	m
                     2020-01-01T00:00:00.000000Z	3	3
                     2020-01-01T00:00:01.000000Z	1	3
@@ -236,7 +236,7 @@ public class DistinctPlanningTest extends AbstractCairoTest {
                     2020-01-01T00:00:03.000000Z	2	3
                     2020-01-01T00:00:04.000000Z	3	3
                     """);
-            assertQueryRows("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct ORDER BY ts DESC", """
+            assertRowsOnly("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct ORDER BY ts DESC", """
                     ts	id	m
                     2020-01-01T00:00:04.000000Z	3	3
                     2020-01-01T00:00:03.000000Z	2	3
@@ -244,7 +244,7 @@ public class DistinctPlanningTest extends AbstractCairoTest {
                     2020-01-01T00:00:01.000000Z	1	3
                     2020-01-01T00:00:00.000000Z	3	3
                     """);
-            assertQueryRows("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct LIMIT 2", """
+            assertRowsOnly("SELECT DISTINCT ts,id, max(id) OVER () m FROM lp_distinct LIMIT 2", """
                     ts	id	m
                     2020-01-01T00:00:00.000000Z	3	3
                     2020-01-01T00:00:01.000000Z	1	3
@@ -348,9 +348,5 @@ public class DistinctPlanningTest extends AbstractCairoTest {
                 (2,'B','b','beta','2020-01-01T00:00:03Z'),
                 (3,'C','c','café','2020-01-01T00:00:04Z')
                 """);
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

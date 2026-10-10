@@ -48,15 +48,15 @@ public class JoinPredicateScopeTest extends AbstractCairoTest {
             createRows();
             final String transparent = "SELECT a.id FROM lp_scope_a a "
                     + "JOIN (SELECT id,ts FROM lp_scope_b) b ON a.id=b.id WHERE ";
-            assertRows(transparent + MIXED_PREDICATE + " AND b.id>0 ORDER BY a.id", "id\n1\n2\n");
-            assertRows(transparent + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(transparent + MIXED_PREDICATE + " AND b.id>0 ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(transparent + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
 
             // LIMIT stops source pushdown. The separate bound must retain
             // nanosecond row-comparison precision as well as the mixed OR.
             final String limited = "SELECT a.id FROM lp_scope_a a "
                     + "JOIN (SELECT id,ts FROM lp_scope_b LIMIT 3) b ON a.id=b.id WHERE ";
-            assertRows(limited + MIXED_PREDICATE + " AND b.id>0 AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
-            assertRows(limited + MIXED_PREDICATE
+            assertRowsOnly(limited + MIXED_PREDICATE + " AND b.id>0 AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(limited + MIXED_PREDICATE
                     + " AND b.ts>='2020-01-01T00:00:00.000000001Z' ORDER BY a.id", "id\n2\n");
         });
     }
@@ -68,9 +68,9 @@ public class JoinPredicateScopeTest extends AbstractCairoTest {
             final String query = "SELECT q.id FROM (SELECT a.id id,a.active active,b.ts early,b.ts late "
                     + "FROM lp_scope_a a JOIN lp_scope_b b ON a.id=b.id) q WHERE ";
             final String mixed = "(q.late<'2020-01-01T00:00:00.000000001Z' OR q.active)";
-            assertRows(query + mixed + " ORDER BY q.id", "id\n1\n2\n");
-            assertRows(query + mixed + " AND q.id>0 ORDER BY q.id", "id\n1\n2\n");
-            assertRows(query + mixed + " AND q.early<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n2\n");
+            assertRowsOnly(query + mixed + " ORDER BY q.id", "id\n1\n2\n");
+            assertRowsOnly(query + mixed + " AND q.id>0 ORDER BY q.id", "id\n1\n2\n");
+            assertRowsOnly(query + mixed + " AND q.early<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n2\n");
         });
     }
 
@@ -80,9 +80,9 @@ public class JoinPredicateScopeTest extends AbstractCairoTest {
             createRows();
             final String predicate = "(b.id>0 AND (" + MIXED_PREDICATE + " AND ("
                     + NATIVE_BOUND + " AND a.id>0))) ORDER BY a.id";
-            assertRows(TWO_SOURCES + predicate, "id\n1\n2\n");
-            assertRows(THREE_SOURCES + predicate, "id\n1\n2\n");
-            assertRows(THREE_SOURCES + MIXED_PREDICATE
+            assertRowsOnly(TWO_SOURCES + predicate, "id\n1\n2\n");
+            assertRowsOnly(THREE_SOURCES + predicate, "id\n1\n2\n");
+            assertRowsOnly(THREE_SOURCES + MIXED_PREDICATE
                     + " AND (b.id>0 AND b.ts>='2020-01-01T00:00:00.000000001Z') ORDER BY a.id", "id\n2\n");
         });
     }
@@ -134,11 +134,11 @@ public class JoinPredicateScopeTest extends AbstractCairoTest {
             for (int i = 0, n = sources.size(); i < n; i++) {
                 final String query = "SELECT q.id FROM (" + sources.getQuick(i) + ") q WHERE ";
                 final String mixed = "(q.ts<'2020-01-01T00:00:00.000000001Z' OR q.active)";
-                assertRows(query + mixed + " ORDER BY q.id", "id\n1\n2\n");
-                assertRows(query + mixed + " AND q.id>0 ORDER BY q.id", "id\n1\n2\n");
-                assertRows(query + "q.bid>0 AND " + mixed + " ORDER BY q.id", "id\n1\n2\n");
-                assertRows(query + mixed + " AND q.ts<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n2\n");
-                assertRows(query + "q.ts<'2020-01-01T00:00:00.000000001Z' AND q.id>0 ORDER BY q.id", "id\n1\n");
+                assertRowsOnly(query + mixed + " ORDER BY q.id", "id\n1\n2\n");
+                assertRowsOnly(query + mixed + " AND q.id>0 ORDER BY q.id", "id\n1\n2\n");
+                assertRowsOnly(query + "q.bid>0 AND " + mixed + " ORDER BY q.id", "id\n1\n2\n");
+                assertRowsOnly(query + mixed + " AND q.ts<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n2\n");
+                assertRowsOnly(query + "q.ts<'2020-01-01T00:00:00.000000001Z' AND q.id>0 ORDER BY q.id", "id\n1\n");
             }
         });
     }
@@ -149,9 +149,9 @@ public class JoinPredicateScopeTest extends AbstractCairoTest {
             createRows();
             final String query = "SELECT q.id FROM (" + DERIVED_TWO_SOURCES + " LIMIT 2) q WHERE ";
             final String mixed = "(q.ts<'2020-01-01T00:00:00.000000001Z' OR q.active)";
-            assertRows(query + mixed + " AND q.id>0 ORDER BY q.id", "id\n1\n2\n");
-            assertRows(query + mixed + " AND q.ts<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n2\n");
-            assertRows(query + "q.ts<'2020-01-01T00:00:00.000000001Z' AND q.id>0 ORDER BY q.id", "id\n1\n");
+            assertRowsOnly(query + mixed + " AND q.id>0 ORDER BY q.id", "id\n1\n2\n");
+            assertRowsOnly(query + mixed + " AND q.ts<'2020-01-01T00:00:00.000001001Z' ORDER BY q.id", "id\n1\n2\n");
+            assertRowsOnly(query + "q.ts<'2020-01-01T00:00:00.000000001Z' AND q.id>0 ORDER BY q.id", "id\n1\n");
         });
     }
 
@@ -161,11 +161,11 @@ public class JoinPredicateScopeTest extends AbstractCairoTest {
             createRows();
             // b is the last source, so both the mixed OR and the b-only term
             // initially share a post-join placement group.
-            assertRows(THREE_SOURCES + MIXED_PREDICATE + " ORDER BY a.id", "id\n1\n2\n");
-            assertRows(THREE_SOURCES + MIXED_PREDICATE + " AND b.id>0 ORDER BY a.id", "id\n1\n2\n");
-            assertRows(THREE_SOURCES + "b.id>0 AND " + MIXED_PREDICATE
+            assertRowsOnly(THREE_SOURCES + MIXED_PREDICATE + " ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(THREE_SOURCES + MIXED_PREDICATE + " AND b.id>0 ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(THREE_SOURCES + "b.id>0 AND " + MIXED_PREDICATE
                     + " AND c.id>0 ORDER BY a.id", "id\n1\n2\n");
-            assertRows(THREE_SOURCES + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(THREE_SOURCES + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
         });
     }
 
@@ -173,15 +173,11 @@ public class JoinPredicateScopeTest extends AbstractCairoTest {
     public void testTwoSourcesDoNotTaintMixedPredicateWithSourceLocalConjunct() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows(TWO_SOURCES + MIXED_PREDICATE + " ORDER BY a.id", "id\n1\n2\n");
-            assertRows(TWO_SOURCES + MIXED_PREDICATE + " AND b.id>0 ORDER BY a.id", "id\n1\n2\n");
-            assertRows(TWO_SOURCES + "b.id>0 AND " + MIXED_PREDICATE + " ORDER BY a.id", "id\n1\n2\n");
-            assertRows(TWO_SOURCES + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(TWO_SOURCES + MIXED_PREDICATE + " ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(TWO_SOURCES + MIXED_PREDICATE + " AND b.id>0 ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(TWO_SOURCES + "b.id>0 AND " + MIXED_PREDICATE + " ORDER BY a.id", "id\n1\n2\n");
+            assertRowsOnly(TWO_SOURCES + MIXED_PREDICATE + " AND " + NATIVE_BOUND + " ORDER BY a.id", "id\n1\n2\n");
         });
-    }
-
-    private void assertRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

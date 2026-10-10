@@ -48,7 +48,7 @@ public class SetOperationTest extends AbstractCairoTest {
             execute("INSERT INTO lp_set_b VALUES (1,'b'),(2,'a'),(2,'a'),(4,'d'),(null,null)");
             {
                 final String operation = OPERATIONS[0];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,label FROM lp_set_a " + operation
                                 + " SELECT id,label FROM lp_set_b) ORDER BY id",
                         """
@@ -64,7 +64,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[1];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,label FROM lp_set_a " + operation
                                 + " SELECT id,label FROM lp_set_b) ORDER BY id",
                         """
@@ -85,7 +85,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[2];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,label FROM lp_set_a " + operation
                                 + " SELECT id,label FROM lp_set_b) ORDER BY id",
                         """
@@ -98,7 +98,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[3];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,label FROM lp_set_a " + operation
                                 + " SELECT id,label FROM lp_set_b) ORDER BY id",
                         """
@@ -111,7 +111,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[4];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,label FROM lp_set_a " + operation
                                 + " SELECT id,label FROM lp_set_b) ORDER BY id",
                         """
@@ -123,7 +123,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[5];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,label FROM lp_set_a " + operation
                                 + " SELECT id,label FROM lp_set_b) ORDER BY id",
                         """
@@ -173,7 +173,7 @@ public class SetOperationTest extends AbstractCairoTest {
             execute("INSERT INTO lp_set_b VALUES (2,'a'),(9007199254740993,'b'),(null,null)");
             {
                 final String operation = OPERATIONS[0];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT id,s FROM lp_set_a " + operation
                                 + " SELECT id,s FROM lp_set_b) ORDER BY id,s",
                         """
@@ -187,7 +187,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[1];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT id,s FROM lp_set_a " + operation
                                 + " SELECT id,s FROM lp_set_b) ORDER BY id,s",
                         """
@@ -203,7 +203,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[2];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT id,s FROM lp_set_a " + operation
                                 + " SELECT id,s FROM lp_set_b) ORDER BY id,s",
                         """
@@ -215,7 +215,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[3];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT id,s FROM lp_set_a " + operation
                                 + " SELECT id,s FROM lp_set_b) ORDER BY id,s",
                         """
@@ -227,7 +227,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[4];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT id,s FROM lp_set_a " + operation
                                 + " SELECT id,s FROM lp_set_b) ORDER BY id,s",
                         """
@@ -238,7 +238,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[5];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT id,s FROM lp_set_a " + operation
                                 + " SELECT id,s FROM lp_set_b) ORDER BY id,s",
                         """
@@ -263,7 +263,7 @@ public class SetOperationTest extends AbstractCairoTest {
                 final String direction = "ASC";
                 final String sql = "SELECT * FROM (SELECT ts,id,s FROM lp_set_a UNION ALL SELECT ts,id,s FROM lp_set_b"
                         + " UNION ALL SELECT ts,id,s FROM lp_set_c) ORDER BY ts " + direction;
-                assertQueryRows(sql, """
+                assertRowsOnly(sql, """
                         ts	id	s
                         1970-01-01T00:00:00.000000Z	1.0	b
                         1970-01-01T00:00:00.000001Z	2.0	a
@@ -285,7 +285,7 @@ public class SetOperationTest extends AbstractCairoTest {
                 final String direction = "DESC";
                 final String sql = "SELECT * FROM (SELECT ts,id,s FROM lp_set_a UNION ALL SELECT ts,id,s FROM lp_set_b"
                         + " UNION ALL SELECT ts,id,s FROM lp_set_c) ORDER BY ts " + direction;
-                assertQueryRows(sql, """
+                assertRowsOnly(sql, """
                         ts	id	s
                         1970-01-01T00:00:00.000005Z	6.0	a
                         1970-01-01T00:00:00.000004Z	5.0	a
@@ -317,7 +317,7 @@ public class SetOperationTest extends AbstractCairoTest {
             execute("INSERT INTO lp_set_ns VALUES (2000,3)");
             final String limited = "SELECT * FROM (SELECT * FROM (SELECT ts,id FROM lp_set_a LIMIT 1)"
                     + " UNION ALL SELECT ts,id FROM lp_set_b) ORDER BY ts DESC";
-            assertQueryRows(limited, """
+            assertRowsOnly(limited, """
                     ts	id
                     1970-01-01T00:00:00.000003Z	4
                     1970-01-01T00:00:00.000001Z	2
@@ -326,7 +326,7 @@ public class SetOperationTest extends AbstractCairoTest {
             assertPlan(limited, "Encode sort", "Union All Merge");
             final String widened = "SELECT * FROM (SELECT ts,id FROM lp_set_a"
                     + " UNION ALL SELECT ts,id FROM lp_set_ns) ORDER BY ts";
-            assertQueryRows(widened, """
+            assertRowsOnly(widened, """
                     ts	id
                     1970-01-01T00:00:00.000000000Z	1
                     1970-01-01T00:00:00.000002000Z	3
@@ -335,7 +335,7 @@ public class SetOperationTest extends AbstractCairoTest {
             assertPlan(widened, "Encode sort", "Union All Merge");
             final String extraKey = "SELECT * FROM (SELECT ts,id FROM lp_set_a"
                     + " UNION ALL SELECT ts,id FROM lp_set_b) ORDER BY ts,id";
-            assertQueryRows(extraKey, """
+            assertRowsOnly(extraKey, """
                     ts	id
                     1970-01-01T00:00:00.000000Z	1
                     1970-01-01T00:00:00.000001Z	2
@@ -392,7 +392,7 @@ public class SetOperationTest extends AbstractCairoTest {
             execute("INSERT INTO lp_set_c VALUES ('b')");
             {
                 final String operation = OPERATIONS[0];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT s FROM lp_set_a " + operation
                                 + " SELECT s FROM lp_set_b) ORDER BY s",
                         """
@@ -406,7 +406,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[1];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT s FROM lp_set_a " + operation
                                 + " SELECT s FROM lp_set_b) ORDER BY s",
                         """
@@ -423,7 +423,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[2];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT s FROM lp_set_a " + operation
                                 + " SELECT s FROM lp_set_b) ORDER BY s",
                         """
@@ -435,7 +435,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[3];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT s FROM lp_set_a " + operation
                                 + " SELECT s FROM lp_set_b) ORDER BY s",
                         """
@@ -447,7 +447,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[4];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT s FROM lp_set_a " + operation
                                 + " SELECT s FROM lp_set_b) ORDER BY s",
                         """
@@ -458,7 +458,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[5];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT * FROM (SELECT s FROM lp_set_a " + operation
                                 + " SELECT s FROM lp_set_b) ORDER BY s",
                         """
@@ -468,7 +468,7 @@ public class SetOperationTest extends AbstractCairoTest {
                                 """
                 );
             }
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT * FROM (SELECT s FROM lp_set_a UNION ALL SELECT s FROM lp_set_b"
                             + " UNION SELECT s FROM lp_set_c) ORDER BY s",
                     """
@@ -479,7 +479,7 @@ public class SetOperationTest extends AbstractCairoTest {
                             c
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT * FROM (SELECT s FROM lp_set_a UNION ALL SELECT s FROM lp_set_b"
                             + " EXCEPT SELECT s FROM lp_set_c) ORDER BY s",
                     """
@@ -501,7 +501,7 @@ public class SetOperationTest extends AbstractCairoTest {
             execute("INSERT INTO lp_set_b VALUES (3,'a',10),(4,null,20)");
             final String sql = "SELECT s,id FROM (SELECT keepa id,dropa ignored,syma s FROM lp_set_a"
                     + " UNION ALL SELECT keepb otherid,dropb ignored2,symb others FROM lp_set_b) ORDER BY id";
-            assertQueryRows(sql, """
+            assertRowsOnly(sql, """
                     s	id
                     b	1
                     a	2
@@ -527,7 +527,7 @@ public class SetOperationTest extends AbstractCairoTest {
             execute("INSERT INTO lp_set_c VALUES (1,'c'),(2,'c')");
             {
                 final String operation = OPERATIONS[0];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a " + operation
                                 + " SELECT id,tag FROM lp_set_b UNION ALL SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -540,7 +540,7 @@ public class SetOperationTest extends AbstractCairoTest {
                                 3
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a UNION ALL SELECT id,tag FROM lp_set_b "
                                 + operation + " SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -555,7 +555,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[1];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a " + operation
                                 + " SELECT id,tag FROM lp_set_b UNION ALL SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -570,7 +570,7 @@ public class SetOperationTest extends AbstractCairoTest {
                                 3
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a UNION ALL SELECT id,tag FROM lp_set_b "
                                 + operation + " SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -588,7 +588,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[2];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a " + operation
                                 + " SELECT id,tag FROM lp_set_b UNION ALL SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -599,7 +599,7 @@ public class SetOperationTest extends AbstractCairoTest {
                                 2
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a UNION ALL SELECT id,tag FROM lp_set_b "
                                 + operation + " SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -610,7 +610,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[3];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a " + operation
                                 + " SELECT id,tag FROM lp_set_b UNION ALL SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -621,7 +621,7 @@ public class SetOperationTest extends AbstractCairoTest {
                                 2
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a UNION ALL SELECT id,tag FROM lp_set_b "
                                 + operation + " SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -633,7 +633,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[4];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a " + operation
                                 + " SELECT id,tag FROM lp_set_b UNION ALL SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -643,7 +643,7 @@ public class SetOperationTest extends AbstractCairoTest {
                                 2
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a UNION ALL SELECT id,tag FROM lp_set_b "
                                 + operation + " SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -656,7 +656,7 @@ public class SetOperationTest extends AbstractCairoTest {
             }
             {
                 final String operation = OPERATIONS[5];
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a " + operation
                                 + " SELECT id,tag FROM lp_set_b UNION ALL SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -666,7 +666,7 @@ public class SetOperationTest extends AbstractCairoTest {
                                 2
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM (SELECT id,tag FROM lp_set_a UNION ALL SELECT id,tag FROM lp_set_b "
                                 + operation + " SELECT id,tag FROM lp_set_c) ORDER BY id",
                         """
@@ -688,7 +688,7 @@ public class SetOperationTest extends AbstractCairoTest {
             execute("CREATE TABLE lp_set_b (id INT, rank INT)");
             execute("INSERT INTO lp_set_a VALUES (1,30),(2,10),(3,20)");
             execute("INSERT INTO lp_set_b VALUES (4,60),(5,40),(6,50)");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT 7 v FROM (SELECT id,rank FROM lp_set_a UNION ALL SELECT id,rank FROM lp_set_b)",
                     """
                             v
@@ -700,7 +700,7 @@ public class SetOperationTest extends AbstractCairoTest {
                             7
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (SELECT * FROM (SELECT id,rank FROM lp_set_a ORDER BY rank LIMIT 2)"
                             + " UNION ALL SELECT * FROM (SELECT id,rank FROM lp_set_b ORDER BY rank DESC LIMIT 1)) ORDER BY id",
                     """
@@ -722,7 +722,7 @@ public class SetOperationTest extends AbstractCairoTest {
             execute("INSERT INTO lp_set_a VALUES ('[1.0]')");
             execute("INSERT INTO lp_set_b VALUES ('[2.0]')");
             execute("INSERT INTO lp_set_c VALUES (ARRAY[3.0])");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT * FROM (SELECT v FROM lp_set_a UNION ALL SELECT v FROM lp_set_b"
                             + " UNION ALL SELECT v FROM lp_set_c) ORDER BY v",
                     """
@@ -732,7 +732,7 @@ public class SetOperationTest extends AbstractCairoTest {
                             [3.0]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT * FROM (SELECT * FROM (SELECT v FROM lp_set_a UNION ALL SELECT v FROM lp_set_b)"
                             + " UNION ALL SELECT v FROM lp_set_c) ORDER BY v",
                     """
@@ -792,9 +792,5 @@ public class SetOperationTest extends AbstractCairoTest {
             }
         }
         return false;
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

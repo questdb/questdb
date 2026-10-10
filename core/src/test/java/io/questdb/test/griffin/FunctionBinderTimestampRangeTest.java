@@ -53,6 +53,12 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.FunctionBindingHarness.cast;
+import static io.questdb.test.griffin.FunctionBindingHarness.constant;
+import static io.questdb.test.griffin.FunctionBindingHarness.literal;
+import static io.questdb.test.griffin.FunctionBindingHarness.parameter;
+import static io.questdb.test.griffin.FunctionBindingHarness.record;
+
 public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
     @Test
     public void testBareNumericNativeInIsATimestampPoint() throws Exception {
@@ -385,32 +391,6 @@ public class FunctionBinderTimestampRangeTest extends AbstractCairoTest {
             result.rhs = args[0];
         }
         return result;
-    }
-
-    private static ExpressionNode cast(ExpressionNode value, String type) {
-        return call("cast", value, constant(type));
-    }
-
-    private static ExpressionNode constant(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, token, 0, 0);
-    }
-
-    private static ExpressionNode literal(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, token, 0, 0);
-    }
-
-    private static ExpressionNode parameter(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, token, 0, 0);
-    }
-
-    private static Record record(int expectedIndex, long value) {
-        return new Record() {
-            @Override
-            public long getTimestamp(int columnIndex) {
-                Assert.assertEquals(expectedIndex, columnIndex);
-                return value;
-            }
-        };
     }
 
     private static ExpressionNode text(String value) {

@@ -36,7 +36,7 @@ public class StringTest extends AbstractCairoTest {
     public void testStringTransformsProjectionPredicatesAndNulls() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,lower(label) lo,upper(label) hi,to_lowercase(label) lo_alias,to_uppercase(label) hi_alias FROM lp_string ORDER BY id",
                     """
                             id	lo	hi	lo_alias	hi_alias
@@ -47,7 +47,7 @@ public class StringTest extends AbstractCairoTest {
                             5	  äö  	  ÄÖ  	  äö  	  ÄÖ \s
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,trim(label) t,ltrim(label) lt,rtrim(label) rt FROM lp_string ORDER BY id",
                     """
                             id	t	lt	rt
@@ -58,7 +58,7 @@ public class StringTest extends AbstractCairoTest {
                             5	Äö	Äö  	  Äö
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_string WHERE lower(trim(label))='abc' ORDER BY id",
                     """
                             id
@@ -66,14 +66,14 @@ public class StringTest extends AbstractCairoTest {
                             2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_string WHERE upper(label)=null ORDER BY id",
                     """
                             id
                             3
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,lower('  ''AbC''  ') lo,trim('  ''AbC''  ') t,ltrim('  ''AbC''  ') lt,trim(CAST(null AS STRING)) n FROM lp_string ORDER BY id",
                     """
                             id	lo	t	lt	n
@@ -91,7 +91,7 @@ public class StringTest extends AbstractCairoTest {
     public void testStringTransformGroupingOrderingAndDerivedFilter() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT lower(trim(label)) value,count() FROM lp_string ORDER BY value",
                     """
                             value	count
@@ -101,7 +101,7 @@ public class StringTest extends AbstractCairoTest {
                             äö	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,upper(label) value FROM lp_string ORDER BY value,id",
                     """
                             id	value
@@ -112,7 +112,7 @@ public class StringTest extends AbstractCairoTest {
                             2	ABC
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (SELECT id,lower(trim(label)) value FROM lp_string) q WHERE value='abc' ORDER BY id",
                     """
                             id
@@ -120,7 +120,7 @@ public class StringTest extends AbstractCairoTest {
                             2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN id>2 THEN trim(label) ELSE upper(label) END value FROM lp_string ORDER BY id",
                     """
                             id	value
@@ -139,7 +139,7 @@ public class StringTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createRows();
             bindVariableService.setStr(0, "  ABC  ");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,lower(trim($1)) value FROM lp_string WHERE lower(trim(label))=lower(trim($1)) ORDER BY id",
                     """
                             id	value
@@ -148,7 +148,7 @@ public class StringTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setStr(0, null);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,upper($1) value FROM lp_string WHERE trim(label)=trim($1) ORDER BY id",
                     """
                             id	value
@@ -172,7 +172,7 @@ public class StringTest extends AbstractCairoTest {
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     final String sql = "SELECT id,upper(trim(label)) value FROM lp_string WHERE lower(trim(label))='abc' ORDER BY id";
                     try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, expected);
+                        assertRowsOnly(factory, expected);
                     }
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                     try (RecordCursorFactory next = compiler.compile("SELECT count() FROM lp_string", sqlExecutionContext).getRecordCursorFactory()) {
@@ -180,23 +180,15 @@ public class StringTest extends AbstractCairoTest {
                     }
                     compiler.clear();
                 }
-                assertResult(retained, expected);
+                assertRowsOnly(retained, expected);
             } finally {
                 Misc.free(retained);
             }
         });
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private void createRows() throws Exception {
         execute("CREATE TABLE lp_string(id INT,unused LONG,label STRING)");
         execute("INSERT INTO lp_string VALUES (1,1,'  AbC  '),(2,2,'abc'),(3,3,null),(4,4,''),(5,5,'  Äö  ')");
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

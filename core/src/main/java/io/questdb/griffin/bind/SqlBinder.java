@@ -147,7 +147,7 @@ public final class SqlBinder implements Mutable {
         this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder);
         this.pivotBinder = new PivotBinder(ctx, this, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
                 tmpSink, subqueryCompiler);
-        this.updateBinder = new UpdateBinder(ctx, this, windowBinder, joinBinder, orderBinder, updateTarget);
+        this.updateBinder = new UpdateBinder(ctx, this, windowBinder, orderBinder, updateTarget);
     }
 
     public static int getOutputColumnPosition(LogicalPlan output, int index) {
@@ -237,23 +237,6 @@ public final class SqlBinder implements Mutable {
         scope.add(columnId, GenericLexer.unquote(alias), expression.getDataType(), true);
     }
 
-    private static ExpressionNode firstColumnReference(ExpressionNode expression) {
-        if (expression == null || expression.type == ExpressionNode.LITERAL) {
-            return expression;
-        }
-        if (expression.paramCount < 3) {
-            final ExpressionNode left = firstColumnReference(expression.lhs);
-            return left != null ? left : firstColumnReference(expression.rhs);
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            final ExpressionNode column = firstColumnReference(expression.args.getQuick(i));
-            if (column != null) {
-                return column;
-            }
-        }
-        return null;
-    }
-
     private static boolean hasComputedColumn(QueryModel model) {
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             if (model.getBottomUpColumns().getQuick(i).getAst().type != ExpressionNode.LITERAL) {
@@ -332,8 +315,7 @@ public final class SqlBinder implements Mutable {
             join = inputJoin;
         } else {
             join = ctx.planNodes.joins.next().of(position);
-            join.getInputs().add(ctx.planNodes.joinInputs.next().of(input, JoinKind.CROSS, inputAlias, position));
-            join.getOrderedInputs().add(join.getInputs().getLast());
+            join.addInput(ctx.planNodes.joinInputs.next().of(input, JoinKind.CROSS, inputAlias, position));
             joinBinder.addJoinOutput(join, input.getOutput(), inputAlias);
             join.getOutput().setTimestampIndex(input.getOutput().getTimestampIndex());
         }
@@ -456,12 +438,10 @@ public final class SqlBinder implements Mutable {
         if (isHorizonJoin) {
             sourcePlan = temporalJoinBinder.bindHorizonJoin(model, source, where, executionContext);
             where = null;
-        } else if (source.getJoinModels().size() > 1) {
-            sourcePlan = joinBinder.bindJoins(source, where, executionContext);
+            ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), null);
         } else {
-            sourcePlan = bindSource(source, executionContext);
+            sourcePlan = bindBlockSource(model, source, where, executionContext);
         }
-        ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), source.getJoinModels().size() > 1 ? null : sourceAlias(source));
         if (source.getSampleBy() != null) {
             ctx.retainImplicitTimestamp(sourcePlan);
         }
@@ -469,8 +449,7 @@ public final class SqlBinder implements Mutable {
         final SampleByPlan sampleBy = isSampleByCursor ? sampleByBinder.bindSampleBy(model, source, sourcePlan, executionContext) : null;
         final BoundExpression sampleByBucket = source.getSampleBy() == null || isSampleByCursor ? null
                 : sampleByBinder.bindSampleByBucket(model, source, sourcePlan.getOutput(), executionContext);
-        bindScope.aliases.clear();
-        bindScope.aliasSequences.clear();
+        bindScope.resetAliases();
         bindScope.projectionAliasIndexes.clear();
 
         final LatestByPlan latest = bindSourceLatestBy(sourcePlan, source);
@@ -506,8 +485,7 @@ public final class SqlBinder implements Mutable {
                 throw SqlException.$(source.getSampleBy().position, "at least one aggregation function must be present in 'select' clause");
             }
             sourcePlan = input;
-            bindScope.aliases.clear();
-            bindScope.aliasSequences.clear();
+            bindScope.resetAliases();
         }
 
         if (!model.isDistinct() && model.getBottomUpColumns().size() == 1
@@ -560,65 +538,32 @@ public final class SqlBinder implements Mutable {
         if (!hasWindows) {
             validateTimestampOffset(model, sourcePlan, sourceAlias(source));
         }
+        final OutputSchema output = sourcePlan.getOutput();
+        final OutputSchema bindingScope = hasWindows ? ctx.windowBindingScope(output) : output;
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             final QueryColumn column = model.getBottomUpColumns().getQuick(i);
             final ExpressionNode expression = hasWindows ? bindScope.windowSelectExpressions.getQuick(i) : column.getAst();
             if (expression.isWildcard()) {
                 boolean hasMatch = false;
-                for (int k = 0, count = sourcePlan.getOutput().getColumnCount(); k < count; k++) {
-                    if (isWildcardColumn(expression, sourcePlan.getOutput(), k, sourceAlias(source))) {
-                        ctx.addProjection(project, sourcePlan.getOutput(), k, sourcePlan.getOutput().getColumnName(k), expression.position, true);
+                for (int k = 0, count = output.getColumnCount(); k < count; k++) {
+                    if (isWildcardColumn(expression, output, k, sourceAlias(source))) {
+                        ctx.addProjection(project, output, k, output.getColumnName(k), expression.position, true);
                         hasMatch = true;
                     }
                 }
                 if (!hasMatch && Chars.indexOfLastUnquoted(expression.token, '.') >= 0) {
                     throw SqlException.$(expression.position, "invalid table alias");
                 }
-            } else if (expression.type != ExpressionNode.LITERAL || ctx.functionBinder.isOuterColumn(expression,
-                    hasWindows ? ctx.windowBindingScope(sourcePlan.getOutput()) : sourcePlan.getOutput(), sourceAlias(source))) {
-                final int cursorSource = i < bindScope.cursorProjectionSources.size() ? bindScope.cursorProjectionSources.getQuick(i) : -1;
-                final CharSequence name = cursorSource < 0 ? column.getName() : bindScope.cursorNames.getQuick(cursorSource);
-                if (getColumnIndexQuiet(project.getOutput(), name) >= 0) {
-                    throw SqlException.duplicateColumn(0, name);
-                }
-                final OutputSchema scope = referenceScope != null ? referenceScope
-                        : hasWindows ? ctx.windowBindingScope(sourcePlan.getOutput()) : sourcePlan.getOutput();
-                final BoundExpression bound = bindScope.cursorNodes.size() > 0
-                        ? ctx.functionBinder.bind(expression, scope, sourceAlias(source), ColumnType.STRING, bindScope.cursorNodes, bindScope.cursorColumns, executionContext)
-                        : ctx.functionBinder.bind(expression, scope, sourceAlias(source), ColumnType.STRING, executionContext);
-                if (ColumnType.isCursor(bound.getDataType())) {
-                    throw SqlException.$(expression.position, "cursor function cannot be used as a column [column=").put(name).put(']');
-                }
-                ctx.addProjection(project, bound, null, name, true);
-                bindScope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
-                exposeProjectionReference(referenceScope, project, column.getName(), sourcePlan.getOutput());
-                if (translating != null) {
-                    translating.addArguments(bound, sourcePlan.getOutput(), ctx.characterStore);
-                }
-            } else if (referenceScope != null && isProjectionReference(expression, sourcePlan.getOutput(), referenceScope)) {
-                final int index = getColumnIndexQuiet(referenceScope, expression.token);
-                ctx.addProjection(project, ctx.planNodes.columns.next().of(referenceScope.getColumnId(index), referenceScope.getColumnType(index), expression.position),
-                        null, column.getAlias() != null ? column.getAlias() : expression.token, true);
-                bindScope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
-            } else {
-                final int aliasIndex = hasWindows && bindScope.windowAliasIds.getQuick(i) >= 0
-                        ? sourcePlan.getOutput().getColumnIndexById(bindScope.windowAliasIds.getQuick(i)) : -1;
-                final int index = aliasIndex >= 0 ? aliasIndex
-                        : ctx.bindColumnIndex(expression, hasWindows ? ctx.windowBindingScope(sourcePlan.getOutput()) : sourcePlan.getOutput(), sourceAlias(source));
-                CharSequence name = column.getAlias() != null ? column.getAlias() : sourcePlan.getOutput().getColumnName(index);
-                final int dot = Chars.indexOfLastUnquoted(expression.token, '.');
-                final boolean isSourceAliasReusable = dot < 0
-                        || Chars.equalsIgnoreCase(name, expression.token, dot + 1, expression.token.length());
-                if (translating != null) {
-                    name = translating.add(sourcePlan.getOutput().getColumnId(index), name, ctx.characterStore);
-                }
-                final boolean isTranslatingCopy = !isSourceAliasReusable && source.getJoinModels().size() == 1
-                        && bindScope.sourceProjectionIndexes.getQuick(index) < 0 && isReferenced(project, sourcePlan.getOutput().getColumnId(index));
-                ctx.addProjection(project, sourcePlan.getOutput(), index, name, expression.position, isSourceAliasReusable);
-                if (isTranslatingCopy) {
-                    bindScope.translatingCopyIds.add(project.getOutput().getColumnId(project.getOutput().getColumnCount() - 1));
-                }
-                exposeProjectionReference(referenceScope, project, column.getName(), sourcePlan.getOutput());
+                continue;
+            }
+            final int cursorSource = i < bindScope.cursorProjectionSources.size() ? bindScope.cursorProjectionSources.getQuick(i) : -1;
+            final int aliasIndex = hasWindows && bindScope.windowAliasIds.getQuick(i) >= 0
+                    ? output.getColumnIndexById(bindScope.windowAliasIds.getQuick(i)) : -1;
+            final int index = bindSelectColumn(project, output, bindingScope, source, column, expression, aliasIndex, cursorSource, referenceScope,
+                    translating, null, ColumnType.UNDEFINED, executionContext);
+            final int last = project.getExpressions().size() - 1;
+            if (index < 0 && ColumnType.isCursor(project.getExpressions().getQuick(last).getDataType())) {
+                throw SqlException.$(expression.position, "cursor function cannot be used as a column [column=").put(project.getOutput().getColumnName(last)).put(']');
             }
         }
         clearCursorColumns();
@@ -686,7 +631,6 @@ public final class SqlBinder implements Mutable {
             throw SqlException.$(expression.position, "boolean expression expected");
         }
         final FilterPlan filter = ctx.planNodes.filters.next().of(branch, predicate, predicate.getPosition());
-        filter.deriveOutput();
         return filter;
     }
 
@@ -735,8 +679,7 @@ public final class SqlBinder implements Mutable {
         // constrain the whole set; bind them without moving or rebuilding AST nodes.
         final QueryModel ordering = branch.getNestedModel();
         if (ordering != null && ordering.getOrderBy().size() > 0) {
-            scope.aliases.clear();
-            scope.aliasSequences.clear();
+            scope.resetAliases();
             scope.projectionAliasIndexes.clear();
             scope.sourceProjectionIndexes.setAll(result.getOutput().getColumnCount(), -1);
             final ProjectPlan projection = ctx.planNodes.projects.next().of(result, model.getModelPosition());
@@ -828,11 +771,8 @@ public final class SqlBinder implements Mutable {
                     throw orderNotSelected(order);
                 }
             }
-            final ProjectPlan projection = ctx.planNodes.projects.next().of(input, source.getSubsamplePosition());
-            projection.getOutput().copyFrom(input.getOutput());
-            for (int i = 0, n = input.getOutput().getColumnCount(); i < n; i++) {
-                projection.getExpressions().add(ctx.planNodes.columns.next().of(input.getOutput().getColumnId(i), input.getOutput().getColumnType(i), model.getModelPosition()));
-            }
+            final ProjectPlan projection = ctx.identityProjection(input, model.getModelPosition());
+            projection.setPosition(source.getSubsamplePosition());
             result = sampleByBinder.bindSubsample(orderBinder.bindSubsampleInputOrder(model, input, projection, source, sourceAlias(source), executionContext),
                     sourcePlan, source, executionContext);
         } else {
@@ -863,11 +803,7 @@ public final class SqlBinder implements Mutable {
         }
         // A declaration changes metadata and observes the subquery's order. Keep
         // that boundary using the existing projection/factory representation.
-        final ProjectPlan project = ctx.planNodes.projects.next().of(input, timestamp.position);
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            project.getExpressions().add(ctx.planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), timestamp.position));
-        }
-        project.getOutput().copyFrom(output);
+        final ProjectPlan project = ctx.identityProjection(input, timestamp.position);
         project.getOutput().setTimestampIndex(index);
         project.markTimestampDeclaration();
         return project;
@@ -1173,6 +1109,17 @@ public final class SqlBinder implements Mutable {
     }
 
     /**
+     * Binds the block's source: its joins, or its single source; promotes the select-list names that call a
+     * no-argument function.
+     */
+    LogicalPlan bindBlockSource(QueryModel model, QueryModel source, ExpressionNode where, SqlExecutionContext executionContext) throws SqlException {
+        final boolean hasJoins = source.getJoinModels().size() > 1;
+        final LogicalPlan sourcePlan = hasJoins ? joinBinder.bindJoins(source, where, executionContext) : bindSource(source, executionContext);
+        ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), hasJoins ? null : sourceAlias(source));
+        return sourcePlan;
+    }
+
+    /**
      * Binds the conjuncts of a filter as conjuncts of a WHERE clause; the caller combines them with the filter's
      * other conjuncts.
      */
@@ -1272,6 +1219,65 @@ public final class SqlBinder implements Mutable {
         return scan;
     }
 
+    /**
+     * Binds one select-list column into the projection: a computed value, or a plain column of the source,
+     * resolved in {@code bindingScope}, or {@code referenceScope} when the block exposes earlier aliases to it.
+     * {@code requestedName} names the column when the statement fixes its name (the UPDATE target), else a computed
+     * value takes the name of the cursor column it joins, {@code cursorSource}, or its alias, and a plain column its
+     * alias or its source column's name. A value assigned by an UPDATE binds to {@code updateTargetType},
+     * {@link ColumnType#UNDEFINED} elsewhere. Returns the source index of a plain column, else -1.
+     */
+    int bindSelectColumn(
+            ProjectPlan project, OutputSchema output, OutputSchema bindingScope, QueryModel source, QueryColumn column,
+            ExpressionNode expression, int aliasIndex, int cursorSource, OutputSchema referenceScope,
+            BindScope.TranslatingAliases translating, CharSequence requestedName, int updateTargetType, SqlExecutionContext executionContext
+    ) throws SqlException {
+        final BindScope bindScope = ctx.scope();
+        final CharSequence alias = sourceAlias(source);
+        if (expression.type != ExpressionNode.LITERAL || ctx.functionBinder.isOuterColumn(expression, bindingScope, alias)) {
+            final CharSequence name = requestedName != null ? requestedName
+                    : cursorSource < 0 ? column.getName() : bindScope.cursorNames.getQuick(cursorSource);
+            if (getColumnIndexQuiet(project.getOutput(), name) >= 0) {
+                throw SqlException.duplicateColumn(0, name);
+            }
+            final OutputSchema scope = referenceScope != null ? referenceScope : bindingScope;
+            final BoundExpression bound = updateTargetType != ColumnType.UNDEFINED
+                    ? ctx.functionBinder.bindUpdateAssignment(expression, scope, alias, updateTargetType, executionContext)
+                    : bindScope.cursorNodes.size() > 0
+                      ? ctx.functionBinder.bind(expression, scope, alias, ColumnType.STRING, bindScope.cursorNodes, bindScope.cursorColumns, executionContext)
+                      : ctx.functionBinder.bind(expression, scope, alias, ColumnType.STRING, executionContext);
+            ctx.addProjection(project, bound, null, name, true);
+            bindScope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
+            exposeProjectionReference(referenceScope, project, column.getName(), output);
+            if (translating != null) {
+                translating.addArguments(bound, output, ctx.characterStore);
+            }
+            return -1;
+        }
+        if (referenceScope != null && isProjectionReference(expression, output, referenceScope)) {
+            final int index = getColumnIndexQuiet(referenceScope, expression.token);
+            ctx.addProjection(project, ctx.planNodes.columns.next().of(referenceScope.getColumnId(index), referenceScope.getColumnType(index), expression.position),
+                    null, column.getAlias() != null ? column.getAlias() : expression.token, true);
+            bindScope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
+            return -1;
+        }
+        final int index = aliasIndex >= 0 ? aliasIndex : ctx.bindColumnIndex(expression, bindingScope, alias);
+        CharSequence name = requestedName != null ? requestedName : column.getAlias() != null ? column.getAlias() : output.getColumnName(index);
+        final int dot = Chars.indexOfLastUnquoted(expression.token, '.');
+        final boolean isSourceAliasReusable = dot < 0 || Chars.equalsIgnoreCase(name, expression.token, dot + 1, expression.token.length());
+        if (translating != null) {
+            name = translating.add(output.getColumnId(index), name, ctx.characterStore);
+        }
+        final boolean isTranslatingCopy = !isSourceAliasReusable && source.getJoinModels().size() == 1
+                && bindScope.sourceProjectionIndexes.getQuick(index) < 0 && isReferenced(project, output.getColumnId(index));
+        ctx.addProjection(project, output, index, name, expression.position, isSourceAliasReusable);
+        if (isTranslatingCopy) {
+            bindScope.translatingCopyIds.add(project.getOutput().getColumnId(project.getOutput().getColumnCount() - 1));
+        }
+        exposeProjectionReference(referenceScope, project, column.getName(), output);
+        return index;
+    }
+
     LogicalPlan bindSource(QueryModel source, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         final LowerCaseCharSequenceObjHashMap<CharSequence> previousHints = scope.currentHints;
@@ -1308,7 +1314,6 @@ public final class SqlBinder implements Mutable {
         }
         if (!(predicate instanceof ConstantExpression constant) || constant.getLongValue() == 0) {
             final FilterPlan filter = ctx.planNodes.filters.next().of(sourcePlan, predicate, predicate.getPosition());
-            filter.deriveOutput();
             return filter;
         }
         return sourcePlan;

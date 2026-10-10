@@ -29,10 +29,13 @@ import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
+import io.questdb.griffin.plan.logical.ForwardingPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -41,11 +44,15 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
+import io.questdb.griffin.plan.logical.WindowJoinPlan;
+import io.questdb.griffin.plan.logical.WindowJoinStep;
+import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Rewrite state {@link Decorrelation} shares with its collaborators: the master join of the step being
@@ -148,6 +155,29 @@ final class DecorrelationContext implements Mutable {
         return expression != null && !expression.walk(visitor);
     }
 
+    /**
+     * Lays out a window join over its decorrelated master: master columns, then the step aggregates, with each
+     * step's scopes rebuilt over that layout.
+     */
+    private void alignWindowJoin(WindowJoinPlan windowJoin) {
+        final OutputSchema output = windowJoin.getOutput();
+        final OutputSchema master = windowJoin.getMaster().getOutput();
+        alignColumns(output, master);
+        int prefix = master.getColumnCount();
+        for (int s = 0, m = windowJoin.getSteps().size(); s < m; s++) {
+            final WindowJoinStep step = windowJoin.getSteps().getQuick(s);
+            final OutputSchema masterScope = step.getMasterScope();
+            masterScope.clear();
+            for (int i = 0; i < prefix; i++) {
+                masterScope.addColumnFrom(output, i);
+            }
+            final OutputSchema scope = step.getScope();
+            scope.copyFrom(masterScope);
+            scope.addColumnsFrom(step.getSlave().getOutput(), step.getSlaveAlias());
+            prefix += step.getAggregateColumnIds().size();
+        }
+    }
+
     private int findOuterRefName(LogicalPlan plan) {
         final OutputSchema output = plan.getOutput();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
@@ -161,6 +191,15 @@ final class DecorrelationContext implements Mutable {
     private int findUnmappedOuter(BoundExpression expression) {
         return expression instanceof OuterColumnExpression outer && masterOuterIds.contains(outer.getColumnId())
                 && mappedColumn(outer.getColumnId(), readMappingBase, mappedOuterIds.size()) < 0 ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    }
+
+    /**
+     * Records, as carriers of the step, the columns {@link #substitution} maps the outer columns its ON condition and
+     * key filter read to.
+     */
+    private void recordCarriers(JoinInput step) {
+        recordCarriers(step, step.getOnResidual());
+        recordCarriers(step, step.getKeyFilter());
     }
 
     private void recordCarriers(JoinInput step, BoundExpression expression) {
@@ -237,6 +276,19 @@ final class DecorrelationContext implements Mutable {
         copy.clear();
     }
 
+    /**
+     * CASE WHEN {@code condition} THEN {@code then} ELSE {@code otherwise} END over the input.
+     */
+    BoundExpression caseWhen(BoundExpression condition, BoundExpression then, BoundExpression otherwise, OutputSchema input, int position)
+            throws SqlException {
+        final ObjList<BoundExpression> arguments = context.getCallArguments();
+        arguments.clear();
+        arguments.add(condition);
+        arguments.add(then);
+        arguments.add(otherwise);
+        return context.bindCall("case", position, input);
+    }
+
     void collectColumnIds(BoundExpression expression, IntList sink) {
         columnIdSink = sink;
         try {
@@ -250,10 +302,36 @@ final class DecorrelationContext implements Mutable {
         return planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position);
     }
 
-    void exposeColumn(ProjectPlan project, OutputSchema input, int columnId, CharSequence name, int position) {
+    /**
+     * Appends a hidden column of the projection that reads {@code columnId} of the input; returns its id.
+     */
+    int exposeColumn(ProjectPlan project, OutputSchema input, int columnId, CharSequence name, int position) {
         final int type = input.getColumnType(input.getColumnIndexById(columnId));
         project.getExpressions().add(planNodes.columns.next().of(columnId, type, position));
-        project.getOutput().add(context.newColumnId(), name, type, false);
+        final int exposedId = context.newColumnId();
+        project.getOutput().add(exposedId, name, type, false);
+        return exposedId;
+    }
+
+    /**
+     * A projection that re-projects every column of the input under a fresh id, attribute for attribute and in
+     * input order; {@code remap}, when given, maps each column to its fresh id.
+     */
+    ProjectPlan forwardingProjection(LogicalPlan input, @Nullable IntIntHashMap remap, int position) {
+        final ProjectPlan project = planNodes.projects.next().of(input, position);
+        final OutputSchema source = input.getOutput();
+        final OutputSchema output = project.getOutput();
+        for (int i = 0, n = source.getColumnCount(); i < n; i++) {
+            final int columnId = source.getColumnId(i);
+            final int type = source.getColumnType(i);
+            project.getExpressions().add(planNodes.columns.next().of(columnId, type, position));
+            final int forwardedId = context.newColumnId();
+            output.add(forwardedId, source.getColumnName(i), type, source.getMetadata(i), source.isVisible(i), source.getColumnQualifier(i));
+            if (remap != null) {
+                remap.put(columnId, forwardedId);
+            }
+        }
+        return project;
     }
 
     boolean hasOuterRefName(LogicalPlan plan) {
@@ -280,6 +358,16 @@ final class DecorrelationContext implements Mutable {
     CharSequence joinedName(OutputSchema output, int columnId) {
         final int index = output.getColumnIndexById(columnId);
         return qualifiedName(output.getColumnQualifier(index), output.getColumnName(index));
+    }
+
+    /**
+     * Loads {@link #substitution} with the mapping above {@code base}: each outer column to its mapped column.
+     */
+    void loadMappedSubstitution(int base) {
+        substitution.clear();
+        for (int i = base, n = mappedOuterIds.size(); i < n; i++) {
+            substitution.put(mappedOuterIds.getQuick(i), mappedColumnIds.getQuick(i));
+        }
     }
 
     int mappedColumn(int outerId, int lo, int hi) {
@@ -401,12 +489,30 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * Records, as carriers of the step, the columns {@link #substitution} maps the outer columns its ON condition and
-     * key filter read to.
+     * Lays the node's output out again over the changed output of its input.
      */
-    void recordCarriers(JoinInput step) {
-        recordCarriers(step, step.getOnResidual());
-        recordCarriers(step, step.getKeyFilter());
+    void realign(LogicalPlan node) {
+        switch (node) {
+            case ForwardingPlan forwarding -> forwarding.deriveOutput();
+            case WindowJoinPlan windowJoin -> alignWindowJoin(windowJoin);
+            case WindowPlan _, HorizonJoinPlan _ -> alignColumns(node.getOutput(), node.inputAt(0).getOutput());
+            default -> {
+            }
+        }
+    }
+
+    /**
+     * Realigns every node of the single-input chain from {@code top} down to, excluding, {@code bottom}, lowest first.
+     */
+    void realignAbove(LogicalPlan top, LogicalPlan bottom) {
+        final int base = chain.size();
+        for (LogicalPlan node = top; node != bottom; node = node.inputAt(0)) {
+            chain.add(node);
+        }
+        for (int i = chain.size() - 1; i >= base; i--) {
+            realign(chain.getQuick(i));
+        }
+        chain.setPos(base);
     }
 
     /**
@@ -425,15 +531,38 @@ final class DecorrelationContext implements Mutable {
      * records the mapped columns a join step's ON condition reads as the step's carriers.
      */
     void remapMapped(LogicalPlan node, int base) {
-        substitution.clear();
-        for (int k = base, n = mappedOuterIds.size(); k < n; k++) {
-            substitution.put(mappedOuterIds.getQuick(k), mappedColumnIds.getQuick(k));
-        }
+        loadMappedSubstitution(base);
         if (node instanceof JoinPlan join) {
             for (int i = 0, n = join.getInputs().size(); i < n; i++) {
                 recordCarriers(join.getInputs().getQuick(i));
             }
         }
         copier.remap(node, substitution);
+    }
+
+    /**
+     * Records the step's carriers and renames, in its ON condition, key filter and, when {@code isFilterRead}, post-join
+     * filter, the columns {@link #substitution} holds.
+     */
+    void remapStepConditions(JoinInput step, boolean isFilterRead) {
+        recordCarriers(step);
+        step.setOnResidual(context.getRewriter().remapColumns(step.getOnResidual(), substitution));
+        step.setKeyFilter(context.getRewriter().remapColumns(step.getKeyFilter(), substitution));
+        if (isFilterRead) {
+            step.setPostJoinFilter(context.getRewriter().remapColumns(step.getPostJoinFilter(), substitution));
+        }
+    }
+
+    /**
+     * Gives each column of the output the name {@link OptimiserContext#uniqueName} assigns it after the columns before it.
+     */
+    void uniqueNames(OutputSchema output) {
+        final OutputSchema seen = tmpSchema;
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            final CharSequence name = context.uniqueName(seen, output.getColumnName(i));
+            output.setColumnName(i, name, output.getColumnQualifier(i));
+            seen.add(output.getColumnId(i), name, output.getColumnType(i), false);
+        }
+        seen.clear();
     }
 }

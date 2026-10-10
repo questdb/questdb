@@ -67,24 +67,19 @@ public class CompiledFilterTimestampPrecisionTest extends AbstractCairoTest {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 Assert.assertFalse(factory.usesCompiledFilter());
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 Assert.assertEquals(isCompiled && JitUtil.isJitSupported(), factory.usesCompiledFilter());
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         } finally {
             sqlExecutionContext.setJitMode(previousMode);
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp()
-                .sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

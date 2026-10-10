@@ -25,13 +25,10 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -307,16 +304,16 @@ public class JoinPlanningTest extends AbstractCairoTest {
                         """;
                 try (RecordCursorFactory factory = compiler.compile("SELECT l.id" + from
                         + "l.id<r.id ORDER BY l.id", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
                 bindVariableService.clear();
                 try (RecordCursorFactory factory = compiler.compile("SELECT l.id" + from
                         + "$1 AND l.id<r.id ORDER BY l.id", sqlExecutionContext).getRecordCursorFactory()) {
                     Assert.assertEquals(ColumnType.BOOLEAN, bindVariableService.getFunction(0).getType());
                     bindVariableService.setBoolean(0, true);
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                     bindVariableService.setBoolean(0, false);
-                    assertResult(factory, "id\n");
+                    assertRowsOnly(factory, "id\n");
                 }
             }
         });
@@ -407,16 +404,16 @@ public class JoinPlanningTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 final String sql = "SELECT l.id lid,r.id rid FROM lp_join_l l LEFT JOIN lp_join_r r ON l.k=r.k AND r.v IN (11,31) ORDER BY lid,rid";
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
                 try {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                     Assert.assertNotNull(compiler.getPlanForTesting());
                     explain = compiler.compile("EXPLAIN " + sql, sqlExecutionContext).getRecordCursorFactory();
-                    expectedPlan = print(explain);
+                    expectedPlan = printFactory(explain);
                     assertFailure(compiler, "SELECT lp_missing_fn(l.id) FROM lp_join_l l JOIN lp_join_r r ON l.k=r.k", "unknown function name");
                     try (RecordCursorFactory factory = compiler.compile("SELECT count() FROM lp_join_l", sqlExecutionContext).getRecordCursorFactory()) {
-                        TestUtils.assertEquals("count\n4\n", print(factory));
+                        TestUtils.assertEquals("count\n4\n", printFactory(factory));
                     }
                 } catch (Throwable th) {
                     if (retained != null) {
@@ -429,8 +426,8 @@ public class JoinPlanningTest extends AbstractCairoTest {
                 }
             }
             try (RecordCursorFactory factory = retained; RecordCursorFactory plan = explain) {
-                assertResult(factory, expected);
-                TestUtils.assertEquals(expectedPlan, print(plan));
+                assertRowsOnly(factory, expected);
+                TestUtils.assertEquals(expectedPlan, printFactory(plan));
             }
         });
     }
@@ -448,11 +445,11 @@ public class JoinPlanningTest extends AbstractCairoTest {
                     compiler.setFullFatJoins(fullFat);
                     try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertEquals(fullFat ? 0 : -1, factory.getMetadata().getTimestampIndex());
-                        assertResult(factory, "b\n2020-01-01T00:00:00.000000Z\n2020-01-02T00:00:00.000000Z\n");
+                        assertRowsOnly(factory, "b\n2020-01-01T00:00:00.000000Z\n2020-01-02T00:00:00.000000Z\n");
                     }
                     try (RecordCursorFactory factory = compiler.compile(sql + " ORDER BY q.b", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertEquals(0, factory.getMetadata().getTimestampIndex());
-                        assertResult(factory, "b\n2020-01-01T00:00:00.000000Z\n2020-01-02T00:00:00.000000Z\n");
+                        assertRowsOnly(factory, "b\n2020-01-01T00:00:00.000000Z\n2020-01-02T00:00:00.000000Z\n");
                     }
                 }
             }
@@ -474,7 +471,7 @@ public class JoinPlanningTest extends AbstractCairoTest {
                 assertFailure(compiler, "SELECT l.id FROM lp_join_l l SPLICE JOIN lp_join_r r ON l.k=r.k JOIN lp_join_r x ON l.k=x.k", "left side of time series join has no timestamp");
                 try (RecordCursorFactory factory = compiler.compile("SELECT l.id lid,r.id rid FROM lp_join_l l JOIN lp_join_r r ON l.k=r.k ORDER BY lid,rid", sqlExecutionContext).getRecordCursorFactory()) {
                     Assert.assertNotNull(compiler.getPlanForTesting());
-                    assertResult(factory, "lid\trid\n1\t10\n1\t11\n2\t12\n3\t13\n");
+                    assertRowsOnly(factory, "lid\trid\n1\t10\n1\t11\n2\t12\n3\t13\n");
                 }
             }
         });
@@ -557,13 +554,13 @@ public class JoinPlanningTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 for (String sql : queries) {
                     try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, "lid\trid\n1\t1\n");
+                        assertRowsOnly(factory, "lid\trid\n1\t1\n");
                     }
                 }
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT l.id lid,r.id rid FROM lp_join_ts_l l LEFT JOIN lp_join_ts_r r ON l.id=r.id AND "
                                 + predicate + " ORDER BY lid", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "lid\trid\n1\t1\n2\tnull\n");
+                    assertRowsOnly(factory, "lid\trid\n1\t1\n2\tnull\n");
                 }
             }
         });
@@ -680,15 +677,11 @@ public class JoinPlanningTest extends AbstractCairoTest {
         }
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private void assertRows(String sql, boolean isFullFat, String expected) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             compiler.setFullFatJoins(isFullFat);
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         }
     }
@@ -710,13 +703,5 @@ public class JoinPlanningTest extends AbstractCairoTest {
                 (12,2,1,5,'b','1970-01-01T00:00:00.002000000Z'),
                 (13,null,2,31,null,null)
                 """);
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-            return sink.toString();
-        }
     }
 }

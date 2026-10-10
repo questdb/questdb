@@ -25,13 +25,13 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.optimiser.PlanVerifier;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -46,6 +46,9 @@ import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.PlanShape.assertPlanned;
+import static io.questdb.test.griffin.PlanShape.find;
 
 public class PhysicalPropertiesTest extends AbstractCairoTest {
 
@@ -181,9 +184,9 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
             ) {
-                final ProjectPlan project = (ProjectPlan) find(compiler.getPlanForTesting(), ProjectPlan.class);
+                final ProjectPlan project = find(compiler.getPlanForTesting(), ProjectPlan.class);
                 Assert.assertTrue(project.getInput() instanceof JoinPlan);
-                Assert.assertTrue(LogicalPlans.isIdentityProjection(project));
+                Assert.assertTrue(GeneratedShapes.isIdentityProjection(project));
                 Assert.assertTrue(factory.getBaseFactory() instanceof SelectedRecordCursorFactory);
             }
             assertQuery(sql)
@@ -211,7 +214,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
             ) {
                 final LogicalPlan filter = find(compiler.getPlanForTesting(), FilterPlan.class);
-                final ScanPlan scan = (ScanPlan) find(filter, ScanPlan.class);
+                final ScanPlan scan = find(filter, ScanPlan.class);
                 Assert.assertEquals(ScanPlan.AccessPath.SYMBOL_INDEX, scan.getAccessPath());
                 Assert.assertEquals(ScanPlan.IndexRead.INDEX, scan.getIndexRead());
                 Assert.assertEquals(ScanPlan.IndexOrder.KEY, scan.getIndexOrder());
@@ -260,7 +263,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
             ) {
-                final ScanPlan scan = (ScanPlan) find(compiler.getPlanForTesting(), ScanPlan.class);
+                final ScanPlan scan = find(compiler.getPlanForTesting(), ScanPlan.class);
                 Assert.assertEquals(ScanPlan.AccessPath.EMPTY, scan.getAccessPath());
             }
             assertQuery(sql)
@@ -332,7 +335,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
             ) {
-                final JoinPlan join = (JoinPlan) find(compiler.getPlanForTesting(), JoinPlan.class);
+                final JoinPlan join = find(compiler.getPlanForTesting(), JoinPlan.class);
                 final JoinInput master = join.getOrderedInputs().getQuick(0);
                 final JoinInput slave = join.getOrderedInputs().getQuick(1);
                 Assert.assertEquals(Capability.YES, PhysicalProperties.supportsRandomAccess(master.getInput()));
@@ -525,7 +528,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
             ) {
-                final AggregatePlan source = (AggregatePlan) find(compiler.getPlanForTesting(), AggregatePlan.class);
+                final AggregatePlan source = find(compiler.getPlanForTesting(), AggregatePlan.class);
                 Assert.assertEquals(AggregatePlan.Algorithm.SERIAL, source.getAlgorithm());
                 Assert.assertEquals(2, source.getSharedConsumerCount());
                 Assert.assertEquals(Capability.YES, PhysicalProperties.supportsSharedCursors(source));
@@ -754,12 +757,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
     }
 
     private static void assertFilterAlgorithm(FilterPlan.Algorithm expected, String sql) throws Exception {
-        try (
-                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
-        ) {
-            Assert.assertEquals(expected, ((FilterPlan) find(compiler.getPlanForTesting(), FilterPlan.class)).getAlgorithm());
-        }
+        assertPlanned(engine, sqlExecutionContext, sql, FilterPlan.class, filter -> Assert.assertEquals(expected, filter.getAlgorithm()));
     }
 
     private static void assertFilterLimit(String sql, Capability expected) throws Exception {
@@ -801,7 +799,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                 Assert.assertEquals(sql, isRandomAccess == Capability.YES, factory.recordCursorSupportsRandomAccess());
                 Assert.assertEquals(sql, isPageFrameSupported == Capability.YES, factory.supportsPageFrameCursor());
                 Assert.assertEquals(sql, isTimeFrameSupported == Capability.YES, factory.supportsTimeFrameCursor());
-                final JoinPlan join = (JoinPlan) find(plan, JoinPlan.class);
+                final JoinPlan join = find(plan, JoinPlan.class);
                 if (join != null && temporalAlgorithm != null) {
                     Assert.assertEquals(sql, temporalAlgorithm, join.getOrderedInputs().getQuick(1).getAlgorithm());
                 }
@@ -826,7 +824,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
         ) {
             final LogicalPlan filter = find(compiler.getPlanForTesting(), FilterPlan.class);
             Assert.assertNull(((FilterPlan) filter).getAlgorithm());
-            Assert.assertEquals(expected, ((ScanPlan) find(filter, ScanPlan.class)).getResidualAlgorithm());
+            Assert.assertEquals(expected, find(filter, ScanPlan.class).getResidualAlgorithm());
             Assert.assertEquals(isRandomAccess, PhysicalProperties.supportsRandomAccess(filter));
             Assert.assertEquals(isRandomAccess == Capability.YES, factory.recordCursorSupportsRandomAccess());
         }
@@ -838,7 +836,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
         ) {
             final LogicalPlan plan = compiler.getPlanForTesting();
-            final AggregatePlan aggregate = (AggregatePlan) find(plan, AggregatePlan.class);
+            final AggregatePlan aggregate = find(plan, AggregatePlan.class);
             Assert.assertEquals(algorithm, aggregate.getAlgorithm());
             Assert.assertEquals(expected, PhysicalProperties.supportsSharedCursors(aggregate));
             Assert.assertEquals(expected == Capability.YES, factory.getBaseFactory().supportsSharedCursors());
@@ -858,9 +856,9 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
     private static void assertWalClientUpdate(boolean expected, String sql) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             try (UpdateOperation ignore = compiler.compile(sql, sqlExecutionContext).getUpdateOperation()) {
-                final FilterPlan filter = (FilterPlan) find(compiler.getPlanForTesting(), FilterPlan.class);
+                final FilterPlan filter = find(compiler.getPlanForTesting(), FilterPlan.class);
                 Assert.assertEquals(expected, ((ScanPlan) filter.getInput()).isWalClientUpdate());
-                Assert.assertEquals(!expected, LogicalPlans.isFusedFilter(filter));
+                Assert.assertEquals(!expected, GeneratedShapes.isFusedFilter(filter));
             }
         }
     }
@@ -871,7 +869,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
         ) {
             final LogicalPlan plan = compiler.getPlanForTesting();
-            final WindowJoinPlan windowJoin = (WindowJoinPlan) find(plan, WindowJoinPlan.class);
+            final WindowJoinPlan windowJoin = find(plan, WindowJoinPlan.class);
             Assert.assertEquals(expected, windowJoin.getSteps().getQuick(0).getAlgorithm());
             Assert.assertEquals(Capability.NO, PhysicalProperties.followsOrderAdvice(plan));
             Assert.assertEquals(Capability.NO, PhysicalProperties.isLongSequence(plan));
@@ -888,27 +886,5 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     ('2024-01-01T02:00:00.000000Z', 3),
                     ('2024-01-02T00:00:00.000000Z', 4)
                 """);
-    }
-
-    private static LogicalPlan find(LogicalPlan plan, Class<? extends LogicalPlan> type) {
-        if (type.isInstance(plan)) {
-            return plan;
-        }
-        if (plan instanceof JoinPlan join) {
-            for (int i = 0, n = join.getOrderedInputs().size(); i < n; i++) {
-                final LogicalPlan found = find(join.getOrderedInputs().getQuick(i).getInput(), type);
-                if (found != null) {
-                    return found;
-                }
-            }
-            return null;
-        }
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final LogicalPlan found = find(plan.inputAt(i), type);
-            if (found != null) {
-                return found;
-            }
-        }
-        return null;
     }
 }

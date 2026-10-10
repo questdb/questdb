@@ -47,7 +47,7 @@ public class MatViewQueryTest extends AbstractCairoTest {
                 execute(compiler, "INSERT INTO lp_mat_copy SELECT k,peak,ts FROM lp_mat WHERE peak>5 ORDER BY ts");
                 try (RecordCursorFactory factory = compiler.compile("SELECT k,peak,ts FROM lp_mat_copy ORDER BY ts,k", sqlExecutionContext)
                         .getRecordCursorFactory()) {
-                    assertResult(factory, "k\tpeak\tts\nA\t20\t2020-01-01T00:00:00.000000Z\nA\t7\t2020-01-01T01:00:00.000000Z\n");
+                    assertRowsOnly(factory, "k\tpeak\tts\nA\t20\t2020-01-01T00:00:00.000000Z\nA\t7\t2020-01-01T01:00:00.000000Z\n");
                 }
             }
         });
@@ -74,13 +74,13 @@ public class MatViewQueryTest extends AbstractCairoTest {
                     + "(SELECT ts,k,v,count() OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) rn FROM lp_mat_base)");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile("SELECT count() FROM lp_mat_plain", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "count\n4\n");
+                    assertRowsOnly(factory, "count\n4\n");
                 }
                 try (RecordCursorFactory factory = compiler.compile("SELECT count() FROM lp_mat_live", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "count\n0\n");
+                    assertRowsOnly(factory, "count\n0\n");
                 }
                 try (RecordCursorFactory factory = compiler.compile("SELECT count() FROM lp_mat", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "count\n3\n");
+                    assertRowsOnly(factory, "count\n3\n");
                 }
             }
         });
@@ -104,10 +104,10 @@ public class MatViewQueryTest extends AbstractCairoTest {
                 }
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, INITIAL_ROWS);
+                assertRowsOnly(factory, INITIAL_ROWS);
                 execute("INSERT INTO lp_mat_base VALUES('A',30,'2020-01-01T00:03:00Z'),('C',9,'2020-01-01T02:01:00Z')");
                 drainWalAndMatViewQueues();
-                assertResult(factory, "k\tpeak\tts\n"
+                assertRowsOnly(factory, "k\tpeak\tts\n"
                         + "A\t30\t2020-01-01T00:00:00.000000Z\n"
                         + "B\t5\t2020-01-01T00:00:00.000000Z\n"
                         + "A\t7\t2020-01-01T01:00:00.000000Z\n"
@@ -126,7 +126,7 @@ public class MatViewQueryTest extends AbstractCairoTest {
                 assertMatViewRejected(compiler, "INSERT INTO lp_mat SELECT * FROM lp_mat", 12);
                 try (RecordCursorFactory factory = compiler.compile("SELECT k,peak,ts FROM lp_mat ORDER BY ts,k", sqlExecutionContext)
                         .getRecordCursorFactory()) {
-                    assertResult(factory, INITIAL_ROWS);
+                    assertRowsOnly(factory, INITIAL_ROWS);
                 }
             }
         });
@@ -138,7 +138,7 @@ public class MatViewQueryTest extends AbstractCairoTest {
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
         ) {
             Assert.assertNotNull(compiler.getPlanForTesting());
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
@@ -150,10 +150,6 @@ public class MatViewQueryTest extends AbstractCairoTest {
             Assert.assertEquals(position, e.getPosition());
             TestUtils.assertEquals("cannot modify materialized view [view=lp_mat]", e.getFlyweightMessage());
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createView() throws Exception {

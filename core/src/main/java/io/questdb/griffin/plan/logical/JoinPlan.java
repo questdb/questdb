@@ -42,6 +42,14 @@ public final class JoinPlan extends LogicalPlan {
     private boolean hasExplicitTimestamp;
 
     /**
+     * Appends an input, last in occurrence and execution order alike.
+     */
+    public void addInput(JoinInput input) {
+        inputs.add(input);
+        orderedInputs.add(input);
+    }
+
+    /**
      * Appends, hidden and under the input's binding alias, every column of an input's source the output lacks.
      */
     public void addMissingInputColumns() {

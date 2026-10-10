@@ -244,8 +244,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
             if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.RECORD) {
                 throw new IllegalStateException("table function returned a RECORD column");
             }
-            output.add(planNodes.nextColumnId(), metadata.getColumnName(i), metadata.getColumnType(i), true);
-            output.setSymbolTableStatic(i, metadata.isSymbolTableStatic(i));
+            output.addColumnFrom(metadata, i, planNodes.nextColumnId());
             plan.getSourceColumnIndexes().add(i);
         }
         output.setTimestampIndex(metadata.getTimestampIndex());

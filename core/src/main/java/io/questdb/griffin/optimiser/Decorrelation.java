@@ -56,7 +56,6 @@ import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
-import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -132,7 +131,7 @@ final class Decorrelation implements OptimiserPass {
         domains = new DecorrelationDomains(ctx, tmpSteps);
         keys = new CorrelationKeys(ctx);
         carriers = new OuterJoinCarriers(ctx, domains, keys);
-        compensation = new ScalarCompensation(ctx, domains, tmpConjuncts);
+        compensation = new ScalarCompensation(ctx, domains);
         rewriter = new CorrelatedChainRewriter(ctx, keys, compensation);
     }
 
@@ -237,29 +236,6 @@ final class Decorrelation implements OptimiserPass {
     }
 
     /**
-     * Lays out a window join over its decorrelated master: master columns, then the step aggregates, with each
-     * step's scopes rebuilt over that layout.
-     */
-    private void alignWindowJoin(WindowJoinPlan windowJoin) {
-        final OutputSchema output = windowJoin.getOutput();
-        final OutputSchema master = windowJoin.getMaster().getOutput();
-        ctx.alignColumns(output, master);
-        int prefix = master.getColumnCount();
-        for (int s = 0, m = windowJoin.getSteps().size(); s < m; s++) {
-            final WindowJoinStep step = windowJoin.getSteps().getQuick(s);
-            final OutputSchema masterScope = step.getMasterScope();
-            masterScope.clear();
-            for (int i = 0; i < prefix; i++) {
-                masterScope.addColumnFrom(output, i);
-            }
-            final OutputSchema scope = step.getScope();
-            scope.copyFrom(masterScope);
-            scope.addColumnsFrom(step.getSlave().getOutput(), step.getSlaveAlias());
-            prefix += step.getAggregateColumnIds().size();
-        }
-    }
-
-    /**
      * Collects the outer columns the block reads above {@code chainOuterBase}: those its chain and source join
      * read, and those of its deferred nullable inputs, which the block satisfies itself.
      */
@@ -271,9 +247,7 @@ final class Decorrelation implements OptimiserPass {
         if (source instanceof JoinPlan join) {
             ctx.outerColumnReads.collect(join, ctx.chainOuterIds);
         }
-        for (int i = deferredBase, n = keys.deferredInputs.size(); i < n; i++) {
-            ctx.chainOuterIds.add(keys.deferredOuterIds.getQuick(i));
-        }
+        keys.collectDeferredOuterIds(deferredBase, ctx.chainOuterIds);
     }
 
     private void collectMasterOuterIds(LogicalPlan plan) {
@@ -316,11 +290,7 @@ final class Decorrelation implements OptimiserPass {
             ctx.copier.remap(plan, compensation.consumerRemap);
         }
         if (domains.decorrelatedSteps.size() > 0) {
-            if (plan instanceof WindowJoinPlan windowJoin) {
-                alignWindowJoin(windowJoin);
-            } else if (plan instanceof WindowPlan window) {
-                ctx.alignColumns(window.getOutput(), window.getInput().getOutput());
-            }
+            ctx.realign(plan);
         }
         return plan instanceof JoinPlan join && hasDependentStep(join) ? decorrelateJoin(join) : result;
     }
@@ -366,12 +336,8 @@ final class Decorrelation implements OptimiserPass {
         } finally {
             ctx.chain.setPos(chainBase);
             ctx.chainOuterIds.setPos(chainOuterBase);
-            keys.deferredInputs.setPos(deferredBase);
-            keys.deferredOuterIds.setPos(deferredBase);
-            keys.deferredColumnIds.setPos(deferredBase);
-            compensation.drivenInputs.setPos(drivenBase);
-            compensation.drivenScalars.setPos(drivenBase);
-            compensation.uncompensatedScalars.setPos(uncompensatedBase);
+            keys.truncateDeferred(deferredBase);
+            compensation.truncateDriven(drivenBase, uncompensatedBase);
         }
     }
 
@@ -478,12 +444,12 @@ final class Decorrelation implements OptimiserPass {
             }
             case WindowJoinPlan windowJoin -> {
                 windowJoin.replaceInput(0, decorrelateBlock(windowJoin.getMaster(), false, base));
-                alignWindowJoin(windowJoin);
+                ctx.realign(windowJoin);
                 return windowJoin;
             }
             case HorizonJoinPlan horizon -> {
                 horizon.replaceInput(0, decorrelateBlock(horizon.getMaster(), false, base));
-                ctx.alignColumns(horizon.getOutput(), horizon.getMaster().getOutput());
+                ctx.realign(horizon);
                 return horizon;
             }
             default -> {
@@ -540,7 +506,7 @@ final class Decorrelation implements OptimiserPass {
                     throw SqlException.$(outerLimit.getPosition(), OUTER_LIMIT_OVER_COUNT);
                 }
                 compensation.exposeCarriers(scalarBody);
-                compensation.forwardColumns(body, scalarBody);
+                ctx.realignAbove(body, scalarBody);
             }
             final OutputSchema output = body.getOutput();
             for (int i = base, n = ctx.mappedOuterIds.size(); i < n; i++) {
@@ -570,8 +536,6 @@ final class Decorrelation implements OptimiserPass {
                 } else {
                     compensation.compensateStep(step, scalarBody, base, guard, isLeft ? keys.stepCondition(join, step, conditionKeyCount) : null);
                 }
-            } else if (step.getJoinType() == JoinKind.CROSS && step.getMasterKeyColumnIds().size() > 0) {
-                step.setJoinType(JoinKind.INNER);
             }
             ctx.mappedOuterIds.setPos(base);
             ctx.mappedColumnIds.setPos(base);
@@ -788,41 +752,35 @@ final class Decorrelation implements OptimiserPass {
         if (domains.domainOuterIds.size() == 0) {
             return source;
         }
-        domains.domainEqualities.clear();
+        final int start = keys.droppedEqualities.size();
         if (filter != null && !(source instanceof JoinPlan)) {
-            domains.collectDomainEqualities(filter.getPredicate(), source.getOutput());
+            keys.collectEqualities(filter.getPredicate(), source.getOutput(), null, base);
         }
         final AggregatePlan domain = domains.buildDomain(source.getPosition());
         if (!(source instanceof JoinPlan join)) {
             final JoinPlan crossed = domains.crossDomain(source, domain, source.getPosition());
             final JoinInput domainStep = crossed.getInputs().getQuick(1);
             final OutputSchema domainOutput = domain.getOutput();
-            for (int i = 0, n = domains.domainEqualities.size(); i < n; i += 2) {
-                final int outerId = domains.domainEqualities.getQuick(i);
-                final int columnId = domains.domainEqualities.getQuick(i + 1);
-                final int domainId = ctx.mappedColumn(outerId, base, ctx.mappedOuterIds.size());
+            for (int i = start, n = keys.droppedEqualities.size(); i < n; i += 2) {
+                final int columnId = keys.droppedEqualities.getQuick(i + 1);
+                final int domainId = ctx.mappedColumn(keys.droppedEqualities.getQuick(i), base, ctx.mappedOuterIds.size());
                 domainStep.addKey(columnId, domainId, source.getOutput().getColumnName(source.getOutput().getColumnIndexById(columnId)),
                         domainOutput.getColumnName(domainOutput.getColumnIndexById(domainId)), domainStep.getPosition());
-                domainStep.setJoinType(JoinKind.INNER);
-                keys.droppedEqualities.add(outerId);
-                keys.droppedEqualities.add(columnId);
             }
             return crossed;
         }
         if (keys.deferredInputs.size() > deferredBase || LogicalPlans.hasBarrierInput(join)) {
             final JoinInput first = join.getOrderedInputs().getQuick(0);
             first.setInput(domains.crossDomain(first.getInput(), domain, source.getPosition()));
+            join.addMissingInputColumns();
         } else {
-            final JoinInput step = ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domains.domainAlias(), source.getPosition());
+            final JoinInput step = domains.insertDomainStep(join, domain, join.getOrderedInputs().size(), source.getPosition());
             for (int i = 1, n = join.getInputs().size(); i < n; i++) {
                 final JoinInput input = join.getInputs().getQuick(i);
                 input.setPostJoinFilter(domains.moveDomainConjuncts(input.getPostJoinFilter(), step));
                 input.setOnResidual(domains.moveDomainConjuncts(input.getOnResidual(), step));
             }
-            join.getInputs().add(step);
-            join.getOrderedInputs().add(step);
         }
-        join.addMissingInputColumns();
         return join;
     }
 

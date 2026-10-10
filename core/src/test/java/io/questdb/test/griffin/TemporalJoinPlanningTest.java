@@ -24,14 +24,10 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Misc;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -186,12 +182,12 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
             final String expectedPlan;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
                 try {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                     explain = compiler.compile("EXPLAIN " + sql, sqlExecutionContext).getRecordCursorFactory();
-                    expectedPlan = print(explain);
+                    expectedPlan = printFactory(explain);
                     try (RecordCursorFactory ignored = compiler.compile("SELECT l.id FROM lp_tc_m l ASOF JOIN "
                             + "(SELECT * FROM lp_tc_s WHERE id IN(10,11,13)) r ON(k) "
                             + "WHERE l.id IN(1,2) AND missing>0", sqlExecutionContext).getRecordCursorFactory()) {
@@ -200,7 +196,7 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: missing");
                     }
                     try (RecordCursorFactory factory = compiler.compile("SELECT count() FROM lp_tc_m", sqlExecutionContext).getRecordCursorFactory()) {
-                        TestUtils.assertEquals("count\n4\n", print(factory));
+                        TestUtils.assertEquals("count\n4\n", printFactory(factory));
                     }
                     compiler.clear();
                 } catch (Throwable th) {
@@ -210,9 +206,9 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
                 }
             }
             try (RecordCursorFactory factory = retained; RecordCursorFactory plan = explain) {
-                assertResult(factory, expected);
-                assertResult(factory, expected);
-                TestUtils.assertEquals(expectedPlan, print(plan));
+                assertRowsOnly(factory, expected);
+                assertRowsOnly(factory, expected);
+                TestUtils.assertEquals(expectedPlan, printFactory(plan));
             }
         });
     }
@@ -539,7 +535,7 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
                     """;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
                 try {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
@@ -551,7 +547,7 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "unsupported SPLICE join expression");
                     }
                     try (RecordCursorFactory factory = compiler.compile("SELECT count() FROM lp_tc_m", sqlExecutionContext).getRecordCursorFactory()) {
-                        TestUtils.assertEquals("count\n4\n", print(factory));
+                        TestUtils.assertEquals("count\n4\n", printFactory(factory));
                     }
                     compiler.clear();
                 } catch (Throwable th) {
@@ -560,7 +556,7 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
                 }
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         });
     }
@@ -1168,18 +1164,14 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
             compiler.setFullFatJoins(isFullFat);
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 if (algorithm != null) {
-                    TestUtils.assertContains(plan(factory), algorithm);
+                    TestUtils.assertContains(planText(factory), algorithm);
                 }
                 if (expectedPlan != null) {
-                    TestUtils.assertEquals(expectedPlan, plan(factory));
+                    TestUtils.assertEquals(expectedPlan, planText(factory));
                 }
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createTables() throws Exception {
@@ -1189,23 +1181,5 @@ public class TemporalJoinPlanningTest extends AbstractCairoTest {
                 + "(3,2,7,'B','2020-01-01T00:00:03Z'),(4,3,8,'C','2020-01-01T00:00:04Z')");
         execute("INSERT INTO lp_tc_s VALUES(10,1,10,'A','2020-01-01T00:00:00.500000Z'),(11,1,20,'A','2020-01-01T00:00:01Z'),"
                 + "(12,2,30,'B','2020-01-01T00:00:02Z'),(13,1,40,'A','2020-01-01T00:00:02.500000Z')");
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        final StringSink text = new StringSink();
-        for (int i = 1, n = sink.getLineCount(); i <= n; i++) {
-            text.put(sink.getLine(i)).put('\n');
-        }
-        return text.toString();
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        final StringSink sink = new StringSink();
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-        }
-        return sink.toString();
     }
 }

@@ -32,11 +32,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory;
@@ -54,12 +51,14 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.FunctionBindingHarness.parser;
+
 public class FunctionBinderWindowTest extends AbstractCairoTest {
     @Test
     public void testContextAndWindowRootAreRequired() throws Exception {
         assertMemoryLeak(() -> {
             final OutputSchema input = schema(false);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(new ObjList<>()))) {
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser(engine, new ObjList<>()))) {
                 try {
                     binder.bindWindow(call("row_number"), input, null, sqlExecutionContext);
                     Assert.fail("missing window context accepted");
@@ -97,7 +96,7 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
             metadata.add(new TableColumnMetadata("i", ColumnType.INT));
             final ObjList<String> names = new ObjList<>("first_value", "last_value", "nth_value", "sum", "ksum", "avg", "min", "max",
                     "count", "stddev_pop", "var_samp", "corr", "covar_pop");
-            final FunctionParser parser = parser(new ObjList<>());
+            final FunctionParser parser = parser(engine, new ObjList<>());
             try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 for (int i = 0; i < names.size(); i++) {
                     final String name = names.getQuick(i);
@@ -148,7 +147,7 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
     public void testIndependentFinalLayoutsSurviveCompilerReset() throws Exception {
         assertMemoryLeak(() -> {
             final ObjList<Function> constructions = new ObjList<>();
-            final FunctionParser parser = parser(constructions);
+            final FunctionParser parser = parser(engine, constructions);
             final OutputSchema full = schema(true);
             final OutputSchema pruned = schema(false);
             try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
@@ -208,7 +207,7 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
             calls.add(call("corr", literal("v"), literal("v")));
             calls.add(call("covar_pop", literal("v"), literal("v")));
             calls.add(call("covar_samp", literal("v"), literal("v")));
-            final FunctionParser parser = parser(new ObjList<>());
+            final FunctionParser parser = parser(engine, new ObjList<>());
             final OutputSchema input = schema(false);
             input.add(28, "ts", ColumnType.TIMESTAMP_MICRO, true);
             input.setTimestampIndex(1);
@@ -347,18 +346,6 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
                 RecordCursorFactory.SCAN_DIRECTION_OTHER, 0, framingMode,
                 lo, (char) 0, 0, 0, hi, (char) 0, 0, 0, WindowExpression.EXCLUDE_NO_OTHERS, 0,
                 -1, ColumnType.UNDEFINED, ignoreNulls, 0);
-    }
-
-    private FunctionParser parser(ObjList<Function> constructions) {
-        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
-            @Override
-            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                final Function function = super.createFunction(overload, position, name, args, positions, context);
-                constructions.add(function);
-                return function;
-            }
-        });
     }
 
     private static class CountingDouble extends DoubleFunction {

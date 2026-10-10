@@ -27,10 +27,8 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -87,15 +85,15 @@ public class MixedJoinTest extends AbstractCairoTest {
                     try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                         compiler.setFullFatJoins(isFullFat);
                         retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-                        expectedPlan = plan(retained);
-                        assertRows(retained, expected);
+                        expectedPlan = planText(retained);
+                        assertRowsOnly(retained, expected);
                         try (RecordCursorFactory ignored = compiler.compile("SELECT count() FROM lp_mix_b", sqlExecutionContext).getRecordCursorFactory()) {
                             Assert.assertNotNull(ignored);
                         }
                         compiler.clear();
                     }
-                    assertRows(retained, expected);
-                    Assert.assertEquals(expectedPlan, plan(retained));
+                    assertRowsOnly(retained, expected);
+                    Assert.assertEquals(expectedPlan, planText(retained));
                 } finally {
                     Misc.free(retained);
                 }
@@ -198,18 +196,14 @@ public class MixedJoinTest extends AbstractCairoTest {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             compiler.setFullFatJoins(isFullFat);
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                assertRows(factory, expected);
+                assertRowsOnly(factory, expected);
                 if (algorithm != null) {
-                    TestUtils.assertContains(plan(factory), algorithm);
+                    TestUtils.assertContains(planText(factory), algorithm);
                 }
             }
         } finally {
             sqlExecutionContext.setJitMode(jitMode);
         }
-    }
-
-    private void assertRows(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {
@@ -219,15 +213,5 @@ public class MixedJoinTest extends AbstractCairoTest {
         execute("INSERT INTO lp_mix_a VALUES(1,1,'A','2024-01-01T00:00:01'),(2,2,'B','2024-01-01T00:00:03'),(3,3,'C','2024-01-01T00:00:05')");
         execute("INSERT INTO lp_mix_b VALUES(20,2,'B','2024-01-01T00:00:00'),(10,1,'A','2024-01-01T00:00:00'),(40,4,'D','2024-01-01T00:00:04')");
         execute("INSERT INTO lp_mix_c VALUES(100,1,'A','2024-01-01T00:00:00'),(200,2,'B','2024-01-01T00:00:02'),(400,4,'D','2024-01-01T00:00:04')");
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink planSink = new TextPlanSink();
-        planSink.of(factory, sqlExecutionContext);
-        final StringSink text = new StringSink();
-        for (int i = 1, n = planSink.getLineCount(); i <= n; i++) {
-            text.put(planSink.getLine(i)).put('\n');
-        }
-        return text.toString();
     }
 }

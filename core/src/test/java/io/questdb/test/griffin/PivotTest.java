@@ -966,6 +966,56 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotProtectedColumnReferenceableThroughJoinScope() throws Exception {
+        // The counterpart of testPivotProtectedColumnNotReferenceableFromEnclosingQuery: a join scope names its
+        // inputs' columns bare, so the composed reference t1."in" resolves through a join, a LATERAL body and a
+        // temporal join, and the enclosing query projects and aliases it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO data VALUES ('A', 'in', 10, '2024-01-01T00:00:00.000000Z'), ('B', 'in', 30, '2024-01-01T01:00:00.000000Z');");
+            assertQuery("""
+                    SELECT t1."in" AS v FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN (SELECT 1 x) t2
+                    ORDER BY v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            10
+                            30
+                            """);
+            assertQuery("""
+                    SELECT l.y FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN LATERAL (SELECT t1."in" + 1 AS y FROM long_sequence(1)) l
+                    ORDER BY l.y
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            y
+                            11
+                            31
+                            """);
+            assertQuery("""
+                    SELECT t1."in" AS v FROM
+                      (SELECT * FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY ts)) TIMESTAMP(ts)) t1
+                      ASOF JOIN data t2
+                    ORDER BY v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            10
+                            30
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotQuotedContentValueCollidesWithOperatorToken() throws Exception {
         // Regression: a pivot value whose data is literally "in" displays as in (the documented
         // quoted-content-value tradeoff) and collides with the operator-token value 'in'. The dedup

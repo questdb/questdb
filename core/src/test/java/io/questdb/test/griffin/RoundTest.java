@@ -44,7 +44,7 @@ public class RoundTest extends AbstractCairoTest {
             {
                 final int i = 0;
                 final String name = FUNCTION_NAMES.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + name + "(d,0) zero," + name + "(d,2) positive," + name
                                 + "(d,-1) negative," + name + "(d,scale) dynamic," + name + "(d::FLOAT,2) promoted FROM lp_round ORDER BY id",
                         """
@@ -59,7 +59,7 @@ public class RoundTest extends AbstractCairoTest {
                                 8	-123.0	-123.46000000000001	-120.0	null	-123.46000000000001
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + name + "(d,15) high," + name + "(d,18) boundary," + name
                                 + "(d,-18) negative_boundary FROM lp_round ORDER BY id",
                         """
@@ -78,7 +78,7 @@ public class RoundTest extends AbstractCairoTest {
             {
                 final int i = 1;
                 final String name = FUNCTION_NAMES.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + name + "(d,0) zero," + name + "(d,2) positive," + name
                                 + "(d,-1) negative," + name + "(d,scale) dynamic," + name + "(d::FLOAT,2) promoted FROM lp_round ORDER BY id",
                         """
@@ -93,7 +93,7 @@ public class RoundTest extends AbstractCairoTest {
                                 8	-123.0	-123.45	-120.0	null	-123.45
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + name + "(d,15) high," + name + "(d,18) boundary," + name
                                 + "(d,-18) negative_boundary FROM lp_round ORDER BY id",
                         """
@@ -112,7 +112,7 @@ public class RoundTest extends AbstractCairoTest {
             {
                 final int i = 2;
                 final String name = FUNCTION_NAMES.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + name + "(d,0) zero," + name + "(d,2) positive," + name
                                 + "(d,-1) negative," + name + "(d,scale) dynamic," + name + "(d::FLOAT,2) promoted FROM lp_round ORDER BY id",
                         """
@@ -127,7 +127,7 @@ public class RoundTest extends AbstractCairoTest {
                                 8	-124.0	-123.46000000000001	-130.0	null	-123.46000000000001
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + name + "(d,15) high," + name + "(d,18) boundary," + name
                                 + "(d,-18) negative_boundary FROM lp_round ORDER BY id",
                         """
@@ -146,7 +146,7 @@ public class RoundTest extends AbstractCairoTest {
             {
                 final int i = 3;
                 final String name = FUNCTION_NAMES.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + name + "(d,0) zero," + name + "(d,2) positive," + name
                                 + "(d,-1) negative," + name + "(d,scale) dynamic," + name + "(d::FLOAT,2) promoted FROM lp_round ORDER BY id",
                         """
@@ -161,7 +161,7 @@ public class RoundTest extends AbstractCairoTest {
                                 8	-123.0	-123.46000000000001	-120.0	null	-123.46000000000001
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + name + "(d,15) high," + name + "(d,18) boundary," + name
                                 + "(d,-18) negative_boundary FROM lp_round ORDER BY id",
                         """
@@ -187,7 +187,7 @@ public class RoundTest extends AbstractCairoTest {
             final ObjList<String> scales = new ObjList<>("null::INT", "1000", "-1000");
             for (int i = 0; i < FUNCTION_NAMES.size(); i++) {
                 for (int j = 0; j < scales.size(); j++) {
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id," + FUNCTION_NAMES.getQuick(i)
                                     + "(CASE WHEN id IN (1,2,3) THEN d ELSE d+1 END," + scales.getQuick(j)
                                     + ") value FROM lp_round ORDER BY id",
@@ -223,7 +223,7 @@ public class RoundTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = compiler.compile(
                             "SELECT round(1.25,1) value FROM lp_round LIMIT 1", sqlExecutionContext
                     ).getRecordCursorFactory()) {
-                        assertResult(factory, "value\n1.3\n");
+                        assertRowsOnly(factory, "value\n1.3\n");
                     }
                 }
             }
@@ -335,7 +335,7 @@ public class RoundTest extends AbstractCairoTest {
             }
         }
         try (RecordCursorFactory factory = retained) {
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
@@ -343,20 +343,16 @@ public class RoundTest extends AbstractCairoTest {
         final String outOfRange = "id\tvalue\n1\tnull\n2\tnull\n3\tnull\n4\tnull\n5\tnull\n6\tnull\n7\tnull\n8\tnull\n";
         bindVariableService.setInt(0, 2);
         try (RecordCursorFactory factory = select("SELECT id," + function + "(d,$1) value FROM lp_round ORDER BY id")) {
-            assertResult(factory, scaleTwo);
+            assertRowsOnly(factory, scaleTwo);
             bindVariableService.setInt(0, -1);
-            assertResult(factory, scaleMinusOne);
+            assertRowsOnly(factory, scaleMinusOne);
             bindVariableService.setInt(0, 0);
-            assertResult(factory, scaleZero);
+            assertRowsOnly(factory, scaleZero);
             bindVariableService.setInt(0, Numbers.INT_NULL);
-            assertResult(factory, outOfRange);
+            assertRowsOnly(factory, outOfRange);
             bindVariableService.setInt(0, 1000);
-            assertResult(factory, outOfRange);
+            assertRowsOnly(factory, outOfRange);
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {
@@ -372,9 +368,5 @@ public class RoundTest extends AbstractCairoTest {
                 (97,7,14.7778,1000),
                 (98,8,-123.456,-1000)
                 """);
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

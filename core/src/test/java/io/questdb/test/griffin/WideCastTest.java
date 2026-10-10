@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -69,14 +68,14 @@ public class WideCastTest extends AbstractCairoTest {
                     3		\t
                     4	00000000-0000-0002-0000-000000000001	00000000-0000-0002-0000-000000000001	00000000-0000-0002-0000-000000000001
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT '00000000-0000-0002-0000-000000000001'::UUID u,''::VARCHAR::UUID e,null::UUID n FROM lp_wide_cast LIMIT 1",
                     """
                             u	e	n
                             00000000-0000-0002-0000-000000000001	\t
                             """
             );
-            assertQueryRows("SELECT id,u=s dynamic FROM lp_wide_cast ORDER BY id", """
+            assertRowsOnly("SELECT id,u=s dynamic FROM lp_wide_cast ORDER BY id", """
                     id	dynamic
                     1	true
                     2	false
@@ -84,7 +83,7 @@ public class WideCastTest extends AbstractCairoTest {
                     4	false
                     """);
             bindVariableService.setStr(0, "00000000-0000-0002-0000-000000000001");
-            assertQueryRows("SELECT id,u=$1 runtime FROM lp_wide_cast ORDER BY id", """
+            assertRowsOnly("SELECT id,u=$1 runtime FROM lp_wide_cast ORDER BY id", """
                     id	runtime
                     1	true
                     2	false
@@ -92,7 +91,7 @@ public class WideCastTest extends AbstractCairoTest {
                     4	true
                     """);
             bindVariableService.setStr(0, "invalid uuid");
-            assertQueryRows("SELECT id,u!=$1 runtime FROM lp_wide_cast ORDER BY id", """
+            assertRowsOnly("SELECT id,u!=$1 runtime FROM lp_wide_cast ORDER BY id", """
                     id	runtime
                     1	true
                     2	true
@@ -103,7 +102,7 @@ public class WideCastTest extends AbstractCairoTest {
                 final String op = "=";
                 {
                     final String text = "'00000000-0000-0002-0000-000000000001'";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id,u" + op + text + " a," + text + op + "u b FROM lp_wide_cast ORDER BY id",
                             """
                                     id	a	b
@@ -113,7 +112,7 @@ public class WideCastTest extends AbstractCairoTest {
                                     4	true	true
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id FROM lp_wide_cast WHERE u" + op + text + " ORDER BY id",
                             """
                                     id
@@ -124,7 +123,7 @@ public class WideCastTest extends AbstractCairoTest {
                 }
                 {
                     final String text = "'invalid uuid'";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id,u" + op + text + " a," + text + op + "u b FROM lp_wide_cast ORDER BY id",
                             """
                                     id	a	b
@@ -134,7 +133,7 @@ public class WideCastTest extends AbstractCairoTest {
                                     4	false	false
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id FROM lp_wide_cast WHERE u" + op + text + " ORDER BY id",
                             """
                                     id
@@ -143,7 +142,7 @@ public class WideCastTest extends AbstractCairoTest {
                 }
                 {
                     final String text = "null";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id,u" + op + text + " a," + text + op + "u b FROM lp_wide_cast ORDER BY id",
                             """
                                     id	a	b
@@ -153,7 +152,7 @@ public class WideCastTest extends AbstractCairoTest {
                                     4	false	false
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id FROM lp_wide_cast WHERE u" + op + text + " ORDER BY id",
                             """
                                     id
@@ -166,7 +165,7 @@ public class WideCastTest extends AbstractCairoTest {
                 final String op = "!=";
                 {
                     final String text = "'00000000-0000-0002-0000-000000000001'";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id,u" + op + text + " a," + text + op + "u b FROM lp_wide_cast ORDER BY id",
                             """
                                     id	a	b
@@ -176,7 +175,7 @@ public class WideCastTest extends AbstractCairoTest {
                                     4	false	false
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id FROM lp_wide_cast WHERE u" + op + text + " ORDER BY id",
                             """
                                     id
@@ -187,7 +186,7 @@ public class WideCastTest extends AbstractCairoTest {
                 }
                 {
                     final String text = "'invalid uuid'";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id,u" + op + text + " a," + text + op + "u b FROM lp_wide_cast ORDER BY id",
                             """
                                     id	a	b
@@ -197,7 +196,7 @@ public class WideCastTest extends AbstractCairoTest {
                                     4	true	true
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id FROM lp_wide_cast WHERE u" + op + text + " ORDER BY id",
                             """
                                     id
@@ -210,7 +209,7 @@ public class WideCastTest extends AbstractCairoTest {
                 }
                 {
                     final String text = "null";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id,u" + op + text + " a," + text + op + "u b FROM lp_wide_cast ORDER BY id",
                             """
                                     id	a	b
@@ -220,7 +219,7 @@ public class WideCastTest extends AbstractCairoTest {
                                     4	true	true
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id FROM lp_wide_cast WHERE u" + op + text + " ORDER BY id",
                             """
                                     id
@@ -235,7 +234,7 @@ public class WideCastTest extends AbstractCairoTest {
                 final String op = "<>";
                 {
                     final String text = "'00000000-0000-0002-0000-000000000001'";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id,u" + op + text + " a," + text + op + "u b FROM lp_wide_cast ORDER BY id",
                             """
                                     id	a	b
@@ -245,7 +244,7 @@ public class WideCastTest extends AbstractCairoTest {
                                     4	false	false
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id FROM lp_wide_cast WHERE u" + op + text + " ORDER BY id",
                             """
                                     id
@@ -256,7 +255,7 @@ public class WideCastTest extends AbstractCairoTest {
                 }
                 {
                     final String text = "'invalid uuid'";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id,u" + op + text + " a," + text + op + "u b FROM lp_wide_cast ORDER BY id",
                             """
                                     id	a	b
@@ -266,7 +265,7 @@ public class WideCastTest extends AbstractCairoTest {
                                     4	true	true
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id FROM lp_wide_cast WHERE u" + op + text + " ORDER BY id",
                             """
                                     id
@@ -279,7 +278,7 @@ public class WideCastTest extends AbstractCairoTest {
                 }
                 {
                     final String text = "null";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id,u" + op + text + " a," + text + op + "u b FROM lp_wide_cast ORDER BY id",
                             """
                                     id	a	b
@@ -289,7 +288,7 @@ public class WideCastTest extends AbstractCairoTest {
                                     4	true	true
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT id FROM lp_wide_cast WHERE u" + op + text + " ORDER BY id",
                             """
                                     id
@@ -434,7 +433,7 @@ public class WideCastTest extends AbstractCairoTest {
                     3	false	0		0	null	null	null	null						null
                     4	false	0		0	null	null	null	null						null
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,h::LONG256 same,(s::VARCHAR)::LONG256 text FROM lp_wide_cast ORDER BY id",
                     """
                             id	same	text
@@ -516,7 +515,7 @@ public class WideCastTest extends AbstractCairoTest {
                         3\t
                         4	0
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ('u4pruydqqvj8'::" + target + ") text,(1L::" + target + ") num,(null::" + target + ") nil FROM lp_wide_cast LIMIT 1",
                         """
                                 text	num	nil
@@ -555,7 +554,7 @@ public class WideCastTest extends AbstractCairoTest {
                         3\t
                         4	0000000
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ('u4pruydqqvj8'::" + target + ") text,(1L::" + target + ") num,(null::" + target + ") nil FROM lp_wide_cast LIMIT 1",
                         """
                                 text	num	nil
@@ -594,7 +593,7 @@ public class WideCastTest extends AbstractCairoTest {
                         3\t
                         4	00000000
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ('u4pruydqqvj8'::" + target + ") text,(1L::" + target + ") num,(null::" + target + ") nil FROM lp_wide_cast LIMIT 1",
                         """
                                 text	num	nil
@@ -633,7 +632,7 @@ public class WideCastTest extends AbstractCairoTest {
                         3\t
                         4	000
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ('u4pruydqqvj8'::" + target + ") text,(1L::" + target + ") num,(null::" + target + ") nil FROM lp_wide_cast LIMIT 1",
                         """
                                 text	num	nil
@@ -672,7 +671,7 @@ public class WideCastTest extends AbstractCairoTest {
                         3\t
                         4	0000000000000000
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ('u4pruydqqvj8'::" + target + ") text,(1L::" + target + ") num,(null::" + target + ") nil FROM lp_wide_cast LIMIT 1",
                         """
                                 text	num	nil
@@ -711,7 +710,7 @@ public class WideCastTest extends AbstractCairoTest {
                         3\t
                         4	0000000000000000000000000000000
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ('u4pruydqqvj8'::" + target + ") text,(1L::" + target + ") num,(null::" + target + ") nil FROM lp_wide_cast LIMIT 1",
                         """
                                 text	num	nil
@@ -750,7 +749,7 @@ public class WideCastTest extends AbstractCairoTest {
                         3\t
                         4	00000000000000000000000000000000
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ('u4pruydqqvj8'::" + target + ") text,(1L::" + target + ") num,(null::" + target + ") nil FROM lp_wide_cast LIMIT 1",
                         """
                                 text	num	nil
@@ -789,7 +788,7 @@ public class WideCastTest extends AbstractCairoTest {
                         3\t
                         4\t
                         """);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ('u4pruydqqvj8'::" + target + ") text,(1L::" + target + ") num,(null::" + target + ") nil FROM lp_wide_cast LIMIT 1",
                         """
                                 text	num	nil
@@ -797,7 +796,7 @@ public class WideCastTest extends AbstractCairoTest {
                                 """
                 );
             }
-            assertQueryRows("SELECT ##10101 bits,#u4pr chars FROM lp_wide_cast LIMIT 1", """
+            assertRowsOnly("SELECT ##10101 bits,#u4pr chars FROM lp_wide_cast LIMIT 1", """
                     bits	chars
                     p	u4pr
                     """);
@@ -815,7 +814,7 @@ public class WideCastTest extends AbstractCairoTest {
             bindVariableService.setUuid(0, 1, 2);
             bindVariableService.setLong256(1, 1, 2, 3, 4);
             bindVariableService.setGeoHash(2, 123456789, geoType);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT $1::STRING u,$2::VARCHAR h,($3::GEOHASH(5b)) g FROM lp_wide_cast LIMIT 1",
                     """
                             u	h	g
@@ -904,24 +903,6 @@ public class WideCastTest extends AbstractCairoTest {
                 + "(99,4,false,127,'1',32767,2147483647,9223372036854,1e30,1e30,123456::DATE,1234567::TIMESTAMP,1234567890::TIMESTAMP_NS,'u4pruydqqvj8','00000000-0000-0002-0000-000000000001','0x01','00000000-0000-0002-0000-000000000001',0x01,#u,#u4,#u4pr,#u4pruydqqvj8)");
     }
 
-    private void assertCastQuery(String sql, String expectedTypes, String expectedRows) throws Exception {
-        final int jitMode = sqlExecutionContext.getJitMode();
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        try (RecordCursorFactory factory = select(sql)) {
-            final StringSink types = new StringSink();
-            for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
-                if (i > 0) {
-                    types.put(',');
-                }
-                types.put(ColumnType.nameOf(factory.getMetadata().getColumnType(i)));
-            }
-            TestUtils.assertEquals(sql, expectedTypes, types);
-            assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expectedRows);
-        } finally {
-            sqlExecutionContext.setJitMode(jitMode);
-        }
-    }
-
     private int assertCasts(String source, ObjList<String> targets, String expectedTypes, String expectedRows) throws Exception {
         final StringSink sql = new StringSink();
         sql.put("SELECT id");
@@ -931,9 +912,5 @@ public class WideCastTest extends AbstractCairoTest {
         sql.put(" FROM lp_wide_cast ORDER BY id");
         assertCastQuery(sql.toString(), expectedTypes, expectedRows);
         return targets.size();
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

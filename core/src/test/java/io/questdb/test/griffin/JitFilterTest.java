@@ -84,7 +84,7 @@ public class JitFilterTest extends AbstractCairoTest {
                     AsyncFilterConstructionFault.disarm();
                 }
                 try (RecordCursorFactory recovered = compiler.compile("SELECT id FROM lp_filter WHERE b", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(recovered, "id\n3\n4\n5\n");
+                    assertRowsOnly(recovered, "id\n3\n4\n5\n");
                 }
             } finally {
                 sqlExecutionContext.setJitMode(oldMode);
@@ -174,9 +174,9 @@ public class JitFilterTest extends AbstractCairoTest {
                     }
                 }
                 Assert.assertEquals(JitUtil.isJitSupported(), retained.usesCompiledFilter());
-                assertResult(retained, "id\n3\n4\n5\n");
+                assertRowsOnly(retained, "id\n3\n4\n5\n");
                 bindVariableService.setInt(0, 16777217);
-                assertResult(retained, "id\n4\n");
+                assertRowsOnly(retained, "id\n4\n");
             } finally {
                 Misc.free(retained);
                 sqlExecutionContext.setJitMode(oldMode);
@@ -195,9 +195,9 @@ public class JitFilterTest extends AbstractCairoTest {
             bindVariableService.setBoolean(0, true);
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile("SELECT id FROM lp_filter WHERE $1", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "id\n1\n2\n3\n4\n5\n6\n");
+                    assertRowsOnly(factory, "id\n1\n2\n3\n4\n5\n6\n");
                     bindVariableService.setBoolean(0, false);
-                    assertResult(factory, "id\n");
+                    assertRowsOnly(factory, "id\n");
                 }
             }
         });
@@ -220,17 +220,13 @@ public class JitFilterTest extends AbstractCairoTest {
                 sqlExecutionContext.setJitMode(mode);
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                     Assert.assertEquals(sql, mode != SqlJitMode.JIT_MODE_DISABLED && isJitEligible && JitUtil.isJitSupported(), factory.usesCompiledFilter());
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
             }
         } finally {
             sqlExecutionContext.setJitMode(oldMode);
             sqlExecutionContext.setParallelFilterEnabled(wasParallel);
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

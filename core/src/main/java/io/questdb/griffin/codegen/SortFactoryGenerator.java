@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -170,8 +171,8 @@ final class SortFactoryGenerator {
      */
     RecordCursorFactory generateParallelTopK(GenerationFrame frame, SortPlan sort, LimitPlan limit, SqlExecutionContext executionContext)
             throws SqlException {
-        final ProjectPlan projection = LogicalPlans.parallelTopKProjection(sort);
-        final LogicalPlan source = projection != null ? projection.getInput() : sort.getInput();
+        final ProjectPlan projection = GeneratedShapes.parallelTopKProjection(sort);
+        final LogicalPlan source = GeneratedShapes.parallelTopKSource(sort);
         final boolean isFilterStolen = sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K;
         final PreparedFilter prepared = frame.pushPreparedFilter(isFilterStolen);
         final RecordCursorFactory topK;

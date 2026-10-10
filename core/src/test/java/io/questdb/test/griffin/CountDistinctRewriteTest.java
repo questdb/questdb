@@ -361,9 +361,9 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
                         compiler.clear();
                     }
                 }
-                assertResult(retained, "c\n2\n");
+                assertRowsOnly(retained, "c\n2\n");
                 execute("INSERT INTO cd_lifetime VALUES (2),(1),(null)");
-                assertResult(retained, "c\n2\n");
+                assertRowsOnly(retained, "c\n2\n");
             } finally {
                 Misc.free(retained);
             }
@@ -398,11 +398,7 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
             TestUtils.assertEquals(message, e.getFlyweightMessage());
         }
         try (RecordCursorFactory factory = compiler.compile("SELECT count_distinct(x) c FROM cd_errors", sqlExecutionContext).getRecordCursorFactory()) {
-            assertResult(factory, "c\n1\n");
+            assertRowsOnly(factory, "c\n1\n");
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String rows) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(rows);
     }
 }

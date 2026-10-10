@@ -37,7 +37,7 @@ public class MathFunctionTest extends AbstractCairoTest {
     public void testConstantsParametersAndNumericPromotion() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT pi(),degrees(0.5),radians(90),sin(0),cos(0),atan2(1,-1),power(2,3),round(1.5) FROM lp_math LIMIT 1",
                     """
                             pi	degrees	radians	sin	cos	atan2	power	round
@@ -46,7 +46,7 @@ public class MathFunctionTest extends AbstractCairoTest {
             );
             bindVariableService.setDouble(0, 0.5);
             bindVariableService.setInt(1, 2);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,sin($1),power(d,$2),atan2($1,d),degrees($1),radians($1) FROM lp_math ORDER BY id",
                     """
                             id	sin	power	atan2	degrees	radians
@@ -58,7 +58,7 @@ public class MathFunctionTest extends AbstractCairoTest {
                             6	0.479425538604203	null	null	28.64788975654116	0.008726646259971648
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,sqrt(i),sin(l),cos(f),power(i,l),atan2(f,i) FROM lp_math ORDER BY id",
                     """
                             id	sqrt	sin	cos	power	atan2
@@ -71,7 +71,7 @@ public class MathFunctionTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setDouble(0, Double.NaN);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,degrees($1),radians($1),sqrt($1),round($1) FROM lp_math ORDER BY id",
                     """
                             id	degrees	radians	sqrt	round
@@ -103,7 +103,7 @@ public class MathFunctionTest extends AbstractCairoTest {
             RecordCursorFactory retained;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                 try (RecordCursorFactory factoryBeforeReset = retained) {
@@ -111,12 +111,12 @@ public class MathFunctionTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = compiler.compile("SELECT sin(d) FROM lp_math", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(factory);
                     }
-                    assertResult(retained, expected);
+                    assertRowsOnly(retained, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         });
     }
@@ -125,7 +125,7 @@ public class MathFunctionTest extends AbstractCairoTest {
     public void testMathInFiltersAggregatesAndNestedProjections() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_math WHERE sin(d)>0 OR sqrt(abs(d))<1 ORDER BY id",
                     """
                             id
@@ -136,14 +136,14 @@ public class MathFunctionTest extends AbstractCairoTest {
                             5
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT sum(sqrt(abs(d))),avg(sin(d)),count() FROM lp_math WHERE cos(d)<1",
                     """
                             sum	avg	count
                             34.41102221295453	0.2983325263215697	4
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT value FROM (SELECT id,sqrt(abs(d))+sin(d) value FROM lp_math) WHERE value>0 ORDER BY value,id LIMIT 3",
                     """
                             value
@@ -152,7 +152,7 @@ public class MathFunctionTest extends AbstractCairoTest {
                             2.1796109741881464
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT sign(i) k,sum(round(d)) total FROM lp_math GROUP BY 1 ORDER BY k",
                     """
                             k	total
@@ -169,7 +169,7 @@ public class MathFunctionTest extends AbstractCairoTest {
     public void testTrigonometricLogarithmicAndPowerDomains() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT id,acos(d),asin(d),atan(d),atan2(d,f),cos(d),cot(d),degrees(d),exp(d),
                                    ln(d),log(d),pi(),power(d,2.0),radians(d),sin(d),sqrt(d),tan(d)
@@ -185,7 +185,7 @@ public class MathFunctionTest extends AbstractCairoTest {
                             6	null	null	null	null	null	null	null	null	null	null	3.141592653589793	null	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,ln(-abs(d)),sqrt(-abs(d)),acos(d+2),cot(d-d),power(d,0.5),round(exp(d)) FROM lp_math ORDER BY id",
                     """
                             id	ln	sqrt	acos	cot	power	round
@@ -204,7 +204,7 @@ public class MathFunctionTest extends AbstractCairoTest {
     public void testTypedRoundingSignAndRemainder() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT id,ceil(f) cf,ceil(d) cd,ceiling(f) cef,ceiling(d) ced,floor(f) ff,floor(d) fd,
                                    sign(b) sb,sign(s) ss,sign(i) si,sign(l) sl,sign(f) sf,sign(d) sd,
@@ -221,7 +221,7 @@ public class MathFunctionTest extends AbstractCairoTest {
                             6	null	null	null	null	null	null	0	0	null	null	null	null	null	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,i%0,l%0,f%0,d%0,i%null,l%null,f%null,d%null FROM lp_math ORDER BY id",
                     """
                             id	column	column1	column2	column3	column4	column5	column6	column7
@@ -234,10 +234,6 @@ public class MathFunctionTest extends AbstractCairoTest {
                             """
             );
         });
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void assertUnknownFunction(SqlCompilerImpl compiler, String sql) throws Exception {
@@ -259,9 +255,5 @@ public class MathFunctionTest extends AbstractCairoTest {
                 (95,5,1,1,1,1,1000,1000),
                 (96,6,0,0,null,null,null,null)
                 """);
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

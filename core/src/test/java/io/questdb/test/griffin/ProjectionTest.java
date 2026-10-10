@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -173,16 +172,16 @@ public class ProjectionTest extends AbstractCairoTest {
                     retained = compiler.compile(
                             "SELECT id+1 AS adjusted,sym,note FROM lp_projection ORDER BY ts", sqlExecutionContext
                     ).getRecordCursorFactory();
-                    assertResult(retained, "adjusted\tsym\tnote\n4\tC\tcafé\n2\tA\talpha\nnull\t\t\n3\tB\tβeta\n");
+                    assertRowsOnly(retained, "adjusted\tsym\tnote\n4\tC\tcafé\n2\tA\talpha\nnull\t\t\n3\tB\tβeta\n");
                     try (RecordCursorFactory other = compiler.compile(
                             "SELECT id+2 AS later FROM lp_projection WHERE id>1", sqlExecutionContext
                     ).getRecordCursorFactory()) {
-                        assertResult(other, "later\n5\n4\n");
+                        assertRowsOnly(other, "later\n5\n4\n");
                     }
                     compiler.clear();
-                    assertResult(retained, "adjusted\tsym\tnote\n4\tC\tcafé\n2\tA\talpha\nnull\t\t\n3\tB\tβeta\n");
+                    assertRowsOnly(retained, "adjusted\tsym\tnote\n4\tC\tcafé\n2\tA\talpha\nnull\t\t\n3\tB\tβeta\n");
                 }
-                assertResult(retained, "adjusted\tsym\tnote\n4\tC\tcafé\n2\tA\talpha\nnull\t\t\n3\tB\tβeta\n");
+                assertRowsOnly(retained, "adjusted\tsym\tnote\n4\tC\tcafé\n2\tA\talpha\nnull\t\t\n3\tB\tβeta\n");
             } finally {
                 Misc.free(retained);
             }
@@ -200,13 +199,13 @@ public class ProjectionTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT adjusted,label FROM lp_target ORDER BY adjusted", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "adjusted\tlabel\n2\ta\n3\tb\n4\tc\n");
+                    assertRowsOnly(factory, "adjusted\tlabel\n2\ta\n3\tb\n4\tc\n");
                 }
                 execute(compiler, "UPDATE lp_projection SET copied=id+1 WHERE id>1");
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id,copied FROM lp_projection ORDER BY ts", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\tcopied\n3\t4\n1\tnull\nnull\tnull\n2\t3\n");
+                    assertRowsOnly(factory, "id\tcopied\n3\t4\n1\tnull\nnull\tnull\n2\t3\n");
                 }
             }
         });
@@ -320,16 +319,12 @@ public class ProjectionTest extends AbstractCairoTest {
                 source = source.inputAt(0);
             }
             Assert.assertEquals(-1, source.getOutput().getColumnIndexQuiet("unused"));
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
     private void assertOrdinalFailure(String sql, String message) throws Exception {
         assertQuery(sql).noLeakCheck().fails(sql.lastIndexOf(' ') + 1, message);
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private CairoEngine newGenerationCountingEngine(int[] generatedQueries) throws IOException {

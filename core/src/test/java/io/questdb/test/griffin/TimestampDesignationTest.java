@@ -139,9 +139,9 @@ public class TimestampDesignationTest extends AbstractCairoTest {
                             ? "other" + operators.getQuick(i) + "'2020-01-02'"
                             : "'2020-01-02'" + operators.getQuick(i - operators.size()) + "other");
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                    try (RecordCursorFactory expected = compile(sql)) {
+                    try (RecordCursorFactory expected = select(sql)) {
                         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-                        try (RecordCursorFactory actual = compile(sql)) {
+                        try (RecordCursorFactory actual = select(sql)) {
                             Assert.assertEquals(sql, JitUtil.isJitSupported(), actual.usesCompiledFilter());
                             try (RecordCursor left = expected.getCursor(sqlExecutionContext); RecordCursor right = actual.getCursor(sqlExecutionContext)) {
                                 TestUtils.assertEquals(left, expected.getMetadata(), right, actual.getMetadata(), false);
@@ -150,7 +150,7 @@ public class TimestampDesignationTest extends AbstractCairoTest {
                     }
                 }
                 execute("CREATE TABLE lp_timestamp_empty(id INT,other TIMESTAMP_NS)");
-                try (RecordCursorFactory empty = compile("SELECT id FROM lp_timestamp_empty WHERE other > '1600-01-01'");
+                try (RecordCursorFactory empty = select("SELECT id FROM lp_timestamp_empty WHERE other > '1600-01-01'");
                      RecordCursor cursor = empty.getCursor(sqlExecutionContext)) {
                     Assert.assertFalse(empty.usesCompiledFilter());
                     Assert.assertFalse(cursor.hasNext());
@@ -309,12 +309,6 @@ public class TimestampDesignationTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertEquals(sql, position, e.getPosition());
             TestUtils.assertEquals(message, e.getFlyweightMessage());
-        }
-    }
-
-    private RecordCursorFactory compile(String sql) throws SqlException {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            return compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
         }
     }
 

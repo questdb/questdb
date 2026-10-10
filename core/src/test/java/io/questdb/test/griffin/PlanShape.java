@@ -24,9 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LogicalPlan;
+import org.junit.Assert;
 
 /**
  * Renders the factory tree of a physical plan as "Node > Node > ...", keeping every node line
@@ -34,6 +39,40 @@ import io.questdb.griffin.TextPlanSink;
  */
 final class PlanShape {
     private PlanShape() {
+    }
+
+    static <T extends LogicalPlan> void assertPlanned(CairoEngine engine, SqlExecutionContext context, String sql, Class<T> type, PlanAssertion<T> assertion) throws Exception {
+        try (
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                RecordCursorFactory ignore = compiler.compile(sql, context).getRecordCursorFactory()
+        ) {
+            final T found = find(compiler.getPlanForTesting(), type);
+            Assert.assertNotNull(found);
+            assertion.check(found);
+        }
+    }
+
+    static <T extends LogicalPlan> T find(LogicalPlan plan, Class<T> type) {
+        if (type.isInstance(plan)) {
+            return type.cast(plan);
+        }
+        if (plan instanceof JoinPlan join) {
+            for (int i = 0, n = join.getOrderedInputs().size(); i < n; i++) {
+                final LogicalPlan input = join.getOrderedInputs().getQuick(i).getInput();
+                final T found = input == null ? null : find(input, type);
+                if (found != null) {
+                    return found;
+                }
+            }
+            return null;
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final T found = find(plan.inputAt(i), type);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
     }
 
     static String of(RecordCursorFactory factory, SqlExecutionContext context) {
@@ -67,5 +106,10 @@ final class PlanShape {
             }
         }
         return false;
+    }
+
+    @FunctionalInterface
+    interface PlanAssertion<T> {
+        void check(T plan);
     }
 }

@@ -29,10 +29,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.jit.JitUtil;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -346,7 +344,7 @@ public class UpdateJoinTest extends AbstractCairoTest {
         try (UpdateOperation update = query.getUpdateOperation()) {
             Assert.assertEquals(engine.verifyTableName("uj_target").getTableId(), update.getTableId());
             Assert.assertTrue(update.getFactory().supportsUpdateRowId(engine.verifyTableName("uj_target")));
-            TestUtils.assertEquals(sql, JitUtil.isJitSupported() ? expectedPlan : expectedPlan.replace("Async JIT", "Async"), planOf(update.getFactory()));
+            TestUtils.assertEquals(sql, JitUtil.isJitSupported() ? expectedPlan : expectedPlan.replace("Async JIT", "Async"), planText(update.getFactory()));
             try (OperationFuture future = query.execute(null)) {
                 future.await();
                 Assert.assertEquals(sql, affectedRows, future.getAffectedRowsCount());
@@ -364,15 +362,5 @@ public class UpdateJoinTest extends AbstractCairoTest {
     private void dropRows() throws SqlException {
         execute("DROP TABLE uj_source");
         execute("DROP TABLE uj_target");
-    }
-
-    private String planOf(RecordCursorFactory factory) {
-        final TextPlanSink plan = new TextPlanSink();
-        plan.of(factory, sqlExecutionContext);
-        final StringSink text = new StringSink();
-        for (int i = 1, n = plan.getLineCount(); i <= n; i++) {
-            text.put(plan.getLine(i)).put('\n');
-        }
-        return text.toString();
     }
 }

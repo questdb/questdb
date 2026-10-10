@@ -38,7 +38,7 @@ public class TextOperationsTest extends AbstractCairoTest {
     public void testStringAndVarcharOperationsKeepTypesNullsAndUnicode() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT id,length(v),length_bytes(v),lower(v),upper(v),to_lowercase(v),to_uppercase(v),
                                    trim(v),ltrim(v),rtrim(v),left(s,n),right(s,n),left(v,n),right(v,n),
@@ -56,7 +56,7 @@ public class TextOperationsTest extends AbstractCairoTest {
                             5	-1	-1																null	null	null	null	5null	\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,left(v,-2),right(v,-2),substring(v,0,2),substring(s,1,0),replace(s,'','x'),replace(v,'','x') FROM lp_string ORDER BY id",
                     """
                             id	left	right	substring	substring1	replace	replace1
@@ -67,7 +67,7 @@ public class TextOperationsTest extends AbstractCairoTest {
                             5					\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,replace(s,s,s),replace(v,v,v),strpos(s,s),strpos(v,v) FROM lp_string ORDER BY id",
                     """
                             id	replace	replace1	strpos	strpos1
@@ -85,14 +85,14 @@ public class TextOperationsTest extends AbstractCairoTest {
     public void testStringConstantsAndRuntimeParameters() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT left('aé中'::varchar,2),right('aé中'::varchar,2),substring('aé中'::varchar,2,2),trim('  a  '::varchar),replace('aé中'::varchar,'é','x'),concat('a',null,3),null::varchar FROM lp_string LIMIT 1",
                     """
                             left	right	substring	trim	replace	concat	cast
                             aé	é中	é中	a	ax中	a3\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT left('x''y'::varchar,3),right('x''y'::varchar,3),replace('x''y'::varchar,'x','z'),('x''y'::varchar)::string FROM lp_string LIMIT 1",
                     """
                             left	right	replace	cast
@@ -101,7 +101,7 @@ public class TextOperationsTest extends AbstractCairoTest {
             );
             bindVariableService.setVarchar(0, new Utf8String("  hé中  "));
             bindVariableService.setInt(1, 2);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,left($1,$2),right(v,$2),replace(v,$1,v),position(v,$1),trim($1),concat(v,$1) FROM lp_string ORDER BY id",
                     """
                             id	left	right	replace	position	trim	concat
@@ -113,7 +113,7 @@ public class TextOperationsTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setVarchar(0, null);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,left($1,$2),length($1),replace(v,$1,v),position(v,$1),concat(v,$1) FROM lp_string ORDER BY id",
                     """
                             id	left	length	replace	position	concat
@@ -131,7 +131,7 @@ public class TextOperationsTest extends AbstractCairoTest {
     public void testNativeDiscardedChildrenAndFailureRecovery() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT left(trim(v),null),right(trim(v),null),substring(trim(v),1,0),
                                    substring(trim(v),null,2),replace(trim(v),'x',null),replace(trim(v),null,trim(v)),
@@ -167,7 +167,7 @@ public class TextOperationsTest extends AbstractCairoTest {
     public void testFiltersDerivedProjectionsAndSameTypeCase() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_string WHERE length(trim(v))>0 AND strpos(s,'a')>0 ORDER BY id",
                     """
                             id
@@ -176,7 +176,7 @@ public class TextOperationsTest extends AbstractCairoTest {
                             3
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT result FROM (SELECT id,left(trim(v),3) result FROM lp_string) WHERE length(result)>0 ORDER BY id",
                     """
                             result
@@ -185,7 +185,7 @@ public class TextOperationsTest extends AbstractCairoTest {
                             abc
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE WHEN id IN (1,3) THEN trim(v) ELSE left(v,2) END FROM lp_string ORDER BY id",
                     """
                             id	case
@@ -196,7 +196,7 @@ public class TextOperationsTest extends AbstractCairoTest {
                             5\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,CASE v WHEN 'abc' THEN trim(v) ELSE left(v,2) END FROM lp_string ORDER BY id",
                     """
                             id	switch
@@ -207,7 +207,7 @@ public class TextOperationsTest extends AbstractCairoTest {
                             5\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT sum(length(trim(v))),max(position(s,'a')) FROM lp_string",
                     """
                             sum	max
@@ -233,7 +233,7 @@ public class TextOperationsTest extends AbstractCairoTest {
             RecordCursorFactory retained;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                 try (RecordCursorFactory beforeReset = retained) {
@@ -245,18 +245,14 @@ public class TextOperationsTest extends AbstractCairoTest {
                     try (RecordCursorFactory next = compiler.compile("SELECT length(v) FROM lp_string", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(next);
                     }
-                    assertResult(retained, expected);
+                    assertRowsOnly(retained, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         });
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {
@@ -269,9 +265,5 @@ public class TextOperationsTest extends AbstractCairoTest {
                 (94,4,'','',0),
                 (95,5,null,null,null)
                 """);
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

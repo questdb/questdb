@@ -88,9 +88,9 @@ public class BooleanNotNormalizationTest extends AbstractCairoTest {
                     }
                     compiler.clear();
                 }
-                assertRows(retained, "id\n3\n");
+                assertRowsOnly(retained, "id\n3\n");
                 bindVariableService.setInt(0, -2);
-                assertRows(retained, "id\n1\n3\n");
+                assertRowsOnly(retained, "id\n1\n3\n");
             } finally {
                 Misc.free(retained);
             }
@@ -110,7 +110,7 @@ public class BooleanNotNormalizationTest extends AbstractCairoTest {
                                 + "SELECT * FROM (SELECT id FROM @q UNION ALL SELECT id FROM @q) ORDER BY id",
                         sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertRows(factory, "id\n1\n1\n3\n3\n");
+                    assertRowsOnly(factory, "id\n1\n1\n3\n3\n");
                 }
             }
         });
@@ -136,14 +136,10 @@ public class BooleanNotNormalizationTest extends AbstractCairoTest {
                 sink.of(factory, sqlExecutionContext);
                 TestUtils.assertContains(sink.getSink(), planPart);
             }
-            assertRows(factory, expected);
+            assertRowsOnly(factory, expected);
         } finally {
             sqlExecutionContext.setJitMode(previousJitMode);
         }
-    }
-
-    private void assertRows(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

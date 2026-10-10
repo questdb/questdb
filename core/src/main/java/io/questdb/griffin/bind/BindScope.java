@@ -226,6 +226,24 @@ public final class BindScope implements Mutable {
     }
 
     /**
+     * Starts a projection's alias space afresh.
+     */
+    void resetAliases() {
+        aliases.clear();
+        aliasSequences.clear();
+    }
+
+    /**
+     * Starts a projection's alias space afresh, with the names of {@code seed} taken.
+     */
+    void resetAliases(OutputSchema seed) {
+        resetAliases();
+        for (int i = 0, n = seed.getColumnCount(); i < n; i++) {
+            aliases.add(seed.getColumnName(i));
+        }
+    }
+
+    /**
      * Projection aliases: the first reference to a column fixes its alias.
      */
     static final class TranslatingAliases implements Mutable {

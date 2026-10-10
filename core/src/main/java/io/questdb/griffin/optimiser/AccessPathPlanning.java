@@ -43,6 +43,7 @@ import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -160,7 +161,7 @@ final class AccessPathPlanning {
                 || output.getColumnIndexById(column.getColumnId()) < 0) {
             return null;
         }
-        return LogicalPlans.withinPrefixes(call, output, prefixes) ? call : null;
+        return GeneratedShapes.withinPrefixes(call, output, prefixes) ? call : null;
     }
 
     private int findCursor(BoundExpression expression) {
@@ -621,7 +622,7 @@ final class AccessPathPlanning {
     private void walk(LogicalPlan plan, boolean isTimestampRequired) throws SqlException {
         switch (plan) {
             case ScanPlan scan -> planScan(scan, null, null, isTimestampRequired);
-            case FilterPlan filter when LogicalPlans.fusedScan(filter) instanceof ScanPlan scan -> {
+            case FilterPlan filter when GeneratedShapes.fusedScan(filter) instanceof ScanPlan scan -> {
                 planScan(scan, filter.getPredicate(), null, operatorPlanning.requiresInputTimestamp(filter, 0, isTimestampRequired));
                 planSubqueries(scan);
             }
@@ -630,7 +631,7 @@ final class AccessPathPlanning {
             case JoinPlan join -> walkJoin(join, isTimestampRequired);
             case WindowJoinPlan windowJoin -> walkWindowJoin(windowJoin, isTimestampRequired);
             case SampleByPlan sample ->
-                    walk(LogicalPlans.sampleByBase(sample), operatorPlanning.requiresInputTimestamp(sample, 0, isTimestampRequired));
+                    walk(GeneratedShapes.sampleByBase(sample), operatorPlanning.requiresInputTimestamp(sample, 0, isTimestampRequired));
             default -> {
                 for (int i = 0, n = plan.inputCount(); i < n; i++) {
                     walk(plan.inputAt(i), operatorPlanning.requiresInputTimestamp(plan, i, isTimestampRequired));
@@ -683,7 +684,7 @@ final class AccessPathPlanning {
 
     private void walkLatestBy(LatestByPlan latest, boolean isTimestampRequired) throws SqlException {
         final LogicalPlan input = latest.getInput();
-        final ScanPlan scan = LogicalPlans.latestByScan(latest);
+        final ScanPlan scan = GeneratedShapes.latestByScan(latest);
         final boolean isInputTimestampRequired = operatorPlanning.requiresInputTimestamp(latest, 0, isTimestampRequired);
         if (scan != null) {
             planScan(scan, input instanceof FilterPlan filter ? filter.getPredicate() : null, latest, isInputTimestampRequired);
@@ -693,7 +694,7 @@ final class AccessPathPlanning {
             planSubqueries(scan);
             return;
         }
-        walk(LogicalPlans.latestByBase(latest), isInputTimestampRequired);
+        walk(GeneratedShapes.latestByBase(latest), isInputTimestampRequired);
     }
 
     private void walkWindowJoin(WindowJoinPlan windowJoin, boolean isTimestampRequired) throws SqlException {

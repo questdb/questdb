@@ -69,7 +69,7 @@ public final class JoinInput implements Mutable {
     private UnnestSpec unnest;
 
     /**
-     * Keys the step on a master and a slave column unless it already is.
+     * Keys the step on a master and a slave column unless it already is; a CROSS step that gains a key joins INNER.
      */
     public void addKey(int masterId, int slaveId, CharSequence masterName, CharSequence slaveName, int position) {
         for (int i = 0, n = masterKeyColumnIds.size(); i < n; i++) {
@@ -82,6 +82,9 @@ public final class JoinInput implements Mutable {
         masterKeyNames.add(masterName);
         slaveKeyNames.add(slaveName);
         keyPositions.add(position);
+        if (joinType == JoinKind.CROSS) {
+            joinType = JoinKind.INNER;
+        }
     }
 
     @Override

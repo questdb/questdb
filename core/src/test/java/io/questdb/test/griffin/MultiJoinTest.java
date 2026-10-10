@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -447,7 +446,7 @@ public class MultiJoinTest extends AbstractCairoTest {
                 }
                 try {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-                    expectedPlan = plan(retained);
+                    expectedPlan = planText(retained);
                     try (RecordCursorFactory other = compiler.compile("SELECT count() FROM lp_multi_a", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(other);
                     }
@@ -461,7 +460,7 @@ public class MultiJoinTest extends AbstractCairoTest {
             }
             try (RecordCursorFactory factory = retained) {
                 assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-                TestUtils.assertEquals(expectedPlan, plan(factory));
+                TestUtils.assertEquals(expectedPlan, planText(factory));
             }
         });
     }
@@ -2053,7 +2052,7 @@ public class MultiJoinTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
                 if (expectedPlan != null) {
-                    TestUtils.assertEquals(JitUtil.isJitSupported() ? expectedPlan : expectedPlan.replace("Async JIT", "Async"), plan(factory));
+                    TestUtils.assertEquals(JitUtil.isJitSupported() ? expectedPlan : expectedPlan.replace("Async JIT", "Async"), planText(factory));
                 }
             }
         }
@@ -2087,15 +2086,5 @@ public class MultiJoinTest extends AbstractCairoTest {
             execute("INSERT INTO " + name + " VALUES(" + (base + 1) + ",1," + (10 + i) + ",'one','2020-01-01'),("
                     + (base + 2) + ",2," + (20 + i) + ",'two','2020-01-02'),(" + (base + 3) + ",null,null,null,'2020-01-03')");
         }
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        final StringSink text = new StringSink();
-        for (int i = 1, n = sink.getLineCount(); i <= n; i++) {
-            text.put(sink.getLine(i)).put('\n');
-        }
-        return text.toString();
     }
 }

@@ -1050,16 +1050,16 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             bindVariableService.setStr("pattern", "A%");
             final String query = "SELECT sym, v FROM t WHERE sym LIKE :pattern ORDER BY v";
             try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
-                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printCompliant(factory));
 
                 execute("INSERT INTO t VALUES ('AC', 3, 2)");
-                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printCompliant(factory));
 
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printCompliant(factory));
 
                 bindVariableService.setStr("pattern", "");
-                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printCompliant(factory));
             }
         });
     }
@@ -1073,13 +1073,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             final String query = "SELECT sym, sum(price) total FROM t WHERE sym LIKE :pattern ORDER BY sym";
             final String oracle = "SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sym, sum(price) total FROM t WHERE sym LIKE :pattern ORDER BY sym";
             try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 execute("INSERT INTO t VALUES ('AC', 3.0, 2)");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", "");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
             }
         });
     }
@@ -1093,13 +1093,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             final String query = "SELECT sym, price FROM t WHERE sym LIKE :pattern ORDER BY price";
             final String oracle = "SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sym, price FROM t WHERE sym LIKE :pattern ORDER BY price";
             try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 execute("INSERT INTO t VALUES ('AC', 3.0, 2)");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", "");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
             }
         });
     }
@@ -1113,13 +1113,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             final String query = "SELECT sym, v FROM t WHERE sym NOT LIKE :pattern ORDER BY v";
             final String oracle = "SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym NOT LIKE :pattern ORDER BY v";
             try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 execute("INSERT INTO t VALUES ('AC', 3, 2)");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 bindVariableService.setStr("pattern", "");
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
             }
         });
     }
@@ -1158,7 +1158,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     TestUtils.assertEquals(
                             "re-bind " + i + " to " + pattern,
                             select(oracle),
-                            printFactory(factory)
+                            printCompliant(factory)
                     );
                 }
             }
@@ -1194,7 +1194,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 final long freshOpens;
                 try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
                     HeapRowCursorFactory.testRowCursorsOpened.set(0);
-                    TestUtils.assertEquals(expectedNarrow, printFactory(factory));
+                    TestUtils.assertEquals(expectedNarrow, printCompliant(factory));
                     freshOpens = HeapRowCursorFactory.testRowCursorsOpened.get();
                 }
                 Assert.assertTrue("the index route opened no row cursor at all", freshOpens > 0);
@@ -1204,7 +1204,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 bindVariableService.setStr("pattern", "a%");
                 try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
                     HeapRowCursorFactory.testRowCursorsOpened.set(0);
-                    TestUtils.assertEquals(expectedWide, printFactory(factory));
+                    TestUtils.assertEquals(expectedWide, printCompliant(factory));
                     final long wideOpens = HeapRowCursorFactory.testRowCursorsOpened.get();
                     // Guards the guard: without this the whole test decays to vacuous. If 'a%' ever
                     // resolved to one key, or the route fell back to the scan delegate, the reuse
@@ -1219,7 +1219,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     );
                     bindVariableService.setStr("pattern", "z%");
                     HeapRowCursorFactory.testRowCursorsOpened.set(0);
-                    TestUtils.assertEquals(expectedNarrow, printFactory(factory));
+                    TestUtils.assertEquals(expectedNarrow, printCompliant(factory));
                     Assert.assertEquals(freshOpens, HeapRowCursorFactory.testRowCursorsOpened.get());
                 }
             } finally {
@@ -2766,7 +2766,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 final int initialCapacity = effectiveKeys.capacity();
 
                 SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 Assert.assertEquals("a set exactly at the cap must remain available to the index delegate", 16, effectiveKeys.size());
                 Assert.assertEquals(initialCapacity, effectiveKeys.capacity());
                 Assert.assertTrue("the equal-cap set must use the index route",
@@ -2776,7 +2776,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 bindVariableService.setStr("pattern", "%");
                 for (int open = 0; open < 2; open++) {
                     SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-                    TestUtils.assertEquals(select(oracle), printFactory(factory));
+                    TestUtils.assertEquals(select(oracle), printCompliant(factory));
                     Assert.assertEquals("an over-cap positive set must not be copied on open " + open,
                             0, effectiveKeys.size());
                     Assert.assertEquals("an over-cap positive set must not grow retained capacity on open " + open,
@@ -2787,7 +2787,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 }
 
                 bindVariableService.setStr("pattern", null);
-                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                TestUtils.assertEquals(select(oracle), printCompliant(factory));
                 Assert.assertEquals("a NULL pattern must leave no effective keys", 0, effectiveKeys.size());
                 Assert.assertEquals(initialCapacity, effectiveKeys.capacity());
             }
@@ -2815,7 +2815,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 final IntList effectiveKeys = getAdaptiveEffectiveKeys(factory);
                 final int initialCapacity = effectiveKeys.capacity();
 
-                io.questdb.test.tools.TestUtils.assertEquals(expected, printFactory(factory));
+                io.questdb.test.tools.TestUtils.assertEquals(expected, printCompliant(factory));
                 Assert.assertEquals(
                         "an over-budget complement must not grow the retained effective-key list",
                         initialCapacity,
@@ -2948,7 +2948,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 // Insert a new matching symbol AFTER the factory was compiled
                 execute("insert into t values ('AC', 999, 100_000_000::timestamp)");
                 // Execute the cached plan now — must see the new 'AC' row
-                String actual = printFactory(factory);
+                String actual = printCompliant(factory);
                 String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v from t where sym like 'A%' order by v");
                 io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             }
@@ -2990,7 +2990,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = engine.select("select price, sym from t where sym like 'A%' order by price", sqlExecutionContext)) {
                 // Insert a new matching symbol AFTER the covering factory was compiled.
                 execute("insert into t values ('AC', 999.0, 100_000_000::timestamp)");
-                String actual = printFactory(factory);
+                String actual = printCompliant(factory);
                 String expected = select("select /*+ no_symbol_pattern_index(t) no_covering(t) */ price, sym from t where sym like 'A%' order by price");
                 io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             }
@@ -4089,7 +4089,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             final String expected = select(oracle);
             for (int open = 0; open < 2; open++) {
                 SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-                TestUtils.assertEquals(expected, printFactory(factory));
+                TestUtils.assertEquals(expected, printCompliant(factory));
                 Assert.assertEquals("an over-cap set must not be copied for " + predicate + " on open " + open,
                         0, effectiveKeys.size());
                 Assert.assertEquals("an over-cap set must not grow retained capacity for " + predicate + " on open " + open,
@@ -4108,7 +4108,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     private void assertRouteFlip(RecordCursorFactory factory, String oracle, boolean isIndexBranchExpected) throws SqlException {
         AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
         SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-        TestUtils.assertEquals(select(oracle), printFactory(factory));
+        TestUtils.assertEquals(select(oracle), printCompliant(factory));
         if (isIndexBranchExpected) {
             Assert.assertTrue(
                     "expected the index branch",
@@ -4373,7 +4373,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
      * Executes a pre-compiled {@link RecordCursorFactory} and returns its output as a string
      * (header + rows), using a private sink so it does not clobber the shared static test sink.
      */
-    private String printFactory(RecordCursorFactory factory) throws SqlException {
+    private String printCompliant(RecordCursorFactory factory) throws SqlException {
         StringSink localSink = new StringSink();
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             println(factory.getMetadata(), cursor, localSink);

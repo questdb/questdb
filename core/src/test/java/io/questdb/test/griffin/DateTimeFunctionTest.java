@@ -42,7 +42,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             {
                 final int i = 0;
                 final String column = columns.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id,day(" + column + "),day_of_week(" + column + "),day_of_week_sunday_first(" + column
                                 + "),days_in_month(" + column + "),hour(" + column + "),is_end_of_month(" + column
                                 + "),is_leap_year(" + column + "),micros(" + column + "),millis(" + column + "),minute(" + column
@@ -60,7 +60,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             {
                 final int i = 1;
                 final String column = columns.getQuick(i);
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id,day(" + column + "),day_of_week(" + column + "),day_of_week_sunday_first(" + column
                                 + "),days_in_month(" + column + "),hour(" + column + "),is_end_of_month(" + column
                                 + "),is_leap_year(" + column + "),micros(" + column + "),millis(" + column + "),minute(" + column
@@ -75,7 +75,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 """
                 );
             }
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT id,extract(epoch FROM nt),extract(century FROM ts),extract(decade FROM nt),
                                    extract(dow FROM ts),extract(doy FROM nt),extract(isodow FROM ts),extract(isoyear FROM nt),
@@ -98,7 +98,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
     public void testDateAddUsesConstantAndRuntimeArguments() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,ts+1L,nt+1L,dateadd('d',1,ts),dateadd('n',3,nt),dateadd('M',stride,ts),dateadd(unit,stride,nt) FROM lp_date ORDER BY id",
                     """
                             id	column	column1	dateadd	dateadd1	dateadd2	dateadd3
@@ -110,7 +110,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             );
             bindVariableService.setChar(0, 'h');
             bindVariableService.setInt(1, -2);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,dateadd($1,$2,ts),dateadd($1,$2,nt),dateadd('d',$2,ts) FROM lp_date ORDER BY id",
                     """
                             id	dateadd	dateadd1	dateadd2
@@ -120,7 +120,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                             4		\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,dateadd('y',-1,nt) FROM lp_date WHERE year(ts)=2020 ORDER BY id",
                     """
                             id	dateadd
@@ -134,7 +134,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
     public void testDateDiffConstantAndDynamicPeriodsKeepFullTypesAndNulls() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,datediff('n',ts,nt),datediff('u',nt,ts),datediff('d',ts,nt),datediff(unit,ts,nt) FROM lp_date ORDER BY id",
                     """
                             id	datediff	datediff1	datediff2	datediff3
@@ -144,7 +144,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                             4	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,datediff('d',ts,'2021-01-01T00:00:00.000000Z'),"
                             + "datediff('d','2021-01-01T00:00:00.000000001Z',ts),datediff('d',null,nt),datediff('d',ts,null)"
                             + " FROM lp_date ORDER BY id",
@@ -156,7 +156,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                             4	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT datediff('n','2020-01-01T00:00:00.000000Z','2020-01-01T00:00:00.000000001Z'),"
                             + "datediff('?',null,null),datediff('?',ts,nt) FROM lp_date ORDER BY id",
                     """
@@ -168,7 +168,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setChar(0, 'n');
-            assertQueryRows("SELECT id,datediff($1,ts,nt) FROM lp_date ORDER BY id", """
+            assertRowsOnly("SELECT id,datediff($1,ts,nt) FROM lp_date ORDER BY id", """
                     id	datediff
                     1	789
                     2	999
@@ -176,7 +176,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                     4	null
                     """);
             bindVariableService.setChar(0, '?');
-            assertQueryRows("SELECT id,datediff($1,ts,nt) FROM lp_date ORDER BY id", """
+            assertRowsOnly("SELECT id,datediff($1,ts,nt) FROM lp_date ORDER BY id", """
                     id	datediff
                     1	null
                     2	null
@@ -194,7 +194,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                     + "CASE WHEN id IN (2,3) THEN nt ELSE nt END";
             // Invalid constant units fold to typed NULL; both native sets must
             // close even though the surviving expression has no column leaves.
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,datediff('?'," + arguments + ") value FROM lp_date ORDER BY id",
                     """
                             id	value
@@ -215,7 +215,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             RecordCursorFactory retained;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                 try {
@@ -232,7 +232,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                 }
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         });
     }
@@ -241,7 +241,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
     public void testDateParsingFormattingAndConstantFolding() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT id,to_date(text,'yyyy-MM-dd HH:mm:ss'),to_timestamp(text,'yyyy-MM-dd HH:mm:ss'),
                                    to_timestamp_ns(text,'yyyy-MM-dd HH:mm:ss'),to_timestamp(epoch),to_timestamp_ns(epoch),
@@ -257,7 +257,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                             4							\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT year('2020-02-29T23:59:58.123456Z'),date_trunc('nanosecond','2020-02-29T23:59:58.123456789Z'),
                                    to_date('2020-02-29','yyyy-MM-dd'),to_timestamp('123'),to_timestamp_ns('123'),
@@ -271,7 +271,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                             2020	2020-02-29T23:59:58.123456789Z	2020-02-29T00:00:00.000Z	1970-01-01T00:00:00.000123Z	1970-01-01T00:00:00.000000123Z	2020-02-29T00:00:00.000000Z	2020-02-29T00:00:00.000000000Z	2020-02-29	\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,text::timestamp,text::timestamp_ns FROM lp_date ORDER BY id",
                     """
                             id	cast	cast1
@@ -281,7 +281,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                             4	\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_date WHERE to_str(ts,'yyyy-MM-dd')='2020-02-29' ORDER BY id",
                     """
                             id
@@ -295,7 +295,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
     public void testFloorCeilTruncationAndOrigin() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     """
                             SELECT id,timestamp_floor('15m',ts),timestamp_floor('3n',nt),timestamp_ceil('d',ts),
                                    timestamp_ceil('U',nt),date_trunc('microsecond',ts),date_trunc('nanosecond',nt),
@@ -312,14 +312,14 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                             4											\t
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_date WHERE timestamp_floor('d',ts)='2020-02-29T00:00:00.000000Z' ORDER BY id",
                     """
                             id
                             1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT date_trunc('month',ts) bucket,count() FROM lp_date GROUP BY 1 ORDER BY bucket",
                     """
                             bucket	count
@@ -347,7 +347,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             RecordCursorFactory retained;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, expected);
+                    assertRowsOnly(factory, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                 try (RecordCursorFactory ignored = retained) {
@@ -355,12 +355,12 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = compiler.compile("SELECT year(nt) FROM lp_date", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(factory);
                     }
-                    assertResult(retained, expected);
+                    assertRowsOnly(retained, expected);
                 }
                 retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
             }
             try (RecordCursorFactory factory = retained) {
-                assertResult(factory, expected);
+                assertRowsOnly(factory, expected);
             }
         });
     }
@@ -403,16 +403,16 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                     final String query = "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i)
                             + "<'2020-01-01T00:00:00.000000001Z' ORDER BY id";
                     try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, expected.getQuick(i));
+                        assertRowsOnly(factory, expected.getQuick(i));
                     }
                     try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, expected.getQuick(i));
+                        assertRowsOnly(factory, expected.getQuick(i));
                     }
                 }
             }
             {
                 final int i = 0;
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "!='2020-01-01T00:00:00.000000001Z' ORDER BY id",
                         """
                                 id
@@ -420,7 +420,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 2
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "<'2020-01-01T00:00:00.000000001Z' OR id=2 ORDER BY id",
                         """
                                 id
@@ -431,7 +431,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             }
             {
                 final int i = 1;
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "!='2020-01-01T00:00:00.000000001Z' ORDER BY id",
                         """
                                 id
@@ -439,7 +439,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 2
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "<'2020-01-01T00:00:00.000000001Z' OR id=2 ORDER BY id",
                         """
                                 id
@@ -450,7 +450,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             }
             {
                 final int i = 2;
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "!='2020-01-01T00:00:00.000000001Z' ORDER BY id",
                         """
                                 id
@@ -458,7 +458,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 2
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "<'2020-01-01T00:00:00.000000001Z' OR id=2 ORDER BY id",
                         """
                                 id
@@ -468,7 +468,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             }
             {
                 final int i = 3;
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "!='2020-01-01T00:00:00.000000001Z' ORDER BY id",
                         """
                                 id
@@ -476,7 +476,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 2
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "<'2020-01-01T00:00:00.000000001Z' OR id=2 ORDER BY id",
                         """
                                 id
@@ -487,7 +487,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             }
             {
                 final int i = 4;
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "!='2020-01-01T00:00:00.000000001Z' ORDER BY id",
                         """
                                 id
@@ -495,7 +495,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 2
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id FROM lp_date_native WHERE " + expressions.getQuick(i) + "<'2020-01-01T00:00:00.000000001Z' OR id=2 ORDER BY id",
                         """
                                 id
@@ -504,21 +504,21 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 """
                 );
             }
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_date_native WHERE timestamp_floor('d',ts)<'2020-01-02T00:00:00.000000Z' ORDER BY id",
                     """
                             id
                             1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_date_native WHERE timestamp_floor('d',other)<'2020-01-01T00:00:00.000000001Z' ORDER BY id",
                     """
                             id
                             1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT timestamp_floor('d',ts)<'2020-01-01T00:00:00.000000001Z' value FROM lp_date_native ORDER BY id",
                     """
                             value
@@ -526,7 +526,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                             false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM (SELECT id,ts FROM lp_date_native LIMIT 1) WHERE timestamp_floor('d',ts)<'2020-01-01T00:00:00.000000001Z' ORDER BY id",
                     """
                             id
@@ -542,7 +542,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             createRows();
             {
                 final String function = "to_utc";
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + function + "(ts,'Europe/Berlin')," + function + "(nt,'+02:30') FROM lp_date ORDER BY id",
                         """
                                 id	to_utc	to_utc1
@@ -552,7 +552,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 4	\t
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + function + "(ts,CASE WHEN id=1 THEN 'Europe/Berlin' ELSE '+02:30' END),"
                                 + function + "(nt,text) FROM lp_date ORDER BY id",
                         """
@@ -564,7 +564,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 """
                 );
                 bindVariableService.setStr(0, "Pacific/Chatham");
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + function + "(ts,$1)," + function + "(nt,$1) FROM lp_date ORDER BY id",
                         """
                                 id	to_utc	to_utc1
@@ -574,7 +574,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 4	\t
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT " + function + "('2024-01-15T12:00:00.000000123Z'::timestamp_ns,'Europe/Berlin') FROM lp_date LIMIT 1",
                         """
                                 to_utc
@@ -584,7 +584,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
             }
             {
                 final String function = "to_timezone";
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + function + "(ts,'Europe/Berlin')," + function + "(nt,'+02:30') FROM lp_date ORDER BY id",
                         """
                                 id	to_timezone	to_timezone1
@@ -594,7 +594,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 4	\t
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + function + "(ts,CASE WHEN id=1 THEN 'Europe/Berlin' ELSE '+02:30' END),"
                                 + function + "(nt,text) FROM lp_date ORDER BY id",
                         """
@@ -606,7 +606,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 """
                 );
                 bindVariableService.setStr(0, "Pacific/Chatham");
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT id," + function + "(ts,$1)," + function + "(nt,$1) FROM lp_date ORDER BY id",
                         """
                                 id	to_timezone	to_timezone1
@@ -616,7 +616,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 4	\t
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT " + function + "('2024-01-15T12:00:00.000000123Z'::timestamp_ns,'Europe/Berlin') FROM lp_date LIMIT 1",
                         """
                                 to_timezone
@@ -641,14 +641,6 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = compiler.compile("SELECT year(ts) FROM lp_date", sqlExecutionContext).getRecordCursorFactory()) {
             Assert.assertNotNull(factory);
         }
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

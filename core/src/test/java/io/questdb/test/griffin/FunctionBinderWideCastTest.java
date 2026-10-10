@@ -55,6 +55,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.FunctionBindingHarness.wideSchema;
+
 public class FunctionBinderWideCastTest extends AbstractCairoTest {
     @Test
     public void testGeoHashColumnsKeepEveryPrecisionAcrossLayouts() throws Exception {
@@ -360,13 +362,5 @@ public class FunctionBinderWideCastTest extends AbstractCairoTest {
                 return getLong256A(columnIndex);
             }
         };
-    }
-
-    private static OutputSchema wideSchema(int type) {
-        final OutputSchema schema = new OutputSchema();
-        for (int i = 0; i < 48; i++) {
-            schema.add(i, "unused" + i, ColumnType.INT, true);
-        }
-        return schema.add(70, "value", type, true);
     }
 }

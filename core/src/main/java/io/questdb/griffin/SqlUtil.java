@@ -958,7 +958,7 @@ public class SqlUtil {
     public static RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final QueryModel queryModel = model.getQueryModel();
         assert queryModel != null;
-        return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
+        return compiler.generateSelectWithRetries(queryModel, executionContext, false);
     }
 
     /**

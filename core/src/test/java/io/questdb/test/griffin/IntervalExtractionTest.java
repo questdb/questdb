@@ -116,7 +116,7 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                         false,
                         "PageFrame > Row forward scan > Interval forward scan on: lp_interval"
                 );
-                assertRows(actual, rows("ts\tid", false, "3 4"));
+                assertRowsOnly(actual, rows("ts\tid", false, "3 4"));
             }
         });
     }
@@ -288,7 +288,7 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                         setTimestamp(0, point, isNanos);
                         final String sql = "SELECT ts,id FROM lp_interval WHERE "
                                 + (reversed == 1 ? "$1" + operator + "ts" : "ts" + operator + "$1");
-                        try (RecordCursorFactory factory = compile(sql)) {
+                        try (RecordCursorFactory factory = select(sql)) {
                             assertPlan(
                                     factory,
                                     "Interval forward scan",
@@ -297,7 +297,7 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                             );
                             for (int b = 0; b < bounds.length; b++) {
                                 setTimestamp(0, bounds[b], isNanos);
-                                assertRows(factory, rows("ts\tid", isNanos, expectedIds[i * 2 + reversed][b]));
+                                assertRowsOnly(factory, rows("ts\tid", isNanos, expectedIds[i * 2 + reversed][b]));
                             }
                         }
                     }
@@ -340,12 +340,12 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                     setTimestamp(0, point - 2, isNanos);
                     setTimestamp(1, point, isNanos);
                     final String sql = "SELECT id,ts FROM lp_interval WHERE " + predicate + " ORDER BY ts DESC";
-                    try (RecordCursorFactory factory = compile(sql)) {
+                    try (RecordCursorFactory factory = select(sql)) {
                         assertPlan(factory, "Interval backward scan", predicate.startsWith("("), shapes[i]);
                         for (int state = 0; state < 5; state++) {
                             setTimestamp(0, state == 1 || state == 3 ? Numbers.LONG_NULL : point - 2, isNanos);
                             setTimestamp(1, state == 2 || state == 3 ? Numbers.LONG_NULL : point, isNanos);
-                            assertRows(factory, rows("id\tts", isNanos, expectedIds[i][state]));
+                            assertRowsOnly(factory, rows("id\tts", isNanos, expectedIds[i][state]));
                         }
                     }
                 }
@@ -370,7 +370,7 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                 final String sql = "SELECT ts,id FROM lp_interval WHERE ts>=dateadd('s',1,:bound) AND id IN(1,2,4,5)";
                 final long[] bounds = {point - second, point - second - 2, Numbers.LONG_NULL, point - second};
                 final String[] expectedIds = {"4 5", "2 4 5", "", "4 5"};
-                try (RecordCursorFactory factory = compile(sql)) {
+                try (RecordCursorFactory factory = select(sql)) {
                     assertPlan(
                             factory,
                             "Interval forward scan",
@@ -383,7 +383,7 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                         } else {
                             bindVariableService.setTimestamp("bound", bounds[b]);
                         }
-                        assertRows(factory, rows("ts\tid", isNanos, expectedIds[b]));
+                        assertRowsOnly(factory, rows("ts\tid", isNanos, expectedIds[b]));
                     }
                 }
                 bindVariableService.clear();
@@ -586,7 +586,7 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                         "Async JIT Filter workers: 1 > PageFrame > Row forward scan > Interval forward scan on: lp_interval"
                 );
                 TestUtils.assertEquals("filter: id in [3,4,6]", filterLine(actual));
-                assertRows(actual, rows("ts\tid", false, "3 4"));
+                assertRowsOnly(actual, rows("ts\tid", false, "3 4"));
             }
         });
     }
@@ -658,10 +658,10 @@ public class IntervalExtractionTest extends AbstractCairoTest {
     }
 
     private void assertResidual(String sql, String filter, String shape, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
+        try (RecordCursorFactory factory = select(sql)) {
             assertPlan(factory, "Interval forward scan", true, shape);
             TestUtils.assertEquals(filter, filterLine(factory));
-            assertRows(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
@@ -679,9 +679,9 @@ public class IntervalExtractionTest extends AbstractCairoTest {
     }
 
     private void assertInterval(String sql, String scan, boolean residual, String shape, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
+        try (RecordCursorFactory factory = select(sql)) {
             assertPlan(factory, scan, residual, shape);
-            assertRows(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
@@ -697,16 +697,6 @@ public class IntervalExtractionTest extends AbstractCairoTest {
         Assert.assertEquals(text, residual, text.contains("Filter"));
         if (scan.startsWith("Frame")) {
             Assert.assertFalse(text, text.contains("Interval"));
-        }
-    }
-
-    private void assertRows(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-    }
-
-    private RecordCursorFactory compile(String sql) throws SqlException {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            return compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
         }
     }
 

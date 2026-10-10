@@ -25,19 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
-import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.PlanShape.assertPlanned;
 
 /**
  * Pins the operators that apply the filter of their input themselves, as operator planning records it on the operator,
@@ -380,7 +379,7 @@ public class FilterPlacementTest extends AbstractCairoTest {
                     WINDOW JOIN prices p ON (t.sym = p.sym)
                     RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING EXCLUDE PREVAILING
                     """;
-            assertPlanned(sql, WindowJoinPlan.class,
+            assertPlanned(engine, sqlExecutionContext, sql, WindowJoinPlan.class,
                     join -> Assert.assertEquals(WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER, join.getSteps().getQuick(0).getAlgorithm()));
             assertQuery(sql)
                     .timestamp("ts")
@@ -393,26 +392,15 @@ public class FilterPlacementTest extends AbstractCairoTest {
     }
 
     private static void assertAggregateAlgorithm(AggregatePlan.Algorithm expected, String sql) throws Exception {
-        assertPlanned(sql, AggregatePlan.class, aggregate -> Assert.assertEquals(expected, aggregate.getAlgorithm()));
+        assertPlanned(engine, sqlExecutionContext, sql, AggregatePlan.class, aggregate -> Assert.assertEquals(expected, aggregate.getAlgorithm()));
     }
 
     private static void assertJoinAlgorithm(JoinInput.Algorithm expected, String sql) throws Exception {
-        assertPlanned(sql, JoinPlan.class, join -> Assert.assertEquals(expected, join.getOrderedInputs().getQuick(1).getAlgorithm()));
-    }
-
-    private static <T extends LogicalPlan> void assertPlanned(String sql, Class<T> type, PlanAssertion<T> assertion) throws Exception {
-        try (
-                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                RecordCursorFactory ignore = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
-        ) {
-            final LogicalPlan found = find(compiler.getPlanForTesting(), type);
-            Assert.assertNotNull(found);
-            assertion.check(type.cast(found));
-        }
+        assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class, join -> Assert.assertEquals(expected, join.getOrderedInputs().getQuick(1).getAlgorithm()));
     }
 
     private static void assertSortAlgorithm(SortPlan.Algorithm expected, String sql) throws Exception {
-        assertPlanned(sql, SortPlan.class, sort -> Assert.assertEquals(expected, sort.getAlgorithm()));
+        assertPlanned(engine, sqlExecutionContext, sql, SortPlan.class, sort -> Assert.assertEquals(expected, sort.getAlgorithm()));
     }
 
     private static void createCoveringTable() throws Exception {
@@ -468,33 +456,5 @@ public class FilterPlacementTest extends AbstractCairoTest {
         execute("CREATE TABLE prices (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO trades VALUES ('a', 100.0, '2022-01-01T00:00:00.000000Z'), ('b', 200.0, '2022-01-01T00:01:00.000000Z')");
         execute("INSERT INTO prices VALUES ('a', 1.0, '2022-01-01T00:00:00.000000Z'), ('b', 2.0, '2022-01-01T00:01:00.000000Z')");
-    }
-
-    private static LogicalPlan find(LogicalPlan plan, Class<? extends LogicalPlan> type) {
-        if (type.isInstance(plan)) {
-            return plan;
-        }
-        if (plan instanceof JoinPlan join) {
-            for (int i = 0, n = join.getOrderedInputs().size(); i < n; i++) {
-                final LogicalPlan input = join.getOrderedInputs().getQuick(i).getInput();
-                final LogicalPlan found = input == null ? null : find(input, type);
-                if (found != null) {
-                    return found;
-                }
-            }
-            return null;
-        }
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final LogicalPlan found = find(plan.inputAt(i), type);
-            if (found != null) {
-                return found;
-            }
-        }
-        return null;
-    }
-
-    @FunctionalInterface
-    private interface PlanAssertion<T> {
-        void check(T plan);
     }
 }

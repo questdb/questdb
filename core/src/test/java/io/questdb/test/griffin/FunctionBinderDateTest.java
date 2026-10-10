@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.IntList;
@@ -42,6 +41,10 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.FunctionBindingHarness.binary;
+import static io.questdb.test.griffin.FunctionBindingHarness.constant;
+import static io.questdb.test.griffin.FunctionBindingHarness.literal;
 
 public class FunctionBinderDateTest extends AbstractCairoTest {
     @Test
@@ -55,7 +58,7 @@ public class FunctionBinderDateTest extends AbstractCairoTest {
                     .add(70, "nt", ColumnType.TIMESTAMP_NANO, true);
             try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
-                        function("to_str", literal("nt"), constant("'yyyy-MM-dd HH:mm:ss.SSSUUUNNN'")),
+                        binary("to_str", literal("nt"), constant("'yyyy-MM-dd HH:mm:ss.SSSUUUNNN'")),
                         original, null, sqlExecutionContext);
                 try (Function first = binder.instantiate(expression, firstLayout, sqlExecutionContext);
                      Function second = binder.instantiate(expression, secondLayout, sqlExecutionContext)) {
@@ -104,7 +107,7 @@ public class FunctionBinderDateTest extends AbstractCairoTest {
                     .add(70, "nt", ColumnType.TIMESTAMP_NANO, true);
             try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
                 final FunctionExpression expression = (FunctionExpression) binder.bind(
-                        function("date_trunc", constant("'nanosecond'"), literal("nt")), original, null, sqlExecutionContext);
+                        binary("date_trunc", constant("'nanosecond'"), literal("nt")), original, null, sqlExecutionContext);
                 Assert.assertEquals(1, constructions[0]);
                 Assert.assertEquals(ColumnType.TIMESTAMP_NANO, expression.getDataType());
                 TestUtils.assertEquals("date_trunc(sN)", expression.getSignature());
@@ -126,22 +129,6 @@ public class FunctionBinderDateTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    private static ExpressionNode constant(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, token, 0, 0);
-    }
-
-    private static ExpressionNode function(String name, ExpressionNode left, ExpressionNode right) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 0);
-        node.lhs = left;
-        node.rhs = right;
-        node.paramCount = 2;
-        return node;
-    }
-
-    private static ExpressionNode literal(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, token, 0, 0);
     }
 
     private static Record timestampRecord(int expectedIndex, long value) {

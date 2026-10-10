@@ -207,6 +207,11 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExecuteRunsPseudoSelectStatements() throws Exception {
+        assertMemoryLeak(() -> engine.execute("COPY '0000000000000001' CANCEL", sqlExecutionContext));
+    }
+
+    @Test
     public void testExpiry() throws Exception {
         assertMemoryLeak(() -> {
             class MyListener implements PoolListener {

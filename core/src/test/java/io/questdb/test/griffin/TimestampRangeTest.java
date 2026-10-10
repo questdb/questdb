@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
@@ -43,7 +42,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String keyword = " BETWEEN ";
                     {
                         final String endpoints = "'2020-01-01' AND '2020-01-02'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-01-01T12:00:00.000000Z	2
@@ -52,7 +51,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01-02' AND '2020-01-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-01-01T12:00:00.000000Z	2
@@ -61,26 +60,26 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01' AND '2020-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 """);
                     }
                     {
                         final String endpoints = "null AND '2020-01-02'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 """);
                     }
                     {
                         final String endpoints = "'2020-01-02' AND null";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 """);
                     }
                     {
                         final String endpoints = "CAST('2020-01-01' AS TIMESTAMP_NS) AND CAST('2020-01-02' AS TIMESTAMP)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-01-01T12:00:00.000000Z	2
@@ -92,7 +91,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String keyword = " NOT BETWEEN ";
                     {
                         final String endpoints = "'2020-01-01' AND '2020-01-02'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-02-01T00:00:00.000000Z	4
                                 2020-03-01T00:00:00.000000Z	5
@@ -100,7 +99,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01-02' AND '2020-01-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-02-01T00:00:00.000000Z	4
                                 2020-03-01T00:00:00.000000Z	5
@@ -108,7 +107,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01' AND '2020-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T12:00:00.000000Z	2
                                 2020-01-02T00:00:00.000000Z	3
@@ -118,7 +117,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "null AND '2020-01-02'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-01-01T12:00:00.000000Z	2
@@ -129,7 +128,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01-02' AND null";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-01-01T12:00:00.000000Z	2
@@ -140,14 +139,14 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "CAST('2020-01-01' AS TIMESTAMP_NS) AND CAST('2020-01-02' AS TIMESTAMP)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-02-01T00:00:00.000000Z	4
                                 2020-03-01T00:00:00.000000Z	5
                                 """);
                     }
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE ts BETWEEN '2020-01-01' AND '2020-01-02' AND id>1",
                         """
                                 ts	id
@@ -155,7 +154,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                 2020-01-02T00:00:00.000000Z	3
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE other BETWEEN '2020-01-01' AND '2020-01-02'",
                         """
                                 ts	id
@@ -176,7 +175,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String keyword = " BETWEEN ";
                     {
                         final String endpoints = "'2020-01-01' AND '2020-01-02'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-01-01T12:00:00.000000000Z	2
@@ -185,7 +184,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01-02' AND '2020-01-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-01-01T12:00:00.000000000Z	2
@@ -194,26 +193,26 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01' AND '2020-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 """);
                     }
                     {
                         final String endpoints = "null AND '2020-01-02'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 """);
                     }
                     {
                         final String endpoints = "'2020-01-02' AND null";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 """);
                     }
                     {
                         final String endpoints = "CAST('2020-01-01' AS TIMESTAMP_NS) AND CAST('2020-01-02' AS TIMESTAMP)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-01-01T12:00:00.000000000Z	2
@@ -225,7 +224,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String keyword = " NOT BETWEEN ";
                     {
                         final String endpoints = "'2020-01-01' AND '2020-01-02'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-02-01T00:00:00.000000000Z	4
                                 2020-03-01T00:00:00.000000000Z	5
@@ -233,7 +232,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01-02' AND '2020-01-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-02-01T00:00:00.000000000Z	4
                                 2020-03-01T00:00:00.000000000Z	5
@@ -241,7 +240,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01' AND '2020-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T12:00:00.000000000Z	2
                                 2020-01-02T00:00:00.000000000Z	3
@@ -251,7 +250,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "null AND '2020-01-02'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-01-01T12:00:00.000000000Z	2
@@ -262,7 +261,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "'2020-01-02' AND null";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-01-01T12:00:00.000000000Z	2
@@ -273,14 +272,14 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String endpoints = "CAST('2020-01-01' AS TIMESTAMP_NS) AND CAST('2020-01-02' AS TIMESTAMP)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + endpoints, """
                                 ts	id
                                 2020-02-01T00:00:00.000000000Z	4
                                 2020-03-01T00:00:00.000000000Z	5
                                 """);
                     }
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE ts BETWEEN '2020-01-01' AND '2020-01-02' AND id>1",
                         """
                                 ts	id
@@ -288,7 +287,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                 2020-01-02T00:00:00.000000000Z	3
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE other BETWEEN '2020-01-01' AND '2020-01-02'",
                         """
                                 ts	id
@@ -311,8 +310,8 @@ public class TimestampRangeTest extends AbstractCairoTest {
             final String value = "'1969-12-31T23:59:59.999999999Z'";
             final String text = "SELECT id FROM lp_range WHERE ts-1L BETWEEN " + value + " AND " + value;
             final String typed = "SELECT id FROM lp_range WHERE ts-1L BETWEEN CAST(" + value + " AS TIMESTAMP_NS) AND CAST(" + value + " AS TIMESTAMP_NS)";
-            assertQueryRows(text, "id\n");
-            assertQueryRows(typed, "id\n");
+            assertRowsOnly(text, "id\n");
+            assertRowsOnly(typed, "id\n");
             assertExpected(text, "id\n");
             assertExpected(typed, "id\n");
         });
@@ -328,7 +327,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String keyword = " IN ";
                     {
                         final String values = "'2020-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-01-01T12:00:00.000000Z	2
@@ -337,7 +336,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "'2020-01-01;1d;1M;3'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-01-01T12:00:00.000000Z	2
@@ -347,7 +346,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "('2020-01-01','2020-02-01')";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-02-01T00:00:00.000000Z	4
@@ -355,20 +354,20 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "('2020-01-01','2020-01-01',null)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 """);
                     }
                     {
                         final String values = "null";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 """);
                     }
                     {
                         final String values = "CAST('2020-01' AS VARCHAR)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-01-01T12:00:00.000000Z	2
@@ -377,7 +376,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "(CAST('2020-01-01' AS TIMESTAMP),CAST('2020-02-01' AS TIMESTAMP_NS))";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-02-01T00:00:00.000000Z	4
@@ -388,7 +387,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String keyword = " NOT IN ";
                     {
                         final String values = "'2020-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-02-01T00:00:00.000000Z	4
                                 2020-03-01T00:00:00.000000Z	5
@@ -396,14 +395,14 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "'2020-01-01;1d;1M;3'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-02T00:00:00.000000Z	3
                                 """);
                     }
                     {
                         final String values = "('2020-01-01','2020-02-01')";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T12:00:00.000000Z	2
                                 2020-01-02T00:00:00.000000Z	3
@@ -412,7 +411,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "('2020-01-01','2020-01-01',null)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T12:00:00.000000Z	2
                                 2020-01-02T00:00:00.000000Z	3
@@ -422,7 +421,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "null";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000Z	1
                                 2020-01-01T12:00:00.000000Z	2
@@ -433,7 +432,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "CAST('2020-01' AS VARCHAR)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-02-01T00:00:00.000000Z	4
                                 2020-03-01T00:00:00.000000Z	5
@@ -441,7 +440,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "(CAST('2020-01-01' AS TIMESTAMP),CAST('2020-02-01' AS TIMESTAMP_NS))";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T12:00:00.000000Z	2
                                 2020-01-02T00:00:00.000000Z	3
@@ -449,7 +448,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                 """);
                     }
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE CAST(ts AS " + (nanos ? "TIMESTAMP_NS" : "TIMESTAMP") + ") IN '2020-01'",
                         """
                                 ts	id
@@ -458,7 +457,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                 2020-01-02T00:00:00.000000Z	3
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE other IN ('2020-01-01','2020-01-02')",
                         """
                                 ts	id
@@ -479,7 +478,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String keyword = " IN ";
                     {
                         final String values = "'2020-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-01-01T12:00:00.000000000Z	2
@@ -488,7 +487,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "'2020-01-01;1d;1M;3'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-01-01T12:00:00.000000000Z	2
@@ -498,7 +497,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "('2020-01-01','2020-02-01')";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-02-01T00:00:00.000000000Z	4
@@ -506,20 +505,20 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "('2020-01-01','2020-01-01',null)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 """);
                     }
                     {
                         final String values = "null";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 """);
                     }
                     {
                         final String values = "CAST('2020-01' AS VARCHAR)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-01-01T12:00:00.000000000Z	2
@@ -528,7 +527,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "(CAST('2020-01-01' AS TIMESTAMP),CAST('2020-02-01' AS TIMESTAMP_NS))";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-02-01T00:00:00.000000000Z	4
@@ -539,7 +538,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String keyword = " NOT IN ";
                     {
                         final String values = "'2020-01'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-02-01T00:00:00.000000000Z	4
                                 2020-03-01T00:00:00.000000000Z	5
@@ -547,14 +546,14 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "'2020-01-01;1d;1M;3'";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-02T00:00:00.000000000Z	3
                                 """);
                     }
                     {
                         final String values = "('2020-01-01','2020-02-01')";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T12:00:00.000000000Z	2
                                 2020-01-02T00:00:00.000000000Z	3
@@ -563,7 +562,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "('2020-01-01','2020-01-01',null)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T12:00:00.000000000Z	2
                                 2020-01-02T00:00:00.000000000Z	3
@@ -573,7 +572,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "null";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T00:00:00.000000000Z	1
                                 2020-01-01T12:00:00.000000000Z	2
@@ -584,7 +583,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "CAST('2020-01' AS VARCHAR)";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-02-01T00:00:00.000000000Z	4
                                 2020-03-01T00:00:00.000000000Z	5
@@ -592,7 +591,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String values = "(CAST('2020-01-01' AS TIMESTAMP),CAST('2020-02-01' AS TIMESTAMP_NS))";
-                        assertQueryRows("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
+                        assertRowsOnly("SELECT ts,id FROM lp_range WHERE ts" + keyword + values, """
                                 ts	id
                                 2020-01-01T12:00:00.000000000Z	2
                                 2020-01-02T00:00:00.000000000Z	3
@@ -600,7 +599,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                 """);
                     }
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE CAST(ts AS " + (nanos ? "TIMESTAMP_NS" : "TIMESTAMP") + ") IN '2020-01'",
                         """
                                 ts	id
@@ -609,7 +608,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                 2020-01-02T00:00:00.000000000Z	3
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE other IN ('2020-01-01','2020-01-02')",
                         """
                                 ts	id
@@ -630,7 +629,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             createRows(false);
             {
                 final String predicate = "ts IN '2020-01' OR ts IN '2020-03'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T00:00:00.000000Z	1
                         2020-01-01T12:00:00.000000Z	2
@@ -640,7 +639,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "ts IN ('2020-01-01','2020-02-01') OR ts='2020-03-01'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T00:00:00.000000Z	1
                         2020-02-01T00:00:00.000000Z	4
@@ -649,7 +648,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "ts IN '2020-01-01;1d;1M;3' OR ts IN '2020-01-02'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T00:00:00.000000Z	1
                         2020-01-01T12:00:00.000000Z	2
@@ -660,7 +659,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "ts>'2020-01-01' AND (ts IN '2020-01' OR ts='2020-03-01')";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T12:00:00.000000Z	2
                         2020-01-02T00:00:00.000000Z	3
@@ -669,7 +668,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "(ts IN '2020-01' OR ts='2020-03-01') AND ts>'2020-01-01'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T12:00:00.000000Z	2
                         2020-01-02T00:00:00.000000Z	3
@@ -678,21 +677,21 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "ts IN ('2020-01-01','2020-02-01') AND ts>'2020-01-01'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-02-01T00:00:00.000000Z	4
                         """);
             }
             {
                 final String predicate = "ts>'2020-01-01' AND ts IN ('2020-01-01','2020-02-01')";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-02-01T00:00:00.000000Z	4
                         """);
             }
             {
                 final String predicate = "ts NOT IN ('2020-01-01','2020-02-01') AND ts>'2020-01-01'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T12:00:00.000000Z	2
                         2020-01-02T00:00:00.000000Z	3
@@ -701,7 +700,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "ts IN '2020-01' OR id=5";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T00:00:00.000000Z	1
                         2020-01-01T12:00:00.000000Z	2
@@ -711,7 +710,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "ts IN '2020-01' OR ts BETWEEN '2020-02-01' AND '2020-03-01'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T00:00:00.000000Z	1
                         2020-01-01T12:00:00.000000Z	2
@@ -722,7 +721,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "ts BETWEEN '2020-01-01' AND '2020-01-02' AND ts BETWEEN '2020-03-01' AND '2020-04-01'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         """);
             }
@@ -786,19 +785,19 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         final boolean isNot = keyword.contains("NOT");
                         final String inside = isNot ? "id\n" : "id\n1\n2\n";
                         final String outside = isNot ? "id\n1\n2\n" : "id\n";
-                        try (RecordCursorFactory factory = compile(sql)) {
-                            assertRows(factory, inside);
+                        try (RecordCursorFactory factory = select(sql)) {
+                            assertRowsOnly(factory, inside);
                             bindVariableService.setStr(0, "1970-01-02");
                             bindVariableService.setStr(1, "1970-01-01");
-                            assertRows(factory, inside);
+                            assertRowsOnly(factory, inside);
                             bindVariableService.setStr(0, null);
-                            assertRows(factory, outside);
+                            assertRowsOnly(factory, outside);
                             bindVariableService.setStr(0, "1969-12-31T23:59:59.999999999Z");
                             bindVariableService.setStr(1, "1969-12-31T23:59:59.999999999Z");
-                            assertRows(factory, outside);
+                            assertRowsOnly(factory, outside);
                             bindVariableService.setStr(0, "1970-01-01");
                             bindVariableService.setStr(1, null);
-                            assertRows(factory, outside);
+                            assertRowsOnly(factory, outside);
                         }
                         bindVariableService.clear();
                     }
@@ -821,20 +820,20 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     bindVariableService.setStr(0, "2020-01");
                     final String sql = "SELECT ts,id FROM lp_range WHERE ts" + keyword + "$1";
                     final boolean isNot = keyword.contains("NOT");
-                    try (RecordCursorFactory factory = compile(sql)) {
-                        assertRows(factory, isNot
+                    try (RecordCursorFactory factory = select(sql)) {
+                        assertRowsOnly(factory, isNot
                                 ? "ts\tid\n2020-02-01T00:00:00.000000Z\t4\n2020-03-01T00:00:00.000000Z\t5\n"
                                 : "ts\tid\n2020-01-01T00:00:00.000000Z\t1\n2020-01-01T12:00:00.000000Z\t2\n2020-01-02T00:00:00.000000Z\t3\n");
                         bindVariableService.setStr(0, "2020-02");
-                        assertRows(factory, isNot
+                        assertRowsOnly(factory, isNot
                                 ? "ts\tid\n2020-01-01T00:00:00.000000Z\t1\n2020-01-01T12:00:00.000000Z\t2\n2020-01-02T00:00:00.000000Z\t3\n2020-03-01T00:00:00.000000Z\t5\n"
                                 : "ts\tid\n2020-02-01T00:00:00.000000Z\t4\n");
                         bindVariableService.setStr(0, null);
-                        assertRows(factory, isNot
+                        assertRowsOnly(factory, isNot
                                 ? "ts\tid\n2020-01-01T00:00:00.000000Z\t1\n2020-01-01T12:00:00.000000Z\t2\n2020-01-02T00:00:00.000000Z\t3\n2020-02-01T00:00:00.000000Z\t4\n2020-03-01T00:00:00.000000Z\t5\n"
                                 : "ts\tid\n");
                         bindVariableService.setStr(0, "2020-01-01;1d;1M;3");
-                        assertRows(factory, isNot
+                        assertRowsOnly(factory, isNot
                                 ? "ts\tid\n2020-01-02T00:00:00.000000Z\t3\n"
                                 : "ts\tid\n2020-01-01T00:00:00.000000Z\t1\n2020-01-01T12:00:00.000000Z\t2\n2020-02-01T00:00:00.000000Z\t4\n2020-03-01T00:00:00.000000Z\t5\n");
                     }
@@ -882,7 +881,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 assertExpected("SELECT id FROM lp_range WHERE ts NOT IN CAST(null AS " + timestampType + ')',
                         "id\n1\n2\n3\n4\n5\n");
                 setTimestamp(0, 1_577_836_800_000_000L, nanos);
-                try (RecordCursorFactory factory = compile("SELECT id FROM lp_range WHERE ts NOT IN $1")) {
+                try (RecordCursorFactory factory = select("SELECT id FROM lp_range WHERE ts NOT IN $1")) {
                     assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                             .sizeMayVary().returns("id\n2\n3\n4\n5\n");
                     setTimestamp(0, Numbers.LONG_NULL, nanos);
@@ -906,7 +905,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 createRows(nanos);
                 {
                     final String expression = "timestamp_floor('d',ts)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-01' AND '2020-01-02'",
                             """
                                     ts	id
@@ -915,7 +914,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                     2020-01-02T00:00:00.000000Z	3
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-02' AND '2020-01-01'",
                             """
                                     ts	id
@@ -932,7 +931,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 }
                 {
                     final String expression = "dateadd('h',1,ts)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-01' AND '2020-01-02'",
                             """
                                     ts	id
@@ -940,7 +939,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                     2020-01-01T12:00:00.000000Z	2
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-02' AND '2020-01-01'",
                             """
                                     ts	id
@@ -956,7 +955,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 }
                 {
                     final String expression = "CAST(ts AS " + (nanos ? "TIMESTAMP_NS" : "TIMESTAMP") + ")";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-01' AND '2020-01-02'",
                             """
                                     ts	id
@@ -965,7 +964,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                     2020-01-02T00:00:00.000000Z	3
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-02' AND '2020-01-01'",
                             """
                                     ts	id
@@ -989,7 +988,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 createRows(nanos);
                 {
                     final String expression = "timestamp_floor('d',ts)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-01' AND '2020-01-02'",
                             """
                                     ts	id
@@ -998,7 +997,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                     2020-01-02T00:00:00.000000000Z	3
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-02' AND '2020-01-01'",
                             """
                                     ts	id
@@ -1015,7 +1014,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 }
                 {
                     final String expression = "dateadd('h',1,ts)";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-01' AND '2020-01-02'",
                             """
                                     ts	id
@@ -1023,7 +1022,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                     2020-01-01T12:00:00.000000000Z	2
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-02' AND '2020-01-01'",
                             """
                                     ts	id
@@ -1039,7 +1038,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 }
                 {
                     final String expression = "CAST(ts AS " + (nanos ? "TIMESTAMP_NS" : "TIMESTAMP") + ")";
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-01' AND '2020-01-02'",
                             """
                                     ts	id
@@ -1048,7 +1047,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                     2020-01-02T00:00:00.000000000Z	3
                                     """
                     );
-                    assertQueryRows(
+                    assertRowsOnly(
                             "SELECT ts,id FROM lp_range WHERE " + expression + " BETWEEN '2020-01-02' AND '2020-01-01'",
                             """
                                     ts	id
@@ -1078,7 +1077,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "date_trunc('day',ts)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1090,7 +1089,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1100,7 +1099,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1110,7 +1109,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1122,7 +1121,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "timestamp_floor('d',ts)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1134,7 +1133,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1144,7 +1143,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1154,7 +1153,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1166,7 +1165,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "timestamp_ceil('d',ts)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1178,7 +1177,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1189,7 +1188,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1200,7 +1199,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1212,7 +1211,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "dateadd('d',1,ts)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1224,7 +1223,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1235,7 +1234,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1246,7 +1245,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1258,7 +1257,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "ts+1L";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1270,7 +1269,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1280,7 +1279,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1290,7 +1289,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1302,7 +1301,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "ts-1L";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1314,7 +1313,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1323,7 +1322,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1332,7 +1331,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1344,7 +1343,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "dateadd('h',-1,timestamp_floor('d',ts))";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1355,7 +1354,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1364,7 +1363,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1373,7 +1372,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1385,7 +1384,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "CAST(ts AS TIMESTAMP)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1397,7 +1396,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1407,7 +1406,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1417,7 +1416,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1429,7 +1428,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "CAST(ts AS TIMESTAMP_NS)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1441,7 +1440,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1451,7 +1450,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1461,7 +1460,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1469,13 +1468,13 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         );
                     }
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE timestamp_floor('d',ts) IN '2020-01-02T12:00:00Z'",
                         """
                                 ts	id
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE timestamp_floor('d',ts) IN '2020-01' AND ts>'2020-01-01'",
                         """
                                 ts	id
@@ -1483,7 +1482,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                 2020-01-02T00:00:00.000000Z	3
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE ts>'2020-01-01' AND timestamp_floor('d',ts) IN '2020-01'",
                         """
                                 ts	id
@@ -1503,7 +1502,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "date_trunc('day',ts)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1515,7 +1514,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1525,7 +1524,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1535,7 +1534,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1547,7 +1546,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "timestamp_floor('d',ts)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1559,7 +1558,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1569,7 +1568,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1579,7 +1578,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1591,7 +1590,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "timestamp_ceil('d',ts)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1603,7 +1602,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1614,7 +1613,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1625,7 +1624,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1637,7 +1636,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "dateadd('d',1,ts)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1649,7 +1648,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1660,7 +1659,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1671,7 +1670,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1683,7 +1682,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "ts+1L";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1695,7 +1694,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1705,7 +1704,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1715,7 +1714,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1728,7 +1727,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "ts-1L";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1740,7 +1739,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1749,7 +1748,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1758,7 +1757,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1770,7 +1769,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "dateadd('h',-1,timestamp_floor('d',ts))";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1781,7 +1780,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1790,7 +1789,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1799,7 +1798,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1811,7 +1810,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "CAST(ts AS TIMESTAMP)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1823,7 +1822,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1833,7 +1832,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1843,7 +1842,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1855,7 +1854,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     final String expression = "CAST(ts AS TIMESTAMP_NS)";
                     {
                         final String interval = "'2020-01'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1867,7 +1866,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1877,7 +1876,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02;1d'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1887,7 +1886,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                     }
                     {
                         final String interval = "'2020-01-02T00:00:00.000000001Z'";
-                        assertQueryRows(
+                        assertRowsOnly(
                                 "SELECT ts,id FROM lp_range WHERE " + expression + " IN " + interval,
                                 """
                                         ts	id
@@ -1895,13 +1894,13 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         );
                     }
                 }
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE timestamp_floor('d',ts) IN '2020-01-02T12:00:00Z'",
                         """
                                 ts	id
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE timestamp_floor('d',ts) IN '2020-01' AND ts>'2020-01-01'",
                         """
                                 ts	id
@@ -1909,7 +1908,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                                 2020-01-02T00:00:00.000000000Z	3
                                 """
                 );
-                assertQueryRows(
+                assertRowsOnly(
                         "SELECT ts,id FROM lp_range WHERE ts>'2020-01-01' AND timestamp_floor('d',ts) IN '2020-01'",
                         """
                                 ts	id
@@ -1932,7 +1931,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 execute("INSERT INTO lp_range VALUES (6,'2020-03-29T00:30:00Z',null),(7,'2020-03-29T01:30:00Z',null)");
                 {
                     final String predicate = "dateadd('M',1,ts) IN '2020-02'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-01-01T00:00:00.000000Z	1
                             2020-01-01T12:00:00.000000Z	2
@@ -1941,7 +1940,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 }
                 {
                     final String predicate = "dateadd('y',1,ts) IN '2021-01-01'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-01-01T00:00:00.000000Z	1
                             2020-01-01T12:00:00.000000Z	2
@@ -1949,21 +1948,21 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 }
                 {
                     final String predicate = "to_timezone(ts,'Europe/London') IN '2020-03-29T02'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-03-29T01:30:00.000000Z	7
                             """);
                 }
                 {
                     final String predicate = "to_utc(ts,'Europe/London') IN '2020-03-29T00'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-03-29T00:30:00.000000Z	6
                             """);
                 }
                 {
                     final String predicate = "to_timezone(ts,'+02:00') IN '2020-01-01'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-01-01T00:00:00.000000Z	1
                             2020-01-01T12:00:00.000000Z	2
@@ -1981,7 +1980,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 execute("INSERT INTO lp_range VALUES (6,'2020-03-29T00:30:00Z',null),(7,'2020-03-29T01:30:00Z',null)");
                 {
                     final String predicate = "dateadd('M',1,ts) IN '2020-02'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-01-01T00:00:00.000000000Z	1
                             2020-01-01T12:00:00.000000000Z	2
@@ -1990,7 +1989,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 }
                 {
                     final String predicate = "dateadd('y',1,ts) IN '2021-01-01'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-01-01T00:00:00.000000000Z	1
                             2020-01-01T12:00:00.000000000Z	2
@@ -1998,21 +1997,21 @@ public class TimestampRangeTest extends AbstractCairoTest {
                 }
                 {
                     final String predicate = "to_timezone(ts,'Europe/London') IN '2020-03-29T02'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-03-29T01:30:00.000000000Z	7
                             """);
                 }
                 {
                     final String predicate = "to_utc(ts,'Europe/London') IN '2020-03-29T00'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-03-29T00:30:00.000000000Z	6
                             """);
                 }
                 {
                     final String predicate = "to_timezone(ts,'+02:00') IN '2020-01-01'";
-                    assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                    assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                             ts	id
                             2020-01-01T00:00:00.000000000Z	1
                             2020-01-01T12:00:00.000000000Z	2
@@ -2031,7 +2030,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             createRows(false);
             {
                 final String predicate = "timestamp_floor('d',ts) IN '2020-01-01;1d;1M;3'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T00:00:00.000000Z	1
                         2020-01-01T12:00:00.000000Z	2
@@ -2041,7 +2040,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "timestamp_floor('d',ts) IN ('2020-01-01','2020-02-01')";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T00:00:00.000000Z	1
                         2020-01-01T12:00:00.000000Z	2
@@ -2050,7 +2049,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "timestamp_floor('d',ts) NOT IN '2020-01'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-02-01T00:00:00.000000Z	4
                         2020-03-01T00:00:00.000000Z	5
@@ -2058,7 +2057,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "timestamp_floor('d',other) IN '2020-01'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T00:00:00.000000Z	1
                         2020-01-01T12:00:00.000000Z	2
@@ -2066,31 +2065,31 @@ public class TimestampRangeTest extends AbstractCairoTest {
             }
             {
                 final String predicate = "timestamp_floor('d',ts) IN null";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         """);
             }
             {
                 final String predicate = "timestamp_floor('d',ts) IN CAST(null AS STRING)";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         """);
             }
             {
                 final String predicate = "timestamp_floor('d',ts) IN CAST(null AS TIMESTAMP)";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         """);
             }
             {
                 final String predicate = "ts+9000000000000000000L IN '2020-01'";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         """);
             }
             {
                 final String predicate = "timestamp_floor('d',ts) IN '2020-01' OR id=5";
-                assertQueryRows("SELECT ts,id FROM lp_range WHERE " + predicate, """
+                assertRowsOnly("SELECT ts,id FROM lp_range WHERE " + predicate, """
                         ts	id
                         2020-01-01T00:00:00.000000Z	1
                         2020-01-01T12:00:00.000000Z	2
@@ -2098,7 +2097,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         2020-03-01T00:00:00.000000Z	5
                         """);
             }
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,id FROM (SELECT ts,id FROM lp_range LIMIT 2) WHERE timestamp_floor('d',ts) IN '2020-02'",
                     """
                             ts	id
@@ -2106,14 +2105,14 @@ public class TimestampRangeTest extends AbstractCairoTest {
             );
             bindVariableService.setStr(0, "2020-01");
             final String sql = "SELECT ts,id FROM lp_range WHERE timestamp_floor('d',ts) IN $1";
-            try (RecordCursorFactory factory = compile(sql)) {
-                assertRows(factory, "ts\tid\n2020-01-01T00:00:00.000000Z\t1\n2020-01-01T12:00:00.000000Z\t2\n2020-01-02T00:00:00.000000Z\t3\n");
+            try (RecordCursorFactory factory = select(sql)) {
+                assertRowsOnly(factory, "ts\tid\n2020-01-01T00:00:00.000000Z\t1\n2020-01-01T12:00:00.000000Z\t2\n2020-01-02T00:00:00.000000Z\t3\n");
                 bindVariableService.setStr(0, "2020-02");
-                assertRows(factory, "ts\tid\n2020-02-01T00:00:00.000000Z\t4\n");
+                assertRowsOnly(factory, "ts\tid\n2020-02-01T00:00:00.000000Z\t4\n");
                 bindVariableService.setStr(0, null);
-                assertRows(factory, "ts\tid\n");
+                assertRowsOnly(factory, "ts\tid\n");
                 bindVariableService.setStr(0, "2020-01-01;1d;1M;3");
-                assertRows(factory, "ts\tid\n2020-01-01T00:00:00.000000Z\t1\n2020-01-01T12:00:00.000000Z\t2\n2020-02-01T00:00:00.000000Z\t4\n2020-03-01T00:00:00.000000Z\t5\n");
+                assertRowsOnly(factory, "ts\tid\n2020-01-01T00:00:00.000000Z\t1\n2020-01-01T12:00:00.000000Z\t2\n2020-02-01T00:00:00.000000Z\t4\n2020-03-01T00:00:00.000000Z\t5\n");
             }
             bindVariableService.clear();
         });
@@ -2127,8 +2126,8 @@ public class TimestampRangeTest extends AbstractCairoTest {
             final String value = "'1969-12-31T23:59:59.999999999Z'";
             final String text = "SELECT id FROM lp_range WHERE ts-1L IN " + value;
             final String typed = "SELECT id FROM lp_range WHERE ts-1L IN CAST(" + value + " AS TIMESTAMP_NS)";
-            assertQueryRows(text, "id\n");
-            assertQueryRows(typed, "id\n");
+            assertRowsOnly(text, "id\n");
+            assertRowsOnly(typed, "id\n");
             assertExpected(text, "id\n");
             assertExpected(typed, "id\n");
         });
@@ -2170,7 +2169,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         final boolean includesTomorrow = interval.contains("$tomorrow");
                         final String sql = "SELECT id FROM lp_range WHERE timestamp_floor('d',ts) IN " + interval;
                         setCurrentMicros(1_577_836_800_000_000L);
-                        try (RecordCursorFactory factory = compile(sql)) {
+                        try (RecordCursorFactory factory = select(sql)) {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                             setCurrentMicros(1_577_923_200_000_000L);
@@ -2183,7 +2182,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                         }
-                        assertQueryRows(sql, """
+                        assertRowsOnly(sql, """
                                 id
                                 1
                                 2
@@ -2194,7 +2193,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         final boolean includesTomorrow = interval.contains("$tomorrow");
                         final String sql = "SELECT id FROM lp_range WHERE timestamp_floor('d',ts) IN " + interval;
                         setCurrentMicros(1_577_836_800_000_000L);
-                        try (RecordCursorFactory factory = compile(sql)) {
+                        try (RecordCursorFactory factory = select(sql)) {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                             setCurrentMicros(1_577_923_200_000_000L);
@@ -2207,7 +2206,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                         }
-                        assertQueryRows(sql, """
+                        assertRowsOnly(sql, """
                                 id
                                 1
                                 2
@@ -2218,7 +2217,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         final boolean includesTomorrow = interval.contains("$tomorrow");
                         final String sql = "SELECT id FROM lp_range WHERE timestamp_floor('d',ts) IN " + interval;
                         setCurrentMicros(1_577_836_800_000_000L);
-                        try (RecordCursorFactory factory = compile(sql)) {
+                        try (RecordCursorFactory factory = select(sql)) {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                             setCurrentMicros(1_577_923_200_000_000L);
@@ -2231,7 +2230,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                         }
-                        assertQueryRows(sql, """
+                        assertRowsOnly(sql, """
                                 id
                                 1
                                 2
@@ -2243,7 +2242,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         final boolean includesTomorrow = interval.contains("$tomorrow");
                         final String sql = "SELECT id FROM lp_range WHERE timestamp_floor('d',ts) IN " + interval;
                         setCurrentMicros(1_577_836_800_000_000L);
-                        try (RecordCursorFactory factory = compile(sql)) {
+                        try (RecordCursorFactory factory = select(sql)) {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                             setCurrentMicros(1_577_923_200_000_000L);
@@ -2256,7 +2255,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                         }
-                        assertQueryRows(sql, """
+                        assertRowsOnly(sql, """
                                 id
                                 1
                                 2
@@ -2279,7 +2278,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         final boolean includesTomorrow = interval.contains("$tomorrow");
                         final String sql = "SELECT id FROM lp_range WHERE timestamp_floor('d',ts) IN " + interval;
                         setCurrentMicros(1_577_836_800_000_000L);
-                        try (RecordCursorFactory factory = compile(sql)) {
+                        try (RecordCursorFactory factory = select(sql)) {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                             setCurrentMicros(1_577_923_200_000_000L);
@@ -2292,7 +2291,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                         }
-                        assertQueryRows(sql, """
+                        assertRowsOnly(sql, """
                                 id
                                 1
                                 2
@@ -2303,7 +2302,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         final boolean includesTomorrow = interval.contains("$tomorrow");
                         final String sql = "SELECT id FROM lp_range WHERE timestamp_floor('d',ts) IN " + interval;
                         setCurrentMicros(1_577_836_800_000_000L);
-                        try (RecordCursorFactory factory = compile(sql)) {
+                        try (RecordCursorFactory factory = select(sql)) {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                             setCurrentMicros(1_577_923_200_000_000L);
@@ -2316,7 +2315,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                         }
-                        assertQueryRows(sql, """
+                        assertRowsOnly(sql, """
                                 id
                                 1
                                 2
@@ -2327,7 +2326,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         final boolean includesTomorrow = interval.contains("$tomorrow");
                         final String sql = "SELECT id FROM lp_range WHERE timestamp_floor('d',ts) IN " + interval;
                         setCurrentMicros(1_577_836_800_000_000L);
-                        try (RecordCursorFactory factory = compile(sql)) {
+                        try (RecordCursorFactory factory = select(sql)) {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                             setCurrentMicros(1_577_923_200_000_000L);
@@ -2340,7 +2339,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                         }
-                        assertQueryRows(sql, """
+                        assertRowsOnly(sql, """
                                 id
                                 1
                                 2
@@ -2352,7 +2351,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                         final boolean includesTomorrow = interval.contains("$tomorrow");
                         final String sql = "SELECT id FROM lp_range WHERE timestamp_floor('d',ts) IN " + interval;
                         setCurrentMicros(1_577_836_800_000_000L);
-                        try (RecordCursorFactory factory = compile(sql)) {
+                        try (RecordCursorFactory factory = select(sql)) {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                             setCurrentMicros(1_577_923_200_000_000L);
@@ -2365,7 +2364,7 @@ public class TimestampRangeTest extends AbstractCairoTest {
                             assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                                     .sizeMayVary().returns(includesTomorrow ? "id\n1\n2\n3\n" : "id\n1\n2\n");
                         }
-                        assertQueryRows(sql, """
+                        assertRowsOnly(sql, """
                                 id
                                 1
                                 2
@@ -2384,19 +2383,19 @@ public class TimestampRangeTest extends AbstractCairoTest {
     public void testLimitAndCastProjectionKeepPredicateScope() throws Exception {
         assertMemoryLeak(() -> {
             createRows(false);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,id FROM (SELECT ts,id FROM lp_range LIMIT 2) WHERE ts IN '2020-02'",
                     """
                             ts	id
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,id FROM (SELECT ts,id FROM lp_range LIMIT 2) WHERE ts BETWEEN '2020-02-01' AND '2020-03-01'",
                     """
                             ts	id
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,id FROM (SELECT ts::timestamp ts,id FROM lp_range) WHERE ts"
                             + " BETWEEN '2020-01-01T00:00:00.000000001Z' AND '2020-01-01T00:00:00.000000001Z'",
                     """
@@ -2411,8 +2410,8 @@ public class TimestampRangeTest extends AbstractCairoTest {
     }
 
     private void assertExpected(String sql, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
-            assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+        try (RecordCursorFactory factory = select(sql)) {
+            assertRowsOnly(factory, expected);
         }
     }
 
@@ -2421,29 +2420,19 @@ public class TimestampRangeTest extends AbstractCairoTest {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         setTimestamp(0, 1_577_836_800_000_000L, nanos);
         setTimestamp(1, 1_580_515_200_000_000L, nanos);
-        try (RecordCursorFactory factory = compile(sql)) {
-            assertRows(factory, nativeRows(initial, nanos));
+        try (RecordCursorFactory factory = select(sql)) {
+            assertRowsOnly(factory, nativeRows(initial, nanos));
             setTimestamp(0, 1_580_515_200_000_000L, nanos);
             setTimestamp(1, 1_577_836_800_000_000L, nanos);
-            assertRows(factory, nativeRows(swapped, nanos));
+            assertRowsOnly(factory, nativeRows(swapped, nanos));
             setTimestamp(0, Numbers.LONG_NULL, nanos);
-            assertRows(factory, nativeRows(firstNull, nanos));
+            assertRowsOnly(factory, nativeRows(firstNull, nanos));
             setTimestamp(0, 1_577_836_800_000_000L, nanos);
             setTimestamp(1, Numbers.LONG_NULL, nanos);
-            assertRows(factory, nativeRows(secondNull, nanos));
+            assertRowsOnly(factory, nativeRows(secondNull, nanos));
         } finally {
             sqlExecutionContext.setJitMode(oldMode);
             bindVariableService.clear();
-        }
-    }
-
-    private void assertRows(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-    }
-
-    private RecordCursorFactory compile(String sql) throws SqlException {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            return compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
         }
     }
 
@@ -2460,9 +2449,5 @@ public class TimestampRangeTest extends AbstractCairoTest {
         } else {
             bindVariableService.setTimestamp(index, micros);
         }
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

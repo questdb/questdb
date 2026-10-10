@@ -121,14 +121,14 @@ public class CountAggregateTest extends AbstractCairoTest {
             try {
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     retained = compiler.compile("SELECT count() AS total FROM lp_count WHERE id>$1", sqlExecutionContext).getRecordCursorFactory();
-                    assertResult(retained, "total\n2\n");
+                    assertRowsOnly(retained, "total\n2\n");
                     try (RecordCursorFactory other = compiler.compile("SELECT count() FROM lp_count WHERE false", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(other, "count\n0\n");
+                        assertRowsOnly(other, "count\n0\n");
                     }
                     compiler.clear();
                 }
                 bindVariableService.setInt(0, 2);
-                assertResult(retained, "total\n1\n");
+                assertRowsOnly(retained, "total\n1\n");
             } finally {
                 Misc.free(retained);
             }
@@ -153,7 +153,7 @@ public class CountAggregateTest extends AbstractCairoTest {
             createRows();
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile("SELECT count() OVER () FROM lp_count", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(factory, "count\n4\n4\n4\n4\n");
+                    assertRowsOnly(factory, "count\n4\n4\n4\n4\n");
                 }
             }
         });
@@ -211,7 +211,7 @@ public class CountAggregateTest extends AbstractCairoTest {
                     TestUtils.assertEquals("boolean expression expected", e.getFlyweightMessage());
                 }
                 try (RecordCursorFactory recovery = compiler.compile("SELECT count() FROM lp_count", sqlExecutionContext).getRecordCursorFactory()) {
-                    assertResult(recovery, "count\n4\n");
+                    assertRowsOnly(recovery, "count\n4\n");
                 }
             }
         });
@@ -244,7 +244,7 @@ public class CountAggregateTest extends AbstractCairoTest {
                         TestUtils.assertEquals(expectedMessage, e.getFlyweightMessage());
                     }
                     try (RecordCursorFactory recovery = compiler.compile("SELECT count() FROM lp_count", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(recovery, "count\n4\n");
+                        assertRowsOnly(recovery, "count\n4\n");
                     }
                 }
             }
@@ -265,12 +265,8 @@ public class CountAggregateTest extends AbstractCairoTest {
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
         ) {
             Assert.assertEquals(sortCount, countSorts(compiler.getPlanForTesting()));
-            assertResult(factory, expected);
+            assertRowsOnly(factory, expected);
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws SqlException {

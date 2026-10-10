@@ -209,7 +209,7 @@ public class MonotonicIntervalTest extends AbstractCairoTest {
                         final String operand = "dateadd('h',-1,timestamp_floor('d',ts))";
                         final String query = "SELECT ts,id FROM lp_monotonic WHERE "
                                 + (reversed == 1 ? "$1" + operators[o] + operand : operand + operators[o] + "$1");
-                        try (RecordCursorFactory factory = compile(query)) {
+                        try (RecordCursorFactory factory = select(query)) {
                             for (int v = 0; v < values.length; v++) {
                                 setTimestamp(values[v], nanos);
                                 assertMonotonic(factory, nanos, expected[o * 2 + reversed][v]);
@@ -220,7 +220,7 @@ public class MonotonicIntervalTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 bindVariableService.setInt(0, 2020);
                 final String[] yearExpected = {"IF:1 2 3 4 5 6 7 8 9", "IF:9", "IF:", "IF:", "IF:1 2 3 4 5 6 7 8 9"};
-                try (RecordCursorFactory factory = compile("SELECT ts,id FROM lp_monotonic WHERE year(ts)>=$1")) {
+                try (RecordCursorFactory factory = select("SELECT ts,id FROM lp_monotonic WHERE year(ts)>=$1")) {
                     final int[] years = {2020, 2021, 999999, Numbers.INT_NULL, 2020};
                     for (int v = 0; v < years.length; v++) {
                         bindVariableService.setInt(0, years[v]);
@@ -243,7 +243,7 @@ public class MonotonicIntervalTest extends AbstractCairoTest {
                 final String[] expected = nanos ? new String[]{"IF:3 4 5 6 7 8 9", "IF:1 2 3 4 5 6 7 8 9", "IF:3 4 5 6 7 8 9"} : new String[]{"IF:5 6 7 8 9", "IF:1 2 3 4 5 6 7 8 9", "IF:4 5 6 7 8 9"};
                 for (int e = 0; e < expressions.length; e++) {
                     setTimestamp(nanos ? micro : micro * 1000 + 1, !nanos);
-                    try (RecordCursorFactory factory = compile("SELECT ts,id FROM lp_monotonic WHERE " + expressions[e] + ">=$1")) {
+                    try (RecordCursorFactory factory = select("SELECT ts,id FROM lp_monotonic WHERE " + expressions[e] + ">=$1")) {
                         assertMonotonic(factory, nanos, expected[e]);
                         setTimestamp(Numbers.LONG_NULL, !nanos);
                         assertMonotonic(factory, nanos, "IF:");
@@ -339,7 +339,7 @@ public class MonotonicIntervalTest extends AbstractCairoTest {
     }
 
     private void assertMonotonic(String sql, boolean nanos, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
+        try (RecordCursorFactory factory = select(sql)) {
             assertMonotonic(factory, nanos, expected);
         }
     }
@@ -351,7 +351,7 @@ public class MonotonicIntervalTest extends AbstractCairoTest {
     }
 
     private void assertScan(String sql, String scan, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
+        try (RecordCursorFactory factory = select(sql)) {
             assertScan(factory, scan, expected);
         }
     }
@@ -366,12 +366,6 @@ public class MonotonicIntervalTest extends AbstractCairoTest {
         Assert.assertEquals(plan, scan.indexOf('F') > 0, plan.contains("Filter"));
         Assert.assertEquals(plan, scan.indexOf('O') > 0, plan.contains("sort"));
         assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
-    }
-
-    private RecordCursorFactory compile(String query) throws SqlException {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            return compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
-        }
     }
 
     private void createRows(boolean nanos) throws SqlException {

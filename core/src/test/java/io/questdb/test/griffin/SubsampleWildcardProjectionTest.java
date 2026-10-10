@@ -969,7 +969,7 @@ public class SubsampleWildcardProjectionTest extends AbstractCairoTest {
                     final QueryModel model = (QueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
                     final int enumerations = counts[0];
                     final int cursorOpens = counts[1];
-                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(model, sqlExecutionContext, false)) {
                         // Enumeration already creates this table function; generation consumes it.
                         Assert.assertEquals(1, enumerations);
                         Assert.assertEquals(enumerations, counts[0]);

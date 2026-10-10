@@ -101,9 +101,9 @@ public class SqlBinderTest extends AbstractCairoTest {
     public void testBooleanLiteralsAndEmptyLimit() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT id FROM lp_rows WHERE TRUE ORDER BY id", "id\n1\n2\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE FALSE ORDER BY id", "id\n");
-            assertRows("SELECT id FROM lp_rows ORDER BY id LIMIT 0", "id\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE TRUE ORDER BY id", "id\n1\n2\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE FALSE ORDER BY id", "id\n");
+            assertRowsOnly("SELECT id FROM lp_rows ORDER BY id LIMIT 0", "id\n");
         });
     }
 
@@ -113,15 +113,15 @@ public class SqlBinderTest extends AbstractCairoTest {
             execute("CREATE TABLE lp_bitwise (unused STRING, id INT, i INT, l LONG, d DOUBLE)");
             execute("INSERT INTO lp_bitwise VALUES ('a',1,2,2,2),('b',2,3,3,3),('c',3,null,null,null)");
             for (String column : new String[]{"i", "l"}) {
-                assertRows("SELECT id FROM lp_bitwise WHERE (" + column + " & 1)=1", "id\n2\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE (" + column + " | 1)=3 ORDER BY id", "id\n1\n2\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE (" + column + " ^ 1)=2", "id\n2\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE (~" + column + ")=-3", "id\n1\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE (~" + column + ")=null", "id\n3\n");
+                assertRowsOnly("SELECT id FROM lp_bitwise WHERE (" + column + " & 1)=1", "id\n2\n");
+                assertRowsOnly("SELECT id FROM lp_bitwise WHERE (" + column + " | 1)=3 ORDER BY id", "id\n1\n2\n");
+                assertRowsOnly("SELECT id FROM lp_bitwise WHERE (" + column + " ^ 1)=2", "id\n2\n");
+                assertRowsOnly("SELECT id FROM lp_bitwise WHERE (~" + column + ")=-3", "id\n1\n");
+                assertRowsOnly("SELECT id FROM lp_bitwise WHERE (~" + column + ")=null", "id\n3\n");
             }
             for (String column : new String[]{"i", "l", "d"}) {
-                assertRows("SELECT id FROM lp_bitwise WHERE nullif(" + column + ",2)=null ORDER BY id", "id\n1\n3\n");
-                assertRows("SELECT id FROM lp_bitwise WHERE nullif(" + column + ",2)=3", "id\n2\n");
+                assertRowsOnly("SELECT id FROM lp_bitwise WHERE nullif(" + column + ",2)=null ORDER BY id", "id\n1\n3\n");
+                assertRowsOnly("SELECT id FROM lp_bitwise WHERE nullif(" + column + ",2)=3", "id\n2\n");
             }
         });
     }
@@ -130,16 +130,16 @@ public class SqlBinderTest extends AbstractCairoTest {
     public void testBoundIntArithmeticAndBooleanClosures() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT id FROM lp_rows WHERE (id * 2 - 1) / 3 = 1 ORDER BY id", "id\n2\n3\n");
-            assertRows("SELECT id FROM lp_rows WHERE -id < -2 ORDER BY id", "id\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE id / 0 = null ORDER BY id", "id\n1\n2\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE active AND id > 2 ORDER BY id", "id\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE NOT active OR id = 3 ORDER BY id", "id\n1\n3\n");
-            assertRows("SELECT id FROM lp_rows WHERE id > 0 AND id < 4 AND id <> 2 AND active", "id\n3\n");
-            assertRows("SELECT id FROM lp_rows WHERE TRUE AND (id > 2) ORDER BY id", "id\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE FALSE OR (id > 2) ORDER BY id", "id\n3\n4\n");
-            assertRows("SELECT label FROM lp_rows WHERE FALSE AND id > 2", "label\n");
-            assertRows("SELECT id FROM lp_rows WHERE TRUE OR id > 2 ORDER BY id", "id\n1\n2\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE (id * 2 - 1) / 3 = 1 ORDER BY id", "id\n2\n3\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE -id < -2 ORDER BY id", "id\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id / 0 = null ORDER BY id", "id\n1\n2\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE active AND id > 2 ORDER BY id", "id\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE NOT active OR id = 3 ORDER BY id", "id\n1\n3\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id > 0 AND id < 4 AND id <> 2 AND active", "id\n3\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE TRUE AND (id > 2) ORDER BY id", "id\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE FALSE OR (id > 2) ORDER BY id", "id\n3\n4\n");
+            assertRowsOnly("SELECT label FROM lp_rows WHERE FALSE AND id > 2", "label\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE TRUE OR id > 2 ORDER BY id", "id\n1\n2\n3\n4\n");
         });
     }
 
@@ -147,15 +147,15 @@ public class SqlBinderTest extends AbstractCairoTest {
     public void testBoundIntComparisonsAndGeneratedAliases() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT id FROM lp_rows WHERE id = 2", "id\n2\n");
-            assertRows("SELECT id FROM lp_rows WHERE id <> 2 ORDER BY id", "id\n1\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE id != 2 ORDER BY id", "id\n1\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE id < 2", "id\n1\n");
-            assertRows("SELECT id FROM lp_rows WHERE id <= 2 ORDER BY id", "id\n1\n2\n");
-            assertRows("SELECT id FROM lp_rows WHERE id > 2 ORDER BY id", "id\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE id >= 2 ORDER BY id", "id\n2\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows WHERE id + 1 = 4", "id\n3\n");
-            assertRows("SELECT id FROM lp_rows WHERE 1 + 1 = 2 ORDER BY id", "id\n1\n2\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id = 2", "id\n2\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id <> 2 ORDER BY id", "id\n1\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id != 2 ORDER BY id", "id\n1\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id < 2", "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id <= 2 ORDER BY id", "id\n1\n2\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id > 2 ORDER BY id", "id\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id >= 2 ORDER BY id", "id\n2\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE id + 1 = 4", "id\n3\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE 1 + 1 = 2 ORDER BY id", "id\n1\n2\n3\n4\n");
         });
     }
 
@@ -164,10 +164,10 @@ public class SqlBinderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_int_filter (discarded INT, id INT, unused STRING, value INT)");
             execute("INSERT INTO lp_int_filter VALUES (99,1,'a',3),(98,2,'b',2),(97,3,'c',null),(96,4,'d',4)");
-            assertRows("SELECT id FROM lp_int_filter WHERE value + 1 >= 4 ORDER BY id", "id\n1\n4\n");
-            assertRows("SELECT id FROM lp_int_filter WHERE discarded + null = value", "id\n3\n");
-            assertRows("SELECT id FROM lp_int_filter WHERE discarded + null = null ORDER BY id", "id\n1\n2\n3\n4\n");
-            assertRows("SELECT id FROM lp_int_filter t WHERE t.value + 1 = 4", "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_int_filter WHERE value + 1 >= 4 ORDER BY id", "id\n1\n4\n");
+            assertRowsOnly("SELECT id FROM lp_int_filter WHERE discarded + null = value", "id\n3\n");
+            assertRowsOnly("SELECT id FROM lp_int_filter WHERE discarded + null = null ORDER BY id", "id\n1\n2\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_int_filter t WHERE t.value + 1 = 4", "id\n1\n");
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_int_filter WHERE value + 1 = 4", sqlExecutionContext
@@ -177,7 +177,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                     assertFailure(compiler, "SELECT id FROM lp_int_filter WHERE value = (SELECT lp_missing_fn(id) FROM lp_int_filter LIMIT 1)",
                             "unknown function name", -1);
                     compiler.clear();
-                    assertResult(factory, "id\n1\n");
+                    assertRowsOnly(factory, "id\n1\n");
                 }
             }
         });
@@ -188,7 +188,7 @@ public class SqlBinderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_numeric_project (unused STRING, l LONG, f FLOAT, d DOUBLE)");
             execute("INSERT INTO lp_numeric_project VALUES ('unused',9007199254740992,1.25,2.5)");
-            assertRows("SELECT l FROM lp_numeric_project WHERE l+1>9007199254740992", "l\n9007199254740992\n");
+            assertRowsOnly("SELECT l FROM lp_numeric_project WHERE l+1>9007199254740992", "l\n9007199254740992\n");
             final String sql = "SELECT l+1 AS a, f+f AS b, d+d AS c, 1.25+2.25 AS folded, f+d AS mixed FROM lp_numeric_project";
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 try (
@@ -224,18 +224,18 @@ public class SqlBinderTest extends AbstractCairoTest {
                 ).getRecordCursorFactory()) {
                     Assert.assertEquals(ColumnType.INT, bindVariableService.getFunction(0).getType());
                     bindVariableService.setInt(0, 1);
-                    assertResult(factory, "id\n2\n");
+                    assertRowsOnly(factory, "id\n2\n");
                     bindVariableService.setInt(0, 3);
                     compiler.clear();
-                    assertResult(factory, "id\n4\n");
+                    assertRowsOnly(factory, "id\n4\n");
                 }
                 bindVariableService.setInt("threshold", 2);
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_rows WHERE id > :threshold ORDER BY id", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\n3\n4\n");
+                    assertRowsOnly(factory, "id\n3\n4\n");
                     bindVariableService.setInt("threshold", 3);
-                    assertResult(factory, "id\n4\n");
+                    assertRowsOnly(factory, "id\n4\n");
                 }
                 bindVariableService.clear();
                 try (RecordCursorFactory factory = compiler.compile(
@@ -243,9 +243,9 @@ public class SqlBinderTest extends AbstractCairoTest {
                 ).getRecordCursorFactory()) {
                     Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
                     bindVariableService.setDouble(0, 2.5);
-                    assertResult(factory, "value\n2\n");
+                    assertRowsOnly(factory, "value\n2\n");
                     bindVariableService.setDouble(0, 5.5);
-                    assertResult(factory, "value\n5\n");
+                    assertRowsOnly(factory, "value\n5\n");
                 }
                 bindVariableService.clear();
                 try (RecordCursorFactory factory = compiler.compile(
@@ -253,18 +253,18 @@ public class SqlBinderTest extends AbstractCairoTest {
                 ).getRecordCursorFactory()) {
                     Assert.assertEquals(ColumnType.STRING, bindVariableService.getFunction(0).getType());
                     bindVariableService.setStr(0, "first");
-                    assertResult(factory, "value\nfirst\n");
+                    assertRowsOnly(factory, "value\nfirst\n");
                     bindVariableService.setStr(0, "second");
-                    assertResult(factory, "value\nsecond\n");
+                    assertRowsOnly(factory, "value\nsecond\n");
                 }
                 bindVariableService.clear();
                 bindVariableService.setBoolean(0, true);
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_rows WHERE $1 ORDER BY id", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\n1\n2\n3\n4\n");
+                    assertRowsOnly(factory, "id\n1\n2\n3\n4\n");
                     bindVariableService.setBoolean(0, false);
-                    assertResult(factory, "id\n");
+                    assertRowsOnly(factory, "id\n");
                 }
             }
         });
@@ -288,7 +288,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                     bindVariableService.setStr(1, "y");
                     bindVariableService.setTimestamp(2, 0);
                     bindVariableService.setInt(3, 2);
-                    assertResult(factory, "v\tb\nxy\ttrue\n");
+                    assertRowsOnly(factory, "v\tb\nxy\ttrue\n");
                 }
             }
         });
@@ -301,25 +301,25 @@ public class SqlBinderTest extends AbstractCairoTest {
             execute("INSERT INTO lp_numeric VALUES ('a',1,2,2,2),('b',2,4,4,4),('c',3,null,null,null),('d',4,0,0,0)");
             for (String column : new String[]{"l", "f", "d"}) {
                 final String prefix = "SELECT id FROM lp_numeric WHERE ";
-                assertRows(prefix + column + "+" + column + "=8", "id\n2\n");
-                assertRows(prefix + column + "-" + column + "=0 ORDER BY id", "id\n1\n2\n4\n");
-                assertRows(prefix + column + "*" + column + "=16", "id\n2\n");
-                assertRows(prefix + column + "/" + column + "=1 ORDER BY id", "id\n1\n2\n");
-                assertRows(prefix + "-" + column + "<0 ORDER BY id", "id\n1\n2\n");
-                assertRows(prefix + column + "=null", "id\n3\n");
-                assertRows(prefix + "null=" + column, "id\n3\n");
-                assertRows(prefix + column + "<>null ORDER BY id", "id\n1\n2\n4\n");
-                assertRows(prefix + column + "+null=null ORDER BY id", "id\n1\n2\n3\n4\n");
-                assertRows(prefix + column + "/0=null ORDER BY id", "id\n1\n2\n3\n4\n");
-                assertRows(prefix + column + "<=2 ORDER BY id", "id\n1\n4\n");
-                assertRows(prefix + column + ">=2 ORDER BY id", "id\n1\n2\n");
-                assertRows(prefix + column + ">2", "id\n2\n");
+                assertRowsOnly(prefix + column + "+" + column + "=8", "id\n2\n");
+                assertRowsOnly(prefix + column + "-" + column + "=0 ORDER BY id", "id\n1\n2\n4\n");
+                assertRowsOnly(prefix + column + "*" + column + "=16", "id\n2\n");
+                assertRowsOnly(prefix + column + "/" + column + "=1 ORDER BY id", "id\n1\n2\n");
+                assertRowsOnly(prefix + "-" + column + "<0 ORDER BY id", "id\n1\n2\n");
+                assertRowsOnly(prefix + column + "=null", "id\n3\n");
+                assertRowsOnly(prefix + "null=" + column, "id\n3\n");
+                assertRowsOnly(prefix + column + "<>null ORDER BY id", "id\n1\n2\n4\n");
+                assertRowsOnly(prefix + column + "+null=null ORDER BY id", "id\n1\n2\n3\n4\n");
+                assertRowsOnly(prefix + column + "/0=null ORDER BY id", "id\n1\n2\n3\n4\n");
+                assertRowsOnly(prefix + column + "<=2 ORDER BY id", "id\n1\n4\n");
+                assertRowsOnly(prefix + column + ">=2 ORDER BY id", "id\n1\n2\n");
+                assertRowsOnly(prefix + column + ">2", "id\n2\n");
             }
-            assertRows("SELECT id FROM lp_numeric WHERE l+f+d+id=7", "id\n1\n");
-            assertRows("SELECT id FROM lp_numeric WHERE l+2147483648=2147483650", "id\n1\n");
-            assertRows("SELECT id FROM lp_numeric WHERE f+0.5=2.5", "id\n1\n");
-            assertRows("SELECT id FROM lp_numeric WHERE d+0.5=4.5", "id\n2\n");
-            assertRows("SELECT id FROM lp_numeric WHERE 1.25+2.25=3.5 ORDER BY id", "id\n1\n2\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_numeric WHERE l+f+d+id=7", "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_numeric WHERE l+2147483648=2147483650", "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_numeric WHERE f+0.5=2.5", "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_numeric WHERE d+0.5=4.5", "id\n2\n");
+            assertRowsOnly("SELECT id FROM lp_numeric WHERE 1.25+2.25=3.5 ORDER BY id", "id\n1\n2\n3\n4\n");
         });
     }
 
@@ -329,19 +329,19 @@ public class SqlBinderTest extends AbstractCairoTest {
             execute("CREATE TABLE lp_string (unused INT, id INT, s STRING, t STRING)");
             execute("INSERT INTO lp_string VALUES (0,1,'aa','ab'),(0,2,'ab','ab'),(0,3,null,null)," +
                     "(0,4,'a','a'),(0,5,'''quoted''','''quoted'''),(0,6,'',''),(0,7,'中文','中文')");
-            assertRows("SELECT id FROM lp_string WHERE s=t ORDER BY id", "id\n2\n3\n4\n5\n6\n7\n");
-            assertRows("SELECT id FROM lp_string WHERE s<>t", "id\n1\n");
-            assertRows("SELECT id FROM lp_string WHERE s<t", "id\n1\n");
-            assertRows("SELECT id FROM lp_string WHERE s='a'", "id\n4\n");
-            assertRows("SELECT id FROM lp_string WHERE 'a'=s", "id\n4\n");
-            assertRows("SELECT id FROM lp_string WHERE s='ab'", "id\n2\n");
-            assertRows("SELECT id FROM lp_string WHERE s='中文'", "id\n7\n");
-            assertRows("SELECT id FROM lp_string WHERE s=null", "id\n3\n");
-            assertRows("SELECT id FROM lp_string WHERE s<'ab' ORDER BY id", "id\n1\n4\n5\n6\n");
-            assertRows("SELECT id FROM lp_string WHERE s>='ab' ORDER BY id", "id\n2\n7\n");
-            assertRows("SELECT id FROM lp_string WHERE s='''quoted'''", "id\n5\n");
-            assertRows("SELECT '''quoted''' AS value FROM lp_string WHERE id=5", "value\n'quoted'\n");
-            assertRows("SELECT id FROM (SELECT id, s AS renamed FROM lp_string) WHERE renamed='''quoted'''", "id\n5\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s=t ORDER BY id", "id\n2\n3\n4\n5\n6\n7\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s<>t", "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s<t", "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s='a'", "id\n4\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE 'a'=s", "id\n4\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s='ab'", "id\n2\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s='中文'", "id\n7\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s=null", "id\n3\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s<'ab' ORDER BY id", "id\n1\n4\n5\n6\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s>='ab' ORDER BY id", "id\n2\n7\n");
+            assertRowsOnly("SELECT id FROM lp_string WHERE s='''quoted'''", "id\n5\n");
+            assertRowsOnly("SELECT '''quoted''' AS value FROM lp_string WHERE id=5", "value\n'quoted'\n");
+            assertRowsOnly("SELECT id FROM (SELECT id, s AS renamed FROM lp_string) WHERE renamed='''quoted'''", "id\n5\n");
         });
     }
 
@@ -350,20 +350,20 @@ public class SqlBinderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_time (unused STRING, id INT, ts TIMESTAMP, ns TIMESTAMP_NS)");
             execute("INSERT INTO lp_time VALUES ('a',1,1,1000),('b',2,1,1001),('c',3,2,2000),('d',4,null,null)");
-            assertRows("SELECT id FROM lp_time WHERE ts=ns AND id<4 ORDER BY id", "id\n1\n3\n");
-            assertRows("SELECT id FROM lp_time WHERE ts<ns ORDER BY id", "id\n2\n");
-            assertRows("SELECT id FROM lp_time WHERE ns>ts ORDER BY id", "id\n2\n");
+            assertRowsOnly("SELECT id FROM lp_time WHERE ts=ns AND id<4 ORDER BY id", "id\n1\n3\n");
+            assertRowsOnly("SELECT id FROM lp_time WHERE ts<ns ORDER BY id", "id\n2\n");
+            assertRowsOnly("SELECT id FROM lp_time WHERE ns>ts ORDER BY id", "id\n2\n");
             for (String column : new String[]{"ts", "ns"}) {
-                assertRows("SELECT id FROM lp_time WHERE " + column + "=null", "id\n4\n");
-                assertRows("SELECT id FROM lp_time WHERE null=" + column, "id\n4\n");
-                assertRows("SELECT id FROM lp_time WHERE " + column + "<>null ORDER BY id", "id\n1\n2\n3\n");
+                assertRowsOnly("SELECT id FROM lp_time WHERE " + column + "=null", "id\n4\n");
+                assertRowsOnly("SELECT id FROM lp_time WHERE null=" + column, "id\n4\n");
+                assertRowsOnly("SELECT id FROM lp_time WHERE " + column + "<>null ORDER BY id", "id\n1\n2\n3\n");
             }
-            assertRows("SELECT id FROM lp_time WHERE ns='1970-01-01T00:00:00.000001001Z'", "id\n2\n");
-            assertRows("SELECT id FROM lp_time WHERE ts<'1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n1\n2\n");
-            assertRows("SELECT id FROM lp_time WHERE ns>='1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n2\n3\n");
-            assertRows("SELECT id FROM lp_time WHERE ns<='1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n1\n2\n");
-            assertRows("SELECT id FROM lp_time WHERE ns=null::timestamp_ns", "id\n4\n");
-            assertRows("SELECT ns::timestamp_ns AS stamp FROM lp_time WHERE id=2", "stamp\n1970-01-01T00:00:00.000001001Z\n");
+            assertRowsOnly("SELECT id FROM lp_time WHERE ns='1970-01-01T00:00:00.000001001Z'", "id\n2\n");
+            assertRowsOnly("SELECT id FROM lp_time WHERE ts<'1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n1\n2\n");
+            assertRowsOnly("SELECT id FROM lp_time WHERE ns>='1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n2\n3\n");
+            assertRowsOnly("SELECT id FROM lp_time WHERE ns<='1970-01-01T00:00:00.000001001Z' ORDER BY id", "id\n1\n2\n");
+            assertRowsOnly("SELECT id FROM lp_time WHERE ns=null::timestamp_ns", "id\n4\n");
+            assertRowsOnly("SELECT ns::timestamp_ns AS stamp FROM lp_time WHERE id=2", "stamp\n1970-01-01T00:00:00.000001001Z\n");
         });
     }
 
@@ -372,13 +372,13 @@ public class SqlBinderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_char (id INT, c CHAR)");
             execute("INSERT INTO lp_char VALUES (1,'a'),(2,'b'),(3,null)");
-            assertRows("SELECT id FROM lp_char WHERE c='ab'", "id\n");
-            assertRows("SELECT id FROM lp_char WHERE 'ab'=c", "id\n");
-            assertRows("SELECT id FROM lp_char WHERE c=''", "id\n");
-            assertRows("SELECT id FROM lp_char WHERE c!='ab' ORDER BY id", "id\n1\n2\n3\n");
-            assertRows("SELECT id FROM lp_char WHERE NOT (c='ab') ORDER BY id", "id\n1\n2\n3\n");
-            assertRows("SELECT id FROM lp_char WHERE c='ab' OR id=2", "id\n2\n");
-            assertRows("SELECT id, c='ab' eq, c<>'ab' ne FROM lp_char ORDER BY id", "id\teq\tne\n1\tfalse\ttrue\n2\tfalse\ttrue\n3\tfalse\ttrue\n");
+            assertRowsOnly("SELECT id FROM lp_char WHERE c='ab'", "id\n");
+            assertRowsOnly("SELECT id FROM lp_char WHERE 'ab'=c", "id\n");
+            assertRowsOnly("SELECT id FROM lp_char WHERE c=''", "id\n");
+            assertRowsOnly("SELECT id FROM lp_char WHERE c!='ab' ORDER BY id", "id\n1\n2\n3\n");
+            assertRowsOnly("SELECT id FROM lp_char WHERE NOT (c='ab') ORDER BY id", "id\n1\n2\n3\n");
+            assertRowsOnly("SELECT id FROM lp_char WHERE c='ab' OR id=2", "id\n2\n");
+            assertRowsOnly("SELECT id, c='ab' eq, c<>'ab' ne FROM lp_char ORDER BY id", "id\teq\tne\n1\tfalse\ttrue\n2\tfalse\ttrue\n3\tfalse\ttrue\n");
         });
     }
 
@@ -484,7 +484,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_target", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\n");
+                    assertRowsOnly(factory, "id\n");
                 }
             }
         });
@@ -501,18 +501,18 @@ public class SqlBinderTest extends AbstractCairoTest {
                             "SELECT label AS name, sym FROM lp_rows WHERE active ORDER BY id",
                             sqlExecutionContext
                     ).getRecordCursorFactory();
-                    assertResult(retained, "name\tsym\nb\tB\nc\tC\n\t\n");
+                    assertRowsOnly(retained, "name\tsym\nb\tB\nc\tC\n\t\n");
                     try (RecordCursorFactory other = compiler.compile(
                             "SELECT id AS other FROM lp_rows ORDER BY id DESC LIMIT 1",
                             sqlExecutionContext
                     ).getRecordCursorFactory()) {
-                        assertResult(other, "other\n4\n");
-                        assertResult(retained, "name\tsym\nb\tB\nc\tC\n\t\n");
+                        assertRowsOnly(other, "other\n4\n");
+                        assertRowsOnly(retained, "name\tsym\nb\tB\nc\tC\n\t\n");
                     }
                     compiler.clear();
-                    assertResult(retained, "name\tsym\nb\tB\nc\tC\n\t\n");
+                    assertRowsOnly(retained, "name\tsym\nb\tB\nc\tC\n\t\n");
                 }
-                assertResult(retained, "name\tsym\nb\tB\nc\tC\n\t\n");
+                assertRowsOnly(retained, "name\tsym\nb\tB\nc\tC\n\t\n");
             } finally {
                 Misc.free(retained);
             }
@@ -533,7 +533,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_rows WHERE active ORDER BY id", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\n2\n3\n4\n");
+                    assertRowsOnly(factory, "id\n2\n3\n4\n");
                 }
             }
         });
@@ -575,7 +575,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                     Assert.assertNotEquals(sourceId, project.getOutput().getColumnId(0));
                     Assert.assertNotEquals(project.getOutput().getColumnId(0), project.getOutput().getColumnId(1));
                     final String before = describePlan(root);
-                    assertResult(factory, "renamed\tduplicate\n2\t2\n4\t4\n");
+                    assertRowsOnly(factory, "renamed\tduplicate\n2\t2\n4\t4\n");
                     Assert.assertEquals(before, describePlan(root));
                 }
             }
@@ -586,9 +586,9 @@ public class SqlBinderTest extends AbstractCairoTest {
     public void testHiddenOrderColumnAndDuplicateOrderDirection() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT label FROM lp_rows WHERE active ORDER BY id, id DESC LIMIT 2", "label\nb\nc\n");
-            assertRows("SELECT id FROM lp_rows WHERE active ORDER BY ts DESC LIMIT 2", "id\n2\n4\n");
-            assertRows("SELECT label FROM lp_rows LIMIT 2", "label\nc\na\n");
+            assertRowsOnly("SELECT label FROM lp_rows WHERE active ORDER BY id, id DESC LIMIT 2", "label\nb\nc\n");
+            assertRowsOnly("SELECT id FROM lp_rows WHERE active ORDER BY ts DESC LIMIT 2", "id\n2\n4\n");
+            assertRowsOnly("SELECT label FROM lp_rows LIMIT 2", "label\nc\na\n");
         });
     }
 
@@ -605,7 +605,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT name,id FROM lp_target ORDER BY id", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "name\tid\nb\t2\nc\t3\n\t4\n");
+                    assertRowsOnly(factory, "name\tid\nb\t2\nc\t3\n\t4\n");
                 }
                 execute(compiler, "INSERT INTO lp_clone SELECT * FROM lp_rows");
                 Assert.assertEquals(5, compiler.getPlanForTesting().getOutput().getColumnCount());
@@ -614,7 +614,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id,label FROM lp_clone ORDER BY id", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\tlabel\n1\ta\n2\tb\n3\tc\n4\t\n");
+                    assertRowsOnly(factory, "id\tlabel\n1\ta\n2\tb\n3\tc\n4\t\n");
                 }
             }
         });
@@ -631,13 +631,13 @@ public class SqlBinderTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id,added FROM lp_rows ORDER BY id", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\tadded\n1\tnull\n2\tnull\n3\tnull\n4\tnull\n5\tnull\n");
+                    assertRowsOnly(factory, "id\tadded\n1\tnull\n2\tnull\n3\tnull\n4\tnull\n5\tnull\n");
                 }
                 execute(compiler, "TRUNCATE TABLE lp_rows");
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id FROM lp_rows", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\n");
+                    assertRowsOnly(factory, "id\n");
                 }
             }
         });
@@ -687,7 +687,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                         "SELECT id FROM lp_rows ORDER BY id", sqlExecutionContext
                 ).getRecordCursorFactory()) {
                     Assert.assertEquals(2, attempts[0]);
-                    assertResult(factory, "id\n1\n2\n3\n4\n");
+                    assertRowsOnly(factory, "id\n1\n2\n3\n4\n");
                     LogicalPlan scan = compiler.getPlanForTesting();
                     while (scan.inputCount() > 0) {
                         scan = scan.inputAt(0);
@@ -706,16 +706,16 @@ public class SqlBinderTest extends AbstractCairoTest {
             execute("INSERT INTO lp_casts VALUES ('a',1,2,2,2,2),('b',2,-3,-3,-3,-3),('c',3,null,null,null,null)");
             for (String column : new String[]{"i", "l", "f", "d"}) {
                 for (String type : new String[]{"int", "long", "float", "double"}) {
-                    assertRows("SELECT id FROM lp_casts WHERE cast(" + column + " AS " + type + ") = -3", "id\n2\n");
-                    assertRows("SELECT id FROM lp_casts WHERE cast(" + column + " AS " + type + ") = null", "id\n3\n");
+                    assertRowsOnly("SELECT id FROM lp_casts WHERE cast(" + column + " AS " + type + ") = -3", "id\n2\n");
+                    assertRowsOnly("SELECT id FROM lp_casts WHERE cast(" + column + " AS " + type + ") = null", "id\n3\n");
                 }
             }
             for (String type : new String[]{"int", "long", "float", "double"}) {
-                assertRows("SELECT id FROM lp_casts WHERE cast(null AS " + type + ") = null ORDER BY id", "id\n1\n2\n3\n");
+                assertRowsOnly("SELECT id FROM lp_casts WHERE cast(null AS " + type + ") = null ORDER BY id", "id\n1\n2\n3\n");
             }
-            assertRows("SELECT cast(4294967297 AS int) AS wrapped FROM lp_casts WHERE id=1", "wrapped\n1\n");
-            assertRows("SELECT id FROM lp_casts WHERE cast(2147483648.0 AS int) = null ORDER BY id", "id\n1\n2\n3\n");
-            assertRows("SELECT id FROM lp_casts WHERE cast(i+2147483647 AS long) < 0 ORDER BY id", "id\n1\n");
+            assertRowsOnly("SELECT cast(4294967297 AS int) AS wrapped FROM lp_casts WHERE id=1", "wrapped\n1\n");
+            assertRowsOnly("SELECT id FROM lp_casts WHERE cast(2147483648.0 AS int) = null ORDER BY id", "id\n1\n2\n3\n");
+            assertRowsOnly("SELECT id FROM lp_casts WHERE cast(i+2147483647 AS long) < 0 ORDER BY id", "id\n1\n");
         });
     }
 
@@ -723,20 +723,20 @@ public class SqlBinderTest extends AbstractCairoTest {
     public void testQualifiedQuotedAliasesAndOrderOrdinal() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows(
+            assertRowsOnly(
                     "SELECT \"row alias\".id AS \"Result ID\", \"row alias\".label AS \"Display Name\" "
                             + "FROM lp_rows AS \"row alias\" WHERE \"row alias\".active ORDER BY \"Result ID\" DESC",
                     "Result ID\tDisplay Name\n4\t\n3\tc\n2\tb\n"
             );
-            assertRows("SELECT r.label AS name, r.id AS number FROM lp_rows r ORDER BY 2 DESC", "name\tnumber\n\t4\nc\t3\nb\t2\na\t1\n");
-            assertRows("SELECT label AS \"r.id\" FROM lp_rows r ORDER BY r.id", "r.id\na\nb\nc\n\n");
+            assertRowsOnly("SELECT r.label AS name, r.id AS number FROM lp_rows r ORDER BY 2 DESC", "name\tnumber\n\t4\nc\t3\nb\t2\na\t1\n");
+            assertRowsOnly("SELECT label AS \"r.id\" FROM lp_rows r ORDER BY r.id", "r.id\na\nb\nc\n\n");
         });
     }
 
     @Test
     public void testRecordAndSliceArgumentsReachTheirFactories() throws Exception {
         assertMemoryLeak(() -> {
-            assertRows("SELECT typeof(1:2) v FROM long_sequence(1)", "v\nINTERVAL\n");
+            assertRowsOnly("SELECT typeof(1:2) v FROM long_sequence(1)", "v\nINTERVAL\n");
             final String record = " FROM (SELECT information_schema._pg_expandarray(ARRAY[1.0]) k FROM long_sequence(1)) i";
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 for (int path = 0; path < 2; path++) {
@@ -752,10 +752,10 @@ public class SqlBinderTest extends AbstractCairoTest {
     public void testSignedAndTwoBoundLimits() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT id FROM lp_rows ORDER BY id LIMIT -2", "id\n3\n4\n");
-            assertRows("SELECT id FROM lp_rows ORDER BY id LIMIT 1,3", "id\n2\n3\n");
-            assertRows("SELECT id FROM lp_rows ORDER BY id LIMIT -3,-1", "id\n2\n3\n");
-            assertRows("SELECT id FROM lp_rows ORDER BY id LIMIT ,2", "id\n1\n2\n");
+            assertRowsOnly("SELECT id FROM lp_rows ORDER BY id LIMIT -2", "id\n3\n4\n");
+            assertRowsOnly("SELECT id FROM lp_rows ORDER BY id LIMIT 1,3", "id\n2\n3\n");
+            assertRowsOnly("SELECT id FROM lp_rows ORDER BY id LIMIT -3,-1", "id\n2\n3\n");
+            assertRowsOnly("SELECT id FROM lp_rows ORDER BY id LIMIT ,2", "id\n1\n2\n");
         });
     }
 
@@ -763,7 +763,7 @@ public class SqlBinderTest extends AbstractCairoTest {
     public void testSpliceThenInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT a.id FROM lp_rows a SPLICE JOIN lp_rows b ON a.id=b.id "
+            assertRowsOnly("SELECT a.id FROM lp_rows a SPLICE JOIN lp_rows b ON a.id=b.id "
                     + "JOIN lp_rows c ON a.id=c.id ORDER BY a.id", "id\n1\n2\n3\n4\n");
         });
     }
@@ -806,37 +806,37 @@ public class SqlBinderTest extends AbstractCairoTest {
             execute("CREATE TABLE lp_partial_ns (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts)");
             execute("INSERT INTO lp_partial_ns VALUES (4,'2020-01-01T00:00:00.000000001Z')");
             for (String column : new String[]{"ts", "other"}) {
-                assertRows("SELECT id FROM lp_partial WHERE " + column + ">'2020' ORDER BY id", "id\n2\n3\n");
-                assertRows("SELECT id FROM lp_partial WHERE " + column + "<='2020-01' ORDER BY id", "id\n1\n");
-                assertRows("SELECT id FROM lp_partial WHERE " + column + "='2020-01' ORDER BY id", "id\n1\n");
-                assertRows("SELECT " + column + ">'2020' AS value FROM lp_partial ORDER BY id", "value\nfalse\ntrue\ntrue\n");
+                assertRowsOnly("SELECT id FROM lp_partial WHERE " + column + ">'2020' ORDER BY id", "id\n2\n3\n");
+                assertRowsOnly("SELECT id FROM lp_partial WHERE " + column + "<='2020-01' ORDER BY id", "id\n1\n");
+                assertRowsOnly("SELECT id FROM lp_partial WHERE " + column + "='2020-01' ORDER BY id", "id\n1\n");
+                assertRowsOnly("SELECT " + column + ">'2020' AS value FROM lp_partial ORDER BY id", "value\nfalse\ntrue\ntrue\n");
             }
             final String nanoLiteral = "'2020-01-01T00:00:00.000000001Z'";
-            assertRows("SELECT id FROM lp_partial WHERE ts=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts!='2020'", "id\n2\n3\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts!='2020-01'", "id\n2\n3\n");
-            assertRows("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial) WHERE renamed=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM (SELECT id, ts AS a, ts AS b FROM lp_partial) WHERE b=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM (SELECT id, ts::timestamp AS renamed FROM lp_partial) WHERE renamed=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial WHERE id>0) WHERE renamed=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial LIMIT 2) WHERE renamed=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts<" + nanoLiteral, "id\n1\n");
-            assertRows("SELECT id FROM lp_partial WHERE other<" + nanoLiteral, "id\n1\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts::timestamp<" + nanoLiteral, "id\n1\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts::timestamp=" + nanoLiteral, "id\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts::timestamp!=" + nanoLiteral + " ORDER BY id", "id\n1\n2\n3\n");
-            assertRows("SELECT ts<" + nanoLiteral + " AS value FROM lp_partial ORDER BY id", "value\ntrue\nfalse\nfalse\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts='2020-01-01' OR ts='2020-02-01' ORDER BY id", "id\n1\n3\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts='2020-01-01' OR id=3 ORDER BY id", "id\n1\n3\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts=" + nanoLiteral + " OR ts='2020-02-01' ORDER BY id", "id\n3\n");
-            assertRows("SELECT id FROM (SELECT id, ts FROM lp_partial UNION ALL SELECT id, ts FROM lp_partial) WHERE ts=" + nanoLiteral,
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts=" + nanoLiteral, "id\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts!='2020'", "id\n2\n3\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts!='2020-01'", "id\n2\n3\n");
+            assertRowsOnly("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial) WHERE renamed=" + nanoLiteral, "id\n");
+            assertRowsOnly("SELECT id FROM (SELECT id, ts AS a, ts AS b FROM lp_partial) WHERE b=" + nanoLiteral, "id\n");
+            assertRowsOnly("SELECT id FROM (SELECT id, ts::timestamp AS renamed FROM lp_partial) WHERE renamed=" + nanoLiteral, "id\n");
+            assertRowsOnly("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial WHERE id>0) WHERE renamed=" + nanoLiteral, "id\n");
+            assertRowsOnly("SELECT id FROM (SELECT id, ts AS renamed FROM lp_partial LIMIT 2) WHERE renamed=" + nanoLiteral, "id\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts<" + nanoLiteral, "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE other<" + nanoLiteral, "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts::timestamp<" + nanoLiteral, "id\n1\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts::timestamp=" + nanoLiteral, "id\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts::timestamp!=" + nanoLiteral + " ORDER BY id", "id\n1\n2\n3\n");
+            assertRowsOnly("SELECT ts<" + nanoLiteral + " AS value FROM lp_partial ORDER BY id", "value\ntrue\nfalse\nfalse\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts='2020-01-01' OR ts='2020-02-01' ORDER BY id", "id\n1\n3\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts='2020-01-01' OR id=3 ORDER BY id", "id\n1\n3\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts=" + nanoLiteral + " OR ts='2020-02-01' ORDER BY id", "id\n3\n");
+            assertRowsOnly("SELECT id FROM (SELECT id, ts FROM lp_partial UNION ALL SELECT id, ts FROM lp_partial) WHERE ts=" + nanoLiteral,
                     "id\n");
             final String mixedSet = "SELECT id FROM (SELECT id, ts FROM lp_partial UNION ALL SELECT id, ts FROM lp_partial_ns) WHERE ts=";
-            assertRows(mixedSet + nanoLiteral + " ORDER BY id", "id\n4\n");
+            assertRowsOnly(mixedSet + nanoLiteral + " ORDER BY id", "id\n4\n");
             bindVariableService.clear();
             bindVariableService.setTimestampNano(0, 1_577_836_800_000_000_001L);
-            assertRows(mixedSet + "$1 ORDER BY id", "id\n4\n");
-            assertRows("SELECT id FROM lp_partial WHERE ts=$1", "id\n");
+            assertRowsOnly(mixedSet + "$1 ORDER BY id", "id\n4\n");
+            assertRowsOnly("SELECT id FROM lp_partial WHERE ts=$1", "id\n");
         });
     }
 
@@ -850,8 +850,8 @@ public class SqlBinderTest extends AbstractCairoTest {
             final String source = "SELECT id FROM (SELECT id, ts FROM lp_epoch_us UNION ALL SELECT id, ts FROM lp_epoch_ns) WHERE ts=";
             bindVariableService.clear();
             bindVariableService.setLong(0, 1);
-            assertRows(source + "1 ORDER BY id", "id\n1\n2\n");
-            assertRows(source + "$1 ORDER BY id", "id\n1\n2\n");
+            assertRowsOnly(source + "1 ORDER BY id", "id\n1\n2\n");
+            assertRowsOnly(source + "$1 ORDER BY id", "id\n1\n2\n");
         });
     }
 
@@ -868,7 +868,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT id,copied FROM lp_update ORDER BY id", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "id\tcopied\n1\t1\n2\t0\n");
+                    assertRowsOnly(factory, "id\tcopied\n1\t1\n2\t0\n");
                 }
             }
         });
@@ -887,7 +887,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = compiler.compile(
                         "SELECT label, id FROM lp_rows ORDER BY id LIMIT 1", sqlExecutionContext
                 ).getRecordCursorFactory()) {
-                    assertResult(factory, "label\tid\na\t1\n");
+                    assertRowsOnly(factory, "label\tid\na\t1\n");
                 }
             }
         });
@@ -897,14 +897,14 @@ public class SqlBinderTest extends AbstractCairoTest {
     public void testWildcardPreservesTypesAndNullValues() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertRows("SELECT * FROM lp_rows ORDER BY id", """
+            assertRowsOnly("SELECT * FROM lp_rows ORDER BY id", """
                     id\tactive\tlabel\tsym\tts
                     1\tfalse\ta\tA\t2020-01-01T00:00:01.000000Z
                     2\ttrue\tb\tB\t2020-01-01T00:00:03.000000Z
                     3\ttrue\tc\tC\t2020-01-01T00:00:00.000000Z
                     4\ttrue\t\t\t2020-01-01T00:00:02.000000Z
                     """);
-            assertRows("SELECT ts AS event_time, id FROM lp_rows LIMIT 2", """
+            assertRowsOnly("SELECT ts AS event_time, id FROM lp_rows LIMIT 2", """
                     event_time\tid
                     2020-01-01T00:00:00.000000Z\t3
                     2020-01-01T00:00:01.000000Z\t1
@@ -980,14 +980,6 @@ public class SqlBinderTest extends AbstractCairoTest {
                 Assert.assertEquals(position, e.getPosition());
             }
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
-    private void assertRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws SqlException {

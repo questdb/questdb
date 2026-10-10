@@ -24,16 +24,12 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.std.Misc;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -44,7 +40,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
     public void testArrayZipNullsAndOrdinality() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.value FROM lp_unnest t,UNNEST(t.a) u ORDER BY t.id,u.value",
                     """
                             id	value
@@ -54,7 +50,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	4.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.x,u.y,u.ord FROM lp_unnest t,UNNEST(t.a,t.b) WITH ORDINALITY u(x,y,ord) ORDER BY t.id,u.ord",
                     """
                             id	x	y	ord
@@ -66,7 +62,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	4.0	null	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.x,u.value2 FROM lp_unnest t,UNNEST(t.a,t.b) u(x) ORDER BY t.id,u.x,u.value2",
                     """
                             id	x	value2
@@ -78,11 +74,11 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	4.0	null
                             """
             );
-            assertQueryRows("SELECT count() FROM lp_unnest t,UNNEST(t.a) u", """
+            assertRowsOnly("SELECT count() FROM lp_unnest t,UNNEST(t.a) u", """
                     count
                     4
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id FROM lp_unnest t,UNNEST(t.a) u WHERE u.value>1 ORDER BY t.id",
                     """
                             id
@@ -98,7 +94,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
     public void testJsonObjectsScalarsAndMixedZip() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.n,u.s,u.ordinality FROM lp_unnest t,UNNEST(t.j COLUMNS(n INT,s VARCHAR)) WITH ORDINALITY u ORDER BY t.id,u.ordinality",
                     """
                             id	n	s	ordinality
@@ -108,7 +104,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             2	3	b	2
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.x,u.n,u.s,u.ord FROM lp_unnest t,UNNEST(t.a,t.j COLUMNS(n INT,s VARCHAR)) WITH ORDINALITY u(x,n,s,ord) ORDER BY t.id,u.ord",
                     """
                             id	x	n	s	ord
@@ -119,7 +115,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	4.0	null		1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT * FROM UNNEST('[1,null,3]'::VARCHAR COLUMNS(value DOUBLE)) WITH ORDINALITY",
                     """
                             value	ordinality
@@ -128,7 +124,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             3.0	3
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT * FROM UNNEST('[{\"n\":2,\"s\":\"x\"},null]'::VARCHAR COLUMNS(n INT,s VARCHAR)) u(k,label)",
                     """
                             k	label
@@ -136,7 +132,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             null\t
                             """
             );
-            assertQueryRows("SELECT * FROM UNNEST('[]'::VARCHAR COLUMNS(n INT)) u", """
+            assertRowsOnly("SELECT * FROM UNNEST('[]'::VARCHAR COLUMNS(n INT)) u", """
                     n
                     """);
         });
@@ -145,7 +141,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
     @Test
     public void testStandaloneAndNestedArrayExpansion() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT * FROM UNNEST(ARRAY[1.0,2.0]) WITH ORDINALITY u(v,ord)",
                     """
                             v	ord
@@ -153,23 +149,23 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             2.0	2
                             """
             );
-            assertQueryRows("SELECT * FROM UNNEST(ARRAY[1.0,2.0],ARRAY[3.0]) u", """
+            assertRowsOnly("SELECT * FROM UNNEST(ARRAY[1.0,2.0],ARRAY[3.0]) u", """
                     value1	value2
                     1.0	3.0
                     2.0	null
                     """);
-            assertQueryRows("SELECT count() FROM UNNEST(ARRAY[1.0,2.0])", """
+            assertRowsOnly("SELECT count() FROM UNNEST(ARRAY[1.0,2.0])", """
                     count
                     2
                     """);
             execute("CREATE TABLE lp_unnest_nested(a DOUBLE[][])");
             execute("INSERT INTO lp_unnest_nested VALUES(ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]])");
-            assertQueryRows("SELECT u.value FROM lp_unnest_nested t,UNNEST(t.a) u", """
+            assertRowsOnly("SELECT u.value FROM lp_unnest_nested t,UNNEST(t.a) u", """
                     value
                     [1.0,2.0]
                     [3.0,4.0]
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT v.value FROM lp_unnest_nested t,UNNEST(t.a) u,UNNEST(u.value) v ORDER BY v.value",
                     """
                             value
@@ -188,7 +184,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
             createRows();
             execute("CREATE TABLE lp_unnest_lookup(v DOUBLE,name STRING,ts TIMESTAMP,id INT) TIMESTAMP(ts)");
             execute("INSERT INTO lp_unnest_lookup VALUES(1.0,'one','2024-01-01',1),(2.0,'two','2024-01-02',2),(3.0,'three','2024-01-03',3)");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.value FROM lp_unnest t,UNNEST(t.a) u WHERE t.id=u.value ORDER BY t.id,u.value",
                     """
                             id	value
@@ -196,7 +192,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	4.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.value FROM lp_unnest t,UNNEST(t.a) u WHERE t.id>1 AND u.value>1 ORDER BY t.id,u.value",
                     """
                             id	value
@@ -217,7 +213,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                     3\t1.0\tone
                     4\t1.0\tone
                     """);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.ts,u.value,l.name FROM lp_unnest t,UNNEST(t.a) u ASOF JOIN lp_unnest_lookup l ORDER BY t.ts,u.value",
                     """
                             ts	value	name
@@ -240,7 +236,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
     public void testAggregationWindowLimitAndCteOccurrences() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT u.value,count() n FROM lp_unnest t,UNNEST(t.a) u GROUP BY u.value ORDER BY u.value",
                     """
                             value	n
@@ -250,7 +246,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4.0	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,sum(u.value) v FROM lp_unnest t,UNNEST(t.a) u GROUP BY t.id ORDER BY t.id",
                     """
                             id	v
@@ -259,7 +255,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	4.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.value,row_number() OVER(PARTITION BY t.id ORDER BY u.value) rn FROM lp_unnest t,UNNEST(t.a) u ORDER BY t.id,u.value",
                     """
                             id	value	rn
@@ -269,7 +265,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	4.0	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT u.value FROM lp_unnest t,UNNEST(t.a) u ORDER BY u.value LIMIT 2",
                     """
                             value
@@ -277,7 +273,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             2.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "WITH q AS(SELECT id,a FROM lp_unnest) SELECT q.id,u.value FROM q,UNNEST(q.a) u ORDER BY q.id,u.value",
                     """
                             id	value
@@ -287,7 +283,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	4.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "WITH q AS(SELECT u.value FROM lp_unnest t,UNNEST(t.a) u) SELECT value FROM q UNION ALL SELECT value FROM q ORDER BY value",
                     """
                             value
@@ -308,7 +304,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
     public void testWildcardAndProtectedAliases() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.* FROM lp_unnest t,UNNEST(t.a,t.b) WITH ORDINALITY u(x,y,ord) ORDER BY t.id,u.ord",
                     """
                             id	x	y	ord
@@ -320,7 +316,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	4.0	null	1
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT * FROM lp_unnest t,UNNEST(t.a) u(id) ORDER BY t.ts,u.id",
                     """
                             id	a	b	j	ts	id1
@@ -330,7 +326,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4	[4.0]	null		2024-01-04T00:00:00.000000Z	4.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT u.\"a.b\" FROM lp_unnest t,UNNEST(t.a) u(\"a.b\") ORDER BY u.\"a.b\"",
                     """
                             a.b
@@ -340,7 +336,7 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                             4.0
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT u.\"select\" FROM lp_unnest t,UNNEST(t.a) u(\"select\") ORDER BY u.\"select\"",
                     """
                             select
@@ -371,14 +367,14 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                 final String expectedPlan;
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-                    expectedPlan = plan(retained);
+                    expectedPlan = planText(retained);
                     compiler.clear();
                     try (RecordCursorFactory ignored = compiler.compile("SELECT count() FROM lp_unnest", sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(ignored);
                     }
                 }
-                assertResult(retained, expected);
-                TestUtils.assertEquals(expectedPlan, plan(retained));
+                assertRowsOnly(retained, expected);
+                TestUtils.assertEquals(expectedPlan, planText(retained));
             } finally {
                 Misc.free(retained);
             }
@@ -411,15 +407,11 @@ public class UnnestPlanningTest extends AbstractCairoTest {
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
         ) {
             Assert.assertTrue(sql, hasUnnest(compiler.getPlanForTesting()));
-            TestUtils.assertContains(plan(factory), "Unnest");
-            assertResult(factory, expectedRows);
+            TestUtils.assertContains(planText(factory), "Unnest");
+            assertRowsOnly(factory, expectedRows);
         } finally {
             sqlExecutionContext.setJitMode(previousJit);
         }
-    }
-
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {
@@ -444,23 +436,5 @@ public class UnnestPlanningTest extends AbstractCairoTest {
             }
         }
         return false;
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        return sink.getSink().toString();
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        final StringSink sink = new StringSink();
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-        }
-        return sink.toString();
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

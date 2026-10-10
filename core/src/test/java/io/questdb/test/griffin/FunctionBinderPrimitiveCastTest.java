@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.FunctionResolver;
@@ -54,6 +53,14 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.griffin.FunctionBindingHarness.cast;
+import static io.questdb.test.griffin.FunctionBindingHarness.constant;
+import static io.questdb.test.griffin.FunctionBindingHarness.literal;
+import static io.questdb.test.griffin.FunctionBindingHarness.parameter;
+import static io.questdb.test.griffin.FunctionBindingHarness.parser;
+import static io.questdb.test.griffin.FunctionBindingHarness.schema;
+import static io.questdb.test.griffin.FunctionBindingHarness.wideSchema;
 
 public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
     @Test
@@ -135,7 +142,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
             try {
                 for (boolean isDynamic : new boolean[]{false, true}) {
                     final ObjList<Function> constructed = new ObjList<>();
-                    final FunctionParser parser = parser(constructed);
+                    final FunctionParser parser = parser(engine, constructed);
                     try (RecordCursorFactory original = select("SELECT unused,s FROM fb_cast_symbol");
                          RecordCursorFactory narrowed = select(isDynamic
                                  ? "SELECT s FROM fb_cast_symbol UNION ALL SELECT s FROM fb_cast_symbol"
@@ -187,7 +194,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             for (int type : new int[]{ColumnType.STRING, ColumnType.VARCHAR}) {
                 final ObjList<Function> constructed = new ObjList<>();
-                final FunctionParser parser = parser(constructed);
+                final FunctionParser parser = parser(engine, constructed);
                 final OutputSchema original = wideSchema(ColumnType.LONG);
                 final OutputSchema firstLayout = new OutputSchema().add(70, "value", ColumnType.LONG, true);
                 final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
@@ -238,7 +245,7 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
     public void testVarcharToCharRetainsUnicodeNullAndWorkerState() throws Exception {
         assertMemoryLeak(() -> {
             final ObjList<Function> constructed = new ObjList<>();
-            final FunctionParser parser = parser(constructed);
+            final FunctionParser parser = parser(engine, constructed);
             final OutputSchema original = wideSchema(ColumnType.VARCHAR);
             final OutputSchema firstLayout = new OutputSchema().add(70, "value", ColumnType.VARCHAR, true);
             final OutputSchema secondLayout = new OutputSchema().add(80, "unused", ColumnType.INT, true)
@@ -266,18 +273,6 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
         });
     }
 
-    private static ExpressionNode cast(ExpressionNode value, String type) {
-        final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "cast", 0, 0);
-        node.lhs = value;
-        node.rhs = constant(type);
-        node.paramCount = 2;
-        return node;
-    }
-
-    private static ExpressionNode constant(String value) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, value, 0, 0);
-    }
-
     private static ExpressionNode in(ExpressionNode value) {
         final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "in", 0, 0);
         node.args.add(constant("4"));
@@ -286,10 +281,6 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
         node.args.add(value);
         node.paramCount = 4;
         return node;
-    }
-
-    private static ExpressionNode literal(String value) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, value, 0, 0);
     }
 
     private static Record longRecord(int expectedIndex, long value) {
@@ -302,19 +293,6 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
         };
     }
 
-    private static ExpressionNode parameter(String token) {
-        return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.BIND_VARIABLE, token, 0, 0);
-    }
-
-    private static OutputSchema schema(RecordMetadata metadata, int firstId) {
-        final OutputSchema result = new OutputSchema();
-        for (int i = 0; i < metadata.getColumnCount(); i++) {
-            result.add(firstId + i, metadata.getColumnName(i), metadata.getColumnType(i), true);
-            result.setSymbolTableStatic(i, metadata.isSymbolTableStatic(i));
-        }
-        return result;
-    }
-
     private static Record varcharRecord(int expectedIndex, String value) {
         final Utf8String bytes = value == null ? null : new Utf8String(value);
         return new Record() {
@@ -324,25 +302,5 @@ public class FunctionBinderPrimitiveCastTest extends AbstractCairoTest {
                 return bytes;
             }
         };
-    }
-
-    private static OutputSchema wideSchema(int type) {
-        final OutputSchema result = new OutputSchema();
-        for (int i = 0; i < 48; i++) {
-            result.add(i, "unused" + i, ColumnType.INT, true);
-        }
-        return result.add(70, "value", type, true);
-    }
-
-    private FunctionParser parser(ObjList<Function> constructed) {
-        return new FunctionParser(configuration, new FunctionResolver(configuration, engine.getFunctionFactoryCache()) {
-            @Override
-            public Function createFunction(FunctionFactoryDescriptor overload, int position, CharSequence name,
-                                           ObjList<Function> args, IntList positions, SqlExecutionContext context) throws SqlException {
-                final Function function = super.createFunction(overload, position, name, args, positions, context);
-                constructed.add(function);
-                return function;
-            }
-        });
     }
 }

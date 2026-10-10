@@ -143,10 +143,8 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testCorrelatedFromSubQueryWithWhereEquality() throws Exception {
         // #7727
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
+            createOuterKeyed("(1, 1, 1), (2, 2, 2)");
+            createAKeyed("(10, 1, 1), (11, 2, 2)");
             assertQuery("""
                     SELECT o.id, l.sx FROM o JOIN LATERAL (
                         SELECT s.x sx FROM (SELECT id, k, x FROM a WHERE k = o.k) s WHERE s.x = o.x
@@ -294,12 +292,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testCorrelatedUnionAllOnLeftJoinSlave() throws Exception {
         // #7803 section 5
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
-            execute("CREATE TABLE a (id INT, k INT)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 2)");
+            createOuter("(1, 1), (2, 2)");
+            createAKeyOnly("(10, 1), (11, 2)");
+            createB("(20, 1, 1), (21, 2, 2)");
             execute("CREATE TABLE c (id INT, k INT, x INT)");
             execute("INSERT INTO c VALUES (30, 1, 1), (31, 2, 2)");
             assertQuery("""
@@ -446,8 +441,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testDomainOfLeftJoinedOuterColumnHoldsNull() throws Exception {
         // #7803 section 11
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
+            createOuter("(1, 1), (2, 2)");
             execute("CREATE TABLE c (v INT, x INT)");
             execute("INSERT INTO c VALUES (5, 1)");
             execute("CREATE TABLE d (v INT)");
@@ -570,8 +564,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testDomainOfOuterColumnNulledByRightOrFullJoin() throws Exception {
         // #7803 section 11
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
+            createOuter("(1, 1), (2, 2)");
             execute("CREATE TABLE c (v INT, x INT)");
             execute("INSERT INTO c VALUES (5, 1), (6, 9)");
             execute("CREATE TABLE d (v INT)");
@@ -819,12 +812,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             1\t2\t1
                             2\t3\t1
                             """);
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            createOuterKeyed("(1, 1, 1), (2, 2, 2)");
+            createAKeyed("(10, 1, 1), (11, 2, 2)");
+            createB("(20, 1, 1), (21, 2, 3)");
             assertQuery("""
                     SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
                         SELECT a.id aid, b.id bid FROM a FULL JOIN b ON a.x = b.k AND b.k = o.k WHERE a.id > 0
@@ -919,12 +909,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testGroupByOverJoinedCorrelatedSubQuery() throws Exception {
         // #7728
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            createOuterKeyed("(1, 1, 1), (2, 2, 2)");
+            createAKeyed("(10, 1, 1), (11, 2, 2)");
+            createB("(20, 1, 1), (21, 2, 3)");
             assertQuery("""
                     SELECT o.id, l.g, l.c FROM o JOIN LATERAL (
                         SELECT a.x g, count(*) c
@@ -1027,12 +1014,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testGroupByOverJoinWithNonEqualityCorrelation() throws Exception {
         // #7694
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            createOuterKeyed("(1, 1, 1), (2, 2, 2)");
+            createAKeyed("(10, 1, 1), (11, 2, 2)");
+            createB("(20, 1, 1), (21, 2, 3)");
             assertQuery("""
                     SELECT o.id, l.g, l.c FROM o JOIN LATERAL (
                         SELECT a.k g, count(*) c FROM a LEFT JOIN b ON a.x = b.k WHERE a.x < o.x GROUP BY a.k
@@ -1060,12 +1044,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testInnerJoinKeysSharingColumnNamesInBody() throws Exception {
         // #7716
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            createOuterKeyed("(1, 1, 1), (2, 2, 2)");
+            createAKeyed("(10, 1, 1), (11, 2, 2)");
+            createB("(20, 1, 1), (21, 2, 3)");
             assertQuery("""
                     SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
                         SELECT a.id aid, b.id bid FROM a JOIN b ON a.x = b.k AND b.x = o.k
@@ -1112,12 +1093,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testJoinedCorrelatedSubQueryKeepsOnWithSecondOuterColumn() throws Exception {
         // #7725
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1)");
-            execute("INSERT INTO a VALUES (10, 1)");
-            execute("INSERT INTO b VALUES (20, 5, 1)");
+            createOuterKeyed("(1, 1, 1)");
+            createA("(10, 1)");
+            createB("(20, 5, 1)");
             assertQuery("""
                     SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
                         SELECT a.id aid, s.id sid, o.x ox
@@ -1163,12 +1141,10 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testJoinedTablesSharingColumnNameWithTwoCorrelatedConditions() throws Exception {
         // #7836
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT)");
+            createOuter("(1, 10), (2, 20)");
+            createAKeyOnly("(1, 1), (2, 2)");
             execute("CREATE TABLE d (id INT)");
             execute("CREATE TABLE o2 (oid INT, ox INT)");
-            execute("INSERT INTO o VALUES (1, 10), (2, 20)");
-            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
             execute("INSERT INTO d VALUES (1), (2)");
             execute("INSERT INTO o2 VALUES (1, 10), (2, 20)");
             assertQuery("""
@@ -1249,12 +1225,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testJoinToSubQueryWithCorrelatedOn() throws Exception {
         // #7729
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            createOuterKeyed("(1, 1, 1), (2, 2, 2)");
+            createAKeyed("(10, 1, 1), (11, 2, 2)");
+            createB("(20, 1, 1), (21, 2, 3)");
             assertQuery("""
                     SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
                         SELECT a.id aid, s.id sid FROM a JOIN (SELECT id, k FROM b) s ON s.k = o.k
@@ -1338,8 +1311,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testKeylessAggregateReadByFilterOrJoin() throws Exception {
         // #7803 section 2
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 9)");
+            createOuter("(1, 1), (2, 9)");
             execute("CREATE TABLE p (k INT, v INT)");
             execute("INSERT INTO p VALUES (0, 10)");
             execute("CREATE TABLE c (x INT)");
@@ -1478,10 +1450,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testLeftJoinedCorrelatedSubQueryAfterInnerJoinWithWhereEquality() throws Exception {
         // #7725
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            createOuterKeyed("(401, 0, 2), (402, NULL, 1), (403, 3, NULL), (404, 0, 3), (405, NULL, 0), (406, 3, 0)");
             execute("CREATE TABLE t0 (id INT, k INT, x INT)");
             execute("CREATE TABLE t4 (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (401, 0, 2), (402, NULL, 1), (403, 3, NULL), (404, 0, 3), (405, NULL, 0), (406, 3, 0)");
             execute("INSERT INTO t0 VALUES (1, 1, 3), (2, 3, 3), (3, 0, NULL)");
             execute("INSERT INTO t4 VALUES (401, 0, 2), (402, NULL, 1), (403, 3, NULL), (404, 0, 3), (405, NULL, 0), (406, 3, 0)");
             assertQuery("""
@@ -1511,12 +1482,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testLeftJoinedCorrelatedSubQueryWithWhereEqualityOnMaster() throws Exception {
         // #7725
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1)");
-            execute("INSERT INTO a VALUES (10, 1)");
-            execute("INSERT INTO b VALUES (20, 5, 1)");
+            createOuterKeyed("(1, 1, 1)");
+            createA("(10, 1)");
+            createB("(20, 5, 1)");
             assertQuery("""
                     SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
                         SELECT a.id aid, s.id sid
@@ -1552,12 +1520,11 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         // #7700
         assertMemoryLeak(() -> {
             execute("CREATE TABLE p (id INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
+            createA("(10, 1), (11, 2)");
             execute("CREATE TABLE b (id INT, k INT)");
             execute("CREATE TABLE c (k INT)");
             execute("CREATE TABLE o (id INT, k INT)");
             execute("INSERT INTO p VALUES (1), (2)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
             execute("INSERT INTO b VALUES (1, 1), (2, 2)");
             execute("INSERT INTO c VALUES (1)");
             execute("INSERT INTO o VALUES (1, 1), (2, 2)");
@@ -1624,13 +1591,10 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testLeftJoinOnReadingOuterColumnAndCrossJoinedTable() throws Exception {
         // #7700
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            createOuterKeyed("(1, 1, 1), (2, 2, 2)");
+            createAKeyed("(10, 1, 1), (11, 2, 2)");
+            createB("(20, 1, 1), (21, 2, 3)");
             execute("CREATE TABLE c (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
             execute("INSERT INTO c VALUES (30, 1, 1), (31, 3, 2)");
             assertQuery("""
                     SELECT o.id, l.aid, l.bid, l.cid FROM o JOIN LATERAL (
@@ -1712,12 +1676,10 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, k INT)");
             execute("CREATE TABLE t (id INT, k INT)");
-            execute("CREATE TABLE a (id INT, k INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            createAKeyOnly("(100, 1), (101, 2), (102, NULL)");
+            createB("(200, 1, 10), (201, 2, 11), (202, NULL, 10)");
             execute("INSERT INTO o VALUES (1, 1), (2, 2), (3, NULL)");
             execute("INSERT INTO t VALUES (10, 1), (11, 2)");
-            execute("INSERT INTO a VALUES (100, 1), (101, 2), (102, NULL)");
-            execute("INSERT INTO b VALUES (200, 1, 10), (201, 2, 11), (202, NULL, 10)");
             final String expected = """
                     id\ttid\taid\tbid
                     1\t10\t100\t200
@@ -1747,12 +1709,10 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnWithTwoOuterColumnsEquatedToOneColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            createOuterKeyed("(1, 1, 1), (2, 2, 3)");
             execute("CREATE TABLE t (id INT, k INT)");
-            execute("CREATE TABLE a (id INT, k INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 3)");
+            createAKeyOnly("(100, 1), (101, 2)");
             execute("INSERT INTO t VALUES (10, 1), (11, 2)");
-            execute("INSERT INTO a VALUES (100, 1), (101, 2)");
             assertQuery("""
                     SELECT o.id, l.tid, l.aid FROM o JOIN LATERAL (
                         SELECT t.id tid, a.id aid FROM t LEFT JOIN a ON a.k = o.k AND a.k = o.x WHERE t.k = o.k AND t.k = o.x
@@ -1771,8 +1731,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testLimitBodySelectingCorrelatedColumnOrWildcard() throws Exception {
         // #7803 section 10
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
+            createOuter("(1, 1), (2, 2)");
             execute("CREATE TABLE b (bid INT, x INT)");
             execute("INSERT INTO b VALUES (20, 1), (21, 1), (22, 2)");
             assertQuery("""
@@ -1894,8 +1853,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testLimitOrderingInBody() throws Exception {
         // #7803 section 8
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
+            createOuter("(1, 1), (2, 2)");
             execute("CREATE TABLE c (v INT, x INT, w INT, g INT)");
             execute("INSERT INTO c VALUES (301, 1, 5, 1), (302, 1, 3, 1), (303, 1, 7, 2), (304, 2, 9, 1), (305, 2, 1, 2), (306, 2, 4, 2), (307, 1, 1, 2)");
             assertQuery("""
@@ -2005,14 +1963,11 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testNestedLateralReadingCorrelatedSubQueryColumn() throws Exception {
         // #7803 section 15
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 2)");
+            createOuter("(1, 1), (2, 2)");
+            createB("(20, 1, 1), (21, 2, 2)");
             execute("CREATE TABLE d (k INT)");
             execute("INSERT INTO d VALUES (1), (1), (2)");
-            execute("CREATE TABLE a (id INT, k INT)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
+            createAKeyOnly("(10, 1), (11, 2)");
             assertQuery("""
                     SELECT o.id, t.bid, t.c FROM o CROSS JOIN LATERAL (
                         SELECT q.id bid, w.c FROM (SELECT id, k FROM b WHERE x = o.x) q
@@ -2078,11 +2033,10 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, k INT)");
             execute("CREATE TABLE p (id INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
+            createA("(10, 1), (11, 2)");
             execute("CREATE TABLE b (id INT, k INT)");
             execute("INSERT INTO o VALUES (1, 1), (2, 2)");
             execute("INSERT INTO p VALUES (1), (5)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
             execute("INSERT INTO b VALUES (5, 1), (6, 2)");
             assertQuery("""
                     SELECT o.id, l.pid, l.aid, l.bid FROM o JOIN LATERAL (
@@ -2136,8 +2090,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testNoInternalColumnsInWildcardOrCreateTableAs() throws Exception {
         // #7803 section 9
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
+            createOuter("(1, 1), (2, 2)");
             execute("CREATE TABLE b (bid INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO b VALUES (20, 1, '2024-01-01T00:00:00.000000Z'), (21, 1, '2024-01-01T00:00:01.000000Z'), (22, 2, '2024-01-01T00:00:02.000000Z')");
             assertQuery("""
@@ -2215,12 +2168,10 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testNonEquiRightJoinWithCorrelatedWhere() throws Exception {
         // #7723
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
+            createOuter("(1, 10), (2, 20)");
             execute("CREATE TABLE a (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 10), (2, 20)");
+            createB("(11, 1, 10), (12, 2, 20), (13, 3, 30)");
             execute("INSERT INTO a VALUES (1, 1, '2024-01-01T00:00:01.000000Z'), (2, 2, '2024-01-01T00:00:03.000000Z')");
-            execute("INSERT INTO b VALUES (11, 1, 10), (12, 2, 20), (13, 3, 30)");
             assertQuery("""
                     SELECT o.id, t.aid, t.cid FROM o CROSS JOIN LATERAL (
                         SELECT a.id aid, c.id cid FROM a RIGHT JOIN b c ON c.k > a.k WHERE c.x != o.x
@@ -2382,10 +2333,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         // #7731
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, x INT, y INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
+            createA("(10, 1), (5, 1), (3, 5), (4, 5)");
             execute("CREATE TABLE c (k INT)");
             execute("INSERT INTO o VALUES (1, 1, 1), (2, 5, 5)");
-            execute("INSERT INTO a VALUES (10, 1), (5, 1), (3, 5), (4, 5)");
             execute("INSERT INTO c VALUES (1), (5)");
             assertQuery("""
                     SELECT o.id, l.aid FROM o JOIN LATERAL (
@@ -2461,11 +2411,10 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         // #7700
         assertMemoryLeak(() -> {
             execute("CREATE TABLE p (id INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
+            createA("(10, 1), (11, 2)");
             execute("CREATE TABLE b (id INT, k INT)");
             execute("CREATE TABLE c (k INT)");
             execute("INSERT INTO p VALUES (1), (2)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
             execute("INSERT INTO b VALUES (1, 1), (2, 2)");
             execute("INSERT INTO c VALUES (1)");
             assertQuery("""
@@ -2740,12 +2689,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testRightAndFullJoinInBodyMatchedRows() throws Exception {
         // #7803
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
-            execute("CREATE TABLE a (id INT, k INT)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 2)");
+            createOuter("(1, 1), (2, 2)");
+            createAKeyOnly("(10, 1), (11, 2)");
+            createB("(20, 1, 1), (21, 2, 2)");
             assertQuery("""
                     SELECT o.id, t.aid, t.cid, t.sid FROM o CROSS JOIN LATERAL (
                         SELECT a.id aid, c.id cid, s.id sid FROM a
@@ -2808,12 +2754,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testRightJoinedCorrelatedSubQueryWithNullOuterKey() throws Exception {
         // #7726
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, NULL)");
-            execute("INSERT INTO a VALUES (10, 1)");
-            execute("INSERT INTO b VALUES (20, 5, 1)");
+            createOuter("(1, 1), (2, NULL)");
+            createA("(10, 1)");
+            createB("(20, 5, 1)");
             assertQuery("""
                     SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
                         SELECT a.id aid, s.id sid
@@ -3048,12 +2991,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testRightJoinToSubQueryWithCorrelatedOn() throws Exception {
         // #7729
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, k INT, x INT)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            createOuterKeyed("(1, 1, 1), (2, 2, 2)");
+            createAKeyed("(10, 1, 1), (11, 2, 2)");
+            createB("(20, 1, 1), (21, 2, 3)");
             assertQuery("""
                     SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
                         SELECT a.id aid, s.id sid FROM a RIGHT JOIN (SELECT id, k FROM b) s ON a.x = s.k AND s.k = o.k
@@ -3173,8 +3113,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
             execute("INSERT INTO o1 VALUES (1, 1), (2, 2)");
             execute("CREATE TABLE o2 (id INT, x INT)");
             execute("INSERT INTO o2 VALUES (1, 5), (2, 6)");
-            execute("CREATE TABLE a (id INT, k INT)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
+            createAKeyOnly("(10, 1), (11, 2)");
             execute("CREATE TABLE b (id INT, k INT, x INT, y INT)");
             execute("INSERT INTO b VALUES (20, 1, 1, 5), (21, 2, 2, 6)");
             assertQuery("""
@@ -3234,10 +3173,8 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testSharedDomainReadByMoreThanOneConsumer() throws Exception {
         // #7803 section 3
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
+            createOuter("(1, 1), (2, 2)");
+            createA("(10, 1), (11, 2)");
             execute("CREATE TABLE b (id INT, k INT, x INT, y INT)");
             execute("INSERT INTO b VALUES (20, 1, 1, 5), (21, 2, 2, 6)");
             execute("CREATE TABLE c (id INT, y INT)");
@@ -3309,10 +3246,8 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testSharedDomainSourceFreedAfterExplainAndFailedCreate() throws Exception {
         // #7803 section 3
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
+            createOuter("(1, 1), (2, 2)");
+            createA("(10, 1), (11, 2)");
             execute("CREATE TABLE b (id INT, k INT, x INT, y INT)");
             execute("INSERT INTO b VALUES (20, 1, 1, 5), (21, 2, 2, 6)");
             execute("CREATE TABLE c (id INT, y INT)");
@@ -3371,12 +3306,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testTwoInnerJoinedCorrelatedSubQueries() throws Exception {
         // #7803 section 4
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
-            execute("CREATE TABLE a (id INT, k INT)");
-            execute("INSERT INTO a VALUES (10, 1)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 1, 2)");
+            createOuter("(1, 1), (2, 2)");
+            createAKeyOnly("(10, 1)");
+            createB("(20, 1, 1), (21, 1, 2)");
             execute("CREATE TABLE c (id INT, k INT, x INT)");
             execute("INSERT INTO c VALUES (30, 1, 1), (31, 1, 2)");
             assertQuery("""
@@ -3420,12 +3352,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             id\taid\tsid
                             1\tnull\t20
                             """);
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, NULL)");
-            execute("INSERT INTO a VALUES (10, 1)");
-            execute("INSERT INTO b VALUES (20, 5, 1)");
+            createOuter("(1, 1), (2, NULL)");
+            createA("(10, 1)");
+            createB("(20, 5, 1)");
             assertQuery("""
                     SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (
                         SELECT a.id aid, s.id sid
@@ -3461,12 +3390,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testWhereEqualityOnFirstTableWithNonEqualityJoinedSubQuery() throws Exception {
         // #7803 section 13
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
-            execute("CREATE TABLE a (id INT, k INT, x INT)");
-            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO b VALUES (20, 1, 2), (21, 2, 1)");
+            createOuter("(1, 1), (2, 2)");
+            createAKeyed("(10, 1, 1), (11, 2, 2)");
+            createB("(20, 1, 2), (21, 2, 1)");
             execute("CREATE TABLE d (k INT)");
             execute("INSERT INTO d VALUES (1), (1), (2)");
             assertQuery("""
@@ -3518,12 +3444,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testWhereEqualityOnOuterDependentLeftJoinSlave() throws Exception {
         // #7732
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("CREATE TABLE a (id INT, x INT)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, NULL)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 5)");
-            execute("INSERT INTO b VALUES (20, 1, 1)");
+            createOuter("(1, 1), (2, NULL)");
+            createA("(10, 1), (11, 5)");
+            createB("(20, 1, 1)");
             assertQuery("""
                     SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (
                         SELECT a.id aid, b.id bid FROM a LEFT JOIN b ON a.x = b.k AND b.k = o.x WHERE b.k = o.x
@@ -3593,12 +3516,9 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testWhereEqualityOnTableJoinedAfterCorrelatedSubQuery() throws Exception {
         // #7803 section 14
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
-            execute("CREATE TABLE a (id INT, k INT)");
-            execute("INSERT INTO a VALUES (10, 1), (11, 2)");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 2)");
+            createOuter("(1, 1), (2, 2)");
+            createAKeyOnly("(10, 1), (11, 2)");
+            createB("(20, 1, 1), (21, 2, 2)");
             execute("CREATE TABLE d (id INT, k INT, x INT)");
             execute("INSERT INTO d VALUES (40, 1, 1), (41, 2, 1), (42, 2, 2)");
             assertQuery("""
@@ -3676,12 +3596,10 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     public void testWindowAndLatestOnAboveJoinedCorrelatedSubQuery() throws Exception {
         // #7803 section 7
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE o (id INT, x INT)");
-            execute("INSERT INTO o VALUES (1, 1), (2, 2)");
+            createOuter("(1, 1), (2, 2)");
             execute("CREATE TABLE a (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO a VALUES (10, 1, '2024-01-01T00:00:00.000000Z'), (11, 2, '2024-01-01T00:00:01.000000Z')");
-            execute("CREATE TABLE b (id INT, k INT, x INT)");
-            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 1), (22, 1, 2), (23, 2, 2)");
+            createB("(20, 1, 1), (21, 2, 1), (22, 1, 2), (23, 2, 2)");
             assertQuery("""
                     SELECT o.id, t.bid, t.rn FROM o CROSS JOIN LATERAL (
                         SELECT bid, row_number() OVER (ORDER BY bid) rn FROM (
@@ -3779,6 +3697,26 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         assertQuery(sql).noLeakCheck().fails(sql.indexOf("SPLICE"), "outer column reference at or before a SPLICE join is not supported in a LATERAL sub-query");
     }
 
+    private void createA(String rows) throws Exception {
+        execute("CREATE TABLE a (id INT, x INT)");
+        execute("INSERT INTO a VALUES " + rows);
+    }
+
+    private void createAKeyOnly(String rows) throws Exception {
+        execute("CREATE TABLE a (id INT, k INT)");
+        execute("INSERT INTO a VALUES " + rows);
+    }
+
+    private void createAKeyed(String rows) throws Exception {
+        execute("CREATE TABLE a (id INT, k INT, x INT)");
+        execute("INSERT INTO a VALUES " + rows);
+    }
+
+    private void createB(String rows) throws Exception {
+        execute("CREATE TABLE b (id INT, k INT, x INT)");
+        execute("INSERT INTO b VALUES " + rows);
+    }
+
     private void createOrdersTradesRefunds() throws Exception {
         execute("CREATE TABLE orders (id INT, k INT)");
         execute("CREATE TABLE trades (id INT, x INT)");
@@ -3788,5 +3726,15 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         execute("INSERT INTO trades VALUES (10, 1)");
         execute("INSERT INTO refunds VALUES (100, 1), (101, 2)");
         execute("INSERT INTO xs VALUES (1, 100)");
+    }
+
+    private void createOuter(String rows) throws Exception {
+        execute("CREATE TABLE o (id INT, x INT)");
+        execute("INSERT INTO o VALUES " + rows);
+    }
+
+    private void createOuterKeyed(String rows) throws Exception {
+        execute("CREATE TABLE o (id INT, k INT, x INT)");
+        execute("INSERT INTO o VALUES " + rows);
     }
 }

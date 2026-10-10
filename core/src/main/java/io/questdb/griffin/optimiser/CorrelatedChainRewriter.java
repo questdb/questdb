@@ -29,7 +29,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
@@ -44,6 +43,7 @@ import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.ObjList;
 
+import static io.questdb.griffin.optimiser.DecorrelationContext.isTrue;
 import static io.questdb.griffin.optimiser.ScalarCompensation.isImplicitlyKeyedByOuterColumns;
 
 /**
@@ -181,8 +181,8 @@ final class CorrelatedChainRewriter {
         switch (node) {
             case ProjectPlan project -> {
                 for (int k = base, n = ctx.mappedOuterIds.size(); k < n; k++) {
-                    ctx.exposeColumn(project, input.getOutput(), ctx.mappedColumnIds.getQuick(k), ctx.outerRefName(ctx.mappedOuterIds.getQuick(k)), project.getPosition());
-                    ctx.mappedColumnIds.setQuick(k, project.getOutput().getColumnId(project.getOutput().getColumnCount() - 1));
+                    ctx.mappedColumnIds.setQuick(k, ctx.exposeColumn(project, input.getOutput(), ctx.mappedColumnIds.getQuick(k),
+                            ctx.outerRefName(ctx.mappedOuterIds.getQuick(k)), project.getPosition()));
                 }
                 return project;
             }
@@ -198,7 +198,7 @@ final class CorrelatedChainRewriter {
                         prependPartitions(window.getSpecs().getQuick(s), input.getOutput(), base, window.getPosition());
                     }
                 }
-                ctx.alignColumns(window.getOutput(), input.getOutput());
+                ctx.realign(window);
                 return window;
             }
             case LimitPlan limit when isCorrelated -> {
@@ -232,9 +232,7 @@ final class CorrelatedChainRewriter {
             predicate = hi != null && lo != null
                     ? ctx.context.getRewriter().combineConjunction(upper, compensation.limitComparison("<", lo, rank, window.getOutput(), position), position) : upper;
         }
-        final FilterPlan filter = ctx.planNodes.filters.next().of(window, predicate, position);
-        filter.deriveOutput();
-        return filter;
+        return ctx.planNodes.filters.next().of(window, predicate, position);
     }
 
     /**
@@ -248,7 +246,7 @@ final class CorrelatedChainRewriter {
             node.replaceInput(0, input);
             if (node instanceof FilterPlan filter) {
                 final BoundExpression predicate = keys.dropEqualities(filter.getPredicate());
-                if (predicate == null || predicate instanceof ConstantExpression constant && constant.getLongValue() != 0) {
+                if (isTrue(predicate)) {
                     continue;
                 }
                 filter.of(input, predicate, filter.getPosition());

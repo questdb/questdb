@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
-import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
@@ -380,11 +379,5 @@ public class AggregateFamiliesTest extends AbstractCairoTest {
                 (3,2,30,'a','a','a','2020-01-03','2020-01-03','2020-01-03T00:00:00.000000003Z'),
                 (4,2,40,'z','z','z','2020-01-04','2020-01-04','2020-01-04T00:00:00.000000004Z')
                 """);
-    }
-
-    private String plan(RecordCursorFactory factory) {
-        final TextPlanSink sink = new TextPlanSink();
-        sink.of(factory, sqlExecutionContext);
-        return sink.getSink().toString();
     }
 }

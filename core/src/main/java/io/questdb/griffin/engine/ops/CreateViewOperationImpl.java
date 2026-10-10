@@ -24,11 +24,9 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -216,61 +214,18 @@ public class CreateViewOperationImpl implements CreateViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromColumns(@Transient OutputSchema metadata, @Transient IntList positions) throws SqlException {
-        final int columnCount = metadata.getColumnCount();
-        assert columnCount > 0;
-        assert positions.size() == columnCount;
-        createColumnModelMap.clear();
-        final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap =
-                createTableOperation.getAugmentedColumnMetadata();
-        for (int i = 0; i < columnCount; i++) {
-            addColumnModel(Chars.toString(metadata.getColumnName(i)), positions.getQuick(i), augColumnMetadataMap);
+        assert metadata.getColumnCount() > 0;
+        assert positions.size() == metadata.getColumnCount();
+        final CreateTableColumnModel timestampModel = createTableOperation.initColumnModels(createColumnModelMap, metadata, positions);
+        if (timestampModel != null) {
+            timestampModel.setIsDedupKey(); // set dedup for timestamp column
         }
-        initColumnMetadata();
+        // Don't forget to reset augmented columns in create table op with what we have scraped.
+        createTableOperation.initColumnMetadata(createColumnModelMap);
     }
 
     @Override
     public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException {
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
-    }
-
-    private void addColumnModel(
-            CharSequence columnName,
-            int position,
-            LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap
-    ) {
-        final CreateTableColumnModel model = CreateTableColumnModel.FACTORY.newInstance();
-        model.setColumnNamePos(position);
-        // Preserve the staged validation: final types come from the generated SELECT metadata.
-        model.setColumnType(ColumnType.UNDEFINED);
-        // Copy index() definitions from create table op, so that we don't lose them.
-        final TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
-        if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
-            model.setIndexType(augColumnMetadata.getIndexType(), position, augColumnMetadata.getIndexValueBlockCapacity());
-        }
-        createColumnModelMap.put(columnName, model);
-    }
-
-    private void initColumnMetadata() throws SqlException {
-        final String timestamp = createTableOperation.getTimestampColumnName();
-        final int timestampPos = createTableOperation.getTimestampColumnNamePosition();
-        if (timestamp != null) {
-            final CreateTableColumnModel timestampModel = createColumnModelMap.get(timestamp);
-            if (timestampModel == null) {
-                throw SqlException.position(timestampPos)
-                        .put("TIMESTAMP column does not exist [name=")
-                        .put(timestamp).put(']');
-            }
-            final int timestampType = timestampModel.getColumnType();
-            // type can be -1 for create table as select because types aren't known yet
-            if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) {
-                throw SqlException.position(timestampPos)
-                        .put("TIMESTAMP column expected [actual=")
-                        .put(ColumnType.nameOf(timestampType)).put(']');
-            }
-            timestampModel.setIsDedupKey(); // set dedup for timestamp column
-        }
-
-        // Don't forget to reset augmented columns in create table op with what we have scraped.
-        createTableOperation.initColumnMetadata(createColumnModelMap);
     }
 }

@@ -30,7 +30,6 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -86,12 +85,12 @@ public class SymbolIndexTest extends AbstractCairoTest {
                             5
                             """
             );
-            try (RecordCursorFactory factory = compile(sql)) {
-                assertRows(factory, "id\n1\n4\n5\n");
+            try (RecordCursorFactory factory = select(sql)) {
+                assertRowsOnly(factory, "id\n1\n4\n5\n");
                 bindVariableService.setBoolean(0, false);
-                assertRows(factory, "id\n");
+                assertRowsOnly(factory, "id\n");
                 bindVariableService.setBoolean(0, true);
-                assertRows(factory, "id\n1\n4\n5\n");
+                assertRowsOnly(factory, "id\n1\n4\n5\n");
             }
         });
     }
@@ -356,10 +355,10 @@ public class SymbolIndexTest extends AbstractCairoTest {
                                 4
                                 """
                 );
-                try (RecordCursorFactory factory = compile(limited)) {
-                    assertRows(factory, "id\n1\n4\n");
+                try (RecordCursorFactory factory = select(limited)) {
+                    assertRowsOnly(factory, "id\n1\n4\n");
                     bindVariableService.setLong(0, -2);
-                    assertRows(factory, "id\n4\n5\n");
+                    assertRowsOnly(factory, "id\n4\n5\n");
                 }
                 sqlExecutionContext.setParallelFilterEnabled(false);
                 assertIndex(
@@ -409,7 +408,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
                             4
                             """
             );
-            try (RecordCursorFactory factory = compile(sql)) {
+            try (RecordCursorFactory factory = select(sql)) {
                 assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
                         .skipRandomAccessProbe().sizeMayVary().returns("id\n3\n4\n");
                 bindVariableService.setStr(0, null);
@@ -441,13 +440,13 @@ public class SymbolIndexTest extends AbstractCairoTest {
                 }
             }
             try (RecordCursorFactory factory = retained) {
-                assertRows(factory, "id\n4\n5\n");
+                assertRowsOnly(factory, "id\n4\n5\n");
                 bindVariableService.setStr(0, null);
-                assertRows(factory, "id\n3\n");
+                assertRowsOnly(factory, "id\n3\n");
                 bindVariableService.setStr(0, "new");
-                assertRows(factory, "id\n");
+                assertRowsOnly(factory, "id\n");
                 execute("INSERT INTO lp_index VALUES(98,8,'new','X','eight','2020-01-03')");
-                assertRows(factory, "id\n8\n");
+                assertRowsOnly(factory, "id\n8\n");
             }
             final String missing = "SELECT id FROM lp_index WHERE s='later'";
             assertIndex(
@@ -456,10 +455,10 @@ public class SymbolIndexTest extends AbstractCairoTest {
                     "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index",
                     "id\n"
             );
-            try (RecordCursorFactory factory = compile(missing)) {
-                assertRows(factory, "id\n");
+            try (RecordCursorFactory factory = select(missing)) {
+                assertRowsOnly(factory, "id\n");
                 execute("INSERT INTO lp_index VALUES(99,9,'later','Y','nine','2020-01-03T00:00:01')");
-                assertRows(factory, "id\n9\n");
+                assertRowsOnly(factory, "id\n9\n");
             }
         });
     }
@@ -491,55 +490,43 @@ public class SymbolIndexTest extends AbstractCairoTest {
     }
 
     private void assertIndex(String sql, String specialization, String shape, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
+        try (RecordCursorFactory factory = select(sql)) {
             final TextPlanSink sink = new TextPlanSink();
             sink.of(factory, sqlExecutionContext);
             TestUtils.assertContains(sink.getSink(), specialization);
             TestUtils.assertEquals(shape, PlanShape.of(factory, sqlExecutionContext));
-            assertRows(factory, expected);
+            assertRowsOnly(factory, expected);
         }
     }
 
     private void assertIndexExactPlan(String sql, String specialization, String plan, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
+        try (RecordCursorFactory factory = select(sql)) {
             final TextPlanSink sink = new TextPlanSink();
             sink.of(factory, sqlExecutionContext);
             TestUtils.assertContains(sink.getSink(), specialization);
-            final StringSink text = new StringSink();
-            for (int i = 1, n = sink.getLineCount(); i <= n; i++) {
-                text.put(sink.getLine(i)).put('\n');
-            }
-            TestUtils.assertEquals(plan, text);
-            assertRows(factory, expected);
+            TestUtils.assertEquals(plan, planText(factory));
+            assertRowsOnly(factory, expected);
         }
     }
 
     private void assertRows(String sql, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
-            assertRows(factory, expected);
+        try (RecordCursorFactory factory = select(sql)) {
+            assertRowsOnly(factory, expected);
         }
     }
 
     private void assertCoveringBackup(String sql, String shape, String expected) throws Exception {
-        try (RecordCursorFactory factory = compile(sql)) {
-            final TextPlanSink sink = new TextPlanSink();
-            sink.of(factory, sqlExecutionContext);
-            TestUtils.assertContains(sink.getSink(), "backup: true");
+        try (RecordCursorFactory factory = select(sql)) {
             TestUtils.assertEquals(shape, PlanShape.of(factory, sqlExecutionContext));
-            assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().noRandomAccess()
-                    .skipRandomAccessProbe().sizeMayVary().returns(expected);
         }
-    }
-
-    private void assertRows(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess()
-                .sizeMayVary().returns(expected);
-    }
-
-    private RecordCursorFactory compile(String sql) throws SqlException {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            return compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-        }
+        assertQuery(sql)
+                .noLeakCheck()
+                .withPlanContaining("backup: true")
+                .inferTimestamp()
+                .noRandomAccess()
+                .skipRandomAccessProbe()
+                .sizeMayVary()
+                .returns(expected);
     }
 
     private void createRows(boolean isCovering) throws SqlException {

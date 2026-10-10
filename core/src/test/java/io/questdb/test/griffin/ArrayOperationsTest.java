@@ -24,14 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -41,7 +38,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
     public void testSearchAndEqualityPreserveNullsShapesAndSlices() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,array_position(a,2.0),array_position(a,NULL),"
                             + "insertion_point(array_sort(a),2.0),insertion_point(array_sort(a),2.0,true),"
                             + "insertion_point(array_sort(a),2.0,false) FROM lp_array_ops ORDER BY id",
@@ -55,7 +52,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             6	null	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,array_position(m[1:3,2],2.5),insertion_point(m[1:3,2],2.5),"
                             + "a=a,a!=a,a<>a,a=NULL::DOUBLE[],a=m FROM lp_array_ops ORDER BY id",
                     """
@@ -68,7 +65,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             6	null	null	true	false	false	false	false
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_position(ARRAY[]::DOUBLE[],1.0),insertion_point(ARRAY[]::DOUBLE[],1.0),"
                             + "ARRAY[1.0,NULL]=ARRAY[1.0,NULL],ARRAY[1.0]<>ARRAY[2.0]",
                     """
@@ -78,7 +75,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
             );
             bindVariableService.setDouble(0, 2);
             bindVariableService.setBoolean(1, true);
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,array_position(a,$1),insertion_point(array_sort(a),$1,$2) FROM lp_array_ops ORDER BY id",
                     """
                             id	array_position	insertion_point
@@ -90,7 +87,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             6	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id FROM lp_array_ops WHERE array_position(a,$1)>0 AND a<>ARRAY[]::DOUBLE[] ORDER BY id",
                     """
                             id
@@ -109,12 +106,12 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                 try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                     try (RecordCursorFactory constant = compiler.compile(
                             "SELECT flatten(NULL::DOUBLE[][]) f", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(constant, "f\nnull\n");
+                        assertRowsOnly(constant, "f\nnull\n");
                     }
                     retained = compiler.compile("SELECT id,flatten(transpose(m)) f FROM lp_array_ops ORDER BY id",
                             sqlExecutionContext).getRecordCursorFactory();
                 }
-                assertResult(retained, "id\tf\n"
+                assertRowsOnly(retained, "id\tf\n"
                         + "1\t[1.25,3.75,2.5,4.5]\n"
                         + "2\tnull\n"
                         + "3\t[5.0,7.0,6.0,8.0]\n"
@@ -131,7 +128,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
     public void testTransformsPreserveMultidimensionalAndStridedValues() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,flatten(m),transpose(m),flatten(transpose(m)),array_cum_sum(m),"
                             + "array_cum_sum(m[1:3,2]),shift(m,1),shift(m,-1,99.0),round(m,1) FROM lp_array_ops ORDER BY id",
                     """
@@ -144,7 +141,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             6	null	null	null	null	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,shift(a,0),shift(a,1),shift(a,-1,99.0),shift(a,99),"
                             + "round(a,-1),round(a,999),round(a,NULL::INT),array_cum_sum(a) FROM lp_array_ops ORDER BY id",
                     """
@@ -157,7 +154,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             6	null	null	null	null	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT flatten(ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]]),"
                             + "flatten(NULL::DOUBLE[][]),"
                             + "transpose(ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]]),array_cum_sum(ARRAY[1.0,NULL,3.0]),"
@@ -167,7 +164,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             [1.0,2.0,3.0,4.0]	null	[[1.0,3.0],[2.0,4.0]]	[1.0,1.0,4.0]	[9.0,1.0]	[1.3,2.6]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT id,shift(m[1:3,2],-1),round(m[1:3,2],1),"
                             + "array_sum(flatten(transpose(m))) FROM lp_array_ops ORDER BY id",
                     """
@@ -180,7 +177,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             6	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT t.id,u.value FROM lp_array_ops t,UNNEST(flatten(transpose(t.m))) u ORDER BY t.id,u.value",
                     """
                             id	value
@@ -205,7 +202,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
     public void testArrayAggregatesKeepNullEmptyGroupingAndFullOutputTypes() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,array_agg(d),array_agg(a),first(a),last(a),first_not_null(a),last_not_null(a) "
                             + "FROM lp_array_ops GROUP BY k ORDER BY k",
                     """
@@ -214,7 +211,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             2	[3.75,4.25]	[3.0,4.0]	[3.0,4.0]	[]	[3.0,4.0]	[]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT first(m),last(m),first_not_null(m),last_not_null(m),"
                             + "array_agg(m[1:3,2]) FROM lp_array_ops",
                     """
@@ -222,7 +219,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             [[1.25,2.5],[3.75,4.5]]	null	[[1.25,2.5],[3.75,4.5]]	[[9.0,10.0],[11.0,12.0]]	[2.5,4.5,6.0,8.0,10.0,12.0]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_agg(d),array_agg(a),first(a),last(a),first_not_null(a),last_not_null(a) "
                             + "FROM lp_array_ops WHERE id<0",
                     """
@@ -230,7 +227,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             null	null	null	null	null	null
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_agg(ARRAY[]::DOUBLE[]),array_agg(NULL::DOUBLE[]),"
                             + "first(ARRAY[]::DOUBLE[]),last_not_null(ARRAY[]::DOUBLE[]) FROM lp_array_ops",
                     """
@@ -238,14 +235,14 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             null	null	[]	[]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_sum(vals),dim_length(vals,1) FROM (SELECT array_agg(a) vals FROM lp_array_ops)",
                     """
                             array_sum	dim_length
                             23.0	8
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,array_agg(array_reverse(a)),first(shift(a,1)),last_not_null(round(a,1)) "
                             + "FROM lp_array_ops GROUP BY k ORDER BY k",
                     """
@@ -261,7 +258,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
     public void testOrderedSubqueriesRemainVisibleToArrayAggregates() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_agg(d),array_agg(a) "
                             + "FROM (SELECT d,a FROM lp_array_ops ORDER BY id DESC)",
                     """
@@ -269,7 +266,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             [null,5.5,4.25,3.75,null,1.25]	[5.0,6.0,3.0,4.0,1.0,2.0,2.0,null]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_agg(d),array_agg(a),first(a),last(a),first_not_null(a),last_not_null(a) "
                             + "FROM (SELECT d,a FROM lp_array_ops ORDER BY id DESC)",
                     """
@@ -277,7 +274,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             [null,5.5,4.25,3.75,null,1.25]	[5.0,6.0,3.0,4.0,1.0,2.0,2.0,null]	null	[1.0,2.0,2.0,null]	[5.0,6.0]	[1.0,2.0,2.0,null]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT k,array_agg(d),array_agg(a),first_not_null(a),last_not_null(a) "
                             + "FROM (SELECT k,d,a FROM lp_array_ops ORDER BY id DESC) GROUP BY k ORDER BY k",
                     """
@@ -286,7 +283,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             2	[4.25,3.75]	[3.0,4.0]	[]	[3.0,4.0]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_agg(d),array_agg(a),first_not_null(a),last_not_null(a) "
                             + "FROM (SELECT d,a FROM lp_array_ops ORDER BY id DESC LIMIT 3)",
                     """
@@ -299,7 +296,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                 for (int reuse = 0; reuse < 2; reuse++) {
                     try (RecordCursorFactory factory = compiler.compile("SELECT array_agg(id::DOUBLE) vals "
                             + "FROM (SELECT id FROM lp_array_ops ORDER BY id DESC)", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(factory, "vals\n[6.0,5.0,4.0,3.0,2.0,1.0]\n");
+                        assertRowsOnly(factory, "vals\n[6.0,5.0,4.0,3.0,2.0,1.0]\n");
                         final TextPlanSink plan = new TextPlanSink();
                         plan.of(factory, sqlExecutionContext);
                         if (reuse == 0) {
@@ -317,7 +314,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
     public void testSamplingUsesExistingArrayAggregateRuntime() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,array_agg(d),array_agg(a),first_not_null(a),last_not_null(a) "
                             + "FROM lp_array_ops SAMPLE BY 1h FILL(NONE)",
                     """
@@ -327,7 +324,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             2026-01-01T02:00:00.000000Z	[5.5,null]	[5.0,6.0]	[5.0,6.0]	[5.0,6.0]
                             """
             );
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT ts,k,array_agg(a),first(m),last(m) FROM lp_array_ops SAMPLE BY 1h FILL(NONE)",
                     """
                             ts	k	array_agg	first	last
@@ -353,7 +350,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                     retained = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
                     compiler.clear();
                     try (RecordCursorFactory recovery = compiler.compile("SELECT count() FROM lp_array_ops", sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(recovery, "count\n6\n");
+                        assertRowsOnly(recovery, "count\n6\n");
                     }
                 }
                 for (int pass = 0; pass < 3; pass++) {
@@ -361,7 +358,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                     bindVariableService.setDouble(1, pass == 2 ? Double.NaN : pass + 7);
                     try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                          RecordCursorFactory baseline = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                        assertResult(retained, print(baseline));
+                        assertRowsOnly(retained, printFactory(baseline));
                     }
                 }
             } finally {
@@ -381,7 +378,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
             assertQuery("SELECT ts,array_agg(a) FROM lp_array_ops SAMPLE BY 1h FILL(LINEAR)").noLeakCheck().fails(59, "support for LINEAR fill is not yet implemented [function=array_agg(a), class=io.questdb.griffin.engine.functions.groupby.ArrayAggDoubleArrayGroupByFunction]");
             assertQuery("SELECT ts,first(a) FROM lp_array_ops SAMPLE BY 1h FILL(1)").noLeakCheck().fails(55, "support for VALUE fill is not yet implemented [function=first(a), class=io.questdb.griffin.engine.functions.groupby.FirstArrayGroupByFunction]");
             assertQuery("SELECT array_position(transpose(ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]]),1.0)").noLeakCheck().fails(22, "array is not one-dimensional");
-            assertQueryRows(
+            assertRowsOnly(
                     "SELECT array_sort(ARRAY[2.0,1.0])=transpose(ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]])",
                     """
                             column
@@ -389,7 +386,7 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                             """
             );
             bindVariableService.setInt(0, Numbers.INT_NULL);
-            assertQueryRows("SELECT id,round(a,$1) FROM lp_array_ops ORDER BY id", """
+            assertRowsOnly("SELECT id,round(a,$1) FROM lp_array_ops ORDER BY id", """
                     id	round
                     1	[null,null,null,null]
                     2	null
@@ -401,10 +398,6 @@ public class ArrayOperationsTest extends AbstractCairoTest {
         });
     }
 
-    private void assertResult(RecordCursorFactory factory, String expected) throws Exception {
-        assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
-    }
-
     private void createRows() throws Exception {
         execute("CREATE TABLE lp_array_ops(unused INT,id INT,k INT,d DOUBLE,a DOUBLE[],m DOUBLE[][],ts TIMESTAMP) TIMESTAMP(ts)");
         execute("INSERT INTO lp_array_ops VALUES"
@@ -414,17 +407,5 @@ public class ArrayOperationsTest extends AbstractCairoTest {
                 + "(94,4,2,4.25,ARRAY[],ARRAY[ARRAY[9.0,10.0],ARRAY[11.0,12.0]],'2026-01-01T01:30:00Z'),"
                 + "(95,5,1,5.5,ARRAY[5.0,6.0],NULL,'2026-01-01T02:00:00Z'),"
                 + "(96,6,1,NULL,NULL,NULL,'2026-01-01T02:30:00Z')");
-    }
-
-    private String print(RecordCursorFactory factory) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final StringSink sink = new StringSink();
-            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
-            return sink.toString();
-        }
-    }
-
-    private void assertQueryRows(String sql, String expected) throws Exception {
-        assertQuery(sql).noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
     }
 }

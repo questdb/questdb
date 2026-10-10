@@ -161,7 +161,7 @@ public class UpdateCastTest extends AbstractCairoTest {
 
     private void assertRows(SqlCompilerImpl compiler, String sql, String expected) throws Exception {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            assertFactory(factory).withContext(sqlExecutionContext).inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+            assertRowsOnly(factory, expected);
         }
     }
 

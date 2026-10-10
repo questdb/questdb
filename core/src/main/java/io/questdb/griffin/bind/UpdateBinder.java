@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
@@ -42,11 +41,11 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
+import static io.questdb.griffin.bind.BindContext.getColumnIndexQuiet;
 import static io.questdb.griffin.bind.BindContext.sourceAlias;
 
 /**
@@ -57,29 +56,23 @@ import static io.questdb.griffin.bind.BindContext.sourceAlias;
 final class UpdateBinder implements Mutable {
     private final SqlBinder binder;
     private final BindContext ctx;
-    private final JoinBinder joinBinder;
     private final OrderBinder orderBinder;
-    private final ObjList<CharSequence> tableColumnNames = new ObjList<>();
-    private final IntList tableColumnTypes = new IntList();
     private final UpdateTarget target;
     private final WindowBinder windowBinder;
-    private int timestampIndex = -1;
+    private ScanPlan targetScan;
 
-    UpdateBinder(BindContext ctx, SqlBinder binder, WindowBinder windowBinder, JoinBinder joinBinder, OrderBinder orderBinder, UpdateTarget target) {
+    UpdateBinder(BindContext ctx, SqlBinder binder, WindowBinder windowBinder, OrderBinder orderBinder, UpdateTarget target) {
         this.ctx = ctx;
         this.binder = binder;
         this.windowBinder = windowBinder;
-        this.joinBinder = joinBinder;
         this.orderBinder = orderBinder;
         this.target = target;
     }
 
     @Override
     public void clear() {
-        tableColumnNames.clear();
-        tableColumnTypes.clear();
         target.clear();
-        timestampIndex = -1;
+        targetScan = null;
     }
 
     private static boolean isAssignable(int type, int targetType) {
@@ -101,54 +94,26 @@ final class UpdateBinder implements Mutable {
         return SqlException.$(model.getModelPosition(), "Unsupported SQL complexity for the UPDATE statement");
     }
 
-    private void bindAssignment(
-            QueryColumn column, ProjectPlan project, OutputSchema output, QueryModel source, SqlExecutionContext executionContext
-    ) throws SqlException {
-        final BindScope scope = ctx.scope();
-        final ExpressionNode expression = column.getAst();
-        final CharSequence alias = sourceAlias(source);
-        if (expression.type != ExpressionNode.LITERAL || ctx.functionBinder.isOuterColumn(expression, output, alias)) {
-            final int targetIndex = getColumnIndex(column.getName());
-            final BoundExpression bound = targetIndex >= 0
-                    ? ctx.functionBinder.bindUpdateAssignment(expression, output, alias, tableColumnTypes.getQuick(targetIndex), executionContext)
-                    : ctx.functionBinder.bind(expression, output, alias, ColumnType.STRING, executionContext);
-            ctx.addProjection(project, bound, null, targetIndex >= 0 ? tableColumnNames.getQuick(targetIndex) : column.getName(), true);
-            scope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
-            return;
+    /**
+     * Binds one SET assignment as a select column named after the target column; a plain source column of another
+     * type binds again as a value, for the conversion.
+     */
+    private void bindAssignment(QueryColumn column, ProjectPlan project, OutputSchema output, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
+        final OutputSchema targetOutput = targetScan.getOutput();
+        final int targetIndex = getColumnIndexQuiet(targetOutput, column.getName());
+        final int targetType = targetIndex < 0 ? ColumnType.UNDEFINED : targetOutput.getColumnType(targetIndex);
+        final int index = binder.bindSelectColumn(project, output, output, source, column, column.getAst(), -1, -1, null, null,
+                targetIndex < 0 ? column.getName() : targetOutput.getColumnName(targetIndex), targetType, executionContext);
+        if (index >= 0 && targetIndex >= 0 && targetType != output.getColumnType(index)) {
+            project.getExpressions().setQuick(project.getExpressions().size() - 1,
+                    ctx.functionBinder.bind(column.getAst(), output, sourceAlias(source), executionContext));
         }
-        final int index = ctx.bindColumnIndex(expression, output, source);
-        CharSequence name = column.getAlias() != null ? column.getAlias() : output.getColumnName(index);
-        final int targetIndex = getColumnIndex(name);
-        if (targetIndex >= 0) {
-            name = tableColumnNames.getQuick(targetIndex);
-        }
-        final int dot = Chars.indexOfLastUnquoted(expression.token, '.');
-        final boolean isSourceAliasReusable = dot < 0 || Chars.equalsIgnoreCase(name, expression.token, dot + 1, expression.token.length());
-        final boolean isTranslatingCopy = !isSourceAliasReusable && source.getJoinModels().size() == 1
-                && scope.sourceProjectionIndexes.getQuick(index) < 0 && SqlBinder.isReferenced(project, output.getColumnId(index));
-        ctx.addProjection(project, output, index, name, expression.position, isSourceAliasReusable);
-        if (isTranslatingCopy) {
-            scope.translatingCopyIds.add(project.getOutput().getColumnId(project.getOutput().getColumnCount() - 1));
-        }
-        if (targetIndex >= 0 && tableColumnTypes.getQuick(targetIndex) != output.getColumnType(index)) {
-            project.getExpressions().setQuick(project.getExpressions().size() - 1, ctx.functionBinder.bind(expression, output, alias, executionContext));
-        }
-    }
-
-    private int getColumnIndex(CharSequence name) {
-        for (int i = 0, n = tableColumnNames.size(); i < n; i++) {
-            if (Chars.equalsIgnoreCase(tableColumnNames.getQuick(i), name)
-                    || SqlUtil.isQuoteProtectedAlias(name)
-                    && Chars.equalsIgnoreCase(tableColumnNames.getQuick(i), name, 1, name.length() - 1)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private void prepareAssignments(QueryModel model, ProjectPlan project, SqlExecutionContext executionContext) throws SqlException {
         final IntList targetTypes = project.getUpdateTargetTypes();
         final OutputSchema output = project.getOutput();
+        final OutputSchema targetOutput = targetScan.getOutput();
         final ObjList<QueryColumn> targets = model.getBottomUpColumns();
         final ObjList<CharSequence> targetNames = target.getColumnNames();
         targetNames.clear();
@@ -156,21 +121,15 @@ final class UpdateBinder implements Mutable {
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             final CharSequence target = output.getColumnName(i);
             final int targetPosition = i < targets.size() ? targets.getQuick(i).getAliasPosition() : 0;
-            final int targetIndex = getColumnIndex(target);
+            final int targetIndex = getColumnIndexQuiet(targetOutput, target);
             if (targetIndex < 0) {
                 throw SqlException.invalidColumn(targetPosition, target);
             }
-            if (targetIndex == timestampIndex) {
+            if (targetIndex == targetOutput.getTimestampIndex()) {
                 throw SqlException.$(targetPosition, "Designated timestamp column cannot be updated");
             }
-            final CharSequence name = tableColumnNames.getQuick(targetIndex);
-            for (int k = 0, m = targetNames.size(); k < m; k++) {
-                if (Chars.equalsIgnoreCase(targetNames.getQuick(k), name)) {
-                    throw SqlException.$(targetPosition, "Duplicate column ").put(target).put(" in SET clause");
-                }
-            }
-            targetNames.add(name);
-            final int targetType = tableColumnTypes.getQuick(targetIndex);
+            targetNames.add(targetOutput.getColumnName(targetIndex));
+            final int targetType = targetOutput.getColumnType(targetIndex);
             targetTypes.add(targetType);
             final BoundExpression expression = project.getExpressions().getQuick(i);
             if (targetType >= 0 && expression.getDataType() != targetType) {
@@ -229,12 +188,9 @@ final class UpdateBinder implements Mutable {
         SqlBinder.linkWindowExpressions(model);
         binder.validateBlockWindows(model, source);
         final ExpressionNode where = binder.copyWhereClause(source);
-        final boolean hasJoin = source.getJoinModels().size() > 1;
-        final LogicalPlan sourcePlan = hasJoin ? joinBinder.bindJoins(source, where, executionContext) : binder.bindSource(source, executionContext);
+        final LogicalPlan sourcePlan = binder.bindBlockSource(model, source, where, executionContext);
         final OutputSchema output = sourcePlan.getOutput();
-        ctx.promoteNoArgFunctions(model, output, hasJoin ? null : sourceAlias(source));
-        scope.aliases.clear();
-        scope.aliasSequences.clear();
+        scope.resetAliases();
         scope.projectionAliasIndexes.clear();
         final LogicalPlan input = binder.bindWhere(where, sourcePlan, null, source, executionContext);
         windowBinder.validateWindowOrder(model, source);
@@ -249,10 +205,10 @@ final class UpdateBinder implements Mutable {
         }
         final ProjectPlan project = ctx.planNodes.projects.next().of(input, model.getModelPosition());
         scope.sourceProjectionIndexes.setAll(output.getColumnCount(), -1);
+        binder.clearCursorColumns();
         for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
             bindAssignment(model.getBottomUpColumns().getQuick(i), project, output, source, executionContext);
         }
-        binder.clearCursorColumns();
         prepareAssignments(model, project, executionContext);
         return orderBinder.designateTimestamp(project);
     }
@@ -273,19 +229,7 @@ final class UpdateBinder implements Mutable {
                 ctx.planTables.acquire(metadata.getTableToken(), metadata.getMetadataVersion(), tableName.position, executionContext);
             }
             target.of(tableName.token, tableName.position, metadata.getTableToken(), metadata.getTableId(), metadata.getMetadataVersion());
-            timestampIndex = -1;
-            tableColumnNames.clear();
-            tableColumnTypes.clear();
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                final int type = metadata.getColumnType(i);
-                if (type > 0) {
-                    if (i == metadata.getTimestampIndex()) {
-                        timestampIndex = tableColumnNames.size();
-                    }
-                    tableColumnTypes.add(type);
-                    tableColumnNames.add(metadata.getColumnName(i));
-                }
-            }
+            targetScan = scan;
             return scan;
         } catch (CairoException e) {
             if (e.isOutOfMemory() || e.isTableDoesNotExist()) {

@@ -25,6 +25,7 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.BoundExpressionRewriter.ConjunctSplit;
 import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OperatorExpression;
@@ -76,6 +77,7 @@ final class FilterPushdown implements OptimiserPass {
     private static final int RUNTIME_LEAVES = 1;
     private static final int STATIC_LEAVES = 0;
     private final AggregateInputOrder aggregateInputOrder;
+    private final ConjunctSplit conjunctSplit = new ConjunctSplit();
     private final OptimiserContext context;
     private final ObjList<BoundExpression> tmpExpressions;
     private final ObjectPool<FilterPlan> filters;
@@ -146,6 +148,7 @@ final class FilterPushdown implements OptimiserPass {
     @Override
     public void clear() {
         conjunctScope = null;
+        conjunctSplit.clear();
         joinConjunctTargets.clear();
         isLatestKeyScope = false;
         latestKeyLimit = null;
@@ -757,7 +760,6 @@ final class FilterPushdown implements OptimiserPass {
             final BoundExpression predicate = ((FilterPlan) filter).getPredicate();
             if (LogicalPlans.isStableWithinExecution(predicate) && LogicalPlans.readsOnly(predicate, mapping.getOutput())) {
                 final FilterPlan copy = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mapping), predicate.getPosition());
-                copy.deriveOutput();
                 input = copy;
             }
         }
@@ -944,12 +946,12 @@ final class FilterPushdown implements OptimiserPass {
             final BoundExpression predicate;
             if (input instanceof ProjectPlan project && !LogicalPlans.isColumnProjection(project)) {
                 conjunctScope = project;
-                final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), computedProjectionConjuncts);
+                context.getRewriter().splitConjuncts(filter.getPredicate(), computedProjectionConjuncts, conjunctSplit);
+                final BoundExpression movable = conjunctSplit.getMatched();
                 if (movable != null) {
-                    final BoundExpression residual = context.getRewriter().getSplitRemainder();
+                    final BoundExpression residual = conjunctSplit.getRemainder();
                     final BoundExpression substituted = context.getRewriter().substituteProjection(movable, project);
                     final FilterPlan pushed = filters.next().of(project.getInput(), substituted, substituted.getPosition());
-                    pushed.deriveOutput();
                     project.replaceInput(0, pushDownScopedFilter(pushed));
                     if (residual != null) {
                         filter.of(project, residual, filter.getPosition());
@@ -968,12 +970,12 @@ final class FilterPushdown implements OptimiserPass {
                         return result;
                     }
                     conjunctScope = project;
-                    final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), projectionConjuncts);
+                    context.getRewriter().splitConjuncts(filter.getPredicate(), projectionConjuncts, conjunctSplit);
+                    final BoundExpression movable = conjunctSplit.getMatched();
                     if (movable != null) {
-                        final BoundExpression residual = context.getRewriter().getSplitRemainder();
+                        final BoundExpression residual = conjunctSplit.getRemainder();
                         final BoundExpression remapped = context.getRewriter().remapColumns(movable, project);
                         final FilterPlan pushed = filters.next().of(project.getInput(), remapped, remapped.getPosition());
-                        pushed.deriveOutput();
                         project.replaceInput(0, pushDownFilter(pushed));
                         filter.of(project, residual, filter.getPosition());
                     }
@@ -1001,14 +1003,14 @@ final class FilterPushdown implements OptimiserPass {
                 continue;
             } else if (input instanceof SortPlan sort) {
                 if (!LogicalPlans.isOrderIndependent(filter.getPredicate())) {
-                    final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), ORDER_INDEPENDENT_CONJUNCTS);
+                    context.getRewriter().splitConjuncts(filter.getPredicate(), ORDER_INDEPENDENT_CONJUNCTS, conjunctSplit);
+                    final BoundExpression movable = conjunctSplit.getMatched();
                     if (movable == null) {
                         return result;
                     }
-                    final BoundExpression residual = context.getRewriter().getSplitRemainder();
+                    final BoundExpression residual = conjunctSplit.getRemainder();
                     final LogicalPlan belowSort = sort.getInput();
                     final FilterPlan pushed = filters.next().of(belowSort, movable, movable.getPosition());
-                    pushed.deriveOutput();
                     sort.replaceInput(0, pushDownFilter(pushed));
                     filter.of(sort, residual, filter.getPosition());
                     return result;
@@ -1049,14 +1051,14 @@ final class FilterPushdown implements OptimiserPass {
                     return result;
                 }
                 conjunctScope = keys;
-                final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), keyConjuncts);
+                context.getRewriter().splitConjuncts(filter.getPredicate(), keyConjuncts, conjunctSplit);
+                final BoundExpression movable = conjunctSplit.getMatched();
                 if (movable == null) {
                     return result;
                 }
-                final BoundExpression residual = context.getRewriter().getSplitRemainder();
+                final BoundExpression residual = conjunctSplit.getRemainder();
                 final BoundExpression remapped = context.getRewriter().remapColumns(movable, keys);
                 final FilterPlan pushed = filters.next().of(aggregate.getInput(), remapped, remapped.getPosition());
-                pushed.deriveOutput();
                 aggregate.replaceInput(0, pushDownScopedFilter(pushed));
                 if (residual != null) {
                     filter.of(input, residual, filter.getPosition());
@@ -1076,13 +1078,13 @@ final class FilterPushdown implements OptimiserPass {
                     return result;
                 }
                 conjunctScope = keys;
-                final BoundExpression movable = context.getRewriter().splitConjuncts(filter.getPredicate(), keyConjuncts);
+                context.getRewriter().splitConjuncts(filter.getPredicate(), keyConjuncts, conjunctSplit);
+                final BoundExpression movable = conjunctSplit.getMatched();
                 if (movable == null) {
                     return result;
                 }
-                final BoundExpression residual = context.getRewriter().getSplitRemainder();
+                final BoundExpression residual = conjunctSplit.getRemainder();
                 final FilterPlan pushed = filters.next().of(fillInput, movable, movable.getPosition());
-                pushed.deriveOutput();
                 input.replaceInput(0, pushDownFilter(pushed));
                 if (residual != null) {
                     filter.of(input, residual, filter.getPosition());
@@ -1109,7 +1111,6 @@ final class FilterPushdown implements OptimiserPass {
                 }
                 final LogicalPlan scan = input.inputAt(0);
                 final FilterPlan pushed = filters.next().of(scan, keys, keys.getPosition());
-                pushed.deriveOutput();
                 input.replaceInput(0, pushed);
                 final BoundExpression residual = context.getRewriter().removeConjunct(filter.getPredicate(), selector);
                 if (residual != null) {
@@ -1236,7 +1237,6 @@ final class FilterPushdown implements OptimiserPass {
         mappingProjection.getExpressions().add(mappingColumn.of(branch.getOutput().getColumnId(timestampIndex), type, predicate.getPosition()));
         final BoundExpression replacement = context.getRewriter().copyRemappedColumns(predicate, mappingProjection);
         final FilterPlan pushed = filters.next().of(branch, replacement, predicate.getPosition());
-        pushed.deriveOutput();
         // A row-selection barrier keeps the filter above the whole branch.
         operation.replaceInput(branchIndex, isSetBranchSelectionBarrier(branch) ? pushed : pushDownScopedFilter(pushed));
         return true;
@@ -1285,7 +1285,6 @@ final class FilterPushdown implements OptimiserPass {
         final LogicalPlan input = occurrence.getInput();
         assert input != null;
         final FilterPlan filter = filters.next().of(input, predicate, predicate.getPosition());
-        filter.deriveOutput();
         final LogicalPlan pushed = pushDownScopedFilter(filter);
         occurrence.setInput(pushed);
         return pushed != filter;
