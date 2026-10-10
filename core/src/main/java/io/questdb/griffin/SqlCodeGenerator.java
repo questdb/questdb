@@ -258,6 +258,8 @@ import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NoopSymbolShortCircuit;
 import io.questdb.griffin.engine.join.NullRecordFactory;
+import io.questdb.griffin.engine.join.OuterJoinNullCheck;
+import io.questdb.griffin.engine.join.OuterJoinRecordSource;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
@@ -1934,6 +1936,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return null;
+    }
+
+    // Gives a nested loop LEFT join the RIGHT and FULL joins with join keys that the query writes after it and
+    // that run before it, see OuterJoinNullCheck. A RIGHT or FULL join that runs after the LEFT join
+    // NULL-extends the LEFT join's columns with the rest.
+    private static void setOuterJoinCheck(
+            NestedLoopLeftJoinRecordCursorFactory leftJoin,
+            int leftJoinIndex,
+            ObjList<OuterJoinRecordSource> outerJoins,
+            IntList outerJoinIndexes
+    ) {
+        OuterJoinNullCheck check = null;
+        for (int i = 0, n = outerJoins.size(); i < n; i++) {
+            if (outerJoinIndexes.getQuick(i) > leftJoinIndex) {
+                if (check == null) {
+                    check = new OuterJoinNullCheck();
+                }
+                check.add(outerJoins.getQuick(i));
+            }
+        }
+        if (check != null) {
+            leftJoin.setOuterJoinCheck(check);
+        }
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -6619,6 +6644,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // the last CROSS or nested loop LEFT join built, and the column count of its master, see JoinKeyFilter
         RecordCursorFactory keylessJoin = null;
         int keylessJoinColumnSplit = 0;
+        // the RIGHT and FULL joins with join keys built so far, and their join model indexes, see
+        // OuterJoinNullCheck
+        ObjList<OuterJoinRecordSource> outerJoins = null;
+        IntList outerJoinIndexes = null;
         ObjList<RecordCursorFactory> pendingHorizonSlaves = null;
         ObjList<IQueryModel> pendingHorizonSlaveModels = null;
         boolean isHorizonJoinCompleted = false;
@@ -6752,6 +6781,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (joinType == IQueryModel.JOIN_CROSS_LEFT) {
                                     keylessJoin = master;
                                     keylessJoinColumnSplit = masterMetadata.getColumnCount();
+                                    if (slaveModel.isMovableAfterOuterJoins() && outerJoins != null) {
+                                        setOuterJoinCheck((NestedLoopLeftJoinRecordCursorFactory) master, index, outerJoins, outerJoinIndexes);
+                                    }
                                 }
                                 masterAlias = null;
                                 break;
@@ -7639,6 +7671,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                                 if (keyFilteredJoin != null) {
                                     setJoinKeyFilter(keyFilteredJoin, master);
+                                }
+                                if (joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER) {
+                                    // a LEFT join written before this join may run after it, see OuterJoinNullCheck
+                                    if (!(master instanceof OuterJoinRecordSource outerJoin)) {
+                                        throw new AssertionError("RIGHT or FULL join factory does not expose its record");
+                                    }
+                                    if (outerJoins == null) {
+                                        outerJoins = new ObjList<>();
+                                        outerJoinIndexes = new IntList();
+                                    }
+                                    outerJoins.add(outerJoin);
+                                    outerJoinIndexes.add(index);
                                 }
                                 masterAlias = null;
                                 break;
@@ -14736,8 +14780,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             positions.setQuick(ordered.getQuick(i), i);
         }
         // the latest execution position of the tables written before table i, and of those among them that
-        // must run before a RIGHT or FULL join with join keys: a LEFT join whose ON clause rejects the rows
-        // that such a join NULL-extends returns the same rows after it, see IQueryModel.isNullRejectingOnClause()
+        // must run before a RIGHT or FULL join with join keys: a LEFT join without join keys may run after
+        // such a join, see IQueryModel.isMovableAfterOuterJoins()
         int lastPrefixPosition = positions.getQuick(0);
         int lastKeyedPrefixPosition = lastPrefixPosition;
         for (int i = 1; i < n; i++) {
@@ -14752,7 +14796,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
             lastPrefixPosition = Math.max(lastPrefixPosition, position);
-            if (!joinModel.isNullRejectingOnClause()) {
+            if (!joinModel.isMovableAfterOuterJoins()) {
                 lastKeyedPrefixPosition = Math.max(lastKeyedPrefixPosition, position);
             }
         }

@@ -515,12 +515,12 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
      */
     ExpressionNode getLateralCountCoalesceGuard();
 
-    boolean isNestedModelIsSubQuery();
+    // True for a LEFT join without join keys that may run after the RIGHT and FULL joins with join keys
+    // written after it, see SqlOptimiser.constrainRightAndFullJoinsAfterPrefix(). Run there, it returns a
+    // row that such a join NULL-extends once, with NULL in its own columns, see OuterJoinNullCheck.
+    boolean isMovableAfterOuterJoins();
 
-    // True for a LEFT join without join keys whose ON clause is false whenever the models before it are
-    // NULL. It returns the same rows before and after a keyed RIGHT or FULL join written after it, see
-    // SqlOptimiser.constrainRightAndFullJoinsAfterPrefix().
-    boolean isNullRejectingOnClause();
+    boolean isNestedModelIsSubQuery();
 
     boolean isOptimisable();
 
@@ -648,11 +648,11 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setModelType(int modelType);
 
+    void setMovableAfterOuterJoins(boolean movableAfterOuterJoins);
+
     void setNestedModel(IQueryModel nestedModel);
 
     void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery);
-
-    void setNullRejectingOnClause(boolean nullRejectingOnClause);
 
     void setOrderByAdviceMnemonic(int orderByAdviceMnemonic);
 

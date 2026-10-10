@@ -58,7 +58,7 @@ import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCur
  * Same as HashOuterJoinRecordCursorFactory but with added filtering (for non-equality
  * or complex join conditions that use functions).
  */
-public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecordCursorFactory implements OuterJoinRecordSource {
     private final int columnSplit;
     private final JoinSymbolTableSource filterSymbolTableSource;
     // the filter reads no slave column, so the LEFT JOIN cursor evaluates it once per master row
@@ -176,6 +176,12 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             Misc.free(cursor);
             throw e;
         }
+    }
+
+    // The record of the RIGHT or FULL join's cursor, see OuterJoinNullCheck.
+    @Override
+    public @Nullable Record getOuterJoinRecord() {
+        return cursor != null ? cursor.getRecord() : null;
     }
 
     @Override

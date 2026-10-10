@@ -58,7 +58,7 @@ import org.jetbrains.annotations.Nullable;
  * Same as HashOuterJoinLightRecordCursorFactory but with added filtering (for non-equality
  * or complex join conditions that use functions).
  */
-public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinRecordCursorFactory implements OuterJoinRecordSource {
 
     private final int columnSplit;
     private final JoinSymbolTableSource filterSymbolTableSource;
@@ -201,6 +201,12 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             Misc.free(cursor);
             throw e;
         }
+    }
+
+    // The record of the RIGHT or FULL join's cursor, see OuterJoinNullCheck.
+    @Override
+    public @Nullable Record getOuterJoinRecord() {
+        return cursor != null ? cursor.getRecord() : null;
     }
 
     @Override

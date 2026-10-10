@@ -888,13 +888,13 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public boolean isNestedModelIsSubQuery() {
-        return delegate.isNestedModelIsSubQuery();
+    public boolean isMovableAfterOuterJoins() {
+        return delegate.isMovableAfterOuterJoins();
     }
 
     @Override
-    public boolean isNullRejectingOnClause() {
-        return delegate.isNullRejectingOnClause();
+    public boolean isNestedModelIsSubQuery() {
+        return delegate.isNestedModelIsSubQuery();
     }
 
     @Override
@@ -1223,17 +1223,17 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setMovableAfterOuterJoins(boolean movableAfterOuterJoins) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setNestedModel(IQueryModel nestedModel) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void setNullRejectingOnClause(boolean nullRejectingOnClause) {
         throw new UnsupportedOperationException();
     }
 

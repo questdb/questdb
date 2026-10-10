@@ -50,7 +50,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory.outerJoinTypeToString;
 
-public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory implements OuterJoinRecordSource {
     private final int columnSplit;
     private final int joinType;
     private final RecordSink masterSink;
@@ -156,6 +156,12 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             Misc.free(cursor);
             throw e;
         }
+    }
+
+    // The record of the RIGHT or FULL join's cursor, see OuterJoinNullCheck.
+    @Override
+    public @Nullable Record getOuterJoinRecord() {
+        return cursor != null ? cursor.getRecord() : null;
     }
 
     @Override

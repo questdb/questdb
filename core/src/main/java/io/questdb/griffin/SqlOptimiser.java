@@ -3441,16 +3441,16 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Adds to models each LEFT join without join keys that returns the same rows before and after the RIGHT
-    // and FULL joins written after it, so a RIGHT or FULL join need not run it first. Every join written after
-    // it must be an INNER, CROSS or LEFT join, or a RIGHT or FULL join with join keys: they commute with it,
-    // as no ON clause reads it. A RIGHT or FULL join NULL-extends every model written before it, and the
-    // LEFT join's ON clause must be false for such a row whatever its own columns hold: one of its conjuncts
-    // compares a column of an earlier model, of a type that has NULL, with < or >, which is false for a NULL
-    // column, see LateralJoinRewriter.isNullRejectingConjunct(). The LEFT join then NULL-extends that row,
-    // as the RIGHT or FULL join does when the LEFT join runs first. Requires the reader lists of
-    // recordJoinModelRefs.
-    private void collectNullRejectingKeylessLeftJoins(IQueryModel parent, IntHashSet models) {
+    // Adds to models each LEFT join without join keys that may run after the RIGHT and FULL joins with join
+    // keys written after it, where doReorderTables appends it as master does. Every join written after it
+    // must be an INNER, CROSS or LEFT join, or a RIGHT or FULL join with join keys, and no ON clause may read
+    // it: such a join returns the same rows with the LEFT join before or after it, except for a row in which
+    // a RIGHT or FULL join NULL-extends every model written before it. Run first, the LEFT join never sees
+    // that row, which the outer join returns once with NULL in the LEFT join's columns. Run after it, the LEFT
+    // join would evaluate its ON clause for the row, which may be true, as NULL >= NULL is, so
+    // SqlCodeGenerator gives it an OuterJoinNullCheck that returns the row once with NULL in its columns.
+    // Requires the reader lists of recordJoinModelRefs.
+    private void collectKeylessLeftJoinsMovableAfterOuterJoins(IQueryModel parent, IntHashSet models) {
         models.clear();
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         final int n = joinModels.size();
@@ -3468,8 +3468,7 @@ public class SqlOptimiser implements Mutable {
             if (model.getJoinType() != IQueryModel.JOIN_CROSS_LEFT
                     || (model.getJoinContext() != null && !model.getJoinContext().isEmpty())
                     || joinModelMaxRefs.getQuick(index) > index
-                    || isReadByOtherModel(index)
-                    || !hasNullRejectingComparison(parent, model.getOuterJoinExpressionClause(), index)) {
+                    || isReadByOtherModel(index)) {
                 continue;
             }
             models.add(index);
@@ -3941,8 +3940,8 @@ public class SqlOptimiser implements Mutable {
             recordJoinModelRefs(i, refs);
         }
         hasJoinModelReaders = true;
-        final IntHashSet nullRejectingLeftJoins = intHashSetPool.next();
-        collectNullRejectingKeylessLeftJoins(parent, nullRejectingLeftJoins);
+        final IntHashSet movableLeftJoins = intHashSetPool.next();
+        collectKeylessLeftJoinsMovableAfterOuterJoins(parent, movableLeftJoins);
         boolean isModel0Recorded = false;
         final IntHashSet unpinned = intHashSetPool.next();
         final IntHashSet timeSeriesJoinsAhead = intHashSetPool.next();
@@ -3972,11 +3971,11 @@ public class SqlOptimiser implements Mutable {
                 if (joinModelMaxRefs.getQuick(prefixIndex) > lastReadableIndex
                         || (isLeftJoin(joinModels.getQuick(prefixIndex).getJoinType()) && isReadByLaterModelItReads(prefixIndex, laterReaders))) {
                     unpinned.add(prefixIndex);
-                } else if (!isNonEqui && nullRejectingLeftJoins.contains(prefixIndex)) {
-                    // returns the same rows after the outer join, where doReorderTables appends it as master
-                    // does, see collectNullRejectingKeylessLeftJoins
+                } else if (!isNonEqui && movableLeftJoins.contains(prefixIndex)) {
+                    // runs after the outer join, where doReorderTables appends it as master does, see
+                    // collectKeylessLeftJoinsMovableAfterOuterJoins
                     unpinned.add(prefixIndex);
-                    joinModels.getQuick(prefixIndex).setNullRejectingOnClause(true);
+                    joinModels.getQuick(prefixIndex).setMovableAfterOuterJoins(true);
                 }
             }
             // A prefix model that reads an unpinned model must stay unpinned too: it cannot run before
@@ -6800,36 +6799,6 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    // Returns true when a conjunct of the ON clause of the join model at index compares a column of an
-    // earlier model, of a type that has NULL, with any operand using < or >, see
-    // collectNullRejectingKeylessLeftJoins.
-    private boolean hasNullRejectingComparison(IQueryModel parent, ExpressionNode onClause, int index) {
-        if (onClause == null) {
-            return false;
-        }
-        nullRejectedJoinStack.clear();
-        nullRejectedJoinStack.push(onClause);
-        while (!nullRejectedJoinStack.isEmpty()) {
-            final ExpressionNode node = nullRejectedJoinStack.pop();
-            if (node.token != null && joinOps.get(node.token) == JOIN_OP_AND) {
-                if (node.lhs != null) {
-                    nullRejectedJoinStack.push(node.lhs);
-                }
-                if (node.rhs != null) {
-                    nullRejectedJoinStack.push(node.rhs);
-                }
-                continue;
-            }
-            if (node.type == OPERATION && node.paramCount == 2
-                    && (Chars.equals(node.token, '<') || Chars.equals(node.token, '>'))
-                    && (isNullableColumnBefore(parent, node.lhs, index) || isNullableColumnBefore(parent, node.rhs, index))) {
-                nullRejectedJoinStack.clear();
-                return true;
-            }
-        }
-        return false;
-    }
-
     // Returns true when every context-free RIGHT/FULL join at or after fromIndex has each model before it
     // as a context parent, which constrainRightAndFullJoinsAfterPrefix and recordNullingJoinPrefix record
     // unless a forward reference leaves the prefix unpinned.
@@ -7052,7 +7021,8 @@ public class SqlOptimiser implements Mutable {
     // after the joins next to it that return the same rows either way, see canRunBeforeDeferredModels. The
     // first model to run gives the joins their designated timestamp, so the model that the query selects
     // from defers only on a level without a join that reads the designated timestamp of its master, see
-    // prepareDeferredModels.
+    // prepareDeferredModels. A LEFT join that collectKeylessLeftJoinsMovableAfterOuterJoins accepts gets no
+    // edge from a RIGHT or FULL join with join keys, and runs after it instead.
     // A model that recordNullingJoinPrefix pins does not defer: the order that master gives such a prefix
     // runs the model at its written position. Running it after the keyed joins instead is faster when a
     // keyed join drops most rows and slower when one multiplies them, and the optimiser does not know
@@ -7726,29 +7696,6 @@ public class SqlOptimiser implements Mutable {
                 isColumnLhs,
                 sqlExecutionContext
         );
-    }
-
-    // Returns true when the node is a column of a model before the one at index, and the column's type has a
-    // NULL: a RIGHT or FULL join puts NULL in it, not false or 0 as in a BOOLEAN, BYTE or SHORT column.
-    private boolean isNullableColumnBefore(IQueryModel parent, ExpressionNode node, int index) {
-        if (node == null || node.type != LITERAL) {
-            return false;
-        }
-        final IntHashSet models = intHashSetPool.next();
-        models.clear();
-        try {
-            literalCollector.withModel(parent);
-            literalCollector.resetCounts();
-            traversalAlgo.traverse(node, literalCollector.to(models));
-        } catch (SqlException ignored) {
-            return false;
-        }
-        if (models.size() != 1 || models.get(0) >= index) {
-            return false;
-        }
-        final IQueryModel model = parent.getJoinModels().getQuick(models.get(0));
-        final int columnType = getQueryColumnType(model, getModelColumn(model, node.token));
-        return columnType > 0 && !LateralJoinRewriter.isTypeWithoutNull(columnType);
     }
 
     // Returns true when every model the ON clause of the context-free join at index reads precedes it
