@@ -277,6 +277,9 @@ public class SqlOptimiser implements Mutable {
     // see the reorder, so analyseEquals defers single-table WHERE predicates to the exec-order-aware
     // assignFilters instead of pushing them down eagerly. Filled by precomputeHasNonEquiNullingJoin.
     private boolean hasNonEquiNullingJoin;
+    // True when moveWhereInsideSubQueries has pushed down at least one and_offset wrapper, so
+    // rebuildStrandedAndOffsets may find one in a post-join filter.
+    private boolean hasOptimiserAndOffsets;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
     private OperatorExpression opAnd;
@@ -411,6 +414,7 @@ public class SqlOptimiser implements Mutable {
         literalCollectorBNames.clear();
         defaultAliasCount = 0;
         hasNonEquiNullingJoin = false;
+        hasOptimiserAndOffsets = false;
         isNullingExecOrderValid = false;
         nullingAnchorByExecPos.clear();
         nullingAnchorByModelPos.clear();
@@ -1288,9 +1292,11 @@ public class SqlOptimiser implements Mutable {
         // select a, b+c ...
         // it should translate to:
         // select a, x from (select a, b+c x from (select a,b,c ...))
-        final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias());
+        // Both references keep the wildcard visibility of qc: an ORDER BY expression
+        // that the select list does not output must stay out of SELECT * above them.
+        final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias(), qc.isIncludeIntoWildcard());
         // outer column's should use innerColumn alias
-        final QueryColumn outerColumn = nextColumn(qc.getAlias(), innerColumn.getAlias());
+        final QueryColumn outerColumn = nextColumn(qc.getAlias(), innerColumn.getAlias(), qc.isIncludeIntoWildcard());
 
         // pull literals only into a translating model
         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false, false, false);
@@ -5217,6 +5223,43 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
+    /**
+     * Returns the position of the leftmost window function, i.e. a function node carrying an
+     * OVER clause, anywhere in the expression tree, or -1 if there is none. Unlike
+     * {@link #findWindowFunctionOrNamePosition(ExpressionNode)}, a pure window function name
+     * without OVER doesn't count; function parsing reports that one with its own error.
+     */
+    private int findWindowFunctionPosition(ExpressionNode node) {
+        sqlNodeStack.clear();
+        // ExpressionNode.paramCount invariants (documented on the field):
+        // paramCount == 1: rhs only; paramCount == 2: lhs and rhs; paramCount > 2: args,
+        // stored in reverse order, so the stack pops the leftmost argument first.
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return node.position;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                if (node.lhs != null) {
+                    node = node.lhs;
+                } else {
+                    node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+                }
+            } else {
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                node = sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll();
+            }
+        }
+        return -1;
+    }
+
     private void fixTimestampAndCollectMissingTokens(
             ExpressionNode node,
             CharSequence timestampColumn,
@@ -6799,6 +6842,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void moveWhereInsideSubQueries(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        hasOptimiserAndOffsets = false;
         // Validate the original pipeline once, before this pass splits or moves any conjuncts.
         moveWhereInsideSubQueries(model, sqlExecutionContext, getLatestKeySelector(model, sqlExecutionContext));
     }
@@ -8513,6 +8557,40 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    /**
+     * Rebuilds every and_offset wrapper that moveWhereInsideSubQueries pushed into a post-join filter
+     * into its {@code dateadd()} residual.
+     * <p>
+     * The pushdown wraps a predicate on a {@code dateadd()} column and moves the wrapper down one model
+     * at a time, renaming the column at each hop. The optimiser tags the column by name only (see
+     * detectTimestampOffset), so the wrapper can stop above a table scan: when the column turns into an
+     * aggregate or a SAMPLE BY bucket ({@code max(ts) ts}), or when a LIMIT, an outer join or a union
+     * branch that can't take it blocks the path. Only a table scan's own filter goes through interval
+     * extraction, which turns the wrapper into an interval, or rebuilds it when the column isn't the
+     * designated timestamp ({@code ts2 AS ts}). Anywhere else the wrapper would reach the function
+     * compiler, which has no and_offset function.
+     * <p>
+     * SqlCodeGenerator#generateFilter0 rebuilds the wrappers left in any other model's WHERE clause just
+     * before it compiles that filter. The join code compiles a post-join filter without
+     * generateFilter0, so this pass rebuilds the wrappers there.
+     * <p>
+     * Each hop renamed the column literal for literal, so {@code dateadd(unit, stride, column)} where the
+     * wrapper stopped is the original {@code dateadd()} column, and the rebuilt predicate filters the
+     * rows the query asked for.
+     */
+    private void rebuildStrandedAndOffsets(IQueryModel model) {
+        if (model == null || !model.isOptimisable()) {
+            return;
+        }
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            final IQueryModel m = joinModels.getQuick(i);
+            WhereClauseParser.rebuildStrandedAndOffsets(expressionNodePool, m.getPostJoinWhereClause(), null);
+            rebuildStrandedAndOffsets(m.getNestedModel());
+            rebuildStrandedAndOffsets(m.getUnionModel());
+        }
+    }
+
     // A non-equi outer join consumes the complete logical prefix as its master, so every prefix
     // model must execute before the boundary. tempIntHashSet marks a boundary whose prefix is
     // already recorded, so each boundary materializes its prefix only once.
@@ -9397,12 +9475,23 @@ public class SqlOptimiser implements Mutable {
     // already has top-down columns, i.e. when it is a sub-query whose projection will be pruned; for a
     // top level model the top-down list is empty and the bottom-up projection is used verbatim, so there
     // is nothing to protect. addTopDownColumn() dedupes by alias, making repeated calls idempotent.
+    // A HORIZON JOIN model groups by its non-aggregate columns as well. For it, the method retains its
+    // hidden non-generated keys, such as those that moveOrderByFunctionsIntoOuterSelect() adds for an
+    // ORDER BY expression over a column that the select list does not output. The projection above the
+    // model does not output such a key, so once a parent query drops the ORDER BY, nothing references
+    // the key, and pruning it would merge the groups that it splits. The same check also matches other
+    // hidden non-generated keys, such as the LATERAL correlation keys that
+    // LateralJoinRewriter.ensureColumnInSelectAtFront() adds. The method leaves generated hidden
+    // columns, such as the SUBSAMPLE ordering helpers, to the regular pruning.
     private void retainGroupByKeysAsTopDownColumns(IQueryModel model) {
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
+        final int selectModelType = model.getSelectModelType();
+        final boolean isHorizonJoin = selectModelType == IQueryModel.SELECT_MODEL_HORIZON_JOIN;
+        if ((selectModelType == IQueryModel.SELECT_MODEL_GROUP_BY || isHorizonJoin) && model.getTopDownColumns().size() > 0) {
             final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
             for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
                 QueryColumn qc = bottomUpColumns.getQuick(i);
-                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                if ((!isHorizonJoin || (!qc.isIncludeIntoWildcard() && !qc.isGenerated()))
+                        && (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token))) {
                     model.addTopDownColumn(qc, qc.getAlias());
                 }
             }
@@ -10048,9 +10137,12 @@ public class SqlOptimiser implements Mutable {
                 limitModel = base;
             }
             final int selectModelType = baseParent.getSelectModelType();
+            // a HORIZON JOIN groups by its non-aggregate columns, so a hidden ORDER BY
+            // column would become an extra grouping key
             groupByOrDistinct = groupByOrDistinct
                     || selectModelType == IQueryModel.SELECT_MODEL_GROUP_BY
-                    || selectModelType == IQueryModel.SELECT_MODEL_DISTINCT;
+                    || selectModelType == IQueryModel.SELECT_MODEL_DISTINCT
+                    || selectModelType == IQueryModel.SELECT_MODEL_HORIZON_JOIN;
         }
 
         // find out how "order by" columns are referenced
@@ -12281,7 +12373,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
 
             // group-by column could have spit out a function call, e.g.
             // select sum(f(x)) from t -> select sum(col) from (select f(x) col) from t)
@@ -12319,7 +12411,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
             rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
             return rewriteStatus;
@@ -12350,7 +12442,7 @@ public class SqlOptimiser implements Mutable {
 
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             if (!isWindowJoin && !isHorizonJoin) {
                 for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                     emitLiterals(
@@ -12395,7 +12487,9 @@ public class SqlOptimiser implements Mutable {
                 // group-by column references might be needed when we have
                 // outer model supporting arithmetic such as:
                 // select sum(a)+sum(b) ...
-                QueryColumn ref = nextColumn(qc.getAlias());
+                // The reference keeps the wildcard visibility of qc: an ORDER BY expression
+                // that the select list does not output is a hidden group-by key.
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0);
                 outerVirtualModel.addBottomUpColumn(ref);
                 distinctModel.addBottomUpColumn(ref);
                 emitLiterals(
@@ -12417,7 +12511,7 @@ public class SqlOptimiser implements Mutable {
             } else if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_JOIN_MODE) != 0) {
                 qc = ensureAliasUniqueness(outerVirtualModel, qc);
                 outerVirtualModel.addBottomUpColumn(qc);
-                QueryColumn ref = nextColumn(qc.getAlias());
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0);
                 distinctModel.addBottomUpColumn(ref);
                 emitLiterals(
                         qc.getAst(),
@@ -12438,7 +12532,8 @@ public class SqlOptimiser implements Mutable {
                 // these qualified names in the AST by using preserveQualifiedNames=true.
                 qc = ensureAliasUniqueness(horizonJoinModel, qc);
                 horizonJoinModel.addBottomUpColumn(qc);
-                QueryColumn ref = nextColumn(qc.getAlias());
+                // the reference keeps the wildcard visibility of qc, as in the GROUP BY branch above
+                QueryColumn ref = nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0);
                 outerVirtualModel.addBottomUpColumn(ref);
                 distinctModel.addBottomUpColumn(ref);
                 emitLiterals(
@@ -12628,11 +12723,20 @@ public class SqlOptimiser implements Mutable {
             if (isWindowExpr && qc.getAst().type != FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Window function expected");
             }
-            if (isWindowExpr && isWindowJoin) {
-                throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in WINDOW JOIN queries");
-            }
-            if (isWindowExpr && isHorizonJoin) {
-                throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in HORIZON JOIN queries");
+            if (isWindowJoin || isHorizonJoin) {
+                // Look for a window function anywhere in the column, not only at its root. A nested one,
+                // as in row_number() OVER () + 1, routes the column to a window model that pre-empts the
+                // join model. Next to or inside an aggregate, as in sum(x) - sum(x) OVER (), it takes the
+                // aggregate path, and the join model gets it as a plain aggregate without its OVER clause.
+                final int windowFnPos = isWindowExpr ? qc.getAst().position : findWindowFunctionPosition(qc.getAst());
+                if (windowFnPos >= 0) {
+                    throw SqlException.$(
+                            windowFnPos,
+                            isWindowJoin
+                                    ? "WINDOW functions are not allowed in WINDOW JOIN queries"
+                                    : "WINDOW functions are not allowed in HORIZON JOIN queries"
+                    );
+                }
             }
 
             if (qc.getAst().type == BIND_VARIABLE) {
@@ -12959,7 +13063,11 @@ public class SqlOptimiser implements Mutable {
                     // outer projection both when the user wrote GROUP BY
                     // explicitly and when an aggregate elsewhere in the SELECT
                     // forces a GROUP BY model implicitly.
-                    if (explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
+                    // WINDOW JOIN and HORIZON JOIN take the same path: they have
+                    // no inner virtual model, and one added for the bind variable
+                    // would sit between the join model and the join, hiding the
+                    // columns the join model reads.
+                    if (explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0 || isWindowJoin || isHorizonJoin) {
                         rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                         rewriteStatus &= ~REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
                         outerVirtualModel.addBottomUpColumn(qc);
@@ -14827,6 +14935,8 @@ public class SqlOptimiser implements Mutable {
                 predicate.position
         );
         wrapper.paramCount = 3;
+        wrapper.isOptimiserAndOffset = true;
+        hasOptimiserAndOffsets = true;
 
         // Unit as constant char (quoted to match dateadd format)
         CharacterStoreEntry unitEntry = characterStore.newEntry();
@@ -15275,6 +15385,9 @@ public class SqlOptimiser implements Mutable {
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel, sqlExecutionContext);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
+            if (hasOptimiserAndOffsets) {
+                rebuildStrandedAndOffsets(rewrittenModel);
+            }
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);

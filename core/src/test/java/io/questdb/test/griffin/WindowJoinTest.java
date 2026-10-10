@@ -443,6 +443,55 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableInSelectList() throws Exception {
+        // The optimizer used to put the bind variable in a virtual model under the window join model,
+        // which hid the join from the window join model and failed code generation. It now lifts the
+        // bind variable to the projection above the join, as it does for a constant.
+        assertMemoryLeak(() -> {
+            prepareTable();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "x");
+
+            final String windowJoin = "FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING");
+            assertQuery("SELECT $1 tag, count() c " + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("functions: [$0::string,c]")
+                    .returns("""
+                            tag\tc
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t3
+                            x\t2
+                            x\t1
+                            x\t2
+                            x\t1
+                            x\t2
+                            x\t1
+                            x\t2
+                            x\t1
+                            x\t1
+                            x\t1
+                            x\t1
+                            x\t1
+                            """);
+            assertQuery("SELECT tag, count() n, sum(c) c FROM (SELECT count() c, $1 tag " + windowJoin + ")")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tag\tn\tc
+                            x\t20\t40
+                            """);
+        });
+    }
+
+    @Test
     public void testCalcSize() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -3998,6 +4047,42 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedWindowFunctionNotAllowed() throws Exception {
+        // A window function nested in a select expression used to skip the WINDOW JOIN window check.
+        // Compilation failed with a NullPointerException or "expected window join model" at position 0,
+        // and next to an aggregate the window function ran as a plain aggregate: sum(p.price) -
+        // sum(p.price) OVER () returned 0.
+        assertMemoryLeak(() -> {
+            prepareTable();
+
+            final String windowJoin = " FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING");
+            final String[][] queries = {
+                    {"SELECT t.sym, row_number() OVER () + 1 rn, avg(p.price) a" + windowJoin, "row_number"},
+                    {"SELECT t.sym, (row_number() OVER ())::string rn, avg(p.price) a" + windowJoin, "row_number"},
+                    {"SELECT t.sym, avg(p.price) OVER () + 1 x, avg(p.price) a" + windowJoin, "avg"},
+                    {"SELECT t.sym, max(avg(p.price) OVER ()) x" + windowJoin, "avg"},
+                    {"SELECT t.sym, sum(p.price) - sum(p.price) OVER () x" + windowJoin, "sum(p.price) OVER"},
+                    {"SELECT t.sym, avg(p.price) a, row_number() OVER w + 1 rn" + windowJoin + " WINDOW w AS ()", "row_number"},
+                    {"SELECT t.sym, avg(p.price) a" + windowJoin + " ORDER BY row_number() OVER ()", "row_number"},
+            };
+            for (String[] query : queries) {
+                final String sql = query[0];
+                final int position = sql.indexOf(query[1]);
+                final String message = "WINDOW functions are not allowed in WINDOW JOIN queries";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(position, message);
+
+                final String outerPrefix = "SELECT count() FROM (";
+                assertQuery(outerPrefix + sql + ")")
+                        .noLeakCheck()
+                        .fails(outerPrefix.length() + position, message);
+            }
+        });
+    }
+
+    @Test
     public void testNonParallelAggregateWindowJoinDowngradesToSerial() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -4060,6 +4145,56 @@ public class WindowJoinTest extends AbstractCairoTest {
                             401.0\tTSLA,AMZN\t496.0
                             402.0\tTSLA,AMZN,META\t496.0
                             """);
+        });
+    }
+
+    @Test
+    public void testNonParallelApproxPercentileEmptyWindowReturnsNull() throws Exception {
+        // The double and packed approx_percentile() variants keep their histograms in a list and
+        // store a histogram index in the map value. The serial WINDOW JOIN calls setEmpty() for
+        // every master row and computeFirst() only when the window has rows, so a master row with
+        // an empty window reads whatever setEmpty() wrote. Index 0 belongs to another master row's
+        // histogram, so setEmpty() has to write NULL. The precision-2 LONG variant stores a
+        // histogram pointer instead and serves as the control.
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                    ('2021-01-01T00:00:00.000000Z', 'A', 1),
+                    ('2021-01-01T05:00:00.000000Z', 'A', 2)
+                    """);
+            execute("CREATE TABLE p (ts TIMESTAMP, sym SYMBOL, price DOUBLE, l LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO p VALUES ('2021-01-01T00:00:30.000000Z', 'A', 10.0, 10)");
+            // The plain join runs on the serial Window Join, the symbol-keyed one on the serial
+            // Window Fast Join; approx_percentile() keeps both off the async factories.
+            final String[][] variants = {{"", "Window Join\n"}, {"ON (m.sym = p.sym)", "Window Fast Join\n"}};
+            for (String[] variant : variants) {
+                assertQuery("""
+                        SELECT m.x,
+                            approx_percentile(p.price, 0.5) ap,
+                            approx_percentile(p.price, 0.5, 3) app,
+                            approx_percentile(p.l, 0.5, 3) alp,
+                            approx_percentile(p.l, 0.5, 2) al,
+                            count() c
+                        FROM m
+                        WINDOW JOIN p
+                        %s
+                        RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                        EXCLUDE PREVAILING
+                        """.formatted(variant[0]))
+                        .withPlanContaining(variant[1])
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                x\tap\tapp\talp\tal\tc
+                                1\t10.0\t10.0\t10.0\t10.0\t1
+                                2\tnull\tnull\tnull\tnull\t0
+                                """);
+            }
         });
     }
 
@@ -4211,6 +4346,82 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .noRandomAccess()
                     .returns(sink);
+        });
+    }
+
+    @Test
+    public void testOrderByExpressionOverNonSelectedColumn() throws Exception {
+        // ORDER BY an expression over a column that the select list does not output, such as
+        // t.price * 2, adds the expression to the select list as a hidden column. With DISTINCT, the
+        // distinct model above the window join model used to reference it as a regular column, so the
+        // query, and SELECT * over it, returned an extra column named "column".
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                                ('2000-01-01T00:00:01.000000Z', 'B', 20.0),
+                                ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                                ('2000-01-01T00:00:03.000000Z', 'C', 40.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO quotes VALUES
+                                ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                                ('2000-01-01T00:00:00.000000Z', 'B', 20.0),
+                                ('2000-01-01T00:00:00.000000Z', 'C', 40.0),
+                                ('2000-01-01T00:00:01.000000Z', 'A', 50.0),
+                                ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                                ('2000-01-01T00:00:02.000000Z', 'B', 60.0)
+                            """
+            );
+
+            final String windowJoin = " FROM trades t WINDOW JOIN quotes q ON (t.sym = q.sym) " +
+                    "RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING INCLUDE PREVAILING ORDER BY t.price * 2, t.sym";
+            final String expected = """
+                    sym\ta
+                    A\t30.0
+                    B\t40.0
+                    A\t40.0
+                    C\t40.0
+                    """;
+            final String expectedPlusOne = """
+                    sym\ta
+                    A\t31.0
+                    B\t41.0
+                    A\t41.0
+                    C\t41.0
+                    """;
+            final String[][] queries = {
+                    {"SELECT t.sym, avg(q.bid) a" + windowJoin, expected},
+                    {"SELECT t.sym, avg(q.bid) + 1 a" + windowJoin, expectedPlusOne},
+                    {"SELECT DISTINCT t.sym, avg(q.bid) a" + windowJoin, expected},
+            };
+            // only the sort over the distinct factory reports its size
+            final boolean[] isSizeKnown = {false, false, true};
+            for (int i = 0, n = queries.length; i < n; i++) {
+                assertOrderByHiddenKey(queries[i][0], queries[i][1], isSizeKnown[i]);
+            }
+
+            // a re-sort over the query drops its ORDER BY
+            assertQuery("SELECT * FROM (" + queries[0][0] + ") ORDER BY sym, a")
+                    .noLeakCheck()
+                    .returns("""
+                            sym\ta
+                            A\t30.0
+                            A\t40.0
+                            B\t40.0
+                            C\t40.0
+                            """);
         });
     }
 

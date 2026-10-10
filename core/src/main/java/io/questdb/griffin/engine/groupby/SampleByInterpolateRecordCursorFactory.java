@@ -781,6 +781,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             assert good;
 
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
+            // TIMESTAMP(col) can designate a column that holds NULL, and an ascending base puts the NULL first. No
+            // bucket can hold it. With ALIGN TO FIRST OBSERVATION, the grid would start at Long.MIN_VALUE, and
+            // fillMap() would create a gap entry for every stride up to the next row. On a calendar grid, round()
+            // would put the NULL in a bucket near Long.MAX_VALUE.
+            if (timestamp == Numbers.LONG_NULL) {
+                throw CairoException.nonCritical().put("SAMPLE BY designated timestamp cannot be NULL");
+            }
             if (rules != null) {
                 tzOffset = rules.getOffset(timestamp);
             }

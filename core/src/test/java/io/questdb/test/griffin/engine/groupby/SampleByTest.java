@@ -44,6 +44,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.model.ExpressionNode;
@@ -103,7 +104,91 @@ public class SampleByTest extends AbstractCairoTest {
               FROM long_sequence(480)
             ) timestamp(ts)
             """;
+    // The rows of SUB_DAY_TIME_ZONE_DDL around the Europe/Berlin fall-back at 2021-10-31T01:00Z, where
+    // 03:00 CEST becomes 02:00 CET. Before it: S3 101.0 at 22:09Z, S4 102.0 at 22:46Z, S0 103.0 at
+    // 23:23Z, S1 104.0 at 00:00Z and S2 105.0 at 00:37Z. After it: S3 106.0 at 01:14Z (02:14 CET),
+    // S4 100.0 at 01:51Z (02:51 CET), S0 101.0 at 02:28Z and S1 102.0 at 03:05Z. Key k groups S1 and S3
+    // as A and the other symbols as B. The sub-query keeps SAMPLE BY on its cursors, which merge the
+    // repeated hour 02:00 CET into the bucket of 02:00 CEST, at 00:00Z.
+    private static final String DST_FALL_BACK_ROWS = """
+            (
+                SELECT ts, sym, CASE WHEN sym IN ('S1', 'S3') THEN 'A' ELSE 'B' END k, price, price::VARCHAR v
+                FROM trades
+                WHERE ts >= '2021-10-30T22:00' AND ts < '2021-10-31T03:30'
+            )""";
+    // GitHub issue #7742: the first row of FILL_PREV_FROM_INSERT, at 21:20, comes two 45m buckets
+    // after FROM 19:45
+    private static final String FILL_PREV_FROM_DDL = "CREATE TABLE fal (price DOUBLE, qty INT, l LONG, sym SYMBOL, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY";
+    private static final String FILL_PREV_FROM_INSERT = """
+            INSERT INTO fal VALUES
+                (1.5, 10, 100, 'b', 'v1', '2021-10-30T21:20:00.000000Z'),
+                (2.5, 20, 200, 'c', 'v2', '2021-10-30T22:10:00.000000Z'),
+                (3.5, 30, 300, 'a', 'v3', '2021-10-30T22:50:00.000000Z'),
+                (4.5, 40, 400, 'b', 'v4', '2021-10-31T00:10:00.000000Z'),
+                (5.5, 50, 500, 'c', 'v5', '2021-10-31T00:40:00.000000Z'),
+                (6.5, 60, 600, 'a', 'v6', '2021-10-31T01:10:00.000000Z'),
+                (7.5, 70, 700, 'b', 'v7', '2021-10-31T01:50:00.000000Z'),
+                (8.5, 80, 800, 'c', 'v8', '2021-10-31T04:20:00.000000Z'),
+                (9.5, 90, 900, 'a', 'v9', '2021-10-31T04:55:00.000000Z'),
+                (10.5, 100, 1000, 'b', 'v10', '2021-10-31T07:30:00.000000Z'),
+                (11.5, 110, 1100, 'c', 'v11', '2021-10-31T10:05:00.000000Z')
+            """;
+    // keyedSampleByReuseSql() over createKeyedSampleByReuseTable(), per fill mode
+    private static final String KEYED_SAMPLE_BY_REUSE_FILL_NONE = """
+            sym\tsum
+            a\t1.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\t5.0
+            \t6.0
+            """;
+    private static final String KEYED_SAMPLE_BY_REUSE_FILL_NULL = """
+            sym\tsum
+            a\t1.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\tnull
+            \tnull
+            a\tnull
+            b\t5.0
+            \t6.0
+            """;
+    private static final String KEYED_SAMPLE_BY_REUSE_FILL_PREV = """
+            sym\tsum
+            a\t1.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\t5.0
+            \t6.0
+            """;
+    private static final String KEYED_SAMPLE_BY_REUSE_FILL_VALUE = """
+            sym\tsum
+            a\t1.0
+            b\t2.0
+            \t3.0
+            a\t4.0
+            b\t42.0
+            \t42.0
+            a\t42.0
+            b\t5.0
+            \t6.0
+            """;
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
+    // 240 rows, 37 minutes apart, from 2021-10-29T20:15:00Z to 2021-11-04T23:38:00Z
+    private static final String SUB_DAY_TIME_ZONE_DDL = """
+            CREATE TABLE trades AS (
+                SELECT ('S' || (x % 5))::SYMBOL sym,
+                       (100 + (x % 7))::DOUBLE price,
+                       timestamp_sequence('2021-10-29T20:15:00', 37 * 60_000_000L) ts
+                FROM long_sequence(240)
+            ) TIMESTAMP(ts) PARTITION BY DAY
+            """;
     private static final String SYS_TELEMETRY_WAL_DDL = "CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
             "created TIMESTAMP, " +
             "event SHORT, " +
@@ -173,6 +258,26 @@ public class SampleByTest extends AbstractCairoTest {
         assertQuery("SELECT count(), ts FROM x SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'")
                 .ddl("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
                 .fails(67, "invalid timezone: Invalid/TZ");
+    }
+
+    @Test
+    public void testBadTimezoneSubDayNoFromSubQuery() throws Exception {
+        // Sub-day stride + timezone without FROM or TO over a sub-query, which keeps the statement on
+        // the SAMPLE BY cursor. Code generation reads the timezone only to convert FROM and TO, so the
+        // statement compiles, and the cursor rejects the timezone when it opens, even with no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (RecordCursorFactory factory = select(
+                    "SELECT count(), ts FROM (SELECT i, ts FROM x WHERE i > 0) SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'"
+            )) {
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(99, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Invalid/TZ");
+                }
+            }
+        });
     }
 
     @Test
@@ -422,6 +527,8 @@ public class SampleByTest extends AbstractCairoTest {
 
             // todo: return values for "prev" function are incorrect. This is a bug.
             // [nwoolmer] I think I've fixed this now, dirty state in SimpleMapValuePeeker
+            // Before the first row, the FILL(PREV) column shows NULL, as on the GROUP BY path, see
+            // testSampleFillValueNotKeyedFromBeforeFirstRow()
             assertQuery("""
                     select created, avg(latency) avg, last(latency) latency
                       from telem
@@ -434,18 +541,18 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             created\tavg\tlatency
-                            2025-01-20T13:56:50.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:52.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:54.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:56.000000Z\t0.0\t0.0
-                            2025-01-20T13:56:58.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:00.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:02.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:04.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:06.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:08.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:10.000000Z\t0.0\t0.0
-                            2025-01-20T13:57:12.000000Z\t0.0\t0.0
+                            2025-01-20T13:56:50.000000Z\t0.0\tnull
+                            2025-01-20T13:56:52.000000Z\t0.0\tnull
+                            2025-01-20T13:56:54.000000Z\t0.0\tnull
+                            2025-01-20T13:56:56.000000Z\t0.0\tnull
+                            2025-01-20T13:56:58.000000Z\t0.0\tnull
+                            2025-01-20T13:57:00.000000Z\t0.0\tnull
+                            2025-01-20T13:57:02.000000Z\t0.0\tnull
+                            2025-01-20T13:57:04.000000Z\t0.0\tnull
+                            2025-01-20T13:57:06.000000Z\t0.0\tnull
+                            2025-01-20T13:57:08.000000Z\t0.0\tnull
+                            2025-01-20T13:57:10.000000Z\t0.0\tnull
+                            2025-01-20T13:57:12.000000Z\t0.0\tnull
                             2025-01-20T13:57:14.000000Z\t0.4851638802935891\t0.4846019644078461
                             2025-01-20T13:57:16.000000Z\t0.5040684715238979\t0.0014510055926236776
                             2025-01-20T13:57:18.000000Z\t0.4855058436740148\t0.760595244599882
@@ -3867,6 +3974,573 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedSampleByFillNoneDstFallBack() throws Exception {
+        // S3 at 01:14Z is the first row after the clock moves back, and it joins the bucket at 00:00Z,
+        // see DST_FALL_BACK_ROWS. FILL(NONE) starts every bucket with an empty map, so the row creates
+        // the map entry of S3, and the cursor used to add the row to that uninitialised entry: the count
+        // was a random number. The cursor also passed a row id of zero for that row, so first() and
+        // last() of key A, which already had S1 at 00:00Z in the bucket, returned 106.0 and 104.0.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T23:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                            2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T02:00:00.000000Z\tS0\t1\t101.0
+                            2021-10-31T03:00:00.000000Z\tS1\t1\t102.0
+                            """);
+            assertQuery("SELECT ts, k, count() c, first(price) f, last(price) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tA\t1\t102.0\t102.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeyedSampleByFillNoneDstFallBackVarchar() throws Exception {
+        // first() and last() over VARCHAR keep a pointer to the value in the map entry, so the
+        // uninitialised entry of testKeyedSampleByFillNoneDstFallBack() handed them a garbage pointer
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            assertQuery("SELECT ts, sym, first(v) f, last(v) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tf\tl
+                            2021-10-30T22:00:00.000000Z\tS3\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tS0\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tS1\t104.0\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t105.0\t105.0
+                            2021-10-31T00:00:00.000000Z\tS3\t106.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t100.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tS0\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tS1\t102.0\t102.0
+                            """);
+            assertQuery("SELECT ts, k, first(v) f, last(v) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tf\tl
+                            2021-10-30T22:00:00.000000Z\tA\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tB\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tB\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tA\t104.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tB\t105.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tB\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tA\t102.0\t102.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeyedSampleByFillNoneLimit() throws Exception {
+        assertKeyedSampleByLimit("", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNonePartialRead() throws Exception {
+        assertKeyedSampleByPartialRead("", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNoneVarcharKeyLimit() throws Exception {
+        assertKeyedSampleByLimit("VARCHAR", "TIMESTAMP", "", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNoneVarcharKeyPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead("VARCHAR", "TIMESTAMP", "", null, KEYED_SAMPLE_BY_REUSE_FILL_NONE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullDstFallBack() throws Exception {
+        // S3 at 01:14Z is the first row after the clock moves back, and it joins the bucket at 00:00Z,
+        // see DST_FALL_BACK_ROWS. The cursor used to add that row to the aggregate of the last bucket
+        // that had S3, then end the bucket and read the row again into the next bucket, together with
+        // S4 at 01:51Z. It also compared the bucket of each key with a bucket start that the change of
+        // the time zone offset had moved, so the bucket at 00:00Z showed NULL for the keys that had rows
+        // in it, and the aggregate of S0 from the bucket at 23:00Z.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T22:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS3\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS4\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-30T23:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T00:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                            2021-10-31T02:00:00.000000Z\tS3\tnull\tnull
+                            2021-10-31T02:00:00.000000Z\tS4\tnull\tnull
+                            2021-10-31T02:00:00.000000Z\tS0\t1\t101.0
+                            2021-10-31T02:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-31T02:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-31T03:00:00.000000Z\tS3\tnull\tnull
+                            2021-10-31T03:00:00.000000Z\tS4\tnull\tnull
+                            2021-10-31T03:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-31T03:00:00.000000Z\tS1\t1\t102.0
+                            2021-10-31T03:00:00.000000Z\tS2\tnull\tnull
+                            """);
+            // Key B gets S4 at 01:51Z after the clock moves back, and S0 at 02:28Z in the next bucket,
+            // which must not add to the bucket at 00:00Z. Key A has S1 at 00:00Z before S3 at 01:14Z.
+            assertQuery("SELECT ts, k, count() c, first(price) f, last(price) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tA\tnull\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tA\tnull\tnull\tnull
+                            2021-10-31T02:00:00.000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tA\t1\t102.0\t102.0
+                            2021-10-31T03:00:00.000000Z\tB\tnull\tnull\tnull
+                            """);
+            // With a stride of 2h, the offset changes inside the bucket of 02:00 CEST, at 00:00Z, without
+            // the clock moving back into an earlier bucket. The bucket start that the cursor compared
+            // with moved by an hour as well, so the bucket showed NULL for every key.
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                    + " WHERE ts < '2021-10-31T02:00' SAMPLE BY 2h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T22:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-30T22:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T00:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullDstFallBackNoRowsInRepeatedHour() throws Exception {
+        // Europe/Berlin moves the clock back from 03:00 CEST to 02:00 CET at 2021-10-31T01:00Z, and no
+        // row falls in the repeated hour, 01:00Z to 02:00Z. B at 02:10Z (03:10 CET) ends the bucket at
+        // 00:00Z without joining it, and the change of the offset moves the local start of that bucket
+        // back by an hour, onto the start of the bucket at 23:00Z, before the cursor emits it. The cursor
+        // used to compare the bucket of each key with that moved start, so the bucket at 00:00Z showed
+        // NULL for A and the aggregate of B from the bucket at 23:00Z, and the gap at 01:00Z showed the
+        // aggregate of A from the bucket at 00:00Z.
+        assertQuery("SELECT ts, sym, count() c, sum(price) s FROM (SELECT ts, sym, price FROM trades WHERE price > 0)"
+                + " SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                .ddl(
+                        "CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO trades VALUES
+                                    ('2021-10-30T23:10:00.000000Z', 'A', 1.0),
+                                    ('2021-10-30T23:40:00.000000Z', 'B', 2.0),
+                                    ('2021-10-31T00:20:00.000000Z', 'A', 3.0),
+                                    ('2021-10-31T02:10:00.000000Z', 'B', 4.0),
+                                    ('2021-10-31T02:40:00.000000Z', 'A', 5.0),
+                                    ('2021-10-31T04:15:00.000000Z', 'A', 6.0)
+                                """
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                .returns("""
+                        ts\tsym\tc\ts
+                        2021-10-30T23:00:00.000000Z\tA\t1\t1.0
+                        2021-10-30T23:00:00.000000Z\tB\t1\t2.0
+                        2021-10-31T00:00:00.000000Z\tA\t1\t3.0
+                        2021-10-31T00:00:00.000000Z\tB\tnull\tnull
+                        2021-10-31T01:00:00.000000Z\tA\tnull\tnull
+                        2021-10-31T01:00:00.000000Z\tB\tnull\tnull
+                        2021-10-31T02:00:00.000000Z\tA\t1\t5.0
+                        2021-10-31T02:00:00.000000Z\tB\t1\t4.0
+                        2021-10-31T03:00:00.000000Z\tA\tnull\tnull
+                        2021-10-31T03:00:00.000000Z\tB\tnull\tnull
+                        2021-10-31T04:00:00.000000Z\tA\t1\t6.0
+                        2021-10-31T04:00:00.000000Z\tB\tnull\tnull
+                        """);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullDstSpringForward() throws Exception {
+        // Europe/Berlin moves the clock forward from 02:00 CET to 03:00 CEST at 2021-03-28T01:00Z. B at
+        // 01:10Z (03:10 CEST) is the first row after the change. It ends the bucket at 00:00Z (01:00 CET),
+        // and the change of the offset moves the local start of that bucket forward by an hour before the
+        // cursor emits it. The cursor used to compare the bucket of each key with that moved start, so the
+        // bucket at 00:00Z showed every key as a fill, A and C included.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2021-03-27T23:10:00.000000Z', 'A', 1.0),
+                        ('2021-03-27T23:40:00.000000Z', 'B', 2.0),
+                        ('2021-03-28T00:20:00.000000Z', 'A', 3.0),
+                        ('2021-03-28T00:50:00.000000Z', 'C', 4.0),
+                        ('2021-03-28T01:10:00.000000Z', 'B', 5.0),
+                        ('2021-03-28T01:30:00.000000Z', 'A', 6.0),
+                        ('2021-03-28T03:15:00.000000Z', 'A', 7.0)
+                    """);
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM (SELECT ts, sym, price FROM trades WHERE price > 0)"
+                    + " SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-03-27T23:00:00.000000Z\tA\t1\t1.0
+                            2021-03-27T23:00:00.000000Z\tB\t1\t2.0
+                            2021-03-27T23:00:00.000000Z\tC\tnull\tnull
+                            2021-03-28T00:00:00.000000Z\tA\t1\t3.0
+                            2021-03-28T00:00:00.000000Z\tB\tnull\tnull
+                            2021-03-28T00:00:00.000000Z\tC\t1\t4.0
+                            2021-03-28T01:00:00.000000Z\tA\t1\t6.0
+                            2021-03-28T01:00:00.000000Z\tB\t1\t5.0
+                            2021-03-28T01:00:00.000000Z\tC\tnull\tnull
+                            2021-03-28T02:00:00.000000Z\tA\tnull\tnull
+                            2021-03-28T02:00:00.000000Z\tB\tnull\tnull
+                            2021-03-28T02:00:00.000000Z\tC\tnull\tnull
+                            2021-03-28T03:00:00.000000Z\tA\t1\t7.0
+                            2021-03-28T03:00:00.000000Z\tB\tnull\tnull
+                            2021-03-28T03:00:00.000000Z\tC\tnull\tnull
+                            """);
+            // FILL(value) runs on the cursor of FILL(NULL)
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM (SELECT ts, sym, price FROM trades WHERE price > 0)"
+                    + " SAMPLE BY 1h FILL(0, 0) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: value\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-03-27T23:00:00.000000Z\tA\t1\t1.0
+                            2021-03-27T23:00:00.000000Z\tB\t1\t2.0
+                            2021-03-27T23:00:00.000000Z\tC\t0\t0.0
+                            2021-03-28T00:00:00.000000Z\tA\t1\t3.0
+                            2021-03-28T00:00:00.000000Z\tB\t0\t0.0
+                            2021-03-28T00:00:00.000000Z\tC\t1\t4.0
+                            2021-03-28T01:00:00.000000Z\tA\t1\t6.0
+                            2021-03-28T01:00:00.000000Z\tB\t1\t5.0
+                            2021-03-28T01:00:00.000000Z\tC\t0\t0.0
+                            2021-03-28T02:00:00.000000Z\tA\t0\t0.0
+                            2021-03-28T02:00:00.000000Z\tB\t0\t0.0
+                            2021-03-28T02:00:00.000000Z\tC\t0\t0.0
+                            2021-03-28T03:00:00.000000Z\tA\t1\t7.0
+                            2021-03-28T03:00:00.000000Z\tB\t0\t0.0
+                            2021-03-28T03:00:00.000000Z\tC\t0\t0.0
+                            """);
+            // With a stride of 1d, the offset changes inside the bucket of 2021-03-28, and the cursor
+            // used to show every key of that day as a fill
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM (SELECT ts, sym, price FROM trades WHERE price > 0)"
+                    + " SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: null\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-03-27T23:00:00.000000Z\tA\t4\t17.0
+                            2021-03-27T23:00:00.000000Z\tB\t2\t7.0
+                            2021-03-27T23:00:00.000000Z\tC\t1\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullLimit() throws Exception {
+        assertKeyedSampleByLimit(" FILL(NULL)", "null", KEYED_SAMPLE_BY_REUSE_FILL_NULL);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullNanosLimit() throws Exception {
+        assertKeyedSampleByLimit("SYMBOL", "TIMESTAMP_NS", " FILL(NULL)", "null", KEYED_SAMPLE_BY_REUSE_FILL_NULL);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullNanosPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead("SYMBOL", "TIMESTAMP_NS", " FILL(NULL)", "null", KEYED_SAMPLE_BY_REUSE_FILL_NULL);
+    }
+
+    @Test
+    public void testKeyedSampleByFillNullPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(" FILL(NULL)", "null", KEYED_SAMPLE_BY_REUSE_FILL_NULL);
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevApproxPercentileBeforeFirstRow() throws Exception {
+        // GitHub issue #7761. Key B has its first row at 02:10. Until then, the keyed SAMPLE BY cursor
+        // reads B from the map value that setNull() initialised. Three approx_percentile()
+        // implementations read the LONG_NULL there as histogram 0, the first histogram of the
+        // execution, which holds key A at 00:00, and showed 10.0 for B at 00:00 and 01:00 while
+        // count() showed NULL. The cursor now shows NULL, as the GROUP BY path does.
+        // approx_percentile(l, 0.5), at precision 2 or less, stores a pointer instead, so issue #7761
+        // does not affect it, and it shows NULL as well.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE, l LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-01T00:10:00.000000Z', 'A', 10.0, 10),
+                        ('2021-01-01T01:10:00.000000Z', 'A', 20.0, 20),
+                        ('2021-01-01T02:10:00.000000Z', 'B', 30.0, 30),
+                        ('2021-01-01T02:20:00.000000Z', 'A', 40.0, 40)
+                    """);
+            final String expected = """
+                    ts\tsym\tpd\tpdp\tpl\tplp\tc
+                    2021-01-01T00:00:00.000000Z\tA\t10.0\t10.0\t10.0\t10.0\t1
+                    2021-01-01T00:00:00.000000Z\tB\tnull\tnull\tnull\tnull\tnull
+                    2021-01-01T01:00:00.000000Z\tA\t20.0\t20.0\t20.0\t20.0\t1
+                    2021-01-01T01:00:00.000000Z\tB\tnull\tnull\tnull\tnull\tnull
+                    2021-01-01T02:00:00.000000Z\tA\t40.0\t40.0\t41.0\t40.0\t1
+                    2021-01-01T02:00:00.000000Z\tB\t30.0\t30.0\t30.0\t30.0\t1
+                    """;
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            assertQuery("""
+                    SELECT ts, sym, approx_percentile(v, 0.5) pd, approx_percentile(v, 0.5, 3) pdp,
+                        approx_percentile(l, 0.5) pl, approx_percentile(l, 0.5, 3) plp, count() c
+                    FROM (SELECT * FROM t WHERE v > 0)
+                    SAMPLE BY 1h FILL(PREV)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: prev\n")
+                    .returns(expected);
+            // PREV for some columns and NULL for others takes the FILL(value) cursor, which reads the
+            // PREV columns of B from the same map value
+            assertQuery("""
+                    SELECT ts, sym, approx_percentile(v, 0.5) pd, approx_percentile(v, 0.5, 3) pdp,
+                        approx_percentile(l, 0.5) pl, approx_percentile(l, 0.5, 3) plp, count() c
+                    FROM (SELECT * FROM t WHERE v > 0)
+                    SAMPLE BY 1h FILL(PREV, PREV, PREV, PREV, NULL)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: value\n")
+                    .returns(expected);
+            // the GROUP BY path, which emits the keys of a bucket in another order
+            assertQuery("""
+                    SELECT ts, sym, approx_percentile(v, 0.5) pd, approx_percentile(v, 0.5, 3) pdp,
+                        approx_percentile(l, 0.5) pl, approx_percentile(l, 0.5, 3) plp, count() c
+                    FROM t
+                    SAMPLE BY 1h FILL(PREV)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns("""
+                            ts\tsym\tpd\tpdp\tpl\tplp\tc
+                            2021-01-01T00:00:00.000000Z\tA\t10.0\t10.0\t10.0\t10.0\t1
+                            2021-01-01T00:00:00.000000Z\tB\tnull\tnull\tnull\tnull\tnull
+                            2021-01-01T01:00:00.000000Z\tA\t20.0\t20.0\t20.0\t20.0\t1
+                            2021-01-01T01:00:00.000000Z\tB\tnull\tnull\tnull\tnull\tnull
+                            2021-01-01T02:00:00.000000Z\tB\t30.0\t30.0\t30.0\t30.0\t1
+                            2021-01-01T02:00:00.000000Z\tA\t40.0\t40.0\t41.0\t40.0\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevDstFallBack() throws Exception {
+        // S3 at 01:14Z is the first row after the clock moves back, and it joins the bucket at 00:00Z,
+        // see DST_FALL_BACK_ROWS. The cursor used to add that row to the aggregate of S3 from the
+        // bucket at 22:00Z, which returned a count of 2, then end the bucket and read the row again
+        // into the next bucket, together with S4 at 01:51Z.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: prev\n  keys: [ts,sym]\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T22:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T22:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS3\t1\t101.0
+                            2021-10-30T23:00:00.000000Z\tS4\t1\t102.0
+                            2021-10-30T23:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-30T23:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-30T23:00:00.000000Z\tS2\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T00:00:00.000000Z\tS0\t1\t103.0
+                            2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                            2021-10-31T02:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T02:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T02:00:00.000000Z\tS0\t1\t101.0
+                            2021-10-31T02:00:00.000000Z\tS1\t1\t104.0
+                            2021-10-31T02:00:00.000000Z\tS2\t1\t105.0
+                            2021-10-31T03:00:00.000000Z\tS3\t1\t106.0
+                            2021-10-31T03:00:00.000000Z\tS4\t1\t100.0
+                            2021-10-31T03:00:00.000000Z\tS0\t1\t101.0
+                            2021-10-31T03:00:00.000000Z\tS1\t1\t102.0
+                            2021-10-31T03:00:00.000000Z\tS2\t1\t105.0
+                            """);
+            // Key B gets S4 at 01:51Z after the clock moves back, and S0 at 02:28Z in the next bucket,
+            // which must not add to the bucket at 00:00Z. Key A has S1 at 00:00Z before S3 at 01:14Z.
+            assertQuery("SELECT ts, k, count() c, first(price) f, last(price) l FROM " + DST_FALL_BACK_ROWS
+                    + " SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n  fill: prev\n  keys: [ts,k]\n")
+                    .returns("""
+                            ts\tk\tc\tf\tl
+                            2021-10-30T22:00:00.000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T22:00:00.000000Z\tB\t1\t102.0\t102.0
+                            2021-10-30T23:00:00.000000Z\tA\t1\t101.0\t101.0
+                            2021-10-30T23:00:00.000000Z\tB\t1\t103.0\t103.0
+                            2021-10-31T00:00:00.000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T00:00:00.000000Z\tB\t2\t105.0\t100.0
+                            2021-10-31T02:00:00.000000Z\tA\t2\t104.0\t106.0
+                            2021-10-31T02:00:00.000000Z\tB\t1\t101.0\t101.0
+                            2021-10-31T03:00:00.000000Z\tA\t1\t102.0\t102.0
+                            2021-10-31T03:00:00.000000Z\tB\t1\t101.0\t101.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevLimit() throws Exception {
+        assertKeyedSampleByLimit(" FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(" FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevStringKeyLimit() throws Exception {
+        assertKeyedSampleByLimit("STRING", "TIMESTAMP", " FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
+    }
+
+    @Test
+    public void testKeyedSampleByFillPrevStringKeyPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead("STRING", "TIMESTAMP", " FILL(PREV)", "prev", KEYED_SAMPLE_BY_REUSE_FILL_PREV);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValueDstFallBack() throws Exception {
+        // FILL(value) runs on the cursor of FILL(NULL), see testKeyedSampleByFillNullDstFallBack()
+        assertQuery("SELECT ts, sym, count() c, sum(price) s FROM " + DST_FALL_BACK_ROWS
+                + " SAMPLE BY 1h FILL(0, 0) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: value\n  keys: [ts,sym]\n")
+                .returns("""
+                        ts\tsym\tc\ts
+                        2021-10-30T22:00:00.000000Z\tS3\t1\t101.0
+                        2021-10-30T22:00:00.000000Z\tS4\t1\t102.0
+                        2021-10-30T22:00:00.000000Z\tS0\t0\t0.0
+                        2021-10-30T22:00:00.000000Z\tS1\t0\t0.0
+                        2021-10-30T22:00:00.000000Z\tS2\t0\t0.0
+                        2021-10-30T23:00:00.000000Z\tS3\t0\t0.0
+                        2021-10-30T23:00:00.000000Z\tS4\t0\t0.0
+                        2021-10-30T23:00:00.000000Z\tS0\t1\t103.0
+                        2021-10-30T23:00:00.000000Z\tS1\t0\t0.0
+                        2021-10-30T23:00:00.000000Z\tS2\t0\t0.0
+                        2021-10-31T00:00:00.000000Z\tS3\t1\t106.0
+                        2021-10-31T00:00:00.000000Z\tS4\t1\t100.0
+                        2021-10-31T00:00:00.000000Z\tS0\t0\t0.0
+                        2021-10-31T00:00:00.000000Z\tS1\t1\t104.0
+                        2021-10-31T00:00:00.000000Z\tS2\t1\t105.0
+                        2021-10-31T02:00:00.000000Z\tS3\t0\t0.0
+                        2021-10-31T02:00:00.000000Z\tS4\t0\t0.0
+                        2021-10-31T02:00:00.000000Z\tS0\t1\t101.0
+                        2021-10-31T02:00:00.000000Z\tS1\t0\t0.0
+                        2021-10-31T02:00:00.000000Z\tS2\t0\t0.0
+                        2021-10-31T03:00:00.000000Z\tS3\t0\t0.0
+                        2021-10-31T03:00:00.000000Z\tS4\t0\t0.0
+                        2021-10-31T03:00:00.000000Z\tS0\t0\t0.0
+                        2021-10-31T03:00:00.000000Z\tS1\t1\t102.0
+                        2021-10-31T03:00:00.000000Z\tS2\t0\t0.0
+                        """);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValueFirstObservationLimit() throws Exception {
+        assertKeyedSampleByLimit(" FILL(42) ALIGN TO FIRST OBSERVATION", "value", KEYED_SAMPLE_BY_REUSE_FILL_VALUE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValueFirstObservationPartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(" FILL(42) ALIGN TO FIRST OBSERVATION", "value", KEYED_SAMPLE_BY_REUSE_FILL_VALUE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValueLimit() throws Exception {
+        assertKeyedSampleByLimit(" FILL(42)", "value", KEYED_SAMPLE_BY_REUSE_FILL_VALUE);
+    }
+
+    @Test
+    public void testKeyedSampleByFillValuePartialRead() throws Exception {
+        assertKeyedSampleByPartialRead(" FILL(42)", "value", KEYED_SAMPLE_BY_REUSE_FILL_VALUE);
+    }
+
+    @Test
     public void testMultiFillCountMismatchPrecedesCapability() throws Exception {
         // When FILL(...) provides more than one value but fewer than the
         // aggregate count, GroupByUtils.assembleGroupByFunctions used to clamp
@@ -5032,6 +5706,447 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByAlignToCalendarNumericTimeZoneAndLimit() throws Exception {
+        // LIMIT rewinds the SAMPLE BY cursor before it reads the first row. toTop() restores the
+        // time zone offset that the first read saves, and nothing recomputes the offset of a numeric
+        // time zone, so the rewind used to replace +05:30 with zero and the buckets fell on UTC
+        // days: one bucket of four rows instead of the two below. A time zone name was not
+        // affected, because the first read derives its offset from the zone rules.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('b', 2.0, '2024-01-01T12:00:00.000000Z'),
+                        ('a', 4.0, '2024-01-01T19:00:00.000000Z'),
+                        ('b', 8.0, '2024-01-01T20:00:00.000000Z')
+                    """);
+            // The sub-query keeps the queries on the SAMPLE BY cursors, one per fill mode, keyed and
+            // not keyed. Both keys have a row in both buckets, so every fill mode returns the same rows.
+            for (String zone : new String[]{"+05:30", "Asia/Kolkata"}) {
+                for (String fill : new String[]{"", " FILL(PREV)", " FILL(NULL)", " FILL(42)"}) {
+                    final String sampleBy = " SAMPLE BY 1d" + fill + " ALIGN TO CALENDAR TIME ZONE '" + zone + "'";
+                    for (String limit : new String[]{"", " LIMIT 10"}) {
+                        assertQuery("SELECT ts, sym, sum(price) FROM (SELECT ts, sym, price FROM trades)" + sampleBy + limit)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .noRandomAccess()
+                                .withPlanContaining("Sample By\n", "keys: [ts,sym]")
+                                .returns("""
+                                        ts\tsym\tsum
+                                        2023-12-31T18:30:00.000000Z\ta\t1.0
+                                        2023-12-31T18:30:00.000000Z\tb\t2.0
+                                        2024-01-01T18:30:00.000000Z\ta\t4.0
+                                        2024-01-01T18:30:00.000000Z\tb\t8.0
+                                        """);
+                        assertQuery("SELECT ts, sum(price) FROM (SELECT ts, price FROM trades)" + sampleBy + limit)
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .noRandomAccess()
+                                .withPlanContaining("Sample By\n", "values: [sum(price)]")
+                                .returns("""
+                                        ts\tsum
+                                        2023-12-31T18:30:00.000000Z\t3.0
+                                        2024-01-01T18:30:00.000000Z\t12.0
+                                        """);
+                    }
+                }
+            }
+
+            // WITH OFFSET moves the bucket start to 01:00 local time, which is 19:30 UTC
+            for (String limit : new String[]{"", " LIMIT 10"}) {
+                assertQuery("SELECT ts, sym, sum(price) FROM (SELECT ts, sym, price FROM trades) " +
+                        "SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE '+05:30' WITH OFFSET '01:00'" + limit)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .withPlanContaining("Sample By\n", "keys: [ts,sym]")
+                        .returns("""
+                                ts\tsym\tsum
+                                2023-12-31T19:30:00.000000Z\ta\t5.0
+                                2023-12-31T19:30:00.000000Z\tb\t2.0
+                                2024-01-01T19:30:00.000000Z\tb\t8.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarNumericTimeZoneBindVariableAndLimit() throws Exception {
+        // Every execution of a compiled factory reads the TIME ZONE bind variable again, and LIMIT
+        // rewinds the SAMPLE BY cursor before its first read, see
+        // testSampleByAlignToCalendarNumericTimeZoneAndLimit(). of() saves the numeric offset of the
+        // current execution for that rewind. An offset saved by the first execution only would put
+        // the buckets of the +02:00 execution on +05:30 days. Each execution returns the rows of the
+        // same statement with the zone as a literal, with or without LIMIT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        (1.0, '2024-01-01T10:00:00.000000Z'),
+                        (2.0, '2024-01-01T12:00:00.000000Z'),
+                        (4.0, '2024-01-01T19:00:00.000000Z'),
+                        (8.0, '2024-01-01T23:00:00.000000Z')
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String sql = """
+                    SELECT ts, sum(price) FROM (SELECT ts, price FROM trades)
+                    SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE $1 LIMIT 10
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "+05:30");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Limit value: 10", "Sample By\n");
+
+            final String rowsAt0530 = """
+                    ts\tsum
+                    2023-12-31T18:30:00.000000Z\t3.0
+                    2024-01-01T18:30:00.000000Z\t12.0
+                    """;
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "+05:30",
+                    rowsAt0530,
+                    bindVariableService -> bindVariableService.setStr(0, "+05:30")
+            ));
+            cases.add(BindVarTuple.ok(
+                    "+02:00 on the same factory",
+                    """
+                            ts\tsum
+                            2023-12-31T22:00:00.000000Z\t7.0
+                            2024-01-01T22:00:00.000000Z\t8.0
+                            """,
+                    bindVariableService -> bindVariableService.setStr(0, "+02:00")
+            ));
+            cases.add(BindVarTuple.ok(
+                    "back to +05:30",
+                    rowsAt0530,
+                    bindVariableService -> bindVariableService.setStr(0, "+05:30")
+            ));
+            // compiles the statement once and executes it for each case in turn
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .assertBinds(cases);
+        });
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarSubDayTimeZoneBindVariable() throws Exception {
+        // A stride shorter than a day with TIME ZONE as a bind variable, and neither FROM nor TO. For
+        // such a stride code generation converts FROM and TO from the time zone to UTC, see
+        // testSampleByFromToSubDayTimeZoneLimit(). It read the zone for that even without FROM and TO,
+        // before the bind variable had a value, and failed the compilation with an internal error. Each
+        // execution of one compiled factory returns the rows of the same statement with the zone as a
+        // literal: the not-keyed and keyed SAMPLE BY cursors and the FILL(NULL), FILL(PREV) and
+        // FILL(value) cursors.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            // the sub-queries keep the statements on the SAMPLE BY cursor
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, count() c FROM (SELECT ts, price FROM trades)
+                            SAMPLE BY 5h ALIGN TO CALENDAR TIME ZONE $1 LIMIT 3
+                            """,
+                    """
+                            ts\tc
+                            2021-10-29T17:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t8
+                            2021-10-30T03:00:00.000000Z\t9
+                            """,
+                    """
+                            ts\tc
+                            2021-10-29T18:30:00.000000Z\t6
+                            2021-10-29T23:30:00.000000Z\t8
+                            2021-10-30T04:30:00.000000Z\t8
+                            """
+            );
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, sym, count() c FROM (SELECT ts, sym, price FROM trades)
+                            SAMPLE BY 5h ALIGN TO CALENDAR TIME ZONE $1 LIMIT 4
+                            """,
+                    """
+                            ts\tsym\tc
+                            2021-10-29T17:00:00.000000Z\tS1\t1
+                            2021-10-29T17:00:00.000000Z\tS2\t1
+                            2021-10-29T17:00:00.000000Z\tS3\t1
+                            2021-10-29T22:00:00.000000Z\tS4\t2
+                            """,
+                    """
+                            ts\tsym\tc
+                            2021-10-29T18:30:00.000000Z\tS1\t2
+                            2021-10-29T18:30:00.000000Z\tS2\t1
+                            2021-10-29T18:30:00.000000Z\tS3\t1
+                            2021-10-29T18:30:00.000000Z\tS4\t1
+                            """
+            );
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, count() c FROM (SELECT ts, price FROM trades)
+                            SAMPLE BY 5h FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1 LIMIT 3
+                            """,
+                    """
+                            ts\tc
+                            2021-10-29T17:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t8
+                            2021-10-30T03:00:00.000000Z\t9
+                            """,
+                    """
+                            ts\tc
+                            2021-10-29T18:30:00.000000Z\t6
+                            2021-10-29T23:30:00.000000Z\t8
+                            2021-10-30T04:30:00.000000Z\t8
+                            """
+            );
+            // rows come 37 minutes apart, so some 20-minute buckets are empty and take the fill
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, sum(price) s FROM (SELECT ts, price FROM trades)
+                            SAMPLE BY 20m FILL(PREV) ALIGN TO CALENDAR TIME ZONE $1 LIMIT 6
+                            """,
+                    """
+                            ts\ts
+                            2021-10-29T20:00:00.000000Z\t101.0
+                            2021-10-29T20:20:00.000000Z\t101.0
+                            2021-10-29T20:40:00.000000Z\t102.0
+                            2021-10-29T21:00:00.000000Z\t102.0
+                            2021-10-29T21:20:00.000000Z\t103.0
+                            2021-10-29T21:40:00.000000Z\t103.0
+                            """,
+                    """
+                            ts\ts
+                            2021-10-29T20:10:00.000000Z\t101.0
+                            2021-10-29T20:30:00.000000Z\t101.0
+                            2021-10-29T20:50:00.000000Z\t102.0
+                            2021-10-29T21:10:00.000000Z\t103.0
+                            2021-10-29T21:30:00.000000Z\t103.0
+                            2021-10-29T21:50:00.000000Z\t104.0
+                            """
+            );
+            assertSubDayTimeZoneBindVariable(
+                    """
+                            SELECT ts, sum(price) s FROM (SELECT ts, price FROM trades)
+                            SAMPLE BY 20m FILL(42) ALIGN TO CALENDAR TIME ZONE $1 LIMIT 6
+                            """,
+                    """
+                            ts\ts
+                            2021-10-29T20:00:00.000000Z\t101.0
+                            2021-10-29T20:20:00.000000Z\t42.0
+                            2021-10-29T20:40:00.000000Z\t102.0
+                            2021-10-29T21:00:00.000000Z\t42.0
+                            2021-10-29T21:20:00.000000Z\t103.0
+                            2021-10-29T21:40:00.000000Z\t42.0
+                            """,
+                    """
+                            ts\ts
+                            2021-10-29T20:10:00.000000Z\t101.0
+                            2021-10-29T20:30:00.000000Z\t42.0
+                            2021-10-29T20:50:00.000000Z\t102.0
+                            2021-10-29T21:10:00.000000Z\t103.0
+                            2021-10-29T21:30:00.000000Z\t42.0
+                            2021-10-29T21:50:00.000000Z\t104.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarSubDayTimeZoneBindVariableWithFromToRejected() throws Exception {
+        // TIME ZONE as a bind variable with FROM or TO and a stride shorter than a day. Code generation
+        // converts FROM and TO from the time zone to UTC before execution, see
+        // testSampleByFromToSubDayTimeZoneLimit(), when the bind variable has no value yet. It rejects
+        // the statement at the bind variable instead of failing with an internal error. A stride of a
+        // day doesn't need the conversion and takes the bind variable. A zone without a bind variable
+        // keeps compiling, see SampleByTemporalFunctionOwnershipTest.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String message = "timezone must not contain a bind variable when SAMPLE BY has FROM or TO and a stride shorter than a day";
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "+02:00");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE $1
+                    LIMIT 3
+                    """)
+                    .noLeakCheck()
+                    .fails(148, message);
+            // FROM alone
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE $1
+                    """)
+                    .noLeakCheck()
+                    .fails(132, message);
+            // TO alone, with FILL(NULL)
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 30m TO '2021-10-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1
+                    """)
+                    .noLeakCheck()
+                    .fails(142, message);
+            // an expression over the bind variable, positioned at the bind variable
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE '+0' || $1
+                    """)
+                    .noLeakCheck()
+                    .fails(140, message);
+            // a named bind variable
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "+02:00");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE :tz
+                    """)
+                    .noLeakCheck()
+                    .fails(132, message);
+            // no value bound yet, as when a client prepares the statement before it binds the values
+            bindVariableService.clear();
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE $1
+                    """)
+                    .noLeakCheck()
+                    .fails(132, message);
+
+            // a stride of a day takes the bind variable
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "+02:00");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 1d FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE $1 LIMIT 3
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-28T22:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t39
+                            2021-10-30T22:00:00.000000Z\t39
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarSubDayTimeZoneBoundBindVariableRejected() throws Exception {
+        // FROM or TO as a bind variable with a time zone and a stride shorter than a day. Code generation
+        // converts the bound from the time zone to UTC before execution, see
+        // testSampleByFromToSubDayTimeZoneLimit(), when the bind variable has no value yet. It rejects
+        // the statement at the bind variable instead of failing with an internal error. Without a time
+        // zone, or with a stride of a day, nothing converts the bound and the bind variable works. A
+        // bound without a bind variable keeps compiling, such as FROM dateadd('d', -1, now()).
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String fromMessage = "from lower bound must not contain a bind variable when SAMPLE BY has a time zone and a stride shorter than a day";
+            final String toMessage = "to upper bound must not contain a bind variable when SAMPLE BY has a time zone and a stride shorter than a day";
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2021-10-29");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM $1 TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(91, fromMessage);
+            // the bind variable inside an expression
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM $1::TIMESTAMP TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(91, fromMessage);
+            // over the table, a bind variable FROM keeps the statement on the SAMPLE BY cursor
+            assertQuery("""
+                    SELECT ts, count() c FROM trades
+                    SAMPLE BY 5h FROM $1 TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(51, fromMessage);
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, MicrosTimestampDriver.floor("2021-10-29"));
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM dateadd('h', 0, $1) TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(107, fromMessage);
+            // TO, with FILL(NONE) and with FILL(NULL)
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2021-10-31");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' TO $1 ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """)
+                    .noLeakCheck()
+                    .fails(107, toMessage);
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 30m TO $1 FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                    """)
+                    .noLeakCheck()
+                    .fails(90, toMessage);
+
+            // without a time zone the bind variable works
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2021-10-29");
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM $1 TO '2021-10-31' ALIGN TO CALENDAR LIMIT 3
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-29T20:00:00.000000Z\t8
+                            2021-10-30T01:00:00.000000Z\t8
+                            2021-10-30T06:00:00.000000Z\t8
+                            """);
+            // so does a stride of a day
+            assertQuery("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 1d FROM $1 ALIGN TO CALENDAR TIME ZONE '+02:00' LIMIT 3
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-28T22:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t39
+                            2021-10-30T22:00:00.000000Z\t39
+                            """);
+            // FROM over now() has no bind variable and returns the rows of FROM '2021-10-29'
+            setCurrentMicros(MicrosTimestampDriver.floor("2021-10-30"));
+            try {
+                assertQuery("""
+                        SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                        SAMPLE BY 1h FROM dateadd('d', -1, now()) TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                        LIMIT 3
+                        """)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .withPlanContaining("Sample By\n")
+                        .returns("""
+                                ts\tc
+                                2021-10-29T20:00:00.000000Z\t2
+                                2021-10-29T21:00:00.000000Z\t1
+                                2021-10-29T22:00:00.000000Z\t2
+                                """);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testSampleByAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -5341,6 +6456,380 @@ public class SampleByTest extends AbstractCairoTest {
                         300
                         100
                         """);
+    }
+
+    @Test
+    public void testSampleByDayDstFallBackRowInLastLocalHour() throws Exception {
+        // GitHub issue #7752. America/New_York moves the clock back from 02:00 EDT to 01:00 EST at
+        // 2021-11-07T06:00Z, so the local day of Nov 7 lasts 25 hours, from 04:00Z to 05:00Z on Nov 8.
+        // The row at 17:00Z on Nov 7 is the first after the change. The cursor shifts the start of its
+        // day back by the offset delta, so that the day keeps the label 04:00Z, and it used to derive the
+        // end of the day from that shifted start: 04:00Z on Nov 8 instead of 05:00Z. The row at 04:30Z on
+        // Nov 8, 23:30 EST on Nov 7, then fell after the end of the day but rounded back to its start. The
+        // keyed FILL cursors emitted that day without end, keyed FILL(NONE) dropped that row and the next
+        // one, and the not-keyed cursors split the day into two rows with the same label. The rows equal
+        // those of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-11-06T22:00:00.000000Z', 'A', 1.0),
+                        ('2021-11-07T17:00:00.000000Z', 'A', 2.0),
+                        ('2021-11-08T04:30:00.000000Z', 'A', 4.0),
+                        ('2021-11-08T17:00:00.000000Z', 'A', 8.0)
+                    """);
+            final String keyed = "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1d";
+            final String notKeyed = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1d";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            final String keyedRows = """
+                    ts\tsym\tc\ts
+                    2021-11-06T04:00:00.000000Z\tA\t1\t1.0
+                    2021-11-07T04:00:00.000000Z\tA\t2\t6.0
+                    2021-11-08T05:00:00.000000Z\tA\t1\t8.0
+                    """;
+            final String notKeyedRows = """
+                    ts\tc\ts
+                    2021-11-06T04:00:00.000000Z\t1\t1.0
+                    2021-11-07T04:00:00.000000Z\t2\t6.0
+                    2021-11-08T05:00:00.000000Z\t1\t8.0
+                    """;
+            assertSampleByCursorDst(keyed + " FILL(NULL)" + timeZone, "fill: null\n", keyedRows);
+            assertSampleByCursorDst(keyed + " FILL(PREV)" + timeZone, "fill: prev\n", keyedRows);
+            assertSampleByCursorDst(keyed + " FILL(0, 0)" + timeZone, "fill: value\n", keyedRows);
+            assertSampleByCursorDst(keyed + timeZone, null, keyedRows);
+            assertSampleByCursorDst(notKeyed + " FILL(NULL)" + timeZone, "fill: null\n", notKeyedRows);
+            assertSampleByCursorDst(notKeyed + " FILL(PREV)" + timeZone, "fill: prev\n", notKeyedRows);
+            assertSampleByCursorDst(notKeyed + " FILL(0, 0)" + timeZone, "fill: value\n", notKeyedRows);
+            assertSampleByCursorDst(notKeyed + timeZone, null, notKeyedRows);
+        });
+    }
+
+    @Test
+    public void testSampleByDayDstFallBackRowInLastLocalHourTwoKeys() throws Exception {
+        // GitHub issue #7752, see testSampleByDayDstFallBackRowInLastLocalHour(). Rows come every 211
+        // minutes and alternate between two keys. In America/New_York, id 1722 at 2021-11-08T04:18Z falls
+        // in the last local hour of the day of the fall-back, 23:18 EST on Nov 7. Over LIMIT 100_000,
+        // count() of the keyed FILL(NULL) cursor returned 100_000. The rows equal those of the GROUP BY
+        // path; the keyed FILL cursors order the keys by their first row.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t2 AS (
+                        SELECT x + 1711 id, ('S' || ((x + 1711) % 2))::SYMBOL sym, (100 + ((x + 1711) % 7))::DOUBLE price,
+                               timestamp_sequence('2021-11-06T17:08:00', 211 * 60_000_000L) ts
+                        FROM long_sequence(14)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String rows = "(SELECT ts, id, sym, price FROM t2 WHERE price > 0)";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertQuery("SELECT count() FROM (SELECT ts, sym, count() c FROM " + rows
+                    + " SAMPLE BY 1d FILL(NULL)" + timeZone + " LIMIT 100_000)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            6
+                            """);
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, min(id) mn FROM " + rows + " SAMPLE BY 1d FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\tmn
+                            2021-11-06T04:00:00.000000Z\tS0\t2\t1712
+                            2021-11-06T04:00:00.000000Z\tS1\t2\t1713
+                            2021-11-07T04:00:00.000000Z\tS0\t4\t1716
+                            2021-11-07T04:00:00.000000Z\tS1\t3\t1717
+                            2021-11-08T05:00:00.000000Z\tS0\t1\t1724
+                            2021-11-08T05:00:00.000000Z\tS1\t2\t1723
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, min(id) mn FROM " + rows + " SAMPLE BY 1d" + timeZone,
+                    null,
+                    """
+                            ts\tsym\tc\tmn
+                            2021-11-06T04:00:00.000000Z\tS0\t2\t1712
+                            2021-11-06T04:00:00.000000Z\tS1\t2\t1713
+                            2021-11-07T04:00:00.000000Z\tS0\t4\t1716
+                            2021-11-07T04:00:00.000000Z\tS1\t3\t1717
+                            2021-11-08T05:00:00.000000Z\tS1\t2\t1723
+                            2021-11-08T05:00:00.000000Z\tS0\t1\t1724
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, min(id) mn FROM " + rows + " SAMPLE BY 1d FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tc\tmn
+                            2021-11-06T04:00:00.000000Z\t4\t1712
+                            2021-11-07T04:00:00.000000Z\t7\t1716
+                            2021-11-08T05:00:00.000000Z\t3\t1723
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayDstFallBackRowInLastLocalHourTwoKeysBerlin() throws Exception {
+        // GitHub issue #7752, see testSampleByDayDstFallBackRowInLastLocalHourTwoKeys(). Europe/Berlin moves
+        // the clock back from 03:00 CEST to 02:00 CET at 2021-10-31T01:00Z, and id 1722 at 22:18Z on Oct 31
+        // falls in the last local hour of that day, 23:18 CET.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t3 AS (
+                        SELECT x + 1711 id, ('S' || ((x + 1711) % 2))::SYMBOL sym, (100 + ((x + 1711) % 7))::DOUBLE price,
+                               timestamp_sequence('2021-10-30T11:08:00', 211 * 60_000_000L) ts
+                        FROM long_sequence(14)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String rows = "(SELECT ts, id, sym, price FROM t3 WHERE price > 0)";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertQuery("SELECT count() FROM (SELECT ts, sym, count() c FROM " + rows
+                    + " SAMPLE BY 1d FILL(PREV)" + timeZone + " LIMIT 100_000)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            6
+                            """);
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, min(id) mn FROM " + rows + " SAMPLE BY 1d FILL(PREV)" + timeZone,
+                    "fill: prev\n",
+                    """
+                            ts\tsym\tc\tmn
+                            2021-10-29T22:00:00.000000Z\tS0\t2\t1712
+                            2021-10-29T22:00:00.000000Z\tS1\t2\t1713
+                            2021-10-30T22:00:00.000000Z\tS0\t4\t1716
+                            2021-10-30T22:00:00.000000Z\tS1\t3\t1717
+                            2021-10-31T23:00:00.000000Z\tS0\t1\t1724
+                            2021-10-31T23:00:00.000000Z\tS1\t2\t1723
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, min(id) mn FROM " + rows + " SAMPLE BY 1d" + timeZone,
+                    null,
+                    """
+                            ts\tc\tmn
+                            2021-10-29T22:00:00.000000Z\t4\t1712
+                            2021-10-30T22:00:00.000000Z\t7\t1716
+                            2021-10-31T23:00:00.000000Z\t3\t1723
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayDstFallBackToEndFill() throws Exception {
+        // GitHub issue #7752 with TO, see testSampleByDayDstFallBackRowInLastLocalHour(). America/New_York
+        // moves the clock back at 2021-11-07T06:00Z. The last day with a row, Nov 7, starts at 04:00Z,
+        // before the change, and its only row comes after the change, so the cursor shifts the start of
+        // the day back by the offset delta to keep the label 04:00Z. The not-keyed FILL(NULL) cursor then
+        // fills the days up to TO, and it used to chain those fills from the shifted start: they came at
+        // 04:00Z, 23:00 EST on the day before, instead of at local midnight, 05:00Z, and an extra fill at
+        // 2021-11-10T04:00Z, 23:00 EST on Nov 9, followed them. The rows equal those of the GROUP BY path.
+        // the sub-query keeps the statement on the SAMPLE BY cursor
+        assertQuery("""
+                SELECT ts, count() c, sum(v) s
+                FROM (SELECT ts, v FROM t WHERE v > 0)
+                SAMPLE BY 1d TO '2021-11-10' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'
+                """)
+                .ddl(
+                        "CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO t VALUES
+                                    ('2021-11-06T22:00:00.000000Z', 1.0),
+                                    ('2021-11-07T17:00:00.000000Z', 2.0)
+                                """
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: null\n")
+                .returns("""
+                        ts\tc\ts
+                        2021-11-06T04:00:00.000000Z\t1\t1.0
+                        2021-11-07T04:00:00.000000Z\t1\t2.0
+                        2021-11-08T05:00:00.000000Z\tnull\tnull
+                        2021-11-09T05:00:00.000000Z\tnull\tnull
+                        """);
+    }
+
+    @Test
+    public void testSampleByDayDstFallBackWithEmptyDays() throws Exception {
+        // GitHub issue #7752, see testSampleByDayDstFallBackRowInLastLocalHour(), with an empty day before
+        // and after the day of the fall-back. The FILL cursors expect the next bucket at the end of the
+        // last one. Besides splitting Nov 7, the not-keyed FILL(NULL) and FILL(value) cursors used to
+        // derive the end of Nov 7 from its shifted start, as an empty day precedes it: they labeled the
+        // empty Nov 8 04:00Z instead of 05:00Z, emitted a fill for Nov 9 at 04:00Z, and labeled the rows
+        // of Nov 9 a day late. The rows equal those of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-11-05T12:00:00.000000Z', 'A', 1.0),
+                        ('2021-11-07T17:00:00.000000Z', 'A', 2.0),
+                        ('2021-11-08T04:30:00.000000Z', 'A', 4.0),
+                        ('2021-11-09T17:00:00.000000Z', 'A', 8.0)
+                    """);
+            final String keyed = "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1d";
+            final String notKeyed = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1d";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-11-05T04:00:00.000000Z\t1\t1.0
+                            2021-11-06T04:00:00.000000Z\tnull\tnull
+                            2021-11-07T04:00:00.000000Z\t2\t6.0
+                            2021-11-08T05:00:00.000000Z\tnull\tnull
+                            2021-11-09T05:00:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(0, 0)" + timeZone,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-11-05T04:00:00.000000Z\t1\t1.0
+                            2021-11-06T04:00:00.000000Z\t0\t0.0
+                            2021-11-07T04:00:00.000000Z\t2\t6.0
+                            2021-11-08T05:00:00.000000Z\t0\t0.0
+                            2021-11-09T05:00:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(PREV)" + timeZone,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2021-11-05T04:00:00.000000Z\t1\t1.0
+                            2021-11-06T04:00:00.000000Z\t1\t1.0
+                            2021-11-07T04:00:00.000000Z\t2\t6.0
+                            2021-11-08T05:00:00.000000Z\t2\t6.0
+                            2021-11-09T05:00:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    keyed + " FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            2021-11-05T04:00:00.000000Z\tA\t1\t1.0
+                            2021-11-06T04:00:00.000000Z\tA\tnull\tnull
+                            2021-11-07T04:00:00.000000Z\tA\t2\t6.0
+                            2021-11-08T05:00:00.000000Z\tA\tnull\tnull
+                            2021-11-09T05:00:00.000000Z\tA\t1\t8.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayDstSpringForwardRowInFirstLocalHour() throws Exception {
+        // America/New_York moves the clock forward from 02:00 EST to 03:00 EDT at 2024-03-10T07:00Z, so the
+        // local day of Mar 10 lasts 23 hours, from 05:00Z to 04:00Z on Mar 11. The data skips Mar 9 and
+        // resumes after the change, see testSampleByDayNoFromAlignToCalendarDSTNYSpringForwardGap(). The
+        // cursor shifts the start of Mar 10 forward by the offset delta, so that the day keeps the label
+        // 05:00Z, and it used to derive the end of the day from that shifted start: 05:00Z on Mar 11
+        // instead of 04:00Z. The row at 04:30Z on Mar 11, 00:30 EDT, then joined Mar 10. The rows equal
+        // those of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-03-08T00:00:00.000000Z', 'A', 1.0),
+                        ('2024-03-08T04:30:00.000000Z', 'A', 2.0),
+                        ('2024-03-08T12:00:00.000000Z', 'A', 4.0),
+                        ('2024-03-10T08:00:00.000000Z', 'A', 8.0),
+                        ('2024-03-10T09:00:00.000000Z', 'A', 16.0),
+                        ('2024-03-11T04:30:00.000000Z', 'A', 32.0),
+                        ('2024-03-11T10:00:00.000000Z', 'A', 64.0),
+                        ('2024-03-13T10:00:00.000000Z', 'A', 128.0)
+                    """);
+            final String keyed = "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1d";
+            final String notKeyed = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1d";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertSampleByCursorDst(
+                    keyed + timeZone,
+                    null,
+                    """
+                            ts\tsym\tc\ts
+                            2024-03-07T05:00:00.000000Z\tA\t2\t3.0
+                            2024-03-08T05:00:00.000000Z\tA\t1\t4.0
+                            2024-03-10T05:00:00.000000Z\tA\t2\t24.0
+                            2024-03-11T04:00:00.000000Z\tA\t2\t96.0
+                            2024-03-13T04:00:00.000000Z\tA\t1\t128.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    keyed + " FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            2024-03-07T05:00:00.000000Z\tA\t2\t3.0
+                            2024-03-08T05:00:00.000000Z\tA\t1\t4.0
+                            2024-03-09T05:00:00.000000Z\tA\tnull\tnull
+                            2024-03-10T05:00:00.000000Z\tA\t2\t24.0
+                            2024-03-11T04:00:00.000000Z\tA\t2\t96.0
+                            2024-03-12T04:00:00.000000Z\tA\tnull\tnull
+                            2024-03-13T04:00:00.000000Z\tA\t1\t128.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(PREV)" + timeZone,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2024-03-07T05:00:00.000000Z\t2\t3.0
+                            2024-03-08T05:00:00.000000Z\t1\t4.0
+                            2024-03-09T05:00:00.000000Z\t1\t4.0
+                            2024-03-10T05:00:00.000000Z\t2\t24.0
+                            2024-03-11T04:00:00.000000Z\t2\t96.0
+                            2024-03-12T04:00:00.000000Z\t2\t96.0
+                            2024-03-13T04:00:00.000000Z\t1\t128.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(0, 0)" + timeZone,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2024-03-07T05:00:00.000000Z\t2\t3.0
+                            2024-03-08T05:00:00.000000Z\t1\t4.0
+                            2024-03-09T05:00:00.000000Z\t0\t0.0
+                            2024-03-10T05:00:00.000000Z\t2\t24.0
+                            2024-03-11T04:00:00.000000Z\t2\t96.0
+                            2024-03-12T04:00:00.000000Z\t0\t0.0
+                            2024-03-13T04:00:00.000000Z\t1\t128.0
+                            """
+            );
+            // The data ends on Mar 10, so the shift of its start outlives the last bucket. Every pass of
+            // the assertion after the first must start from the unshifted start of Mar 7, or its row at
+            // 23:30 EST falls after the end of Mar 7.
+            final String untilMar10 = "(SELECT ts, sym, v FROM t WHERE ts < '2024-03-11') SAMPLE BY 1d";
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s FROM " + untilMar10 + " FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            2024-03-07T05:00:00.000000Z\tA\t2\t3.0
+                            2024-03-08T05:00:00.000000Z\tA\t1\t4.0
+                            2024-03-09T05:00:00.000000Z\tA\tnull\tnull
+                            2024-03-10T05:00:00.000000Z\tA\t2\t24.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM " + untilMar10 + timeZone,
+                    null,
+                    """
+                            ts\tc\ts
+                            2024-03-07T05:00:00.000000Z\t2\t3.0
+                            2024-03-08T05:00:00.000000Z\t1\t4.0
+                            2024-03-10T05:00:00.000000Z\t2\t24.0
+                            """
+            );
+        });
     }
 
     @Test
@@ -5813,6 +7302,32 @@ public class SampleByTest extends AbstractCairoTest {
                             ts\tfirst
                             2022-12-01T01:40:00.000000Z\t4
                             """);
+        });
+    }
+
+    @Test
+    public void testSampleByDstFallBackNotKeyedFirstLast() throws Exception {
+        // S3 at 01:14Z is the first row after the clock moves back, and it joins the bucket at 00:00Z,
+        // see DST_FALL_BACK_ROWS. The cursor gave that row the row id of the next row, S4 100.0 at
+        // 01:51Z, so last() skipped S4 and returned 106.0.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            for (String fill : new String[]{"", " FILL(PREV)", " FILL(NULL)", " FILL(42, 42, 42)"}) {
+                assertQuery("SELECT ts, count() c, first(price) f, last(price) l FROM " + DST_FALL_BACK_ROWS
+                        + " SAMPLE BY 1h" + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .withPlanContaining("Sample By\n", "values: [count(*),first(price),last(price)]")
+                        .returns("""
+                                ts\tc\tf\tl
+                                2021-10-30T22:00:00.000000Z\t2\t101.0\t102.0
+                                2021-10-30T23:00:00.000000Z\t1\t103.0\t103.0
+                                2021-10-31T00:00:00.000000Z\t4\t104.0\t100.0
+                                2021-10-31T02:00:00.000000Z\t1\t101.0\t101.0
+                                2021-10-31T03:00:00.000000Z\t1\t102.0\t102.0
+                                """);
+            }
         });
     }
 
@@ -7252,6 +8767,488 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromToSubDayTimeZoneLimit() throws Exception {
+        // For a sub-day stride with a time zone, code generation converts FROM and TO to UTC, and the
+        // SAMPLE BY cursor applies the time zone offset to the timestamps as well. A rewind before the
+        // first read, such as the one LIMIT makes, starts a cursor that reads a converted bound from a
+        // zero offset, so every statement below applies the time zone once, through the converted
+        // bounds. Here their rows equal those of the same statement on the GROUP BY path, which does
+        // not hold for every such statement. A read without a rewind applies the offset on top of the
+        // converted bounds, so this test does not pin it; #7743 tracks that defect.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            // the sub-query keeps the statements on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)";
+            final String fromTo = select + " SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31'"
+                    + " ALIGN TO CALENDAR TIME ZONE '+02:00'";
+            final String firstRows = """
+                    ts\tc
+                    2021-10-29T18:00:00.000000Z\t5
+                    2021-10-29T23:00:00.000000Z\t8
+                    2021-10-30T04:00:00.000000Z\t8
+                    """;
+            assertQuery(fromTo + " LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns(firstRows);
+            assertQuery(fromTo + " LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-30T09:00:00.000000Z\t8
+                            2021-10-30T14:00:00.000000Z\t8
+                            2021-10-30T19:00:00.000000Z\t5
+                            """);
+            assertQuery(fromTo + " LIMIT 1,3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-10-29T23:00:00.000000Z\t8
+                            2021-10-30T04:00:00.000000Z\t8
+                            """);
+            assertQuery("SELECT * FROM (" + fromTo + ") LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns(firstRows);
+
+            // FROM without TO
+            final String from = select + " SAMPLE BY 5h FROM '2021-10-29' ALIGN TO CALENDAR TIME ZONE '+02:00'";
+            assertQuery(from + " LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns(firstRows);
+            assertQuery(from + " LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tc
+                            2021-11-04T09:00:00.000000Z\t8
+                            2021-11-04T14:00:00.000000Z\t8
+                            2021-11-04T19:00:00.000000Z\t8
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitFillNull() throws Exception {
+        // FILL(NULL) under LIMIT, see testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of
+        // the GROUP BY path.
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00'
+                LIMIT 3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-28T22:00:00.000000Z\tnull
+                        2021-10-29T03:00:00.000000Z\tnull
+                        2021-10-29T08:00:00.000000Z\tnull
+                        """);
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitFillPrev() throws Exception {
+        // FILL(PREV) under LIMIT, see testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of
+        // the GROUP BY path. FROM sits at the local time of the first row, so no bucket precedes the
+        // first row. For buckets before the first row, see testSampleFillPrevNotKeyedFromBeforeFirstRow().
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29T22:15' TO '2021-10-31' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-29T20:15:00.000000Z\t9
+                            2021-10-30T01:15:00.000000Z\t8
+                            2021-10-30T06:15:00.000000Z\t8
+                            """,
+                    """
+                            ts\tc
+                            2021-10-30T11:15:00.000000Z\t8
+                            2021-10-30T16:15:00.000000Z\t8
+                            2021-10-30T21:15:00.000000Z\t1
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitFillValue() throws Exception {
+        // FILL(value) under LIMIT, see testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of
+        // the GROUP BY path.
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' FILL(42) ALIGN TO CALENDAR TIME ZONE '+02:00'
+                LIMIT 3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-28T22:00:00.000000Z\t42
+                        2021-10-29T03:00:00.000000Z\t42
+                        2021-10-29T08:00:00.000000Z\t42
+                        """);
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitNotConvertedDayStride() throws Exception {
+        // Code generation converts FROM and TO to UTC only for a sub-day stride, so the cursor keeps
+        // the numeric offset for the rewind that LIMIT makes, see testSampleByFromToSubDayTimeZoneLimit().
+        // The rows equal those of the same statement without LIMIT and of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 1d FROM '2021-10-29' TO '2021-11-03' ALIGN TO CALENDAR TIME ZONE '+05:30'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-29T18:30:00.000000Z\t37
+                            2021-10-30T18:30:00.000000Z\t38
+                            2021-10-31T18:30:00.000000Z\t39
+                            """,
+                    """
+                            ts\tc
+                            2021-10-30T18:30:00.000000Z\t38
+                            2021-10-31T18:30:00.000000Z\t39
+                            2021-11-01T18:30:00.000000Z\t39
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitNotConvertedNullTo() throws Exception {
+        // A NULL TO leaves code generation nothing to convert to UTC, so the cursor keeps the numeric
+        // offset for the rewind that LIMIT makes, see testSampleByFromToSubDayTimeZoneLimit(). The rows
+        // equal those of the same statement without LIMIT and of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h TO NULL ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-29T17:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t8
+                            2021-10-30T03:00:00.000000Z\t9
+                            """,
+                    """
+                            ts\tc
+                            2021-11-04T13:00:00.000000Z\t8
+                            2021-11-04T18:00:00.000000Z\t8
+                            2021-11-04T23:00:00.000000Z\t2
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitNotConvertedWithoutFromTo() throws Exception {
+        // Without FROM and TO, code generation converts nothing to UTC, so the cursor keeps the numeric
+        // offset for the rewind that LIMIT makes, see testSampleByFromToSubDayTimeZoneLimit(). The rows
+        // equal those of the same statement without LIMIT and of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-29T17:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t8
+                            2021-10-30T03:00:00.000000Z\t9
+                            """,
+                    """
+                            ts\tc
+                            2021-11-04T13:00:00.000000Z\t8
+                            2021-11-04T18:00:00.000000Z\t8
+                            2021-11-04T23:00:00.000000Z\t2
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitOffsetNotMultipleOfStride() throws Exception {
+        // A zone offset of 5:30 is not a whole number of 3h strides, see
+        // testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 3h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+05:30'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-29T18:30:00.000000Z\t3
+                            2021-10-29T21:30:00.000000Z\t4
+                            2021-10-30T00:30:00.000000Z\t5
+                            """,
+                    """
+                            ts\tc
+                            2021-10-30T09:30:00.000000Z\t5
+                            2021-10-30T12:30:00.000000Z\t5
+                            2021-10-30T15:30:00.000000Z\t5
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitReexecution() throws Exception {
+        // Every execution of a compiled factory opens the SAMPLE BY cursor again, and LIMIT rewinds it
+        // before the first read each time, so every execution returns the same rows, see
+        // testSampleByFromToSubDayTimeZoneLimit()
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            try (RecordCursorFactory factory = select("""
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    LIMIT 3
+                    """)) {
+                // the first execution reads one row only
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                }
+                // three more executions: the first checks the timestamp order, and the other two each
+                // compare the rows over several passes over their cursor
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tc
+                                2021-10-29T18:00:00.000000Z\t5
+                                2021-10-29T23:00:00.000000Z\t8
+                                2021-10-30T04:00:00.000000Z\t8
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitWithOffsetBindVariable() throws Exception {
+        // WITH OFFSET as a bind variable, see testSampleByFromToSubDayTimeZoneLimit(). The rows equal
+        // those of the GROUP BY path.
+        sqlExecutionContext.getBindVariableService().setStr(0, "00:00");
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00' WITH OFFSET $1
+                LIMIT 3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-29T18:00:00.000000Z\t5
+                        2021-10-29T23:00:00.000000Z\t8
+                        2021-10-30T04:00:00.000000Z\t8
+                        """);
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitWithoutFrom() throws Exception {
+        // TO without FROM, which code generation converts to UTC alone, see
+        // testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of the GROUP BY path.
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 3h TO '2021-10-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-03:00'
+                LIMIT -3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-30T18:00:00.000000Z\t5
+                        2021-10-30T21:00:00.000000Z\t4
+                        2021-10-31T00:00:00.000000Z\t5
+                        """);
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitWithoutFromFillNone() throws Exception {
+        // TO without FROM. Code generation converts TO to UTC, but the FILL(NONE) cursor does not read
+        // TO, so it keeps the numeric offset for the rewind that LIMIT makes, see
+        // testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of the same statement without
+        // LIMIT and of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-29T17:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t8
+                            2021-10-30T03:00:00.000000Z\t9
+                            """,
+                    """
+                            ts\tc
+                            2021-10-30T08:00:00.000000Z\t8
+                            2021-10-30T13:00:00.000000Z\t8
+                            2021-10-30T18:00:00.000000Z\t6
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitWithoutFromFillPrev() throws Exception {
+        // TO without FROM. Code generation converts TO to UTC, but the FILL(PREV) cursor does not read
+        // TO, so it keeps the numeric offset for the rewind that LIMIT makes, see
+        // testSampleByFromToSubDayTimeZoneLimit(). The rows equal those of the same statement without
+        // LIMIT and of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h TO '2021-10-31' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-29T17:00:00.000000Z\t3
+                            2021-10-29T22:00:00.000000Z\t8
+                            2021-10-30T03:00:00.000000Z\t9
+                            """,
+                    """
+                            ts\tc
+                            2021-10-30T08:00:00.000000Z\t8
+                            2021-10-30T13:00:00.000000Z\t8
+                            2021-10-30T18:00:00.000000Z\t6
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitWithoutFromFillValue() throws Exception {
+        // TO without FROM. Code generation converts TO to UTC, and the FILL(value) cursor reads TO in its
+        // end fill, so it rewinds to a zero offset, see testSampleByFromToSubDayTimeZoneLimit(). The rows
+        // equal those of the GROUP BY path.
+        assertQuery("""
+                SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                SAMPLE BY 3h TO '2021-10-31' FILL(42) ALIGN TO CALENDAR TIME ZONE '-03:00'
+                LIMIT -3
+                """)
+                .ddl(SUB_DAY_TIME_ZONE_DDL)
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        ts\tc
+                        2021-10-30T18:00:00.000000Z\t5
+                        2021-10-30T21:00:00.000000Z\t4
+                        2021-10-31T00:00:00.000000Z\t5
+                        """);
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitWithoutToFillNull() throws Exception {
+        // FROM without TO. Code generation converts FROM to UTC, and the FILL(NULL) cursor reads FROM,
+        // so it rewinds to a zero offset, see testSampleByFromToSubDayTimeZoneLimit(). The rows equal
+        // those of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-28T22:00:00.000000Z\tnull
+                            2021-10-29T03:00:00.000000Z\tnull
+                            2021-10-29T08:00:00.000000Z\tnull
+                            """,
+                    """
+                            ts\tc
+                            2021-11-04T09:00:00.000000Z\t8
+                            2021-11-04T14:00:00.000000Z\t8
+                            2021-11-04T19:00:00.000000Z\t8
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSubDayTimeZoneLimitWithoutToFillValue() throws Exception {
+        // FROM without TO. Code generation converts FROM to UTC, and the FILL(value) cursor reads FROM,
+        // so it rewinds to a zero offset, see testSampleByFromToSubDayTimeZoneLimit(). The rows equal
+        // those of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute(SUB_DAY_TIME_ZONE_DDL);
+            final String sql = """
+                    SELECT ts, count() c FROM (SELECT ts, price FROM trades WHERE price > 0)
+                    SAMPLE BY 5h FROM '2021-10-29' FILL(42) ALIGN TO CALENDAR TIME ZONE '+02:00'
+                    """;
+            assertSampleByCursorLimit(
+                    sql,
+                    """
+                            ts\tc
+                            2021-10-28T22:00:00.000000Z\t42
+                            2021-10-29T03:00:00.000000Z\t42
+                            2021-10-29T08:00:00.000000Z\t42
+                            """,
+                    """
+                            ts\tc
+                            2021-11-04T09:00:00.000000Z\t8
+                            2021-11-04T14:00:00.000000Z\t8
+                            2021-11-04T19:00:00.000000Z\t8
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleByHourFromAlignToCalendarDSTBerlinFallBack() throws Exception {
         // Europe/Berlin: UTC+2 (CEST) -> UTC+1 (CET)
         // Fall back: Oct 31, 2021 at 3:00 CEST -> 2:00 CET (= Oct 31 01:00 UTC)
@@ -7583,6 +9580,654 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByMonthDstFallBackAtBucketBoundary() throws Exception {
+        // GitHub issue #7752 with a stride of a month. America/New_York moves the clock back at
+        // 2021-11-07T06:00Z, and the first row of November comes after that, so the cursor shifts the start
+        // of November back by the offset delta to keep the label 04:00Z. The month sampler keeps only the
+        // year and month of the time it adds a month to, so the end that the cursor used to derive from the
+        // shifted start, 23:00 local on Oct 31, was the start of November. The keyed cursor then dropped
+        // every row from November on, and the not-keyed cursor emitted each November row as a bucket of its
+        // own. The row at 2021-12-01T04:30Z falls in the last local hour of November. The rows equal those
+        // of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-10-15T12:00:00.000000Z', 'A', 1.0),
+                        ('2021-11-15T12:00:00.000000Z', 'A', 2.0),
+                        ('2021-12-01T04:30:00.000000Z', 'A', 4.0),
+                        ('2021-12-15T12:00:00.000000Z', 'A', 8.0)
+                    """);
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1M" + timeZone,
+                    null,
+                    """
+                            ts\tsym\tc\ts
+                            2021-10-01T04:00:00.000000Z\tA\t1\t1.0
+                            2021-11-01T04:00:00.000000Z\tA\t2\t6.0
+                            2021-12-01T05:00:00.000000Z\tA\t1\t8.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM t WHERE v > 0) SAMPLE BY 1M" + timeZone,
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-10-01T04:00:00.000000Z\t1\t1.0
+                            2021-11-01T04:00:00.000000Z\t2\t6.0
+                            2021-12-01T05:00:00.000000Z\t1\t8.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByMonthDstGapBeforeShiftedBucket() throws Exception {
+        // GitHub issue #7753 with a stride of a month. A bucket that begins before a change of the time zone
+        // offset and gets its first row after the change starts at a shifted local time that keeps its label,
+        // see testSampleByMonthDstFallBackAtBucketBoundary(). The month sampler keeps only the year and month
+        // of the time it adds a month to, so the gap chain misses the shifted start, and every fill mode of the
+        // cursor emits a fill an hour off the start of a month: at 2021-10-01T05:00Z before the November bucket
+        // after the fall-back, and at 2021-03-01T04:00Z before the March bucket after the spring-forward. The
+        // not-keyed FILL(NULL) and FILL(value) cursor used to label the bucket after that fill from the gap
+        // chain: November came an hour late, at 2021-11-01T05:00Z, and March a month late, at
+        // 2021-04-01T04:00Z, the timestamp of the April fill after it. The rows equal those of the cursor's
+        // FILL(PREV) and keyed FILL(NULL), and the rows with data equal those of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fall_back (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fall_back VALUES
+                        ('2021-10-15T12:00:00.000000Z', 'A', 1.0),
+                        ('2021-11-15T12:00:00.000000Z', 'A', 2.0),
+                        ('2021-12-01T04:30:00.000000Z', 'A', 4.0),
+                        ('2021-12-15T12:00:00.000000Z', 'A', 8.0)
+                    """);
+            execute("CREATE TABLE spring_forward (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO spring_forward VALUES
+                        ('2021-02-15T12:00:00.000000Z', 'A', 1.0),
+                        ('2021-03-20T12:00:00.000000Z', 'A', 2.0),
+                        ('2021-06-15T12:00:00.000000Z', 'A', 4.0)
+                    """);
+            // the sub-queries keep the statements on the SAMPLE BY cursor
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            // The fill at 2021-10-01T05:00Z, 01:00 EDT on Oct 1, is a phantom, as October has a row. It is
+            // the cursor path's existing phantom fill at a DST change, where kludge() moves the gap chain by
+            // the offset delta and the chain misses the shifted start, in every fill mode. See GitHub issue
+            // #7439 for the same defect with a stride of a day.
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM fall_back WHERE v > 0) SAMPLE BY 1M FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-10-01T04:00:00.000000Z\t1\t1.0
+                            2021-10-01T05:00:00.000000Z\tnull\tnull
+                            2021-11-01T04:00:00.000000Z\t2\t6.0
+                            2021-12-01T05:00:00.000000Z\t1\t8.0
+                            """
+            );
+            // the same phantom fill at 2021-10-01T05:00Z, GitHub issue #7439
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM fall_back WHERE v > 0) SAMPLE BY 1M FILL(PREV)" + timeZone,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2021-10-01T04:00:00.000000Z\t1\t1.0
+                            2021-10-01T05:00:00.000000Z\t1\t1.0
+                            2021-11-01T04:00:00.000000Z\t2\t6.0
+                            2021-12-01T05:00:00.000000Z\t1\t8.0
+                            """
+            );
+            // The fill at 2021-03-01T04:00Z, 23:00 EST on Feb 28, is off the local month grid, an hour before
+            // the March bucket at 05:00Z. It is the same existing phantom fill at a DST change, in every fill
+            // mode, see GitHub issue #7439.
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM spring_forward WHERE v > 0) SAMPLE BY 1M FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-02-01T05:00:00.000000Z\t1\t1.0
+                            2021-03-01T04:00:00.000000Z\tnull\tnull
+                            2021-03-01T05:00:00.000000Z\t1\t2.0
+                            2021-04-01T04:00:00.000000Z\tnull\tnull
+                            2021-05-01T04:00:00.000000Z\tnull\tnull
+                            2021-06-01T04:00:00.000000Z\t1\t4.0
+                            """
+            );
+            // the same phantom fill at 2021-03-01T04:00Z, GitHub issue #7439
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM spring_forward WHERE v > 0) SAMPLE BY 1M FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            2021-02-01T05:00:00.000000Z\tA\t1\t1.0
+                            2021-03-01T04:00:00.000000Z\tA\tnull\tnull
+                            2021-03-01T05:00:00.000000Z\tA\t1\t2.0
+                            2021-04-01T04:00:00.000000Z\tA\tnull\tnull
+                            2021-05-01T04:00:00.000000Z\tA\tnull\tnull
+                            2021-06-01T04:00:00.000000Z\tA\t1\t4.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByMonthNegativeOffset() throws Exception {
+        // GitHub issue #7760. A negative offset places the start of each month bucket on the last day of the
+        // previous month. The month sampler returned the bucket start itself as the next bucket start, and it
+        // rounded a row from the last minutes of a month, such as the one at 2024-01-31T23:55Z, to the bucket a
+        // month early. The fill cursors of both paths emitted the same fill row without end, the not-keyed SAMPLE
+        // BY cursor with FILL(NONE) emitted a bucket per row, and the keyed one returned no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000Z', 'A', 1.0),
+                        ('2024-01-20T10:00:00.000000Z', 'B', 2.0),
+                        ('2024-01-31T23:55:00.000000Z', 'A', 16.0),
+                        ('2024-02-10T10:00:00.000000Z', 'A', 4.0),
+                        ('2024-04-20T10:00:00.000000Z', 'B', 8.0)
+                    """);
+            final String notKeyed = "SELECT ts, count() c, sum(v) s";
+            final String keyed = "SELECT ts, sym, count() c, sum(v) s";
+            final String sampleBy = " SAMPLE BY 1M";
+            final String offset = " ALIGN TO CALENDAR WITH OFFSET '-00:10'";
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    sampleBy + offset,
+                    "timestamp_floor_utc(",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t2\t3.0
+                            2024-01-31T23:50:00.000000Z\t2\t20.0
+                            2024-03-31T23:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    sampleBy + " FILL(NULL)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t2\t3.0
+                            2024-01-31T23:50:00.000000Z\t2\t20.0
+                            2024-02-29T23:50:00.000000Z\tnull\tnull
+                            2024-03-31T23:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    sampleBy + " FILL(PREV)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t2\t3.0
+                            2024-01-31T23:50:00.000000Z\t2\t20.0
+                            2024-02-29T23:50:00.000000Z\t2\t20.0
+                            2024-03-31T23:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    sampleBy + " FILL(10, 100)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t2\t3.0
+                            2024-01-31T23:50:00.000000Z\t2\t20.0
+                            2024-02-29T23:50:00.000000Z\t10\t100.0
+                            2024-03-31T23:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    sampleBy + offset,
+                    "timestamp_floor_utc(",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000Z\tA\t2\t20.0
+                            2024-03-31T23:50:00.000000Z\tB\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    sampleBy + " FILL(NULL)" + offset,
+                    "Sample By Fill\n",
+                    // the GROUP BY path emits the data rows of a bucket before its fill rows
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000Z\tA\t2\t20.0
+                            2024-01-31T23:50:00.000000Z\tB\tnull\tnull
+                            2024-02-29T23:50:00.000000Z\tA\tnull\tnull
+                            2024-02-29T23:50:00.000000Z\tB\tnull\tnull
+                            2024-03-31T23:50:00.000000Z\tB\t1\t8.0
+                            2024-03-31T23:50:00.000000Z\tA\tnull\tnull
+                            """,
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000Z\tA\t2\t20.0
+                            2024-01-31T23:50:00.000000Z\tB\tnull\tnull
+                            2024-02-29T23:50:00.000000Z\tA\tnull\tnull
+                            2024-02-29T23:50:00.000000Z\tB\tnull\tnull
+                            2024-03-31T23:50:00.000000Z\tA\tnull\tnull
+                            2024-03-31T23:50:00.000000Z\tB\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    sampleBy + " FILL(PREV)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000Z\tA\t2\t20.0
+                            2024-01-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-02-29T23:50:00.000000Z\tA\t2\t20.0
+                            2024-02-29T23:50:00.000000Z\tB\t1\t2.0
+                            2024-03-31T23:50:00.000000Z\tB\t1\t8.0
+                            2024-03-31T23:50:00.000000Z\tA\t2\t20.0
+                            """,
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000Z\tA\t2\t20.0
+                            2024-01-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-02-29T23:50:00.000000Z\tA\t2\t20.0
+                            2024-02-29T23:50:00.000000Z\tB\t1\t2.0
+                            2024-03-31T23:50:00.000000Z\tA\t2\t20.0
+                            2024-03-31T23:50:00.000000Z\tB\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    sampleBy + " FILL(10, 100)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000Z\tA\t2\t20.0
+                            2024-01-31T23:50:00.000000Z\tB\t10\t100.0
+                            2024-02-29T23:50:00.000000Z\tA\t10\t100.0
+                            2024-02-29T23:50:00.000000Z\tB\t10\t100.0
+                            2024-03-31T23:50:00.000000Z\tB\t1\t8.0
+                            2024-03-31T23:50:00.000000Z\tA\t10\t100.0
+                            """,
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000Z\tA\t2\t20.0
+                            2024-01-31T23:50:00.000000Z\tB\t10\t100.0
+                            2024-02-29T23:50:00.000000Z\tA\t10\t100.0
+                            2024-02-29T23:50:00.000000Z\tB\t10\t100.0
+                            2024-03-31T23:50:00.000000Z\tA\t10\t100.0
+                            2024-03-31T23:50:00.000000Z\tB\t1\t8.0
+                            """
+            );
+            // a zero and a positive offset keep the buckets at the month start and 10 minutes after it
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    sampleBy + " FILL(NULL) ALIGN TO CALENDAR",
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T00:00:00.000000Z\t3\t19.0
+                            2024-02-01T00:00:00.000000Z\t1\t4.0
+                            2024-03-01T00:00:00.000000Z\tnull\tnull
+                            2024-04-01T00:00:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    sampleBy + " FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T00:10:00.000000Z\t3\t19.0
+                            2024-02-01T00:10:00.000000Z\t1\t4.0
+                            2024-03-01T00:10:00.000000Z\tnull\tnull
+                            2024-04-01T00:10:00.000000Z\t1\t8.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByMonthNegativeOffsetFillLinear() throws Exception {
+        // GitHub issue #7760 with FILL(LINEAR), which reads the table and the sub-query on the same cursor. The
+        // cursor walked the bucket grid with the month sampler, whose next bucket start was the bucket start
+        // itself, and ran until the query timeout without a row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000Z', 'A', 1.0),
+                        ('2024-01-20T10:00:00.000000Z', 'B', 2.0),
+                        ('2024-01-31T23:55:00.000000Z', 'A', 16.0),
+                        ('2024-02-10T10:00:00.000000Z', 'A', 4.0),
+                        ('2024-04-20T10:00:00.000000Z', 'B', 8.0),
+                        ('2024-10-05T10:00:00.000000Z', 'A', 32.0)
+                    """);
+            assertSampleByNegativeOffset(
+                    "SELECT ts, count() c, sum(v) s",
+                    " SAMPLE BY 1M FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '-00:10'",
+                    "fill: linear\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t2\t3.0
+                            2024-01-31T23:50:00.000000Z\t2\t20.0
+                            2024-02-29T23:50:00.000000Z\t1\t14.2
+                            2024-03-31T23:50:00.000000Z\t1\t8.0
+                            2024-04-30T23:50:00.000000Z\t1\t11.934426229508198
+                            2024-05-31T23:50:00.000000Z\t1\t16.0
+                            2024-06-30T23:50:00.000000Z\t1\t19.934426229508198
+                            2024-07-31T23:50:00.000000Z\t1\t24.0
+                            2024-08-31T23:50:00.000000Z\t1\t28.065573770491802
+                            2024-09-30T23:50:00.000000Z\t1\t32.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    "SELECT ts, sym, count() c, sum(v) s",
+                    " SAMPLE BY 1M FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '-00:10'",
+                    "fill: linear\n",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T23:50:00.000000Z\tA\t2\t20.0
+                            2024-01-31T23:50:00.000000Z\tB\t1\t4.043956043956044
+                            2024-02-29T23:50:00.000000Z\tA\t1\t21.432098765432098
+                            2024-02-29T23:50:00.000000Z\tB\t1\t5.956043956043956
+                            2024-03-31T23:50:00.000000Z\tB\t1\t8.0
+                            2024-03-31T23:50:00.000000Z\tA\t1\t22.962962962962962
+                            2024-04-30T23:50:00.000000Z\tA\t1\t24.444444444444443
+                            2024-04-30T23:50:00.000000Z\tB\t1\t9.978021978021978
+                            2024-05-31T23:50:00.000000Z\tA\t1\t25.97530864197531
+                            2024-05-31T23:50:00.000000Z\tB\t1\t12.021978021978022
+                            2024-06-30T23:50:00.000000Z\tA\t1\t27.45679012345679
+                            2024-06-30T23:50:00.000000Z\tB\t1\t14.0
+                            2024-07-31T23:50:00.000000Z\tA\t1\t28.987654320987655
+                            2024-07-31T23:50:00.000000Z\tB\t1\t16.043956043956044
+                            2024-08-31T23:50:00.000000Z\tA\t1\t30.51851851851852
+                            2024-08-31T23:50:00.000000Z\tB\t1\t18.087912087912088
+                            2024-09-30T23:50:00.000000Z\tA\t1\t32.0
+                            2024-09-30T23:50:00.000000Z\tB\t1\t20.065934065934066
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    "SELECT ts, count() c, sum(v) s",
+                    " SAMPLE BY 3M FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '-00:10'",
+                    "fill: linear\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t4\t23.0
+                            2024-03-31T23:50:00.000000Z\t1\t8.0
+                            2024-06-30T23:50:00.000000Z\t1\t19.934426229508198
+                            2024-09-30T23:50:00.000000Z\t1\t32.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByMonthNegativeOffsetQuarterAndYear() throws Exception {
+        // GitHub issue #7760 with strides of 3 months and a year, see testSampleByMonthNegativeOffset(). With 3M,
+        // the next bucket start fell a month short, so the cursors emitted a fill row inside a quarter, and the
+        // GROUP BY path failed on a data row that preceded its next bucket. With 1y, the fill cursors emitted the
+        // same fill row without end.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2023-12-31T23:55:00.000000Z', 'A', 1.0),
+                        ('2024-02-10T10:00:00.000000Z', 'B', 2.0),
+                        ('2024-08-20T10:00:00.000000Z', 'A', 4.0),
+                        ('2026-03-01T10:00:00.000000Z', 'B', 8.0)
+                    """);
+            final String notKeyed = "SELECT ts, count() c, sum(v) s";
+            final String keyed = "SELECT ts, sym, count() c, sum(v) s";
+            final String offset = " ALIGN TO CALENDAR WITH OFFSET '-00:10'";
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    " SAMPLE BY 3M" + offset,
+                    "timestamp_floor_utc(",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t2\t3.0
+                            2024-06-30T23:50:00.000000Z\t1\t4.0
+                            2025-12-31T23:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    " SAMPLE BY 3M FILL(NULL)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t2\t3.0
+                            2024-03-31T23:50:00.000000Z\tnull\tnull
+                            2024-06-30T23:50:00.000000Z\t1\t4.0
+                            2024-09-30T23:50:00.000000Z\tnull\tnull
+                            2024-12-31T23:50:00.000000Z\tnull\tnull
+                            2025-03-31T23:50:00.000000Z\tnull\tnull
+                            2025-06-30T23:50:00.000000Z\tnull\tnull
+                            2025-09-30T23:50:00.000000Z\tnull\tnull
+                            2025-12-31T23:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    " SAMPLE BY 3M FILL(PREV)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t2\t3.0
+                            2024-03-31T23:50:00.000000Z\t2\t3.0
+                            2024-06-30T23:50:00.000000Z\t1\t4.0
+                            2024-09-30T23:50:00.000000Z\t1\t4.0
+                            2024-12-31T23:50:00.000000Z\t1\t4.0
+                            2025-03-31T23:50:00.000000Z\t1\t4.0
+                            2025-06-30T23:50:00.000000Z\t1\t4.0
+                            2025-09-30T23:50:00.000000Z\t1\t4.0
+                            2025-12-31T23:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    " SAMPLE BY 3M FILL(NULL)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-03-31T23:50:00.000000Z\tA\tnull\tnull
+                            2024-03-31T23:50:00.000000Z\tB\tnull\tnull
+                            2024-06-30T23:50:00.000000Z\tA\t1\t4.0
+                            2024-06-30T23:50:00.000000Z\tB\tnull\tnull
+                            2024-09-30T23:50:00.000000Z\tA\tnull\tnull
+                            2024-09-30T23:50:00.000000Z\tB\tnull\tnull
+                            2024-12-31T23:50:00.000000Z\tA\tnull\tnull
+                            2024-12-31T23:50:00.000000Z\tB\tnull\tnull
+                            2025-03-31T23:50:00.000000Z\tA\tnull\tnull
+                            2025-03-31T23:50:00.000000Z\tB\tnull\tnull
+                            2025-06-30T23:50:00.000000Z\tA\tnull\tnull
+                            2025-06-30T23:50:00.000000Z\tB\tnull\tnull
+                            2025-09-30T23:50:00.000000Z\tA\tnull\tnull
+                            2025-09-30T23:50:00.000000Z\tB\tnull\tnull
+                            2025-12-31T23:50:00.000000Z\tB\t1\t8.0
+                            2025-12-31T23:50:00.000000Z\tA\tnull\tnull
+                            """,
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-03-31T23:50:00.000000Z\tA\tnull\tnull
+                            2024-03-31T23:50:00.000000Z\tB\tnull\tnull
+                            2024-06-30T23:50:00.000000Z\tA\t1\t4.0
+                            2024-06-30T23:50:00.000000Z\tB\tnull\tnull
+                            2024-09-30T23:50:00.000000Z\tA\tnull\tnull
+                            2024-09-30T23:50:00.000000Z\tB\tnull\tnull
+                            2024-12-31T23:50:00.000000Z\tA\tnull\tnull
+                            2024-12-31T23:50:00.000000Z\tB\tnull\tnull
+                            2025-03-31T23:50:00.000000Z\tA\tnull\tnull
+                            2025-03-31T23:50:00.000000Z\tB\tnull\tnull
+                            2025-06-30T23:50:00.000000Z\tA\tnull\tnull
+                            2025-06-30T23:50:00.000000Z\tB\tnull\tnull
+                            2025-09-30T23:50:00.000000Z\tA\tnull\tnull
+                            2025-09-30T23:50:00.000000Z\tB\tnull\tnull
+                            2025-12-31T23:50:00.000000Z\tA\tnull\tnull
+                            2025-12-31T23:50:00.000000Z\tB\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    " SAMPLE BY 1y" + offset,
+                    "timestamp_floor_utc(",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t3\t7.0
+                            2025-12-31T23:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    notKeyed,
+                    " SAMPLE BY 1y FILL(NULL)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:50:00.000000Z\t3\t7.0
+                            2024-12-31T23:50:00.000000Z\tnull\tnull
+                            2025-12-31T23:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    " SAMPLE BY 1y FILL(NULL)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t2\t5.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-12-31T23:50:00.000000Z\tA\tnull\tnull
+                            2024-12-31T23:50:00.000000Z\tB\tnull\tnull
+                            2025-12-31T23:50:00.000000Z\tB\t1\t8.0
+                            2025-12-31T23:50:00.000000Z\tA\tnull\tnull
+                            """,
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t2\t5.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-12-31T23:50:00.000000Z\tA\tnull\tnull
+                            2024-12-31T23:50:00.000000Z\tB\tnull\tnull
+                            2025-12-31T23:50:00.000000Z\tA\tnull\tnull
+                            2025-12-31T23:50:00.000000Z\tB\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    keyed,
+                    " SAMPLE BY 1y FILL(PREV)" + offset,
+                    "Sample By Fill\n",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t2\t5.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-12-31T23:50:00.000000Z\tA\t2\t5.0
+                            2024-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2025-12-31T23:50:00.000000Z\tB\t1\t8.0
+                            2025-12-31T23:50:00.000000Z\tA\t2\t5.0
+                            """,
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T23:50:00.000000Z\tA\t2\t5.0
+                            2023-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2024-12-31T23:50:00.000000Z\tA\t2\t5.0
+                            2024-12-31T23:50:00.000000Z\tB\t1\t2.0
+                            2025-12-31T23:50:00.000000Z\tA\t2\t5.0
+                            2025-12-31T23:50:00.000000Z\tB\t1\t8.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByMonthNegativeOffsetTimeZone() throws Exception {
+        // GitHub issue #7760 with a time zone: the offset moves the start of each bucket to 23:50 local time on
+        // the last day of the previous month. Asia/Tokyo keeps +09:00 all year, so the bucket labels fall at 14:50Z.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000Z', 'A', 1.0),
+                        ('2024-01-20T10:00:00.000000Z', 'B', 2.0),
+                        ('2024-01-31T14:55:00.000000Z', 'A', 16.0),
+                        ('2024-02-10T10:00:00.000000Z', 'A', 4.0),
+                        ('2024-04-20T10:00:00.000000Z', 'B', 8.0)
+                    """);
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'Asia/Tokyo' WITH OFFSET '-00:10'";
+            assertSampleByNegativeOffset(
+                    "SELECT ts, count() c, sum(v) s",
+                    " SAMPLE BY 1M" + timeZone,
+                    "timestamp_floor_utc(",
+                    """
+                            ts\tc\ts
+                            2023-12-31T14:50:00.000000Z\t2\t3.0
+                            2024-01-31T14:50:00.000000Z\t2\t20.0
+                            2024-03-31T14:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    "SELECT ts, count() c, sum(v) s",
+                    " SAMPLE BY 1M FILL(NULL)" + timeZone,
+                    "Sample By Fill\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T14:50:00.000000Z\t2\t3.0
+                            2024-01-31T14:50:00.000000Z\t2\t20.0
+                            2024-02-29T14:50:00.000000Z\tnull\tnull
+                            2024-03-31T14:50:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByNegativeOffset(
+                    "SELECT ts, sym, count() c, sum(v) s",
+                    " SAMPLE BY 1M FILL(PREV)" + timeZone,
+                    "Sample By Fill\n",
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T14:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T14:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T14:50:00.000000Z\tA\t2\t20.0
+                            2024-01-31T14:50:00.000000Z\tB\t1\t2.0
+                            2024-02-29T14:50:00.000000Z\tA\t2\t20.0
+                            2024-02-29T14:50:00.000000Z\tB\t1\t2.0
+                            2024-03-31T14:50:00.000000Z\tB\t1\t8.0
+                            2024-03-31T14:50:00.000000Z\tA\t2\t20.0
+                            """,
+                    """
+                            ts\tsym\tc\ts
+                            2023-12-31T14:50:00.000000Z\tA\t1\t1.0
+                            2023-12-31T14:50:00.000000Z\tB\t1\t2.0
+                            2024-01-31T14:50:00.000000Z\tA\t2\t20.0
+                            2024-01-31T14:50:00.000000Z\tB\t1\t2.0
+                            2024-02-29T14:50:00.000000Z\tA\t2\t20.0
+                            2024-02-29T14:50:00.000000Z\tB\t1\t2.0
+                            2024-03-31T14:50:00.000000Z\tA\t2\t20.0
+                            2024-03-31T14:50:00.000000Z\tB\t1\t8.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleByNegativeTimestamp() throws Exception {
         execute("create table test ( ts TIMESTAMP, value float );");
         execute("""
@@ -7645,6 +10290,257 @@ public class SampleByTest extends AbstractCairoTest {
                         1969-12-31T02:00:00.000000Z\t10.0
                         1970-01-01T02:00:00.000000Z\t22.5
                         """);
+    }
+
+    @Test
+    public void testSampleByNegativeTimestampFirstObservationFillLinear() throws Exception {
+        // ALIGN TO FIRST OBSERVATION anchors the grid at the first row, so a first row before 1970 gives the grid a
+        // negative start. SimpleTimestampSampler.round() put a timestamp between the grid start and 1970 that falls
+        // between two grid points one bucket low, and a timestamp on a grid point in its own bucket. The keyed
+        // FILL(LINEAR) cursor then put the row at 20:30 in the 19:00 bucket, behind the 20:00 bucket of the first
+        // row, and emitted a row for key a at 19:00 from a map value that no row wrote.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE before_1970 (ts TIMESTAMP, sym SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO before_1970 VALUES
+                        ('1969-12-31T20:00:00.000000Z', 'a', 1.0),
+                        ('1969-12-31T20:30:00.000000Z', 'b', 2.0),
+                        ('1969-12-31T21:00:00.000000Z', 'a', 3.0),
+                        ('1969-12-31T22:00:00.000000Z', 'b', 4.0),
+                        ('1969-12-31T23:00:00.000000Z', 'a', 5.0),
+                        ('1969-12-31T23:00:00.000000Z', 'b', 6.0)
+                    """);
+            // the sub-query designates the column, since a table rejects designated timestamps before 1970
+            final String before1970 = " FROM (SELECT * FROM before_1970 ORDER BY ts) TIMESTAMP(ts)"
+                    + " SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION";
+            assertQuery("SELECT ts, sym, count() c, sum(v) s" + before1970)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Sample By\n", "fill: linear\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000Z\ta\t1\t1.0
+                            1969-12-31T20:00:00.000000Z\tb\t1\t2.0
+                            1969-12-31T21:00:00.000000Z\ta\t1\t3.0
+                            1969-12-31T21:00:00.000000Z\tb\t1\t3.0
+                            1969-12-31T22:00:00.000000Z\tb\t1\t4.0
+                            1969-12-31T22:00:00.000000Z\ta\t1\t4.0
+                            1969-12-31T23:00:00.000000Z\ta\t1\t5.0
+                            1969-12-31T23:00:00.000000Z\tb\t1\t6.0
+                            """);
+            assertQuery("SELECT ts, count() c, sum(v) s" + before1970)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Sample By\n", "fill: linear\n")
+                    .returns("""
+                            ts\tc\ts
+                            1969-12-31T20:00:00.000000Z\t2\t3.0
+                            1969-12-31T21:00:00.000000Z\t1\t3.0
+                            1969-12-31T22:00:00.000000Z\t1\t4.0
+                            1969-12-31T23:00:00.000000Z\t2\t11.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByNegativeTimestampFirstObservationOffGrid() throws Exception {
+        // Rows before 1970 that open a bucket off the grid of a negative grid start, see
+        // testSampleByNegativeTimestampFirstObservationFillLinear(). SimpleTimestampSampler.round() put the bucket
+        // of such a row one bucket low, so the bucket ended before the row that opened it. The keyed cursors failed
+        // the assertion that the first row of a bucket falls inside it; without assertions, FILL(NULL) and
+        // FILL(PREV) emitted fill rows at 20:00 without end, and FILL(NONE) dropped every row after the first. The
+        // not-keyed cursors labelled the buckets of the rows at 20:00 and 21:30 both 20:00.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE before_1970 (ts TIMESTAMP, sym SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO before_1970 VALUES
+                        ('1969-12-31T20:00:00.000000Z', 'a', 1.0),
+                        ('1969-12-31T21:30:00.000000Z', 'b', 2.0),
+                        ('1969-12-31T23:15:00.000000Z', 'a', 4.0)
+                    """);
+            // the sub-query designates the column, since a table rejects designated timestamps before 1970
+            final String before1970 = " FROM (SELECT * FROM before_1970 ORDER BY ts) TIMESTAMP(ts) SAMPLE BY 1h";
+            final String firstObservation = " ALIGN TO FIRST OBSERVATION";
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s" + before1970 + " FILL(NULL)" + firstObservation,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000Z\ta\t1\t1.0
+                            1969-12-31T20:00:00.000000Z\tb\tnull\tnull
+                            1969-12-31T21:00:00.000000Z\ta\tnull\tnull
+                            1969-12-31T21:00:00.000000Z\tb\t1\t2.0
+                            1969-12-31T22:00:00.000000Z\ta\tnull\tnull
+                            1969-12-31T22:00:00.000000Z\tb\tnull\tnull
+                            1969-12-31T23:00:00.000000Z\ta\t1\t4.0
+                            1969-12-31T23:00:00.000000Z\tb\tnull\tnull
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s" + before1970 + " FILL(PREV)" + firstObservation,
+                    "fill: prev\n",
+                    """
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000Z\ta\t1\t1.0
+                            1969-12-31T20:00:00.000000Z\tb\tnull\tnull
+                            1969-12-31T21:00:00.000000Z\ta\t1\t1.0
+                            1969-12-31T21:00:00.000000Z\tb\t1\t2.0
+                            1969-12-31T22:00:00.000000Z\ta\t1\t1.0
+                            1969-12-31T22:00:00.000000Z\tb\t1\t2.0
+                            1969-12-31T23:00:00.000000Z\ta\t1\t4.0
+                            1969-12-31T23:00:00.000000Z\tb\t1\t2.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s" + before1970 + " FILL(NONE)" + firstObservation,
+                    "keys: [ts,sym]",
+                    """
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000Z\ta\t1\t1.0
+                            1969-12-31T21:00:00.000000Z\tb\t1\t2.0
+                            1969-12-31T23:00:00.000000Z\ta\t1\t4.0
+                            """
+            );
+            assertQuery("SELECT ts, sym, count() c, sum(v) s" + before1970 + " FILL(LINEAR)" + firstObservation)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Sample By\n", "fill: linear\n")
+                    .returns("""
+                            ts\tsym\tc\ts
+                            1969-12-31T20:00:00.000000Z\ta\t1\t1.0
+                            1969-12-31T20:00:00.000000Z\tb\tnull\tnull
+                            1969-12-31T21:00:00.000000Z\tb\t1\t2.0
+                            1969-12-31T21:00:00.000000Z\ta\t1\t2.0
+                            1969-12-31T22:00:00.000000Z\ta\t1\t3.0
+                            1969-12-31T22:00:00.000000Z\tb\tnull\tnull
+                            1969-12-31T23:00:00.000000Z\ta\t1\t4.0
+                            1969-12-31T23:00:00.000000Z\tb\tnull\tnull
+                            """);
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s" + before1970 + " FILL(NULL)" + firstObservation,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            1969-12-31T20:00:00.000000Z\t1\t1.0
+                            1969-12-31T21:00:00.000000Z\t1\t2.0
+                            1969-12-31T22:00:00.000000Z\tnull\tnull
+                            1969-12-31T23:00:00.000000Z\t1\t4.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s" + before1970 + " FILL(PREV)" + firstObservation,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            1969-12-31T20:00:00.000000Z\t1\t1.0
+                            1969-12-31T21:00:00.000000Z\t1\t2.0
+                            1969-12-31T22:00:00.000000Z\t1\t2.0
+                            1969-12-31T23:00:00.000000Z\t1\t4.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s" + before1970 + " FILL(NONE)" + firstObservation,
+                    "fill: none\n",
+                    """
+                            ts\tc\ts
+                            1969-12-31T20:00:00.000000Z\t1\t1.0
+                            1969-12-31T21:00:00.000000Z\t1\t2.0
+                            1969-12-31T23:00:00.000000Z\t1\t4.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNegativeTimestampOnBucketBoundary() throws Exception {
+        // A query can designate a column that holds timestamps before 1970. The sampler rounded such a
+        // timestamp one bucket down when it fell exactly on a bucket boundary of a grid with an offset:
+        // SimpleTimestampSampler.round() compared the quotient with the timestamp instead of with its distance
+        // from the grid start. With a stride of 30m and WITH OFFSET '00:10', the bucket of the row at
+        // 1969-06-01T09:40Z came out at 09:10Z, and every later bucket a stride early. America/New_York moved
+        // the clock forward at 1969-04-27T07:00Z. With a stride of 1h and WITH OFFSET '00:10', the row at
+        // 07:10Z, 03:10 EDT, rounded to 02:10, a local time that the change skipped. The bucket then ended at
+        // 03:10 local, before its own first row: the keyed cursors failed the assertion that the first row of
+        // a bucket falls inside it, and the not-keyed cursors split the bucket into two rows with the same
+        // timestamp.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE before_1970 (ts TIMESTAMP, sym SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO before_1970 VALUES
+                        ('1969-06-01T09:40:00.000000Z', 'a', 1.0),
+                        ('1969-06-01T10:10:00.000000Z', 'b', 2.0),
+                        ('1969-06-01T10:40:00.000000Z', 'a', 4.0),
+                        ('1969-06-01T12:10:00.000000Z', 'b', 8.0)
+                    """);
+            execute("CREATE TABLE spring_forward (ts TIMESTAMP, sym SYMBOL, v DOUBLE)");
+            execute("""
+                    INSERT INTO spring_forward VALUES
+                        ('1969-04-27T06:30:00.000000Z', 'a', 1.0),
+                        ('1969-04-27T07:10:00.000000Z', 'b', 2.0),
+                        ('1969-04-27T07:40:00.000000Z', 'a', 3.0)
+                    """);
+            // the sub-queries designate the column and keep the statements on the SAMPLE BY cursor
+            final String before1970 = " FROM (SELECT ts, sym, v FROM before_1970 WHERE v > 0 ORDER BY ts) TIMESTAMP(ts) SAMPLE BY 30m";
+            final String offset = " ALIGN TO CALENDAR WITH OFFSET '00:10'";
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s" + before1970 + " FILL(NULL)" + offset,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            1969-06-01T09:40:00.000000Z\t1\t1.0
+                            1969-06-01T10:10:00.000000Z\t1\t2.0
+                            1969-06-01T10:40:00.000000Z\t1\t4.0
+                            1969-06-01T11:10:00.000000Z\tnull\tnull
+                            1969-06-01T11:40:00.000000Z\tnull\tnull
+                            1969-06-01T12:10:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s" + before1970 + " FILL(PREV)" + offset,
+                    "fill: prev\n",
+                    """
+                            ts\tsym\tc\ts
+                            1969-06-01T09:40:00.000000Z\ta\t1\t1.0
+                            1969-06-01T09:40:00.000000Z\tb\tnull\tnull
+                            1969-06-01T10:10:00.000000Z\ta\t1\t1.0
+                            1969-06-01T10:10:00.000000Z\tb\t1\t2.0
+                            1969-06-01T10:40:00.000000Z\ta\t1\t4.0
+                            1969-06-01T10:40:00.000000Z\tb\t1\t2.0
+                            1969-06-01T11:10:00.000000Z\ta\t1\t4.0
+                            1969-06-01T11:10:00.000000Z\tb\t1\t2.0
+                            1969-06-01T11:40:00.000000Z\ta\t1\t4.0
+                            1969-06-01T11:40:00.000000Z\tb\t1\t2.0
+                            1969-06-01T12:10:00.000000Z\ta\t1\t4.0
+                            1969-06-01T12:10:00.000000Z\tb\t1\t8.0
+                            """
+            );
+
+            final String springForward = " FROM (SELECT ts, sym, v FROM spring_forward WHERE v > 0 ORDER BY ts) TIMESTAMP(ts) SAMPLE BY 1h";
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York' WITH OFFSET '00:10'";
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s" + springForward + " FILL(PREV)" + newYork,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            1969-04-27T06:10:00.000000Z\t1\t1.0
+                            1969-04-27T07:10:00.000000Z\t2\t5.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s" + springForward + " FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            1969-04-27T06:10:00.000000Z\ta\t1\t1.0
+                            1969-04-27T06:10:00.000000Z\tb\tnull\tnull
+                            1969-04-27T07:10:00.000000Z\ta\t1\t3.0
+                            1969-04-27T07:10:00.000000Z\tb\t1\t2.0
+                            """
+            );
+        });
     }
 
     @Test
@@ -7995,6 +10891,728 @@ public class SampleByTest extends AbstractCairoTest {
                         1970-01-03T06:42:00.000000Z\t18
                         1970-01-03T08:12:00.000000Z\t1
                         """);
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampCursor() throws Exception {
+        // TIMESTAMP(ts) designates a column that holds NULL, and the sort puts the NULL first. The SAMPLE BY cursor
+        // starts its grid, its time zone offset and its first bucket from the first row it reads, each alignment in
+        // its own way, and it never starts them from the NULL, see AbstractNoRecordSampleByCursor.initTimestamps().
+        // With FILL(NULL), FILL(PREV) and FILL(value), the cursor now fails with an error that names the NULL. With
+        // FILL(NONE), it gives the row with the NULL a bucket of its own, as the GROUP BY path does, see
+        // testSampleByNullDesignatedTimestampNoFill().
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM ((SELECT * FROM n ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
+                for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0, 0)"}) {
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO FIRST OBSERVATION", "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill, "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR WITH OFFSET '00:10'", "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "Sample By\n");
+                    assertSampleByNullTimestampFails(select + source + "1M " + fill + " ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "Sample By\n");
+                }
+            }
+            // FILL(NONE) emits the bucket of the NULL first, and the grid starts at the first row that has a timestamp
+            final String[] noFillSampleBy = {
+                    "1h FILL(NONE) ALIGN TO FIRST OBSERVATION",
+                    "1h FILL(NONE)",
+                    "1h FILL(NONE) ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    "1h FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'Europe/London'",
+                    "1M FILL(NONE) ALIGN TO CALENDAR TIME ZONE 'America/New_York'"
+            };
+            final String[] noFillBuckets = {
+                    "2024-01-01T00:00:00.000000Z#1\t1.0\n2024-01-01T02:00:00.000000Z#1\t4.0\n",
+                    "2024-01-01T00:00:00.000000Z#1\t1.0\n2024-01-01T02:00:00.000000Z#1\t4.0\n",
+                    "2023-12-31T23:10:00.000000Z#1\t1.0\n2024-01-01T02:10:00.000000Z#1\t4.0\n",
+                    "2024-01-01T00:00:00.000000Z#1\t1.0\n2024-01-01T02:00:00.000000Z#1\t4.0\n",
+                    "2023-12-01T05:00:00.000000Z#2\t5.0\n"
+            };
+            for (int i = 0; i < noFillSampleBy.length; i++) {
+                // '#' stands for the tab before the count, and for the key of the bucket in the keyed statement
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s" + source + noFillSampleBy[i],
+                        "fill: none\n",
+                        "ts\tc\ts\n\t1\t2.0\n" + noFillBuckets[i].replace("#", "\t")
+                );
+                assertSampleByCursorFrom(
+                        "SELECT ts, sym, count() c, sum(v) s" + source + noFillSampleBy[i],
+                        "keys: [ts,sym]\n",
+                        "ts\tsym\tc\ts\n\tb\t1\t2.0\n" + noFillBuckets[i].replace("#", "\ta\t")
+                );
+            }
+            // a filter that drops the NULL gives the rows
+            assertSampleByCursorFrom(
+                    "SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM n WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T00:00:00.000000Z\t1\t1.0
+                            2024-01-01T01:00:00.000000Z\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\t1\t4.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampFillLinear() throws Exception {
+        // FILL(LINEAR) over a designated timestamp that holds NULL, see testSampleByNullDesignatedTimestampCursor().
+        // The cursor builds every bucket before it returns the first row, so LIMIT does not bound it. With ALIGN TO
+        // FIRST OBSERVATION, a grid that started at the NULL, Long.MIN_VALUE, would hold a gap entry for every stride
+        // up to the next row, so the statement uses a stride of 1000d, which keeps that walk short if the NULL check
+        // regresses. The cursor now fails with an error that names the NULL.
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM ((SELECT * FROM n ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
+                assertSampleByNullTimestampFails(select + source + "1000d FILL(LINEAR) ALIGN TO FIRST OBSERVATION", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1h FILL(LINEAR)", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1h FILL(LINEAR) ALIGN TO CALENDAR WITH OFFSET '00:10'", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "fill: linear\n");
+                assertSampleByNullTimestampFails(select + source + "1M FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "fill: linear\n");
+            }
+            // a filter that drops the NULL gives the rows
+            assertQuery("SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM n WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts))"
+                    + " SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("Sample By\n", "fill: linear\n")
+                    .returns("""
+                            ts\tc\ts
+                            2024-01-01T00:00:00.000000Z\t1\t1.0
+                            2024-01-01T01:00:00.000000Z\t1\t2.5
+                            2024-01-01T02:00:00.000000Z\t1\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampGroupByFill() throws Exception {
+        // The GROUP BY path sorts the bucket of a NULL timestamp first, and without FROM, the fill cursor takes the
+        // start of its grid from the first bucket it reads. It never starts the grid at the NULL, Long.MIN_VALUE: with
+        // or without an offset or a time zone, the cursor now fails with an error that names the NULL.
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM n TIMESTAMP(ts) SAMPLE BY ";
+            for (String select : new String[]{"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"}) {
+                for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0, 0)"}) {
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill, "Sample By Fill\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR WITH OFFSET '00:10'", "Sample By Fill\n");
+                    assertSampleByNullTimestampFails(select + source + "1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/London'", "Sample By Fill\n");
+                    assertSampleByNullTimestampFails(select + source + "1d " + fill + " ALIGN TO CALENDAR TIME ZONE 'America/New_York'", "Sample By Fill\n");
+                }
+            }
+            // without FILL, the GROUP BY path keeps the NULL in a bucket of its own
+            assertQuery("SELECT ts, count() c, sum(v) s FROM n TIMESTAMP(ts) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("keyFunctions: [timestamp_floor_utc('1h',ts)]")
+                    .returns("""
+                            ts\tc\ts
+                            \t1\t2.0
+                            2024-01-01T00:00:00.000000Z\t1\t1.0
+                            2024-01-01T02:00:00.000000Z\t1\t4.0
+                            """);
+            // FROM and a filter that drops the NULL give the rows
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-01T00:00:00.000000Z\t1\t1.0
+                    2024-01-01T01:00:00.000000Z\tnull\tnull
+                    2024-01-01T02:00:00.000000Z\t1\t4.0
+                    """;
+            assertQuery("SELECT ts, count() c, sum(v) s FROM n TIMESTAMP(ts) SAMPLE BY 1h FROM '2024-01-01' FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expected);
+            assertQuery("SELECT ts, count() c, sum(v) s FROM n TIMESTAMP(ts) WHERE ts IS NOT NULL SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFill() throws Exception {
+        // Without FILL, the SAMPLE BY cursor gives the rows with a NULL designated timestamp a bucket of their own,
+        // as the GROUP BY path does for FROM orders TIMESTAMP(filled_at).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (ts TIMESTAMP, filled_at TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                        ('2024-01-01T00:00:00Z', '2024-01-01T00:05:00Z', 'a', 1),
+                        ('2024-01-01T01:00:00Z', NULL, 'b', 2),
+                        ('2024-01-01T02:00:00Z', '2024-01-01T02:30:00Z', 'a', 4),
+                        ('2024-01-01T03:00:00Z', '2024-01-03T09:30:00Z', 'b', 8),
+                        ('2024-01-01T04:00:00Z', '2024-02-10T09:30:00Z', 'a', 16),
+                        ('2024-01-01T05:00:00Z', NULL, 'a', 32),
+                        ('2024-01-01T06:00:00Z', '2025-03-10T09:30:00Z', 'b', 64)
+                    """);
+            final String expected = """
+                    filled_at\ts
+                    \t34.0
+                    2024-01-01T00:00:00.000000Z\t13.0
+                    2024-02-01T00:00:00.000000Z\t16.0
+                    2025-03-01T00:00:00.000000Z\t64.0
+                    """;
+            assertQuery("SELECT filled_at, sum(qty) s"
+                    + " FROM ((SELECT filled_at, sym, qty FROM orders ORDER BY filled_at) TIMESTAMP(filled_at)) SAMPLE BY 1M")
+                    .noLeakCheck()
+                    .timestamp("filled_at")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: none\n")
+                    .returns(expected);
+            // the table alone and the sub-query in single parentheses take the GROUP BY path
+            assertQuery("SELECT filled_at, sum(qty) s FROM orders TIMESTAMP(filled_at) SAMPLE BY 1M")
+                    .noLeakCheck()
+                    .timestamp("filled_at")
+                    .expectSize()
+                    .withPlanContaining("keyFunctions: [timestamp_floor_utc('1M',filled_at)]")
+                    .returns(expected);
+            assertQuery("SELECT filled_at, sum(qty) s"
+                    + " FROM (SELECT filled_at, sym, qty FROM orders ORDER BY filled_at) TIMESTAMP(filled_at) SAMPLE BY 1M")
+                    .noLeakCheck()
+                    .timestamp("filled_at")
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: false\n")
+                    .returns(expected);
+
+            // the keyed statement, with a stride of a year
+            final String expectedKeyed = """
+                    filled_at\tsym\ts
+                    \tb\t2.0
+                    \ta\t32.0
+                    2024-01-01T00:00:00.000000Z\ta\t21.0
+                    2024-01-01T00:00:00.000000Z\tb\t8.0
+                    2025-01-01T00:00:00.000000Z\tb\t64.0
+                    """;
+            assertQuery("SELECT filled_at, sym, sum(qty) s"
+                    + " FROM ((SELECT filled_at, sym, qty FROM orders ORDER BY filled_at) TIMESTAMP(filled_at)) SAMPLE BY 1y")
+                    .noLeakCheck()
+                    .timestamp("filled_at")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "keys: [filled_at,sym]\n")
+                    .returns(expectedKeyed);
+            // the GROUP BY path does not order the keys of a bucket
+            assertQuery("SELECT * FROM (SELECT filled_at, sym, sum(qty) s FROM orders TIMESTAMP(filled_at) SAMPLE BY 1y)"
+                    + " ORDER BY filled_at, sym")
+                    .noLeakCheck()
+                    .timestamp("filled_at")
+                    .expectSize()
+                    .withPlanContaining("keyFunctions: [timestamp_floor_utc('1y',filled_at)]")
+                    .returns("""
+                            filled_at\tsym\ts
+                            \ta\t32.0
+                            \tb\t2.0
+                            2024-01-01T00:00:00.000000Z\ta\t21.0
+                            2024-01-01T00:00:00.000000Z\tb\t8.0
+                            2025-01-01T00:00:00.000000Z\tb\t64.0
+                            """);
+
+            // The cursor rewinds the arguments of the aggregates after the NULL bucket, as it does after every
+            // bucket of the grid. timestamp_sequence() counts the rows that an aggregate reads since the last
+            // rewind, so min() and max() show where the count starts: at 0 in every bucket. Without the rewind
+            // after the NULL bucket, the first bucket of the grid counts on from 3.
+            createNullBucketTable();
+            final String rowCounters = "count() c, min(timestamp_sequence(0, 1)::LONG) mn, max(timestamp_sequence(0, 1)::LONG) mx"
+                    + " FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY 1M";
+            assertSampleByCursorFrom(
+                    "SELECT ts, " + rowCounters,
+                    "fill: none\n",
+                    """
+                            ts\tc\tmn\tmx
+                            \t3\t0\t2
+                            2024-01-01T00:00:00.000000Z\t3\t0\t2
+                            2024-02-01T00:00:00.000000Z\t1\t0\t0
+                            2024-03-01T00:00:00.000000Z\t1\t0\t0
+                            2024-04-01T00:00:00.000000Z\t1\t0\t0
+                            2025-01-01T00:00:00.000000Z\t1\t0\t0
+                            """
+            );
+            // the keys of a bucket share the count
+            assertSampleByCursorFrom(
+                    "SELECT ts, sym, " + rowCounters,
+                    "keys: [ts,sym]\n",
+                    """
+                            ts\tsym\tc\tmn\tmx
+                            \tb\t2\t0\t2
+                            \ta\t1\t1\t1
+                            2024-01-01T00:00:00.000000Z\ta\t2\t0\t1
+                            2024-01-01T00:00:00.000000Z\tb\t1\t2\t2
+                            2024-02-01T00:00:00.000000Z\ta\t1\t0\t0
+                            2024-03-01T00:00:00.000000Z\tb\t1\t0\t0
+                            2024-04-01T00:00:00.000000Z\ta\t1\t0\t0
+                            2025-01-01T00:00:00.000000Z\tb\t1\t0\t0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillAlignments() throws Exception {
+        // The NULL bucket of testSampleByNullDesignatedTimestampNoFill() for keyed and not-keyed statements, with and
+        // without the timestamp in the projection, strides from a millisecond to a year, which cover the simple, week,
+        // month and year samplers, and every alignment. The label of the NULL bucket stays NULL under a time zone and
+        // an offset, and no zone splits the NULL rows.
+        assertMemoryLeak(() -> {
+            createNullBucketTable();
+            final String[] alignments = {
+                    " ALIGN TO FIRST OBSERVATION",
+                    "",
+                    " ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    " ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    " ALIGN TO CALENDAR TIME ZONE 'Europe/London'",
+                    " ALIGN TO CALENDAR TIME ZONE 'America/New_York' WITH OFFSET '00:10'"
+            };
+            for (String stride : new String[]{"1T", "1h", "1d", "3w", "1M", "1y"}) {
+                for (String alignment : alignments) {
+                    final String sampleBy = stride + alignment;
+                    assertSampleByNullBucket("SELECT ts, count() c, sum(v) s", "ts", sampleBy, "\t3\t146.0\n");
+                    assertSampleByNullBucket("SELECT ts, sym, count() c, sum(v) s", "ts, sym", sampleBy, "\tb\t2\t130.0\n\ta\t1\t16.0\n");
+                    assertSampleByNullBucket("SELECT count() c, sum(v) s", "c, s", sampleBy, "3\t146.0\n");
+                    assertSampleByNullBucket("SELECT sym, count() c, sum(v) s", "sym, c, s", sampleBy, "b\t2\t130.0\na\t1\t16.0\n");
+                }
+            }
+            // two of the statements above in full
+            assertSampleByCursorFrom(
+                    "SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1h ALIGN TO FIRST OBSERVATION",
+                    "fill: none\n",
+                    """
+                            ts\tc\ts
+                            \t3\t146.0
+                            2024-01-01T00:15:00.000000Z\t1\t1.0
+                            2024-01-01T02:15:00.000000Z\t1\t4.0
+                            2024-01-03T09:15:00.000000Z\t1\t8.0
+                            2024-02-10T09:15:00.000000Z\t1\t32.0
+                            2024-03-20T09:15:00.000000Z\t1\t64.0
+                            2024-04-05T09:15:00.000000Z\t1\t256.0
+                            2025-01-15T11:15:00.000000Z\t1\t512.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    "SELECT ts, sym, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "keys: [ts,sym]\n",
+                    """
+                            ts\tsym\tc\ts
+                            \tb\t2\t130.0
+                            \ta\t1\t16.0
+                            2023-12-01T05:00:00.000000Z\ta\t2\t5.0
+                            2024-01-01T05:00:00.000000Z\tb\t1\t8.0
+                            2024-02-01T05:00:00.000000Z\ta\t1\t32.0
+                            2024-03-01T05:00:00.000000Z\tb\t1\t64.0
+                            2024-04-01T04:00:00.000000Z\ta\t1\t256.0
+                            2025-01-01T05:00:00.000000Z\tb\t1\t512.0
+                            """
+            );
+            // LIMIT rewinds the cursor before the first read, and a negative LIMIT reads every bucket to count them
+            assertSampleByCursorLimit(
+                    "SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY 1M",
+                    """
+                            ts\tc\ts
+                            \t3\t146.0
+                            2024-01-01T00:00:00.000000Z\t3\t13.0
+                            2024-02-01T00:00:00.000000Z\t1\t32.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-03-01T00:00:00.000000Z\t1\t64.0
+                            2024-04-01T00:00:00.000000Z\t1\t256.0
+                            2025-01-01T00:00:00.000000Z\t1\t512.0
+                            """
+            );
+            assertSampleByCursorLimit(
+                    "SELECT ts, sym, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY 1y",
+                    """
+                            ts\tsym\tc\ts
+                            \tb\t2\t130.0
+                            \ta\t1\t16.0
+                            2024-01-01T00:00:00.000000Z\ta\t4\t293.0
+                            """,
+                    """
+                            ts\tsym\tc\ts
+                            2024-01-01T00:00:00.000000Z\ta\t4\t293.0
+                            2024-01-01T00:00:00.000000Z\tb\t2\t72.0
+                            2025-01-01T00:00:00.000000Z\tb\t1\t512.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillAllNull() throws Exception {
+        // Every row has a NULL designated timestamp, so the NULL bucket is the only bucket, and the cursor never
+        // starts a grid.
+        assertMemoryLeak(() -> {
+            createAllNullTimestampTable();
+            // the table alone stays on the SAMPLE BY cursor path when the statement aligns to the first observation
+            assertQuery("SELECT count() c, sum(v) s FROM an TIMESTAMP(ts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: none\n")
+                    .returns("""
+                            c\ts
+                            2\t3.0
+                            """);
+            final String source = " FROM ((SELECT * FROM an ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            final String[] sampleBys = {
+                    "1h ALIGN TO FIRST OBSERVATION",
+                    "1h",
+                    "1M",
+                    "1y ALIGN TO CALENDAR WITH OFFSET '00:10'",
+                    "1M ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "1h ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:10'",
+                    "1y ALIGN TO CALENDAR TIME ZONE '+03:00'"
+            };
+            for (String sampleBy : sampleBys) {
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s" + source + sampleBy,
+                        "fill: none\n",
+                        """
+                                ts\tc\ts
+                                \t2\t3.0
+                                """
+                );
+                assertSampleByCursorFrom(
+                        "SELECT ts, sym, count() c, sum(v) s" + source + sampleBy,
+                        "keys: [ts,sym]\n",
+                        """
+                                ts\tsym\tc\ts
+                                \ta\t1\t1.0
+                                \tb\t1\t2.0
+                                """
+                );
+            }
+            // the GROUP BY path returns the same bucket
+            assertQuery("SELECT ts, count() c, sum(v) s FROM an TIMESTAMP(ts) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("keyFunctions: [timestamp_floor_utc('1h',ts)]")
+                    .returns("""
+                            ts\tc\ts
+                            \t2\t3.0
+                            """);
+            // a source without rows still returns no row
+            assertSampleByCursorFrom(
+                    "SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM an WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1h",
+                    "fill: none\n",
+                    "ts\tc\ts\n"
+            );
+            assertSampleByCursorFrom(
+                    "SELECT ts, sym, count() c, sum(v) s FROM ((SELECT * FROM an WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1h",
+                    "keys: [ts,sym]\n",
+                    "ts\tsym\tc\ts\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillFault() throws Exception {
+        // An error while the cursor aggregates the NULL bucket, in an aggregate function and in the base cursor. The
+        // statement fails with that error, and the next execution of the same factory returns every row. The first
+        // three rows have a NULL timestamp, and test_fault() throws on its second call, so for the second of them.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            final String rows = "SELECT CASE WHEN x > 3 THEN (x * 3_600_000_000)::TIMESTAMP END ts, x % 2 k, x::DOUBLE v"
+                    + " FROM long_sequence(6)";
+            final String sampleBy = " TIMESTAMP(ts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION";
+            final String expected = """
+                    ts\tc\ts
+                    \t3\t6.0
+                    1970-01-01T04:00:00.000000Z\t1\t4.0
+                    1970-01-01T05:00:00.000000Z\t1\t5.0
+                    1970-01-01T06:00:00.000000Z\t1\t6.0
+                    """;
+            final String expectedKeyed = """
+                    ts\tk\tc\ts
+                    \t1\t2\t4.0
+                    \t0\t1\t2.0
+                    1970-01-01T04:00:00.000000Z\t0\t1\t4.0
+                    1970-01-01T05:00:00.000000Z\t1\t1\t5.0
+                    1970-01-01T06:00:00.000000Z\t0\t1\t6.0
+                    """;
+            // the fault in the argument of sum()
+            final String faultInFunction = "sum(CASE WHEN test_fault() THEN v END) s FROM (" + rows + ")" + sampleBy;
+            assertSampleByNullBucketFault("SELECT ts, count() c, " + faultInFunction, expected);
+            assertSampleByNullBucketFault("SELECT ts, k, count() c, " + faultInFunction, expectedKeyed);
+            // the fault in the filter of the base cursor
+            final String faultInBase = "sum(v) s FROM (" + rows + " WHERE test_fault())" + sampleBy;
+            assertSampleByNullBucketFault("SELECT ts, count() c, " + faultInBase, expected);
+            assertSampleByNullBucketFault("SELECT ts, k, count() c, " + faultInBase, expectedKeyed);
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillFromTo() throws Exception {
+        // FROM and TO add a filter on the designated timestamp to the base of the statement. NULL fails that filter,
+        // so the rows with the NULL reach neither the SAMPLE BY cursor nor the GROUP BY path, and both return the
+        // buckets of the range alone.
+        assertMemoryLeak(() -> {
+            createNullBucketTable();
+            final String[] ranges = {"FROM '2024-02-01'", "TO '2025-01-01'", "FROM '2024-02-01' TO '2025-01-01'"};
+            final String[] expected = {
+                    """
+                            ts\tc\ts
+                            2024-02-01T00:00:00.000000Z\t1\t32.0
+                            2024-03-01T00:00:00.000000Z\t1\t64.0
+                            2024-04-01T00:00:00.000000Z\t1\t256.0
+                            2025-01-01T00:00:00.000000Z\t1\t512.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T00:00:00.000000Z\t3\t13.0
+                            2024-02-01T00:00:00.000000Z\t1\t32.0
+                            2024-03-01T00:00:00.000000Z\t1\t64.0
+                            2024-04-01T00:00:00.000000Z\t1\t256.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-02-01T00:00:00.000000Z\t1\t32.0
+                            2024-03-01T00:00:00.000000Z\t1\t64.0
+                            2024-04-01T00:00:00.000000Z\t1\t256.0
+                            """
+            };
+            for (int i = 0; i < ranges.length; i++) {
+                // with FROM or TO, the sub-query in single parentheses stays on the SAMPLE BY cursor path
+                assertSampleByCursorFrom(
+                        "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts) SAMPLE BY 1M " + ranges[i],
+                        "range: (",
+                        expected[i]
+                );
+                assertQuery("SELECT ts, count() c, sum(v) s FROM nb TIMESTAMP(ts) SAMPLE BY 1M " + ranges[i])
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining("keyFunctions: [timestamp_floor_utc('1M',ts")
+                        .returns(expected[i]);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillManyRows() throws Exception {
+        // 20,000 rows, ten minutes apart. Every tenth row has a NULL designated timestamp, and these 2,000 rows cover
+        // all 97 keys, so the NULL bucket updates each key many times. Both paths return the same rows.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE nm AS (
+                        SELECT
+                            CASE WHEN x % 10 != 0 THEN (1_704_067_200_000_000 + x * 600_000_000)::TIMESTAMP END ts,
+                            ('k' || (x % 97))::SYMBOL sym,
+                            x::DOUBLE v
+                        FROM long_sequence(20_000)
+                    )
+                    """);
+            final String[] selects = {"SELECT ts, count() c, sum(v) s", "SELECT ts, sym, count() c, sum(v) s"};
+            final String[] orderBys = {"ts", "ts, sym"};
+            for (String sampleBy : new String[]{"1d", "1M ALIGN TO CALENDAR TIME ZONE 'Europe/London'"}) {
+                for (int i = 0; i < selects.length; i++) {
+                    final String groupByStatement = "SELECT * FROM (" + selects[i] + " FROM nm TIMESTAMP(ts) SAMPLE BY " + sampleBy + ")"
+                            + " ORDER BY " + orderBys[i];
+                    assertQuery(groupByStatement)
+                            .noLeakCheck()
+                            .assertsPlanContaining("keyFunctions: [timestamp_floor_utc(");
+                    printSql(groupByStatement);
+                    final String expected = sink.toString();
+                    final String statement = "SELECT * FROM (" + selects[i] + " FROM ((SELECT * FROM nm ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY " + sampleBy + ") ORDER BY " + orderBys[i];
+                    // The chain below spends the first execution of its factory on a pass that reads the timestamps
+                    // alone, and compares the rows from the second execution on. So this pair compiles a factory of
+                    // its own and compares the rows of the first execution; the chain adds the second pass, the
+                    // calculateSize() check and the factory properties.
+                    printSql(statement);
+                    TestUtils.assertEquals(expected, sink);
+                    // ORDER BY ts alone follows the order of the cursor and adds no sort. ORDER BY ts, sym sorts a
+                    // copy of the rows, and the copy supports random access.
+                    assertQuery(statement)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .supportsRandomAccess(!"ts".equals(orderBys[i]))
+                            .withPlanContaining("Sample By\n")
+                            .returns(expected);
+                }
+            }
+            // the NULL bucket holds the rows 10, 20, ..., 20,000
+            assertQuery("SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM nm ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY 1M LIMIT 1")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: none\n")
+                    .returns("""
+                            ts\tc\ts
+                            \t2000\t2.001E7
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillReExecution() throws Exception {
+        // One compiled factory serves a base that starts with the NULL, a base without the NULL and a base with
+        // the NULL alone, in turn. Key b has only the row with the NULL timestamp, and key a has the other two rows.
+        // The time zones make the cursor read the offset of the first row that has a timestamp on every execution.
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String source = " FROM ((SELECT * FROM n WHERE sym != $1 ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY ";
+            assertSampleByNullBucketReExecution(
+                    "SELECT ts, count() c, sum(v) s" + source + "1M ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: none\n",
+                    "ts\tc\ts\n",
+                    "\t1\t2.0\n",
+                    "2023-12-01T05:00:00.000000Z\t2\t5.0\n"
+            );
+            assertSampleByNullBucketReExecution(
+                    "SELECT ts, sym, count() c, sum(v) s" + source + "1h ALIGN TO CALENDAR TIME ZONE 'Europe/London'",
+                    "keys: [ts,sym]\n",
+                    "ts\tsym\tc\ts\n",
+                    "\tb\t1\t2.0\n",
+                    """
+                            2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+                            2024-01-01T02:00:00.000000Z\ta\t1\t4.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampNoFillToTop() throws Exception {
+        // toTop() and the next execution after a partial read bring the NULL bucket back whole. The read stops before
+        // the first row, inside the NULL bucket of a keyed statement, right after the NULL bucket, and inside every
+        // bucket of the grid after it.
+        assertMemoryLeak(() -> {
+            createNullBucketTable();
+            createAllNullTimestampTable();
+            assertSampleByNullBucketPartialRead(
+                    "SELECT ts, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Europe/London'",
+                    """
+                            ts\tc\ts
+                            \t3\t146.0
+                            2024-01-01T00:00:00.000000Z\t3\t13.0
+                            2024-02-01T00:00:00.000000Z\t1\t32.0
+                            2024-03-01T00:00:00.000000Z\t1\t64.0
+                            2024-03-31T23:00:00.000000Z\t1\t256.0
+                            2025-01-01T00:00:00.000000Z\t1\t512.0
+                            """
+            );
+            assertSampleByNullBucketPartialRead(
+                    "SELECT ts, sym, count() c, sum(v) s FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1y ALIGN TO FIRST OBSERVATION",
+                    """
+                            ts\tsym\tc\ts
+                            \tb\t2\t130.0
+                            \ta\t1\t16.0
+                            2024-01-01T00:15:00.000000Z\ta\t4\t293.0
+                            2024-01-01T00:15:00.000000Z\tb\t2\t72.0
+                            2025-01-01T00:15:00.000000Z\tb\t1\t512.0
+                            """
+            );
+            // string_agg() and count_distinct() keep their state in the allocator of the cursor, and first() and last()
+            // compare the row ids that the cursor counts from the first row of the NULL bucket
+            assertSampleByNullBucketPartialRead(
+                    "SELECT ts, string_agg(sym, ',') sa, count_distinct(sym) cd, first(v) f, last(v) l"
+                            + " FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY 1M",
+                    """
+                            ts\tsa\tcd\tf\tl
+                            \tb,a,b\t2\t2.0\t128.0
+                            2024-01-01T00:00:00.000000Z\ta,a,b\t2\t1.0\t8.0
+                            2024-02-01T00:00:00.000000Z\ta\t1\t32.0\t32.0
+                            2024-03-01T00:00:00.000000Z\tb\t1\t64.0\t64.0
+                            2024-04-01T00:00:00.000000Z\ta\t1\t256.0\t256.0
+                            2025-01-01T00:00:00.000000Z\tb\t1\t512.0\t512.0
+                            """
+            );
+            assertSampleByNullBucketPartialRead(
+                    "SELECT ts, sym, string_agg(sym, ',') sa, count_distinct(v::LONG) cd, first(v) f, last(v) l"
+                            + " FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY 1M",
+                    """
+                            ts\tsym\tsa\tcd\tf\tl
+                            \tb\tb,b\t2\t2.0\t128.0
+                            \ta\ta\t1\t16.0\t16.0
+                            2024-01-01T00:00:00.000000Z\ta\ta,a\t2\t1.0\t4.0
+                            2024-01-01T00:00:00.000000Z\tb\tb\t1\t8.0\t8.0
+                            2024-02-01T00:00:00.000000Z\ta\ta\t1\t32.0\t32.0
+                            2024-03-01T00:00:00.000000Z\tb\tb\t1\t64.0\t64.0
+                            2024-04-01T00:00:00.000000Z\ta\ta\t1\t256.0\t256.0
+                            2025-01-01T00:00:00.000000Z\tb\tb\t1\t512.0\t512.0
+                            """
+            );
+            // every row has a NULL timestamp
+            assertSampleByNullBucketPartialRead(
+                    "SELECT ts, sym, count() c, sum(v) s FROM ((SELECT * FROM an ORDER BY ts) TIMESTAMP(ts))"
+                            + " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    """
+                            ts\tsym\tc\ts
+                            \ta\t1\t1.0
+                            \tb\t1\t2.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByNullDesignatedTimestampReExecution() throws Exception {
+        // A prepared statement keeps its factory after the error of testSampleByNullDesignatedTimestampCursor(). Key
+        // b has only the row with the NULL timestamp, and the keyed cursors add it to their maps before they read the
+        // first timestamp. The next execution of the factory must fail the same way, and an execution that filters
+        // key b out must return the rows of key a alone. LIMIT and, for FILL(LINEAR), the calendar alignment keep a
+        // regression that walks the fill grid from the NULL from hanging the test, see
+        // assertSampleByNullTimestampFails().
+        assertMemoryLeak(() -> {
+            createNullTimestampTable();
+            final String select = "SELECT ts, sym, count() c, sum(v) s";
+            final String cursorSource = " FROM ((SELECT * FROM n WHERE sym != $1 ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY 1h ";
+            assertSampleByNullTimestampReExecution(
+                    select + cursorSource + "FILL(PREV) ALIGN TO FIRST OBSERVATION LIMIT 10",
+                    "Sample By\n",
+                    false,
+                    """
+                            ts\tsym\tc\ts
+                            2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+                            2024-01-01T01:00:00.000000Z\ta\t1\t1.0
+                            2024-01-01T02:00:00.000000Z\ta\t1\t4.0
+                            """
+            );
+            final String expectedFillNull = """
+                    ts\tsym\tc\ts
+                    2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+                    2024-01-01T01:00:00.000000Z\ta\tnull\tnull
+                    2024-01-01T02:00:00.000000Z\ta\t1\t4.0
+                    """;
+            assertSampleByNullTimestampReExecution(
+                    select + cursorSource + "FILL(NULL) LIMIT 10",
+                    "Sample By\n",
+                    false,
+                    expectedFillNull
+            );
+            assertSampleByNullTimestampReExecution(
+                    select + " FROM n TIMESTAMP(ts) WHERE sym != $1 SAMPLE BY 1h FILL(NULL) LIMIT 10",
+                    "Sample By Fill\n",
+                    false,
+                    expectedFillNull
+            );
+            assertSampleByNullTimestampReExecution(
+                    select + cursorSource + "FILL(LINEAR)",
+                    "fill: linear\n",
+                    true,
+                    """
+                            ts\tsym\tc\ts
+                            2024-01-01T00:00:00.000000Z\ta\t1\t1.0
+                            2024-01-01T01:00:00.000000Z\ta\t1\t2.5
+                            2024-01-01T02:00:00.000000Z\ta\t1\t4.0
+                            """
+            );
+        });
     }
 
     @Test
@@ -8770,6 +12388,746 @@ public class SampleByTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("timestamp\tcount\n");
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayDstBucketStartInSkippedHour() throws Exception {
+        // Europe/Berlin moves the clock forward from 02:00 CET to 03:00 CEST at 2021-03-28T01:00Z. With a stride
+        // of 40m, the change skips the local grid points 02:00 and 02:40, and the bucket from 02:40 to 03:20
+        // local covers only 01:00Z to 01:20Z. The cursor labels a bucket that starts before the change with its
+        // start read in the offset before the change. For a start that the change skipped, that label, 02:40 CET
+        // or 01:40Z, came after the bucket and after the label of the next bucket, 03:20 CEST or 01:20Z, so the
+        // timestamps went back. The fill cursors also emitted a fill row at 01:00Z for the bucket from 02:00 to
+        // 02:40 local, which covers no instant. Now such a bucket takes the first instant that it covers, the
+        // change at 01:00Z, whenever the label from the old offset would fall at or after the end of the
+        // bucket, that is, when the stride is not longer than the change. With a stride of 1h and an offset of
+        // 00:15, Europe/Prague repeated the label 01:15Z, and with a stride of 40m America/New_York went back
+        // from 07:40Z to 07:20Z at its change, at 2021-03-14T07:00Z. The rows of each bucket follow the local
+        // grid of the cursor. A stride longer than the change keeps the label from the old offset, which lies
+        // inside the bucket: with a stride of 2h and an offset of 00:30, the bucket from 02:30 to 04:30 local
+        // covers 01:00Z to 02:30Z and keeps 01:30Z. Antarctica/Troll moves the clock forward by two hours at
+        // 01:00Z. The fill up to TO labels no bucket, and keeps the rows of the GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE berlin (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO berlin VALUES
+                        ('2021-03-28T00:30:00.000000Z', 'a', 1.0),
+                        ('2021-03-28T00:50:00.000000Z', 'b', 2.0),
+                        ('2021-03-28T01:10:00.000000Z', 'a', 3.0),
+                        ('2021-03-28T01:30:00.000000Z', 'b', 4.0),
+                        ('2021-03-28T02:00:00.000000Z', 'a', 5.0),
+                        ('2021-03-28T02:30:00.000000Z', 'b', 6.0),
+                        ('2021-03-28T04:00:00.000000Z', 'a', 7.0)
+                    """);
+            final String berlinNotKeyed = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM berlin WHERE v > 0) SAMPLE BY 40m";
+            final String berlinKeyed = "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM berlin WHERE v > 0) SAMPLE BY 40m";
+            final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertSampleByCursorDst(
+                    berlinNotKeyed + berlin,
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-03-28T00:20:00.000000Z\t2\t3.0
+                            2021-03-28T01:00:00.000000Z\t1\t3.0
+                            2021-03-28T01:20:00.000000Z\t1\t4.0
+                            2021-03-28T02:00:00.000000Z\t2\t11.0
+                            2021-03-28T04:00:00.000000Z\t1\t7.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    berlinNotKeyed + " FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-03-28T00:20:00.000000Z\t2\t3.0
+                            2021-03-28T01:00:00.000000Z\t1\t3.0
+                            2021-03-28T01:20:00.000000Z\t1\t4.0
+                            2021-03-28T02:00:00.000000Z\t2\t11.0
+                            2021-03-28T02:40:00.000000Z\tnull\tnull
+                            2021-03-28T03:20:00.000000Z\tnull\tnull
+                            2021-03-28T04:00:00.000000Z\t1\t7.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    berlinNotKeyed + " FILL(PREV)" + berlin,
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2021-03-28T00:20:00.000000Z\t2\t3.0
+                            2021-03-28T01:00:00.000000Z\t1\t3.0
+                            2021-03-28T01:20:00.000000Z\t1\t4.0
+                            2021-03-28T02:00:00.000000Z\t2\t11.0
+                            2021-03-28T02:40:00.000000Z\t2\t11.0
+                            2021-03-28T03:20:00.000000Z\t2\t11.0
+                            2021-03-28T04:00:00.000000Z\t1\t7.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    berlinKeyed + berlin,
+                    null,
+                    """
+                            ts\tsym\tc\ts
+                            2021-03-28T00:20:00.000000Z\ta\t1\t1.0
+                            2021-03-28T00:20:00.000000Z\tb\t1\t2.0
+                            2021-03-28T01:00:00.000000Z\ta\t1\t3.0
+                            2021-03-28T01:20:00.000000Z\tb\t1\t4.0
+                            2021-03-28T02:00:00.000000Z\ta\t1\t5.0
+                            2021-03-28T02:00:00.000000Z\tb\t1\t6.0
+                            2021-03-28T04:00:00.000000Z\ta\t1\t7.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    berlinKeyed + " FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            2021-03-28T00:20:00.000000Z\ta\t1\t1.0
+                            2021-03-28T00:20:00.000000Z\tb\t1\t2.0
+                            2021-03-28T01:00:00.000000Z\ta\t1\t3.0
+                            2021-03-28T01:00:00.000000Z\tb\tnull\tnull
+                            2021-03-28T01:20:00.000000Z\ta\tnull\tnull
+                            2021-03-28T01:20:00.000000Z\tb\t1\t4.0
+                            2021-03-28T02:00:00.000000Z\ta\t1\t5.0
+                            2021-03-28T02:00:00.000000Z\tb\t1\t6.0
+                            2021-03-28T02:40:00.000000Z\ta\tnull\tnull
+                            2021-03-28T02:40:00.000000Z\tb\tnull\tnull
+                            2021-03-28T03:20:00.000000Z\ta\tnull\tnull
+                            2021-03-28T03:20:00.000000Z\tb\tnull\tnull
+                            2021-03-28T04:00:00.000000Z\ta\t1\t7.0
+                            2021-03-28T04:00:00.000000Z\tb\tnull\tnull
+                            """
+            );
+            assertSampleByCursorDst(
+                    berlinKeyed + " FILL(PREV)" + berlin,
+                    "fill: prev\n",
+                    """
+                            ts\tsym\tc\ts
+                            2021-03-28T00:20:00.000000Z\ta\t1\t1.0
+                            2021-03-28T00:20:00.000000Z\tb\t1\t2.0
+                            2021-03-28T01:00:00.000000Z\ta\t1\t3.0
+                            2021-03-28T01:00:00.000000Z\tb\t1\t2.0
+                            2021-03-28T01:20:00.000000Z\ta\t1\t3.0
+                            2021-03-28T01:20:00.000000Z\tb\t1\t4.0
+                            2021-03-28T02:00:00.000000Z\ta\t1\t5.0
+                            2021-03-28T02:00:00.000000Z\tb\t1\t6.0
+                            2021-03-28T02:40:00.000000Z\ta\t1\t5.0
+                            2021-03-28T02:40:00.000000Z\tb\t1\t6.0
+                            2021-03-28T03:20:00.000000Z\ta\t1\t5.0
+                            2021-03-28T03:20:00.000000Z\tb\t1\t6.0
+                            2021-03-28T04:00:00.000000Z\ta\t1\t7.0
+                            2021-03-28T04:00:00.000000Z\tb\t1\t6.0
+                            """
+            );
+
+            execute("CREATE TABLE prague (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO prague VALUES
+                        ('2021-03-27T23:50:00.000000Z', 'a', 1.0),
+                        ('2021-03-28T01:05:00.000000Z', 'a', 2.0),
+                        ('2021-03-28T01:20:00.000000Z', 'b', 4.0)
+                    """);
+            final String prague = " ALIGN TO CALENDAR TIME ZONE 'Europe/Prague' WITH OFFSET '00:15'";
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM prague WHERE v > 0) SAMPLE BY 1h" + prague,
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-03-27T23:15:00.000000Z\t1\t1.0
+                            2021-03-28T01:00:00.000000Z\t1\t2.0
+                            2021-03-28T01:15:00.000000Z\t1\t4.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM prague WHERE v > 0) SAMPLE BY 1h FILL(NULL)" + prague,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            2021-03-27T23:15:00.000000Z\ta\t1\t1.0
+                            2021-03-27T23:15:00.000000Z\tb\tnull\tnull
+                            2021-03-28T00:15:00.000000Z\ta\tnull\tnull
+                            2021-03-28T00:15:00.000000Z\tb\tnull\tnull
+                            2021-03-28T01:00:00.000000Z\ta\t1\t2.0
+                            2021-03-28T01:00:00.000000Z\tb\tnull\tnull
+                            2021-03-28T01:15:00.000000Z\ta\tnull\tnull
+                            2021-03-28T01:15:00.000000Z\tb\t1\t4.0
+                            """
+            );
+
+            execute("CREATE TABLE new_york (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO new_york VALUES
+                        ('2021-03-14T06:30:00.000000Z', 'a', 1.0),
+                        ('2021-03-14T07:10:00.000000Z', 'b', 2.0),
+                        ('2021-03-14T07:30:00.000000Z', 'a', 4.0),
+                        ('2021-03-14T09:00:00.000000Z', 'b', 8.0)
+                    """);
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM new_york WHERE v > 0) SAMPLE BY 40m FILL(0, 0)" + newYork,
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2021-03-14T06:20:00.000000Z\t1\t1.0
+                            2021-03-14T07:00:00.000000Z\t1\t2.0
+                            2021-03-14T07:20:00.000000Z\t1\t4.0
+                            2021-03-14T08:00:00.000000Z\t0\t0.0
+                            2021-03-14T08:40:00.000000Z\t1\t8.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM new_york WHERE v > 0) SAMPLE BY 40m FILL(PREV)" + newYork,
+                    "fill: prev\n",
+                    """
+                            ts\tsym\tc\ts
+                            2021-03-14T06:20:00.000000Z\ta\t1\t1.0
+                            2021-03-14T06:20:00.000000Z\tb\tnull\tnull
+                            2021-03-14T07:00:00.000000Z\ta\t1\t1.0
+                            2021-03-14T07:00:00.000000Z\tb\t1\t2.0
+                            2021-03-14T07:20:00.000000Z\ta\t1\t4.0
+                            2021-03-14T07:20:00.000000Z\tb\t1\t2.0
+                            2021-03-14T08:00:00.000000Z\ta\t1\t4.0
+                            2021-03-14T08:00:00.000000Z\tb\t1\t2.0
+                            2021-03-14T08:40:00.000000Z\ta\t1\t4.0
+                            2021-03-14T08:40:00.000000Z\tb\t1\t8.0
+                            """
+            );
+
+            execute("CREATE TABLE berlin_2h (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO berlin_2h VALUES
+                        ('2021-03-27T22:00:00.000000Z', 'a', 1.0),
+                        ('2021-03-28T01:20:00.000000Z', 'b', 2.0),
+                        ('2021-03-28T02:40:00.000000Z', 'a', 4.0)
+                    """);
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM berlin_2h WHERE v > 0) SAMPLE BY 2h FILL(NULL)"
+                            + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-03-27T21:30:00.000000Z\t1\t1.0
+                            2021-03-27T23:30:00.000000Z\tnull\tnull
+                            2021-03-28T01:30:00.000000Z\t1\t2.0
+                            2021-03-28T02:30:00.000000Z\t1\t4.0
+                            """
+            );
+
+            execute("CREATE TABLE troll (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO troll VALUES
+                        ('2021-03-28T00:20:00.000000Z', 'a', 1.0),
+                        ('2021-03-28T01:10:00.000000Z', 'b', 2.0),
+                        ('2021-03-28T01:20:00.000000Z', 'a', 4.0)
+                    """);
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM troll WHERE v > 0)"
+                            + " SAMPLE BY 10m FROM '2021-03-28T00:00' TO '2021-03-28T03:40' FILL(NULL)"
+                            + " ALIGN TO CALENDAR TIME ZONE 'Antarctica/Troll'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-03-28T00:00:00.000000Z\tnull\tnull
+                            2021-03-28T00:10:00.000000Z\tnull\tnull
+                            2021-03-28T00:20:00.000000Z\t1\t1.0
+                            2021-03-28T00:30:00.000000Z\tnull\tnull
+                            2021-03-28T00:40:00.000000Z\tnull\tnull
+                            2021-03-28T00:50:00.000000Z\tnull\tnull
+                            2021-03-28T01:00:00.000000Z\tnull\tnull
+                            2021-03-28T01:10:00.000000Z\t1\t2.0
+                            2021-03-28T01:20:00.000000Z\t1\t4.0
+                            2021-03-28T01:30:00.000000Z\tnull\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayDstChangeAtBucketBoundary() throws Exception {
+        // GitHub issue #7752 with a stride of 2h. The cursor buckets local time, and a bucket that starts
+        // before a change of the time zone offset keeps the label of its start when its first row comes
+        // after the change, see testSampleByDayDstFallBackRowInLastLocalHour(). America/New_York moves the
+        // clock back at 2021-11-07T06:00Z, so the bucket from 00:00 to 02:00 local lasts three hours, from
+        // 04:00Z to 07:00Z. The cursor used to end it at 06:00Z, before its first row at 06:30Z, 01:30 EST,
+        // and the keyed FILL cursors emitted the bucket at 04:00Z without end. Europe/Berlin moves the clock
+        // forward at 2021-03-28T01:00Z, so the bucket from 02:00 to 04:00 local lasts an hour, from 01:00Z
+        // to 02:00Z. The cursor used to end it at 03:00Z, which added the row at 02:30Z, 04:30 CEST, to it.
+        // The GROUP BY path aligns sub-day buckets differently around a change of the offset, so the
+        // expected rows follow the local buckets of the cursor path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fall_back (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fall_back VALUES
+                        ('2021-11-07T02:30:00.000000Z', 'A', 1.0),
+                        ('2021-11-07T06:30:00.000000Z', 'A', 2.0),
+                        ('2021-11-07T08:00:00.000000Z', 'A', 4.0)
+                    """);
+            execute("CREATE TABLE spring_forward (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO spring_forward VALUES
+                        ('2021-03-27T22:30:00.000000Z', 'A', 1.0),
+                        ('2021-03-28T01:30:00.000000Z', 'A', 2.0),
+                        ('2021-03-28T02:30:00.000000Z', 'A', 4.0),
+                        ('2021-03-28T03:30:00.000000Z', 'A', 8.0)
+                    """);
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            final String fallBackKeyed = "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM fall_back WHERE v > 0) SAMPLE BY 2h";
+            final String fallBackRows = """
+                    ts\tsym\tc\ts
+                    2021-11-07T02:00:00.000000Z\tA\t1\t1.0
+                    2021-11-07T04:00:00.000000Z\tA\t1\t2.0
+                    2021-11-07T07:00:00.000000Z\tA\t1\t4.0
+                    """;
+            assertSampleByCursorDst(fallBackKeyed + " FILL(NULL)" + newYork, "fill: null\n", fallBackRows);
+            assertSampleByCursorDst(fallBackKeyed + " FILL(PREV)" + newYork, "fill: prev\n", fallBackRows);
+            assertSampleByCursorDst(fallBackKeyed + newYork, null, fallBackRows);
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM fall_back WHERE v > 0) SAMPLE BY 2h FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2021-11-07T02:00:00.000000Z\t1\t1.0
+                            2021-11-07T04:00:00.000000Z\t1\t2.0
+                            2021-11-07T07:00:00.000000Z\t1\t4.0
+                            """
+            );
+
+            final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, sum(v) s FROM (SELECT ts, sym, v FROM spring_forward WHERE v > 0) SAMPLE BY 2h FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\ts
+                            2021-03-27T21:00:00.000000Z\tA\t1\t1.0
+                            2021-03-27T23:00:00.000000Z\tA\tnull\tnull
+                            2021-03-28T01:00:00.000000Z\tA\t1\t2.0
+                            2021-03-28T02:00:00.000000Z\tA\t2\t12.0
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, sum(v) s FROM (SELECT ts, sym, v FROM spring_forward WHERE v > 0) SAMPLE BY 2h" + berlin,
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-03-27T21:00:00.000000Z\t1\t1.0
+                            2021-03-28T01:00:00.000000Z\t1\t2.0
+                            2021-03-28T02:00:00.000000Z\t2\t12.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayDstGapBeforeFallBack() throws Exception {
+        // GitHub issue #7753 at a fall-back. Europe/Berlin moves the clock back from 03:00 CEST to 02:00 CET
+        // at 2021-10-31T01:00Z. With a stride of 15m, the bucket at 00:30Z has no row. The cursor reads the
+        // row at 01:10Z, the first after the change, while it aggregates the bucket after the gap, at 00:45Z,
+        // and it merges the repeated hour into that bucket, see DST_FALL_BACK_ROWS: the rows at 01:10Z and
+        // 01:40Z join it. The not-keyed FILL(NULL) and FILL(value) cursor aggregates the bucket after a gap
+        // before it emits the gap, and it used to label the gap and that bucket with the offset after the
+        // change, an hour late, at 01:30Z and 01:45Z. The buckets equal those of the not-keyed FILL(PREV)
+        // cursor and of the keyed FILL(NULL) cursor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, id LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-10-31T00:05:00.000000Z', 1, 'S1'),
+                        ('2021-10-31T00:20:00.000000Z', 2, 'S0'),
+                        ('2021-10-31T00:50:00.000000Z', 3, 'S1'),
+                        ('2021-10-31T01:10:00.000000Z', 4, 'S0'),
+                        ('2021-10-31T01:40:00.000000Z', 5, 'S1'),
+                        ('2021-10-31T02:05:00.000000Z', 6, 'S0'),
+                        ('2021-10-31T02:40:00.000000Z', 7, 'S1')
+                    """);
+            // the sub-queries keep the statements on the SAMPLE BY cursor
+            final String notKeyed = "SELECT ts, count() c, min(id) mn FROM (SELECT ts, id, sym FROM t WHERE id > 0) SAMPLE BY 15m";
+            final String timeZone = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tc\tmn
+                            2021-10-31T00:00:00.000000Z\t1\t1
+                            2021-10-31T00:15:00.000000Z\t1\t2
+                            2021-10-31T00:30:00.000000Z\tnull\tnull
+                            2021-10-31T00:45:00.000000Z\t3\t3
+                            2021-10-31T02:00:00.000000Z\t1\t6
+                            2021-10-31T02:15:00.000000Z\tnull\tnull
+                            2021-10-31T02:30:00.000000Z\t1\t7
+                            """
+            );
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(0, 0)" + timeZone,
+                    "fill: value\n",
+                    """
+                            ts\tc\tmn
+                            2021-10-31T00:00:00.000000Z\t1\t1
+                            2021-10-31T00:15:00.000000Z\t1\t2
+                            2021-10-31T00:30:00.000000Z\t0\t0
+                            2021-10-31T00:45:00.000000Z\t3\t3
+                            2021-10-31T02:00:00.000000Z\t1\t6
+                            2021-10-31T02:15:00.000000Z\t0\t0
+                            2021-10-31T02:30:00.000000Z\t1\t7
+                            """
+            );
+            assertSampleByCursorDst(
+                    notKeyed + " FILL(PREV)" + timeZone,
+                    "fill: prev\n",
+                    """
+                            ts\tc\tmn
+                            2021-10-31T00:00:00.000000Z\t1\t1
+                            2021-10-31T00:15:00.000000Z\t1\t2
+                            2021-10-31T00:30:00.000000Z\t1\t2
+                            2021-10-31T00:45:00.000000Z\t3\t3
+                            2021-10-31T02:00:00.000000Z\t1\t6
+                            2021-10-31T02:15:00.000000Z\t1\t6
+                            2021-10-31T02:30:00.000000Z\t1\t7
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, min(id) mn FROM (SELECT ts, id, sym FROM t WHERE id > 0) SAMPLE BY 15m FILL(NULL)" + timeZone,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\tmn
+                            2021-10-31T00:00:00.000000Z\tS1\t1\t1
+                            2021-10-31T00:00:00.000000Z\tS0\tnull\tnull
+                            2021-10-31T00:15:00.000000Z\tS1\tnull\tnull
+                            2021-10-31T00:15:00.000000Z\tS0\t1\t2
+                            2021-10-31T00:30:00.000000Z\tS1\tnull\tnull
+                            2021-10-31T00:30:00.000000Z\tS0\tnull\tnull
+                            2021-10-31T00:45:00.000000Z\tS1\t2\t3
+                            2021-10-31T00:45:00.000000Z\tS0\t1\t4
+                            2021-10-31T02:00:00.000000Z\tS1\tnull\tnull
+                            2021-10-31T02:00:00.000000Z\tS0\t1\t6
+                            2021-10-31T02:15:00.000000Z\tS1\tnull\tnull
+                            2021-10-31T02:15:00.000000Z\tS0\tnull\tnull
+                            2021-10-31T02:30:00.000000Z\tS1\t1\t7
+                            2021-10-31T02:30:00.000000Z\tS0\tnull\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayDstGapBeforeFallBackMultiHour() throws Exception {
+        // GitHub issue #7753 at a fall-back, with a stride that the change of the offset moves off the grid.
+        // America/New_York moves the clock back from 02:00 EDT to 01:00 EST at 2021-11-07T06:00Z. With a
+        // stride of 6h, the bucket at 2021-11-06T22:00Z has no row, and the bucket after it, at 04:00Z,
+        // holds the rows at 04:30Z and 07:00Z, on both sides of the change. The not-keyed FILL(NULL) and
+        // FILL(value) cursor aggregates that bucket before it emits the gap. Crossing the change moves the
+        // gap chain back by an hour, off the 6h grid, so the fills after that bucket fall at 10:00Z and
+        // 16:00Z in every fill mode of the cursor. The bucket of the row at 20:00Z starts at 17:00Z. Labelled
+        // from the chain, it would come 5h late, at 22:00Z, and so would every later bucket after a gap. The
+        // rows equal those of the cursor's FILL(NONE), FILL(PREV) and keyed FILL(NULL), and the GROUP BY path
+        // labels the rows of ids 4 and 5 the same way. Europe/Berlin shows the same with a stride of 2h at
+        // its change, at 2021-10-31T01:00Z, also with a fill list that pairs LINEAR with other fills, which
+        // reaches this cursor for any table. A single FILL(LINEAR) takes a different cursor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE new_york (ts TIMESTAMP, id LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO new_york VALUES
+                        ('2021-11-06T16:30:00.000000Z', 1, 'S0'),
+                        ('2021-11-07T04:30:00.000000Z', 2, 'S1'),
+                        ('2021-11-07T07:00:00.000000Z', 3, 'S0'),
+                        ('2021-11-07T20:00:00.000000Z', 4, 'S1'),
+                        ('2021-11-08T14:00:00.000000Z', 5, 'S0')
+                    """);
+            execute("CREATE TABLE berlin (ts TIMESTAMP, id LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO berlin VALUES
+                        ('2021-10-30T20:30:00.000000Z', 1, 'S0'),
+                        ('2021-10-31T00:30:00.000000Z', 2, 'S1'),
+                        ('2021-10-31T01:30:00.000000Z', 3, 'S0'),
+                        ('2021-10-31T05:30:00.000000Z', 4, 'S1'),
+                        ('2021-10-31T12:10:00.000000Z', 5, 'S0')
+                    """);
+            // the sub-queries keep the statements on the SAMPLE BY cursor
+            final String newYorkNotKeyed = "SELECT ts, count() c, min(id) mn FROM (SELECT ts, id, sym FROM new_york WHERE id > 0) SAMPLE BY 6h";
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            // The fills at 10:00Z and 16:00Z are off the local 6h grid, which has a single fill at 11:00Z.
+            // They are the cursor path's existing off-grid fills: kludge() moves the gap chain by the offset
+            // delta at the change, in every fill mode. See GitHub issue #7439 for the same defect with a
+            // stride of a day.
+            assertSampleByCursorDst(
+                    newYorkNotKeyed + " FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tc\tmn
+                            2021-11-06T16:00:00.000000Z\t1\t1
+                            2021-11-06T22:00:00.000000Z\tnull\tnull
+                            2021-11-07T04:00:00.000000Z\t2\t2
+                            2021-11-07T10:00:00.000000Z\tnull\tnull
+                            2021-11-07T16:00:00.000000Z\tnull\tnull
+                            2021-11-07T17:00:00.000000Z\t1\t4
+                            2021-11-07T23:00:00.000000Z\tnull\tnull
+                            2021-11-08T05:00:00.000000Z\tnull\tnull
+                            2021-11-08T11:00:00.000000Z\t1\t5
+                            """
+            );
+            // the same off-grid fills at 10:00Z and 16:00Z, GitHub issue #7439
+            assertSampleByCursorDst(
+                    newYorkNotKeyed + " FILL(0, 0)" + newYork,
+                    "fill: value\n",
+                    """
+                            ts\tc\tmn
+                            2021-11-06T16:00:00.000000Z\t1\t1
+                            2021-11-06T22:00:00.000000Z\t0\t0
+                            2021-11-07T04:00:00.000000Z\t2\t2
+                            2021-11-07T10:00:00.000000Z\t0\t0
+                            2021-11-07T16:00:00.000000Z\t0\t0
+                            2021-11-07T17:00:00.000000Z\t1\t4
+                            2021-11-07T23:00:00.000000Z\t0\t0
+                            2021-11-08T05:00:00.000000Z\t0\t0
+                            2021-11-08T11:00:00.000000Z\t1\t5
+                            """
+            );
+            assertSampleByCursorDst(
+                    newYorkNotKeyed + newYork,
+                    null,
+                    """
+                            ts\tc\tmn
+                            2021-11-06T16:00:00.000000Z\t1\t1
+                            2021-11-07T04:00:00.000000Z\t2\t2
+                            2021-11-07T17:00:00.000000Z\t1\t4
+                            2021-11-08T11:00:00.000000Z\t1\t5
+                            """
+            );
+            // the same off-grid fills at 10:00Z and 16:00Z for both keys, GitHub issue #7439
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, min(id) mn FROM (SELECT ts, id, sym FROM new_york WHERE id > 0) SAMPLE BY 6h FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\tmn
+                            2021-11-06T16:00:00.000000Z\tS0\t1\t1
+                            2021-11-06T16:00:00.000000Z\tS1\tnull\tnull
+                            2021-11-06T22:00:00.000000Z\tS0\tnull\tnull
+                            2021-11-06T22:00:00.000000Z\tS1\tnull\tnull
+                            2021-11-07T04:00:00.000000Z\tS0\t1\t3
+                            2021-11-07T04:00:00.000000Z\tS1\t1\t2
+                            2021-11-07T10:00:00.000000Z\tS0\tnull\tnull
+                            2021-11-07T10:00:00.000000Z\tS1\tnull\tnull
+                            2021-11-07T16:00:00.000000Z\tS0\tnull\tnull
+                            2021-11-07T16:00:00.000000Z\tS1\tnull\tnull
+                            2021-11-07T17:00:00.000000Z\tS0\tnull\tnull
+                            2021-11-07T17:00:00.000000Z\tS1\t1\t4
+                            2021-11-07T23:00:00.000000Z\tS0\tnull\tnull
+                            2021-11-07T23:00:00.000000Z\tS1\tnull\tnull
+                            2021-11-08T05:00:00.000000Z\tS0\tnull\tnull
+                            2021-11-08T05:00:00.000000Z\tS1\tnull\tnull
+                            2021-11-08T11:00:00.000000Z\tS0\t1\t5
+                            2021-11-08T11:00:00.000000Z\tS1\tnull\tnull
+                            """
+            );
+
+            final String berlinNotKeyed = "SELECT ts, count() c, min(id) mn FROM (SELECT ts, id, sym FROM berlin WHERE id > 0) SAMPLE BY 2h";
+            final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            // The fills at 02:00Z and 04:00Z are off the local 2h grid, which has a single fill at 03:00Z.
+            // They are the cursor path's existing off-grid fills: kludge() moves the gap chain by the offset
+            // delta at the change, in every fill mode. See GitHub issue #7439 for the same defect with a
+            // stride of a day.
+            assertSampleByCursorDst(
+                    berlinNotKeyed + " FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tc\tmn
+                            2021-10-30T20:00:00.000000Z\t1\t1
+                            2021-10-30T22:00:00.000000Z\tnull\tnull
+                            2021-10-31T00:00:00.000000Z\t2\t2
+                            2021-10-31T02:00:00.000000Z\tnull\tnull
+                            2021-10-31T04:00:00.000000Z\tnull\tnull
+                            2021-10-31T05:00:00.000000Z\t1\t4
+                            2021-10-31T07:00:00.000000Z\tnull\tnull
+                            2021-10-31T09:00:00.000000Z\tnull\tnull
+                            2021-10-31T11:00:00.000000Z\t1\t5
+                            """
+            );
+            // the same off-grid fills at 02:00Z and 04:00Z, GitHub issue #7439
+            assertSampleByCursorDst(
+                    berlinNotKeyed + " FILL(0, 0)" + berlin,
+                    "fill: value\n",
+                    """
+                            ts\tc\tmn
+                            2021-10-30T20:00:00.000000Z\t1\t1
+                            2021-10-30T22:00:00.000000Z\t0\t0
+                            2021-10-31T00:00:00.000000Z\t2\t2
+                            2021-10-31T02:00:00.000000Z\t0\t0
+                            2021-10-31T04:00:00.000000Z\t0\t0
+                            2021-10-31T05:00:00.000000Z\t1\t4
+                            2021-10-31T07:00:00.000000Z\t0\t0
+                            2021-10-31T09:00:00.000000Z\t0\t0
+                            2021-10-31T11:00:00.000000Z\t1\t5
+                            """
+            );
+            // the same off-grid fills at 02:00Z and 04:00Z, GitHub issue #7439
+            assertSampleByCursorDst(
+                    berlinNotKeyed + " FILL(PREV)" + berlin,
+                    "fill: prev\n",
+                    """
+                            ts\tc\tmn
+                            2021-10-30T20:00:00.000000Z\t1\t1
+                            2021-10-30T22:00:00.000000Z\t1\t1
+                            2021-10-31T00:00:00.000000Z\t2\t2
+                            2021-10-31T02:00:00.000000Z\t2\t2
+                            2021-10-31T04:00:00.000000Z\t2\t2
+                            2021-10-31T05:00:00.000000Z\t1\t4
+                            2021-10-31T07:00:00.000000Z\t1\t4
+                            2021-10-31T09:00:00.000000Z\t1\t4
+                            2021-10-31T11:00:00.000000Z\t1\t5
+                            """
+            );
+            // A fill list with LINEAR and another fill takes the FILL(value) cursor without a sub-query, while a
+            // single FILL(LINEAR) takes a different cursor. avg(id) interpolates on the line between the
+            // neighbouring rows with data at the timestamps that the cursor emits, including the same
+            // off-grid fills at 02:00Z and 04:00Z (GitHub issue #7439): 1.75 at 22:00Z between 1.0 and 2.5,
+            // 3.1 and 3.7 between 2.5 at 00:00Z and 4.0 at 05:00Z, and 4.33 and 4.67 between 4.0 and 5.0.
+            assertSampleByCursorDst(
+                    "SELECT ts, count() c, min(id) mn, avg(id) a FROM berlin SAMPLE BY 2h FILL(LINEAR, NULL, LINEAR)" + berlin,
+                    "fill: value\n",
+                    """
+                            ts\tc\tmn\ta
+                            2021-10-30T20:00:00.000000Z\t1\t1\t1.0
+                            2021-10-30T22:00:00.000000Z\t1\tnull\t1.75
+                            2021-10-31T00:00:00.000000Z\t2\t2\t2.5
+                            2021-10-31T02:00:00.000000Z\t1\tnull\t3.1
+                            2021-10-31T04:00:00.000000Z\t1\tnull\t3.7
+                            2021-10-31T05:00:00.000000Z\t1\t4\t4.0
+                            2021-10-31T07:00:00.000000Z\t1\tnull\t4.333333333333333
+                            2021-10-31T09:00:00.000000Z\t1\tnull\t4.666666666666667
+                            2021-10-31T11:00:00.000000Z\t1\t5\t5.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBySubDayDstGapBeforeSpringForward() throws Exception {
+        // GitHub issue #7753. Europe/Berlin moves the clock forward from 02:00 CET to 03:00 CEST at
+        // 2021-03-28T01:00Z. With a stride of 15m, the bucket at 00:30Z has no row, and the row at 01:10Z,
+        // the first after the change, ends the bucket after it, at 00:45Z. The not-keyed FILL(NULL) and
+        // FILL(value) cursor aggregates the bucket after a gap before it emits the gap, and it used to
+        // label the gap and that bucket with the offset after the change: the timestamps went back from
+        // 00:15Z to 23:30Z, the row at 00:47Z landed at 23:45Z, and the buckets from 00:00Z to 00:45Z came
+        // again as fills. America/New_York shows the same at its change, at 2021-03-14T07:00Z. The rows
+        // equal those of the GROUP BY path, and the keyed FILL(NULL) cursor returns the same buckets.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE berlin AS (
+                        SELECT x id, ('S' || (x % 2))::SYMBOL sym, (100 + (x % 7))::DOUBLE price,
+                               timestamp_sequence('2021-03-28T00:01:00', 23 * 60_000_000L) ts
+                        FROM long_sequence(5)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    CREATE TABLE new_york AS (
+                        SELECT x id, ('S' || (x % 2))::SYMBOL sym, (100 + (x % 7))::DOUBLE price,
+                               timestamp_sequence('2021-03-14T06:01:00', 23 * 60_000_000L) ts
+                        FROM long_sequence(5)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            // the sub-queries keep the statements on the SAMPLE BY cursor
+            final String berlinNotKeyed = "SELECT ts, count() c, min(id) mn FROM (SELECT ts, id, sym, price FROM berlin WHERE price > 0) SAMPLE BY 15m";
+            final String berlin = " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertSampleByCursorDst(
+                    berlinNotKeyed + " FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tc\tmn
+                            2021-03-28T00:00:00.000000Z\t1\t1
+                            2021-03-28T00:15:00.000000Z\t1\t2
+                            2021-03-28T00:30:00.000000Z\tnull\tnull
+                            2021-03-28T00:45:00.000000Z\t1\t3
+                            2021-03-28T01:00:00.000000Z\t1\t4
+                            2021-03-28T01:15:00.000000Z\tnull\tnull
+                            2021-03-28T01:30:00.000000Z\t1\t5
+                            """
+            );
+            assertSampleByCursorDst(
+                    berlinNotKeyed + " FILL(0, 0)" + berlin,
+                    "fill: value\n",
+                    """
+                            ts\tc\tmn
+                            2021-03-28T00:00:00.000000Z\t1\t1
+                            2021-03-28T00:15:00.000000Z\t1\t2
+                            2021-03-28T00:30:00.000000Z\t0\t0
+                            2021-03-28T00:45:00.000000Z\t1\t3
+                            2021-03-28T01:00:00.000000Z\t1\t4
+                            2021-03-28T01:15:00.000000Z\t0\t0
+                            2021-03-28T01:30:00.000000Z\t1\t5
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, min(id) mn FROM (SELECT ts, id, sym, price FROM berlin WHERE price > 0) SAMPLE BY 15m FILL(NULL)" + berlin,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\tmn
+                            2021-03-28T00:00:00.000000Z\tS1\t1\t1
+                            2021-03-28T00:00:00.000000Z\tS0\tnull\tnull
+                            2021-03-28T00:15:00.000000Z\tS1\tnull\tnull
+                            2021-03-28T00:15:00.000000Z\tS0\t1\t2
+                            2021-03-28T00:30:00.000000Z\tS1\tnull\tnull
+                            2021-03-28T00:30:00.000000Z\tS0\tnull\tnull
+                            2021-03-28T00:45:00.000000Z\tS1\t1\t3
+                            2021-03-28T00:45:00.000000Z\tS0\tnull\tnull
+                            2021-03-28T01:00:00.000000Z\tS1\tnull\tnull
+                            2021-03-28T01:00:00.000000Z\tS0\t1\t4
+                            2021-03-28T01:15:00.000000Z\tS1\tnull\tnull
+                            2021-03-28T01:15:00.000000Z\tS0\tnull\tnull
+                            2021-03-28T01:30:00.000000Z\tS1\t1\t5
+                            2021-03-28T01:30:00.000000Z\tS0\tnull\tnull
+                            """
+            );
+
+            final String newYorkNotKeyed = "SELECT ts, count() c, min(id) mn FROM (SELECT ts, id, sym, price FROM new_york WHERE price > 0) SAMPLE BY 15m";
+            final String newYork = " ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertSampleByCursorDst(
+                    newYorkNotKeyed + " FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tc\tmn
+                            2021-03-14T06:00:00.000000Z\t1\t1
+                            2021-03-14T06:15:00.000000Z\t1\t2
+                            2021-03-14T06:30:00.000000Z\tnull\tnull
+                            2021-03-14T06:45:00.000000Z\t1\t3
+                            2021-03-14T07:00:00.000000Z\t1\t4
+                            2021-03-14T07:15:00.000000Z\tnull\tnull
+                            2021-03-14T07:30:00.000000Z\t1\t5
+                            """
+            );
+            assertSampleByCursorDst(
+                    newYorkNotKeyed + " FILL(0, 0)" + newYork,
+                    "fill: value\n",
+                    """
+                            ts\tc\tmn
+                            2021-03-14T06:00:00.000000Z\t1\t1
+                            2021-03-14T06:15:00.000000Z\t1\t2
+                            2021-03-14T06:30:00.000000Z\t0\t0
+                            2021-03-14T06:45:00.000000Z\t1\t3
+                            2021-03-14T07:00:00.000000Z\t1\t4
+                            2021-03-14T07:15:00.000000Z\t0\t0
+                            2021-03-14T07:30:00.000000Z\t1\t5
+                            """
+            );
+            assertSampleByCursorDst(
+                    "SELECT ts, sym, count() c, min(id) mn FROM (SELECT ts, id, sym, price FROM new_york WHERE price > 0) SAMPLE BY 15m FILL(NULL)" + newYork,
+                    "fill: null\n",
+                    """
+                            ts\tsym\tc\tmn
+                            2021-03-14T06:00:00.000000Z\tS1\t1\t1
+                            2021-03-14T06:00:00.000000Z\tS0\tnull\tnull
+                            2021-03-14T06:15:00.000000Z\tS1\tnull\tnull
+                            2021-03-14T06:15:00.000000Z\tS0\t1\t2
+                            2021-03-14T06:30:00.000000Z\tS1\tnull\tnull
+                            2021-03-14T06:30:00.000000Z\tS0\tnull\tnull
+                            2021-03-14T06:45:00.000000Z\tS1\t1\t3
+                            2021-03-14T06:45:00.000000Z\tS0\tnull\tnull
+                            2021-03-14T07:00:00.000000Z\tS1\tnull\tnull
+                            2021-03-14T07:00:00.000000Z\tS0\t1\t4
+                            2021-03-14T07:15:00.000000Z\tS1\tnull\tnull
+                            2021-03-14T07:15:00.000000Z\tS0\tnull\tnull
+                            2021-03-14T07:30:00.000000Z\tS1\t1\t5
+                            2021-03-14T07:30:00.000000Z\tS0\tnull\tnull
+                            """
+            );
         });
     }
 
@@ -12763,6 +17121,149 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillNullNotKeyedFromDayTimeZone() throws Exception {
+        // For a stride of a day or longer, code generation leaves FROM in local time, and the sampler grid starts
+        // at FROM. The not-keyed FILL(NULL) cursor starts at the bucket at FROM, as the GROUP BY path does. The
+        // cursor used to round FROM plus the offset of a zone behind UTC, and the rows below matched the GROUP BY
+        // path only because SimpleTimestampSampler.round() rounds a value less than a stride before the grid start
+        // up to that start. The month and year samplers floor, see testSampleFillNullNotKeyedFromMonthTimeZone().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000Z', 1.0),
+                        ('2024-01-16T10:00:00.000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0)"
+                    + " SAMPLE BY 1d FROM '2024-01-12' FILL(NULL) ALIGN TO CALENDAR TIME ZONE ";
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-12T05:00:00.000000Z\tnull\tnull
+                    2024-01-13T05:00:00.000000Z\tnull\tnull
+                    2024-01-14T05:00:00.000000Z\tnull\tnull
+                    2024-01-15T05:00:00.000000Z\t1\t1.0
+                    2024-01-16T05:00:00.000000Z\t1\t2.0
+                    """;
+            assertSampleByCursorFrom(select + "'-05:00'", "fill: null\n", expected);
+            assertSampleByCursorFrom(select + "'America/New_York'", "fill: null\n", expected);
+        });
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedFromMonthTimeZone() throws Exception {
+        // GitHub issue #7763. For a stride of a day or longer, code generation leaves FROM in local time, but the
+        // cursor rounded FROM plus the offset of the zone. For a zone behind UTC, that is the evening before FROM,
+        // and the month sampler floored it into December 2023. The not-keyed FILL(NULL) cursor then emitted a
+        // fill row for December, also with TO. It now starts at the bucket at FROM, as the GROUP BY path does,
+        // for a zone name and for a numeric zone. A FROM a month before the first row still fills that month.
+        // Issue #7763 does not affect a zone ahead of UTC: with Europe/Berlin, the cursor returns the rows of the
+        // GROUP BY path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000Z', 1.0),
+                        ('2024-02-10T10:00:00.000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1M";
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-01T05:00:00.000000Z\t1\t1.0
+                    2024-02-01T05:00:00.000000Z\t1\t2.0
+                    """;
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: null\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: null\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' TO '2024-04-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000Z\t1\t2.0
+                            2024-03-01T05:00:00.000000Z\tnull\tnull
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2023-12-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2023-12-01T05:00:00.000000Z\tnull\tnull
+                            2024-01-01T05:00:00.000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:00:00.000000Z\t1\t1.0
+                            2024-01-31T23:00:00.000000Z\t1\t2.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedFromYearTimeZone() throws Exception {
+        // GitHub issue #7763, see testSampleFillNullNotKeyedFromMonthTimeZone(). The year sampler floored FROM plus
+        // the offset of a zone behind UTC into 2023, and the not-keyed FILL(NULL) cursor emitted a fill row for
+        // 2023 before the bucket at FROM.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000Z', 1.0),
+                        ('2024-02-10T10:00:00.000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1y";
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-01T05:00:00.000000Z\t2\t3.0
+                    """;
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: null\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: null\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2023-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2023-01-01T05:00:00.000000Z\tnull\tnull
+                            2024-01-01T05:00:00.000000Z\t2\t3.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "fill: null\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:00:00.000000Z\t2\t3.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleFillNullNotKeyedValid() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -15040,6 +19541,297 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillPrevNotKeyedFromBeforeFirstRow() throws Exception {
+        // The first row of FILL_PREV_FROM_INSERT, at 21:20, comes two buckets after FROM. The
+        // not-keyed FILL(PREV) cursor emits the buckets at 19:45 and 20:30 before it aggregates a row,
+        // and it used to read the bucket at 20:30 from a map value that nothing had written: garbage on
+        // a first execution, and the last bucket of the previous pass after a rewind or a re-execution.
+        // Both buckets now hold NULL for every aggregate, count() included, as on the GROUP BY path. The
+        // cursor used to omit the bucket at FROM itself, 19:45 (GitHub issue #7764).
+        // the sub-query keeps the statement on the SAMPLE BY cursor
+        assertQuery("""
+                SELECT ts, count() c, sum(price) sp, first(qty) fq, last(l) ll, count_distinct(qty) cd
+                FROM (SELECT * FROM fal WHERE price > 0)
+                SAMPLE BY 45m FROM '2021-10-30T19:45' FILL(PREV)
+                """)
+                .ddl(FILL_PREV_FROM_DDL, FILL_PREV_FROM_INSERT)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: prev\n")
+                .returns("""
+                        ts\tc\tsp\tfq\tll\tcd
+                        2021-10-30T19:45:00.000000Z\tnull\tnull\tnull\tnull\tnull
+                        2021-10-30T20:30:00.000000Z\tnull\tnull\tnull\tnull\tnull
+                        2021-10-30T21:15:00.000000Z\t1\t1.5\t10\t100\t1
+                        2021-10-30T22:00:00.000000Z\t1\t2.5\t20\t200\t1
+                        2021-10-30T22:45:00.000000Z\t1\t3.5\t30\t300\t1
+                        2021-10-30T23:30:00.000000Z\t1\t4.5\t40\t400\t1
+                        2021-10-31T00:15:00.000000Z\t1\t5.5\t50\t500\t1
+                        2021-10-31T01:00:00.000000Z\t1\t6.5\t60\t600\t1
+                        2021-10-31T01:45:00.000000Z\t1\t7.5\t70\t700\t1
+                        2021-10-31T02:30:00.000000Z\t1\t7.5\t70\t700\t1
+                        2021-10-31T03:15:00.000000Z\t1\t7.5\t70\t700\t1
+                        2021-10-31T04:00:00.000000Z\t1\t8.5\t80\t800\t1
+                        2021-10-31T04:45:00.000000Z\t1\t9.5\t90\t900\t1
+                        2021-10-31T05:30:00.000000Z\t1\t9.5\t90\t900\t1
+                        2021-10-31T06:15:00.000000Z\t1\t9.5\t90\t900\t1
+                        2021-10-31T07:00:00.000000Z\t1\t10.5\t100\t1000\t1
+                        2021-10-31T07:45:00.000000Z\t1\t10.5\t100\t1000\t1
+                        2021-10-31T08:30:00.000000Z\t1\t10.5\t100\t1000\t1
+                        2021-10-31T09:15:00.000000Z\t1\t10.5\t100\t1000\t1
+                        2021-10-31T10:00:00.000000Z\t1\t11.5\t110\t1100\t1
+                        """);
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedFromBeforeFirstRowApproxPercentile() throws Exception {
+        // GitHub issue #7761, over the rows of testSampleFillPrevNotKeyedFromBeforeFirstRow before
+        // 22:45. The CROSS JOIN rewinds the sample for the second row of long_sequence(2). At the
+        // rewind, the not-keyed FILL(PREV) cursor sets its value to NULL, and it emits the buckets at
+        // 19:45 and 20:30 from that value. Three approx_percentile() implementations read the LONG_NULL
+        // that setNull() writes as histogram 0, which the rewind keeps: the bucket at 21:15 of the first
+        // pass. On the second pass, the bucket at 20:30 showed that percentile while count() showed
+        // NULL. Both buckets now show NULL on both passes. approx_percentile(l, 0.5), at precision 2 or
+        // less, is the control.
+        // the sub-query keeps the sample on the SAMPLE BY cursor
+        assertQuery("""
+                SELECT x, ts, pd, pdp, pl, plp, c
+                FROM long_sequence(2)
+                CROSS JOIN (
+                    SELECT ts, approx_percentile(price, 0.5) pd, approx_percentile(price, 0.5, 3) pdp,
+                        approx_percentile(l, 0.5) pl, approx_percentile(l, 0.5, 3) plp, count() c
+                    FROM (SELECT * FROM fal WHERE price > 0 AND ts < '2021-10-30T22:45')
+                    SAMPLE BY 45m FROM '2021-10-30T19:45' FILL(PREV)
+                )
+                """)
+                .ddl(FILL_PREV_FROM_DDL, FILL_PREV_FROM_INSERT)
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns("""
+                        x\tts\tpd\tpdp\tpl\tplp\tc
+                        1\t2021-10-30T19:45:00.000000Z\tnull\tnull\tnull\tnull\tnull
+                        1\t2021-10-30T20:30:00.000000Z\tnull\tnull\tnull\tnull\tnull
+                        1\t2021-10-30T21:15:00.000000Z\t1.5\t1.5\t103.0\t100.0\t1
+                        1\t2021-10-30T22:00:00.000000Z\t2.5\t2.5\t207.0\t200.0\t1
+                        2\t2021-10-30T19:45:00.000000Z\tnull\tnull\tnull\tnull\tnull
+                        2\t2021-10-30T20:30:00.000000Z\tnull\tnull\tnull\tnull\tnull
+                        2\t2021-10-30T21:15:00.000000Z\t1.5\t1.5\t103.0\t100.0\t1
+                        2\t2021-10-30T22:00:00.000000Z\t2.5\t2.5\t207.0\t200.0\t1
+                        """);
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedFromBeforeFirstRowVarchar() throws Exception {
+        // The statement from GitHub issue #7742, over the rows of
+        // testSampleFillPrevNotKeyedFromBeforeFirstRow. For the bucket at 20:30, last(s) used to read a
+        // VARCHAR pointer from a map value that nothing had written, and the JVM aborted with SIGSEGV.
+        // After a re-execution, the pointer of the previous pass referenced allocator memory that the
+        // cursor had freed. As in that test, the cursor also emits the bucket at FROM itself, 19:45, as
+        // the GROUP BY path does.
+        // the sub-query keeps the statement on the SAMPLE BY cursor
+        assertQuery("""
+                SELECT ts, last(s) ls, count() c
+                FROM (SELECT * FROM fal WHERE price > 0)
+                SAMPLE BY 45m FROM '2021-10-30T19:45' FILL(PREV)
+                """)
+                .ddl(FILL_PREV_FROM_DDL, FILL_PREV_FROM_INSERT)
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: prev\n")
+                .returns("""
+                        ts\tls\tc
+                        2021-10-30T19:45:00.000000Z\t\tnull
+                        2021-10-30T20:30:00.000000Z\t\tnull
+                        2021-10-30T21:15:00.000000Z\tv1\t1
+                        2021-10-30T22:00:00.000000Z\tv2\t1
+                        2021-10-30T22:45:00.000000Z\tv3\t1
+                        2021-10-30T23:30:00.000000Z\tv4\t1
+                        2021-10-31T00:15:00.000000Z\tv5\t1
+                        2021-10-31T01:00:00.000000Z\tv6\t1
+                        2021-10-31T01:45:00.000000Z\tv7\t1
+                        2021-10-31T02:30:00.000000Z\tv7\t1
+                        2021-10-31T03:15:00.000000Z\tv7\t1
+                        2021-10-31T04:00:00.000000Z\tv8\t1
+                        2021-10-31T04:45:00.000000Z\tv9\t1
+                        2021-10-31T05:30:00.000000Z\tv9\t1
+                        2021-10-31T06:15:00.000000Z\tv9\t1
+                        2021-10-31T07:00:00.000000Z\tv10\t1
+                        2021-10-31T07:45:00.000000Z\tv10\t1
+                        2021-10-31T08:30:00.000000Z\tv10\t1
+                        2021-10-31T09:15:00.000000Z\tv10\t1
+                        2021-10-31T10:00:00.000000Z\tv11\t1
+                        """);
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedFromHourBeforeFirstRow() throws Exception {
+        // GitHub issue #7764: on its first call, the not-keyed FILL(PREV) cursor expected the bucket after
+        // the bucket at FROM, so it omitted the bucket at FROM whenever the first row came after it. The
+        // rows equal those of the GROUP BY path, with NULL for every aggregate, count() included, up to the
+        // first row. With FROM in the bucket of the first row, no bucket precedes that row. Code generation
+        // converts a sub-day FROM in a zone to UTC, see testSampleByFromToSubDayTimeZoneLimitFillPrev().
+        // The assertion reads each statement twice and rewinds the cursor in between; LIMIT stops the
+        // cursor inside the fill rows before the first row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-01T00:30:00.000000Z', 1.0),
+                        ('2021-01-01T01:10:00.000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0) SAMPLE BY 1h FROM ";
+            assertSampleByCursorFrom(
+                    select + "'2020-12-31T23:00' FILL(PREV)",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2020-12-31T23:00:00.000000Z\tnull\tnull
+                            2021-01-01T00:00:00.000000Z\t1\t1.0
+                            2021-01-01T01:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "'2020-12-31T22:00' FILL(PREV)",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2020-12-31T22:00:00.000000Z\tnull\tnull
+                            2020-12-31T23:00:00.000000Z\tnull\tnull
+                            2021-01-01T00:00:00.000000Z\t1\t1.0
+                            2021-01-01T01:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "'2021-01-01T00:00' FILL(PREV)",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2021-01-01T00:00:00.000000Z\t1\t1.0
+                            2021-01-01T01:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "'2020-12-31T22:00' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '+02:00'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2020-12-31T20:00:00.000000Z\tnull\tnull
+                            2020-12-31T21:00:00.000000Z\tnull\tnull
+                            2020-12-31T22:00:00.000000Z\tnull\tnull
+                            2020-12-31T23:00:00.000000Z\tnull\tnull
+                            2021-01-01T00:00:00.000000Z\t1\t1.0
+                            2021-01-01T01:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "'2020-12-31T22:00' FILL(PREV) LIMIT 2",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2020-12-31T22:00:00.000000Z\tnull\tnull
+                            2020-12-31T23:00:00.000000Z\tnull\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedFromMonthTimeZone() throws Exception {
+        // For a stride of a day or longer, code generation leaves FROM in local time, and the cursor
+        // starts at the bucket at FROM, January 2024, see testSampleFillNullNotKeyedFromMonthTimeZone().
+        // The first row falls in that bucket, so the not-keyed FILL(PREV) cursor aggregates it there and
+        // returns the rows of the GROUP BY path; testSampleFillPrevNotKeyedFromMonthTimeZoneBeforeFirstRow()
+        // covers a bucket at FROM with no row. Both rows come before the DST change in March, so every
+        // bucket carries the offset of the first row on both paths.
+        // the sub-query keeps the statement on the SAMPLE BY cursor
+        assertQuery("""
+                SELECT ts, sum(v) s
+                FROM (SELECT * FROM t WHERE v > 0)
+                SAMPLE BY 1M FROM '2024-01-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'America/New_York'
+                """)
+                .ddl(
+                        "CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO t VALUES
+                                    ('2024-01-15T10:00:00.000000Z', 1.0),
+                                    ('2024-02-10T10:00:00.000000Z', 2.0)
+                                """
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n  fill: prev\n")
+                .returns("""
+                        ts\ts
+                        2024-01-01T05:00:00.000000Z\t1.0
+                        2024-02-01T05:00:00.000000Z\t2.0
+                        """);
+    }
+
+    @Test
+    public void testSampleFillPrevNotKeyedFromMonthTimeZoneBeforeFirstRow() throws Exception {
+        // GitHub issue #7764, see testSampleFillPrevNotKeyedFromHourBeforeFirstRow(). The first row comes
+        // two months after FROM. For a month, quarter or year stride in a zone behind UTC, the cursor used to
+        // start one bucket before FROM (GitHub issue #7763), so it emitted the bucket at FROM by accident.
+        // It now starts at FROM and emits that bucket on its first call. The rows equal those of the GROUP
+        // BY path. The first row comes before the DST change in March, so the New York buckets before it
+        // carry the offset of the first row on both paths.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-03-05T10:00:00.000000Z', 1.0),
+                        ('2024-05-10T10:00:00.000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT ts, v FROM t WHERE v > 0) SAMPLE BY ";
+            assertSampleByCursorFrom(
+                    select + "1M FROM '2024-01-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000Z\tnull\tnull
+                            2024-02-01T05:00:00.000000Z\tnull\tnull
+                            2024-03-01T05:00:00.000000Z\t1\t1.0
+                            2024-04-01T05:00:00.000000Z\t1\t1.0
+                            2024-05-01T05:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "1M FROM '2024-01-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000Z\tnull\tnull
+                            2024-02-01T05:00:00.000000Z\tnull\tnull
+                            2024-03-01T05:00:00.000000Z\t1\t1.0
+                            2024-04-01T04:00:00.000000Z\t1\t1.0
+                            2024-05-01T04:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "3M FROM '2023-10-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2023-10-01T05:00:00.000000Z\tnull\tnull
+                            2024-01-01T05:00:00.000000Z\t1\t1.0
+                            2024-04-01T05:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + "1y FROM '2023-01-01' FILL(PREV) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: prev\n",
+                    """
+                            ts\tc\ts
+                            2023-01-01T05:00:00.000000Z\tnull\tnull
+                            2024-01-01T05:00:00.000000Z\t2\t3.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleFillValue() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -16084,6 +20876,149 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillValueNegative() throws Exception {
+        // The parser turns FILL(-1) into a unary minus over the literal 1. The SAMPLE BY cursor used to
+        // parse the minus sign alone and reject the statement with "invalid fill value: -". It now
+        // returns the rows that the GROUP BY path returns, not keyed and keyed, alone and next to PREV.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP, k SYMBOL, i INT, l LONG, d DOUBLE, f FLOAT, s SHORT, b BYTE)
+                    TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 10, 100, 1.25, 2.5, 3, 4),
+                    ('2024-01-01T00:30:00.000000Z', 'b', 20, 200, 2.25, 3.5, 5, 6),
+                    ('2024-01-01T03:00:00.000000Z', 'a', 30, 300, 3.25, 4.5, 7, 8)
+                    """);
+            assertSampleByFillNegative(
+                    "SELECT ts, sum(i) s",
+                    " SAMPLE BY 1h FILL(-1)",
+                    """
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\t30
+                            2024-01-01T01:00:00.000000Z\t-1
+                            2024-01-01T02:00:00.000000Z\t-1
+                            2024-01-01T03:00:00.000000Z\t30
+                            """
+            );
+            assertSampleByFillNegative(
+                    "SELECT ts, avg(d) a",
+                    " SAMPLE BY 1h FILL(-1.5)",
+                    """
+                            ts\ta
+                            2024-01-01T00:00:00.000000Z\t1.75
+                            2024-01-01T01:00:00.000000Z\t-1.5
+                            2024-01-01T02:00:00.000000Z\t-1.5
+                            2024-01-01T03:00:00.000000Z\t3.25
+                            """
+            );
+            final String notKeyed = "SELECT ts, first(i) i, first(l) l, first(d) d, first(f) f, first(s) s, first(b) b";
+            assertSampleByFillNegative(
+                    notKeyed,
+                    " SAMPLE BY 1h FILL(-1, -2, -1.5, -2.5, -3, -4)",
+                    """
+                            ts\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000Z\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T01:00:00.000000Z\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T02:00:00.000000Z\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T03:00:00.000000Z\t30\t300\t3.25\t4.5\t7\t8
+                            """
+            );
+            assertSampleByFillNegative(
+                    notKeyed,
+                    " SAMPLE BY 1h FILL(PREV, -1, -1.5, PREV, -2, -3)",
+                    """
+                            ts\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000Z\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T01:00:00.000000Z\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T02:00:00.000000Z\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T03:00:00.000000Z\t30\t300\t3.25\t4.5\t7\t8
+                            """
+            );
+            final String keyed = "SELECT ts, k, first(i) i, first(l) l, first(d) d, first(f) f, first(s) s, first(b) b";
+            assertSampleByFillNegative(
+                    keyed,
+                    " SAMPLE BY 1h FILL(-1, -2, -1.5, -2.5, -3, -4)",
+                    """
+                            ts\tk\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000Z\ta\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T00:00:00.000000Z\tb\t20\t200\t2.25\t3.5\t5\t6
+                            2024-01-01T01:00:00.000000Z\ta\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T01:00:00.000000Z\tb\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T02:00:00.000000Z\ta\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T02:00:00.000000Z\tb\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            2024-01-01T03:00:00.000000Z\ta\t30\t300\t3.25\t4.5\t7\t8
+                            2024-01-01T03:00:00.000000Z\tb\t-1\t-2\t-1.5\t-2.5\t-3\t-4
+                            """
+            );
+            assertSampleByFillNegative(
+                    keyed,
+                    " SAMPLE BY 1h FILL(PREV, -1, -1.5, PREV, -2, -3)",
+                    """
+                            ts\tk\ti\tl\td\tf\ts\tb
+                            2024-01-01T00:00:00.000000Z\ta\t10\t100\t1.25\t2.5\t3\t4
+                            2024-01-01T00:00:00.000000Z\tb\t20\t200\t2.25\t3.5\t5\t6
+                            2024-01-01T01:00:00.000000Z\ta\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T01:00:00.000000Z\tb\t20\t-1\t-1.5\t3.5\t-2\t-3
+                            2024-01-01T02:00:00.000000Z\ta\t10\t-1\t-1.5\t2.5\t-2\t-3
+                            2024-01-01T02:00:00.000000Z\tb\t20\t-1\t-1.5\t3.5\t-2\t-3
+                            2024-01-01T03:00:00.000000Z\ta\t30\t300\t3.25\t4.5\t7\t8
+                            2024-01-01T03:00:00.000000Z\tb\t20\t-1\t-1.5\t3.5\t-2\t-3
+                            """
+            );
+            assertSampleByFillNegative(
+                    "SELECT ts, first(i) i, first(l) l",
+                    " SAMPLE BY 1h FILL(-2_147_483_647, -9_223_372_036_854_775_807)",
+                    """
+                            ts\ti\tl
+                            2024-01-01T00:00:00.000000Z\t10\t100
+                            2024-01-01T01:00:00.000000Z\t-2147483647\t-9223372036854775807
+                            2024-01-01T02:00:00.000000Z\t-2147483647\t-9223372036854775807
+                            2024-01-01T03:00:00.000000Z\t30\t300
+                            """
+            );
+            // The lowest INT and LONG literals are the NULL sentinels of their types, so they fill NULL.
+            assertSampleByCursorFrom(
+                    """
+                            SELECT ts, first(i) i, first(l) l FROM (SELECT * FROM t WHERE i > 0)
+                            SAMPLE BY 1h FILL(-2_147_483_648, -9_223_372_036_854_775_808)
+                            """,
+                    "fill: value\n",
+                    """
+                            ts\ti\tl
+                            2024-01-01T00:00:00.000000Z\t10\t100
+                            2024-01-01T01:00:00.000000Z\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\tnull\tnull
+                            2024-01-01T03:00:00.000000Z\t30\t300
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleFillValueNegativeInvalid() throws Exception {
+        // The SAMPLE BY cursor accepts a minus sign only over a literal and parses the signed literal, so
+        // a value out of range for the column type, or a minus sign over anything else, keeps failing at
+        // the minus sign.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT ts, sum(i) s FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-abc)")
+                    .noLeakCheck()
+                    .fails(73, "invalid fill value: -");
+            assertQuery("SELECT ts, first(i) i FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-1.5)")
+                    .noLeakCheck()
+                    .fails(75, "invalid fill value: -1.5");
+            assertQuery("SELECT ts, first(i) i FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-2_147_483_649)")
+                    .noLeakCheck()
+                    .fails(75, "invalid fill value: -2_147_483_649");
+            assertQuery("SELECT ts, first(ts) fts FROM (SELECT * FROM t WHERE i > 0) SAMPLE BY 1h FILL(-'2019-01-01')")
+                    .noLeakCheck()
+                    .fails(78, "Invalid fill value: '-'. Timestamp fill value must be in quotes.");
+        });
+    }
+
+    @Test
     public void testSampleFillValueNotEnough() throws Exception {
         // Per-column fill values must cover every non-key aggregate; 5 fill
         // values for 6 aggregates (b is a symbol key, not an aggregate) must
@@ -16846,6 +21781,159 @@ public class SampleByTest extends AbstractCairoTest {
                         20.56\t1970-01-03T08:01:06.000000Z
                         84.45258177211063\t1970-01-03T08:31:06.000000Z
                         """);
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedFromBeforeFirstRow() throws Exception {
+        // The not-keyed FILL(value) cursor emits the buckets between FROM and the first row before it
+        // aggregates a row. The FILL(PREV) columns of a mixed fill list read those buckets from a value that
+        // the cursor zeroes, so they showed 0.0, 0, the first symbol and the percentile of histogram 0, where
+        // the GROUP BY path shows NULL. The FILL(value) and FILL(NULL) columns keep their fill. The CROSS JOIN
+        // rewinds the sample for the second row of long_sequence(2).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE, l LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2021-01-01T00:10:00.000000Z', 'A', 10.0, 10, 'x1'),
+                        ('2021-01-01T01:10:00.000000Z', 'B', 20.0, 20, 'x2'),
+                        ('2021-01-01T02:10:00.000000Z', 'B', 30.0, 30, 'x3'),
+                        ('2021-01-01T02:20:00.000000Z', 'A', 40.0, 40, 'x4')
+                    """);
+            final String select = """
+                    SELECT ts, sum(v) sv, last(v) lv, max(l) ml, last(sym) ls, last(s) lvc, approx_percentile(v, 0.5) pv,
+                        min(l) mnl, count() c
+                    FROM\s""";
+            final String sampleBy = " SAMPLE BY 1h FROM '2020-12-31T22:00' FILL(PREV, PREV, PREV, PREV, PREV, PREV, 7, NULL)";
+            final String expected = """
+                    ts\tsv\tlv\tml\tls\tlvc\tpv\tmnl\tc
+                    2020-12-31T22:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                    2020-12-31T23:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                    2021-01-01T00:00:00.000000Z\t10.0\t10.0\t10\tA\tx1\t10.0\t10\t1
+                    2021-01-01T01:00:00.000000Z\t20.0\t20.0\t20\tB\tx2\t20.0\t20\t1
+                    2021-01-01T02:00:00.000000Z\t70.0\t40.0\t40\tA\tx4\t30.0\t30\t2
+                    """;
+            // the table alone takes the GROUP BY path
+            assertQuery(select + "t" + sampleBy)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("Sample By Fill\n")
+                    .returns(expected);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String cursorSql = select + "(SELECT * FROM t WHERE v > 0)" + sampleBy;
+            assertSampleByCursorFrom(cursorSql, "fill: value\n", expected);
+            assertQuery("SELECT * FROM long_sequence(2) CROSS JOIN (" + cursorSql + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n", "fill: value\n")
+                    .returns("""
+                            x\tts\tsv\tlv\tml\tls\tlvc\tpv\tmnl\tc
+                            1\t2020-12-31T22:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            1\t2020-12-31T23:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            1\t2021-01-01T00:00:00.000000Z\t10.0\t10.0\t10\tA\tx1\t10.0\t10\t1
+                            1\t2021-01-01T01:00:00.000000Z\t20.0\t20.0\t20\tB\tx2\t20.0\t20\t1
+                            1\t2021-01-01T02:00:00.000000Z\t70.0\t40.0\t40\tA\tx4\t30.0\t30\t2
+                            2\t2020-12-31T22:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            2\t2020-12-31T23:00:00.000000Z\tnull\tnull\tnull\t\t\tnull\t7\tnull
+                            2\t2021-01-01T00:00:00.000000Z\t10.0\t10.0\t10\tA\tx1\t10.0\t10\t1
+                            2\t2021-01-01T01:00:00.000000Z\t20.0\t20.0\t20\tB\tx2\t20.0\t20\t1
+                            2\t2021-01-01T02:00:00.000000Z\t70.0\t40.0\t40\tA\tx4\t30.0\t30\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedFromMonthTimeZone() throws Exception {
+        // GitHub issue #7763, see testSampleFillNullNotKeyedFromMonthTimeZone(). The not-keyed FILL(value) cursor
+        // emitted a row with the fill values for December 2023, the month before FROM, for a zone behind UTC.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000Z', 1.0),
+                        ('2024-02-10T10:00:00.000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1M";
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' TO '2024-04-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2024-01-01T05:00:00.000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000Z\t1\t2.0
+                            2024-03-01T05:00:00.000000Z\t5\t5.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2023-12-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2023-12-01T05:00:00.000000Z\t5\t5.0
+                            2024-01-01T05:00:00.000000Z\t1\t1.0
+                            2024-02-01T05:00:00.000000Z\t1\t2.0
+                            """
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2023-12-31T23:00:00.000000Z\t1\t1.0
+                            2024-01-31T23:00:00.000000Z\t1\t2.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedFromYearTimeZone() throws Exception {
+        // GitHub issue #7763, see testSampleFillNullNotKeyedFromYearTimeZone(). The not-keyed FILL(value) cursor
+        // emitted a row with the fill values for 2023, the year before FROM, for a zone behind UTC.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-15T10:00:00.000000Z', 1.0),
+                        ('2024-02-10T10:00:00.000000Z', 2.0)
+                    """);
+            // the sub-query keeps the statement on the SAMPLE BY cursor
+            final String select = "SELECT ts, count() c, sum(v) s FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1y";
+            final String expected = """
+                    ts\tc\ts
+                    2024-01-01T05:00:00.000000Z\t2\t3.0
+                    """;
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "fill: value\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2024-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: value\n",
+                    expected
+            );
+            assertSampleByCursorFrom(
+                    select + " FROM '2023-01-01' FILL(5, 5) ALIGN TO CALENDAR TIME ZONE '-05:00'",
+                    "fill: value\n",
+                    """
+                            ts\tc\ts
+                            2023-01-01T05:00:00.000000Z\t5\t5.0
+                            2024-01-01T05:00:00.000000Z\t2\t3.0
+                            """
+            );
+        });
     }
 
     @Test
@@ -17689,6 +22777,32 @@ public class SampleByTest extends AbstractCairoTest {
         );
     }
 
+    private static void createAllNullTimestampTable() throws SqlException {
+        // the table has no designated timestamp, so a statement can designate ts, which holds NULL in every row
+        execute("CREATE TABLE an (ts TIMESTAMP, sym SYMBOL, v DOUBLE)");
+        execute("""
+                INSERT INTO an VALUES
+                    (NULL, 'a', 1.0),
+                    (NULL, 'b', 2.0)
+                """);
+    }
+
+    private static void createKeyedSampleByReuseTable(String keyType, String timestampType) throws SqlException {
+        // Three one-hour buckets over the keys 'a', 'b' and NULL. The first bucket holds all three
+        // keys, so reading two rows leaves the NULL key unread; the later buckets have gaps to fill.
+        // A STRING or VARCHAR key puts the map on its variable-size cursor.
+        execute("CREATE TABLE trades (sym " + keyType + ", price DOUBLE, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO trades VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-01T00:10:00.000000Z'),
+                    (NULL, 3.0, '2024-01-01T00:20:00.000000Z'),
+                    ('a', 4.0, '2024-01-01T01:00:00.000000Z'),
+                    ('b', 5.0, '2024-01-01T02:10:00.000000Z'),
+                    (NULL, 6.0, '2024-01-01T02:20:00.000000Z')
+                """);
+    }
+
     @NotNull
     private static CairoConfiguration createMmapFailingConfiguration(int x) {
         FilesFacade ff = new TestFilesFacadeImpl() {
@@ -17709,6 +22823,57 @@ public class SampleByTest extends AbstractCairoTest {
                 return ff;
             }
         };
+    }
+
+    private static void createNullBucketTable() throws SqlException {
+        // The table has no designated timestamp, so a statement can designate ts. Three rows hold NULL in it, two of
+        // them under the same key, and a sort by ts puts them first. Each value is a power of two, so a sum names the
+        // rows of its bucket. The other rows span two years. They cross one DST change at a time, in New York and in
+        // London, and none of them falls into the first ten minutes of a month: past either limit, the SAMPLE BY
+        // cursor and the GROUP BY path label a bucket differently, with or without NULL rows, and
+        // assertSampleByNullBucket() compares the two paths.
+        execute("CREATE TABLE nb (ts TIMESTAMP, sym SYMBOL, v DOUBLE)");
+        execute("""
+                INSERT INTO nb VALUES
+                    ('2024-01-01T00:15:00.000000Z', 'a', 1.0),
+                    (NULL, 'b', 2.0),
+                    ('2024-01-01T02:30:00.000000Z', 'a', 4.0),
+                    ('2024-01-03T09:30:00.000000Z', 'b', 8.0),
+                    (NULL, 'a', 16.0),
+                    ('2024-02-10T09:30:00.000000Z', 'a', 32.0),
+                    ('2024-03-20T09:30:00.000000Z', 'b', 64.0),
+                    (NULL, 'b', 128.0),
+                    ('2024-04-05T10:00:00.000000Z', 'a', 256.0),
+                    ('2025-01-15T12:00:00.000000Z', 'b', 512.0)
+                """);
+    }
+
+    private static void createNullTimestampTable() throws SqlException {
+        // the table has no designated timestamp, so a statement can designate ts, whose second row holds NULL
+        execute("CREATE TABLE n (ts TIMESTAMP, sym SYMBOL, v DOUBLE)");
+        execute("""
+                INSERT INTO n VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                    (NULL, 'b', 2.0),
+                    ('2024-01-01T02:30:00.000000Z', 'a', 4.0)
+                """);
+    }
+
+    private static String keyedSampleByReusePlan(String planFill) {
+        return "Sample By\n" +
+                (planFill != null ? "  fill: " + planFill + "\n" : "") +
+                """
+                          keys: [sym]
+                          values: [sum(price)]
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                        """;
+    }
+
+    private static String keyedSampleByReuseSql(String fill) {
+        return "SELECT sym, sum(price) FROM (SELECT sym, price FROM trades) SAMPLE BY 1h" + fill;
     }
 
     private static String sampleByPushdownPlan(String fill, String align) {
@@ -17743,6 +22908,121 @@ public class SampleByTest extends AbstractCairoTest {
                 "            PageFrame\n" +
                 "                Row forward scan\n" +
                 "                Frame forward scan on: #TABLE#\n";
+    }
+
+    private void assertKeyedSampleByLimit(String fill, String planFill, String expected) throws Exception {
+        assertKeyedSampleByLimit("SYMBOL", "TIMESTAMP", fill, planFill, expected);
+    }
+
+    private void assertKeyedSampleByLimit(
+            String keyType,
+            String timestampType,
+            String fill,
+            String planFill,
+            String expected
+    ) throws Exception {
+        // The sub-query hides the designated timestamp from the SAMPLE BY to GROUP BY rewrite,
+        // so the query runs on the keyed SAMPLE BY cursor that owns the map.
+        assertMemoryLeak(() -> {
+            createKeyedSampleByReuseTable(keyType, timestampType);
+            final String sql = keyedSampleByReuseSql(fill);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan(keyedSampleByReusePlan(planFill))
+                    .returns(expected);
+            // LIMIT stops reading in the middle of the first bucket, so the repeated passes
+            // of the assertion rewind a partially read cursor.
+            assertQuery(sql + " LIMIT 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sym\tsum
+                            a\t1.0
+                            b\t2.0
+                            """);
+        });
+    }
+
+    private void assertKeyedSampleByPartialRead(String fill, String planFill, String expected) throws Exception {
+        assertKeyedSampleByPartialRead("SYMBOL", "TIMESTAMP", fill, planFill, expected);
+    }
+
+    private void assertKeyedSampleByPartialRead(
+            String keyType,
+            String timestampType,
+            String fill,
+            String planFill,
+            String expected
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedSampleByReuseTable(keyType, timestampType);
+            final String sql = keyedSampleByReuseSql(fill);
+            assertQuery(sql).noLeakCheck().assertsPlan(keyedSampleByReusePlan(planFill));
+            try (RecordCursorFactory factory = select(sql)) {
+                // read two of the three keys of the first bucket, then close the cursor
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.hasNext());
+                }
+                // the next execution must not start with the key that the previous one left unread
+                assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().returns(expected);
+
+                // the same for toTop() on a partially read cursor
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.hasNext());
+                    cursor.toTop();
+                    assertCursor(expected, cursor, factory.getMetadata(), true);
+                }
+            }
+        });
+    }
+
+    // Asserts a statement on the SAMPLE BY cursor path. LIMIT bounds the statements that a change of the
+    // time zone offset at a bucket boundary used to keep in an endless loop, see GitHub issue #7752.
+    private void assertSampleByCursorDst(String sql, String planFill, String expected) throws Exception {
+        assertSampleByCursorFrom(sql + " LIMIT 100", planFill, expected);
+    }
+
+    private void assertSampleByCursorFrom(String sql, String planFill, String expected) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n", planFill)
+                .returns(expected);
+    }
+
+    // Asserts the first three and the last three rows of a statement on the SAMPLE BY cursor path, through
+    // LIMIT 3 and LIMIT -3.
+    private void assertSampleByCursorLimit(String sql, String firstRows, String lastRows) throws Exception {
+        assertQuery(sql + " LIMIT 3")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns(firstRows);
+        assertQuery(sql + " LIMIT -3")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Sample By\n")
+                .returns(lastRows);
+    }
+
+    // Asserts a negative FILL value on both SAMPLE BY paths with the same rows: the table alone takes the GROUP BY
+    // path, and the filtered sub-query keeps the statement on the SAMPLE BY cursor.
+    private void assertSampleByFillNegative(String select, String sampleBy, String expected) throws Exception {
+        assertQuery(select + " FROM t" + sampleBy)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By Fill\n")
+                .returns(expected);
+        assertSampleByCursorFrom(select + " FROM (SELECT * FROM t WHERE i > 0)" + sampleBy, "fill: value\n", expected);
     }
 
     private void assertSampleByFlavours(String expected, String sql) throws Exception {
@@ -17787,6 +23067,321 @@ public class SampleByTest extends AbstractCairoTest {
                     .expectSize(expectSize)
                     .returns(expected);
         });
+    }
+
+    // Asserts a statement of GitHub issue #7760 on both SAMPLE BY paths: the table alone takes the GROUP BY path,
+    // except with FILL(LINEAR), and the filtered sub-query keeps the statement on the SAMPLE BY cursor. LIMIT
+    // keeps a regression to the endless fill rows of issue #7760 from hanging the test; each statement returns
+    // fewer rows, so the LIMIT hides no extra row.
+    private void assertSampleByNegativeOffset(String select, String sampleBy, String groupByPlan, String expected) throws Exception {
+        assertSampleByNegativeOffset(select, sampleBy, groupByPlan, expected, expected);
+    }
+
+    private void assertSampleByNegativeOffset(
+            String select,
+            String sampleBy,
+            String groupByPlan,
+            String expectedGroupBy,
+            String expectedCursor
+    ) throws Exception {
+        assertQuery(select + " FROM t" + sampleBy + " LIMIT 100")
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining(groupByPlan)
+                .returns(expectedGroupBy);
+        assertQuery(select + " FROM (SELECT * FROM t WHERE v > 0)" + sampleBy + " LIMIT 100")
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By\n")
+                .returns(expectedCursor);
+    }
+
+    // Asserts a statement without FILL on the SAMPLE BY cursor path over table nb, sorted so that the rows with a NULL
+    // designated timestamp come first. The NULL bucket goes out first, and the rows after it are the rows of the
+    // same statement over the source without the NULL rows. Unless the statement aligns to the first observation,
+    // the GROUP BY path has a spelling of it, and both spellings return the same rows. The GROUP BY path does not
+    // order the keys of a bucket, so that comparison orders both results.
+    private void assertSampleByNullBucket(String select, String orderBy, String sampleBy, String expectedNullBucket) throws Exception {
+        final String statement = select + " FROM ((SELECT * FROM nb ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY " + sampleBy;
+        printSql(select + " FROM ((SELECT * FROM nb WHERE ts IS NOT NULL ORDER BY ts) TIMESTAMP(ts)) SAMPLE BY " + sampleBy);
+        final String withoutNulls = sink.toString();
+        final int headerLength = withoutNulls.indexOf('\n') + 1;
+        Assert.assertTrue("the source without the NULL rows has buckets", withoutNulls.length() > headerLength);
+        final String expected = withoutNulls.substring(0, headerLength) + expectedNullBucket + withoutNulls.substring(headerLength);
+        // When the statement has a timestamp, the chain below spends the first execution of its factory on a pass
+        // that reads the timestamps alone, and compares the rows from the second execution on. So this pair
+        // compiles a factory of its own and compares the rows of the first execution; the chain adds the second
+        // pass, the calculateSize() check and the factory properties.
+        printSql(statement);
+        TestUtils.assertEquals(expected, sink);
+        assertQuery(statement)
+                .noLeakCheck()
+                .timestamp(select.startsWith("SELECT ts") ? "ts" : null)
+                .noRandomAccess()
+                .withPlanContaining("Sample By\n")
+                .returns(expected);
+
+        if (!sampleBy.contains("FIRST OBSERVATION")) {
+            final String groupByStatement = "SELECT * FROM (" + select + " FROM nb TIMESTAMP(ts) SAMPLE BY " + sampleBy + ") ORDER BY " + orderBy;
+            assertQuery(groupByStatement)
+                    .noLeakCheck()
+                    .assertsPlanContaining("keyFunctions: [timestamp_floor_utc(");
+            printSql(groupByStatement);
+            final String expectedOrdered = sink.toString();
+            final String orderedStatement = "SELECT * FROM (" + statement + ") ORDER BY " + orderBy;
+            // the same pair ahead of the chain, for the first execution of the ordered statement
+            printSql(orderedStatement);
+            TestUtils.assertEquals(expectedOrdered, sink);
+            // ORDER BY ts alone follows the order of the cursor and adds no sort. Every other ORDER BY sorts a copy of
+            // the rows, and the copy supports random access.
+            assertQuery(orderedStatement)
+                    .noLeakCheck()
+                    .timestamp(select.startsWith("SELECT ts") ? "ts" : null)
+                    .supportsRandomAccess(!"ts".equals(orderBy))
+                    .withPlanContaining("Sample By\n")
+                    .returns(expectedOrdered);
+        }
+    }
+
+    // Executes the factory once and compares the rows of that execution. A builder chain with a timestamp starts
+    // with a pass that reads the timestamps alone, so the helpers below call this first, for the execution that
+    // follows the event they set up.
+    private void assertSampleByNullBucketExecution(RecordCursorFactory factory, String expected) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            assertCursor(expected, cursor, factory.getMetadata(), true);
+        }
+    }
+
+    // Arms test_fault() to throw on its second call, which comes while the cursor aggregates the NULL bucket. Asserts
+    // that the statement fails with the injected error, and that the next execution of the same factory returns the
+    // rows.
+    private void assertSampleByNullBucketFault(String sql, String expected) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlanContaining("Sample By\n");
+        try (RecordCursorFactory factory = select(sql)) {
+            TestFaultFunctionFactory.armToFailAfter(1);
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                cursor.hasNext();
+                Assert.fail("expected the injected failure");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "test_fault: injected failure");
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+            Assert.assertEquals(1, TestFaultFunctionFactory.faultsTriggered());
+            // the first execution after the fault
+            assertSampleByNullBucketExecution(factory, expected);
+            assertFactory(factory)
+                    .withContext(sqlExecutionContext)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+        }
+    }
+
+    // Reads the first rows of a statement, for every row count up to all of them. Then rewinds the cursor, or closes
+    // it and executes the factory again, and asserts every row.
+    private void assertSampleByNullBucketPartialRead(String sql, String expected) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlanContaining("Sample By\n");
+        // expected holds the header and the rows, a line each
+        final int rowCount = expected.split("\n").length - 1;
+        try (RecordCursorFactory factory = select(sql)) {
+            for (int n = 0; n <= rowCount; n++) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    for (int i = 0; i < n; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    cursor.toTop();
+                    assertCursor(expected, cursor, factory.getMetadata(), true);
+                }
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    for (int i = 0; i < n; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                }
+                // the first execution after the partial read
+                assertSampleByNullBucketExecution(factory, expected);
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns(expected);
+            }
+        }
+    }
+
+    // Executes one compiled factory of a statement without FILL over a sequence of bases: the base that starts with
+    // the NULL, twice; with key b, whose only row holds the NULL, filtered out; over the NULL again; with key a
+    // filtered out, which leaves the row with the NULL alone; and over the first two bases again. The sequence runs
+    // twice, each time on a factory of its own: with one execution per base, whose rows the helper compares, and
+    // through assertBinds().
+    private void assertSampleByNullBucketReExecution(
+            String sql,
+            String planFragment,
+            String header,
+            String nullBucket,
+            String buckets
+    ) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "none");
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlanContaining("Sample By\n", planFragment);
+
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "NULL first",
+                header + nullBucket + buckets,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        cases.add(BindVarTuple.ok(
+                "NULL first again on the same factory",
+                header + nullBucket + buckets,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        cases.add(BindVarTuple.ok(
+                "key b filtered out",
+                header + buckets,
+                bindVariableService -> bindVariableService.setStr(0, "b")
+        ));
+        cases.add(BindVarTuple.ok(
+                "NULL first after a base without it",
+                header + nullBucket + buckets,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        cases.add(BindVarTuple.ok(
+                "key a filtered out",
+                header + nullBucket,
+                bindVariableService -> bindVariableService.setStr(0, "a")
+        ));
+        cases.add(BindVarTuple.ok(
+                "NULL first after a base with the NULL alone",
+                header + nullBucket + buckets,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        cases.add(BindVarTuple.ok(
+                "key b filtered out after the NULL",
+                header + buckets,
+                bindVariableService -> bindVariableService.setStr(0, "b")
+        ));
+        // assertBinds() starts every case with a pass that reads the timestamps alone. So this loop executes a
+        // factory of its own once per case, and compares the rows of the first execution after each change of $1.
+        try (RecordCursorFactory factory = select(sql)) {
+            for (int i = 0, n = cases.size(); i < n; i++) {
+                final BindVarTuple testCase = cases.getQuick(i);
+                bindVariableService.clear();
+                testCase.getBinds().assignBindVariables(bindVariableService);
+                try {
+                    assertSampleByNullBucketExecution(factory, testCase.getExpected());
+                } catch (AssertionError e) {
+                    // name the case, as assertBinds() does
+                    throw new AssertionError(
+                            "bind-variable case #" + i + " (" + testCase.getDescription() + "): " + e.getMessage(), e);
+                }
+            }
+        }
+        assertQuery(sql)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
+    }
+
+    // Asserts that a statement over a designated timestamp that holds NULL fails with an error that names the NULL,
+    // and pins the path of the same statement in its plan. LIMIT keeps a regression that walks the fill grid from
+    // the NULL from hanging the test, except with FILL(LINEAR), which builds every bucket before it returns the
+    // first row.
+    private void assertSampleByNullTimestampFails(String sql, String planFragment) throws Exception {
+        final String limited = sql + " LIMIT 10";
+        assertQuery(limited)
+                .noLeakCheck()
+                .assertsPlanContaining(planFragment);
+        assertQuery(limited)
+                .noLeakCheck()
+                .failsWith("SAMPLE BY designated timestamp cannot be NULL");
+    }
+
+    // Compiles a statement once and executes it four times: twice over the base with the NULL timestamp, then with
+    // key b, whose only row holds the NULL, filtered out by the bind variable, and then over the NULL again.
+    // FILL(LINEAR) reads its rows from a map, so it supports random access and knows its size.
+    private void assertSampleByNullTimestampReExecution(
+            String sql,
+            String planFragment,
+            boolean isFillLinear,
+            String expected
+    ) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "b");
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlanContaining(planFragment);
+
+        final String error = "SAMPLE BY designated timestamp cannot be NULL";
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.fails(
+                "NULL in the base",
+                error,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        cases.add(BindVarTuple.fails(
+                "NULL again on the same factory",
+                error,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        cases.add(BindVarTuple.ok(
+                "key b filtered out",
+                expected,
+                bindVariableService -> bindVariableService.setStr(0, "b")
+        ));
+        cases.add(BindVarTuple.fails(
+                "NULL after a full read",
+                error,
+                bindVariableService -> bindVariableService.setStr(0, "none")
+        ));
+        assertQuery(sql)
+                .noLeakCheck()
+                .timestamp("ts")
+                .supportsRandomAccess(isFillLinear)
+                .expectSize(isFillLinear)
+                .assertBinds(cases);
+    }
+
+    private void assertSubDayTimeZoneBindVariable(String sql, String rowsAt0200, String rowsAt0530) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "+02:00");
+        assertQuery(sql)
+                .noLeakCheck()
+                .assertsPlanContaining("Sample By\n");
+
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "+02:00",
+                rowsAt0200,
+                bindVariableService -> bindVariableService.setStr(0, "+02:00")
+        ));
+        cases.add(BindVarTuple.ok(
+                "+05:30 on the same factory",
+                rowsAt0530,
+                bindVariableService -> bindVariableService.setStr(0, "+05:30")
+        ));
+        cases.add(BindVarTuple.ok(
+                "back to +02:00",
+                rowsAt0200,
+                bindVariableService -> bindVariableService.setStr(0, "+02:00")
+        ));
+        // compiles the statement once and executes it for each case in turn
+        assertQuery(sql)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .assertBinds(cases);
     }
 
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {

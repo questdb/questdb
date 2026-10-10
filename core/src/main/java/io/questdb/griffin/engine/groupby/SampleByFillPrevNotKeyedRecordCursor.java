@@ -26,11 +26,15 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
 public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordSampleByCursor {
     private final SimpleMapValue value;
+    private boolean isFirstRun = true;
 
     public SampleByFillPrevNotKeyedRecordCursor(
             CairoConfiguration configuration,
@@ -48,7 +52,8 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc
     ) {
         super(
                 configuration,
@@ -65,7 +70,8 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                isFromToUtc
         );
         this.value = value;
         record.of(value);
@@ -82,7 +88,19 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         // the next sample epoch could be different from current sample epoch due to DST transition,
         // e.g. clock going backward
         // we need to ensure we do not fill time transition
-        final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
+        final long expectedLocalEpoch;
+        if (isFirstRun) {
+            // On the first call, nextSampleLocalEpoch holds the bucket at FROM, see initTimestamps(), and
+            // that bucket is the first one to emit, as in SampleByFillValueNotKeyedRecordCursor. Expecting
+            // the bucket after it skipped the bucket at FROM whenever the first row came after it, unlike
+            // the GROUP BY path (GitHub issue #7764). Without FROM, or with the first row at or before the
+            // bucket at FROM, nextSampleLocalEpoch is not before localEpoch, and notKeyedLoop() aggregates the
+            // bucket of the first row.
+            expectedLocalEpoch = nextSampleLocalEpoch;
+            isFirstRun = false;
+        } else {
+            expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
+        }
         // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
             sampleLocalEpoch = expectedLocalEpoch;
@@ -91,5 +109,31 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         }
 
         return notKeyedLoop(value);
+    }
+
+    @Override
+    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        super.of(baseCursor, executionContext);
+        isFirstRun = true;
+        setValueToNull();
+    }
+
+    @Override
+    public void toTop() {
+        super.toTop();
+        isFirstRun = true;
+        setValueToNull();
+    }
+
+    // hasNext() emits the gap buckets between FROM and the first row from the value before
+    // notKeyedLoop() aggregates any row into it. Each function writes NULL into its own slots, as the
+    // keyed FILL(PREV) cursor does for a key with no row yet. Otherwise those buckets read memory
+    // that nothing has written or, after a rewind or a re-execution, the last bucket of the previous
+    // pass. After a re-execution, the VARCHAR pointers of that bucket reference allocator memory
+    // that close() has freed.
+    private void setValueToNull() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).setNull(value);
+        }
     }
 }

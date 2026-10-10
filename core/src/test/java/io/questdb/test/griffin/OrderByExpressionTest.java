@@ -105,6 +105,73 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByExpressionOverNonSelectedColumnWithWindowFunction() throws Exception {
+        // ORDER BY an expression over a column that the select list does not output, such as
+        // price * 2, adds the expression to the select list as a hidden column. Next to a window
+        // function, the window, projection and distinct models used to reference it as a regular
+        // column, so the query, and SELECT * over it, returned an extra column named "column".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                        ('2000-01-01T00:00:01.000000Z', 'B', 20.0),
+                        ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                        ('2000-01-01T00:00:03.000000Z', 'C', 40.0)
+                    """);
+
+            final String rowNumbers = """
+                    sym\trn
+                    A\t1
+                    B\t2
+                    A\t3
+                    C\t4
+                    """;
+            final String[][] queries = {
+                    {"SELECT sym, row_number() OVER () rn FROM trades ORDER BY price * 2", rowNumbers},
+                    {"SELECT sym, row_number() OVER () rn FROM trades ORDER BY abs(price)", rowNumbers},
+                    {
+                            "SELECT sym, row_number() OVER () + 1 rn FROM trades ORDER BY price * 2",
+                            """
+                            sym\trn
+                            A\t2
+                            B\t3
+                            A\t4
+                            C\t5
+                            """
+                    },
+                    {
+                            "SELECT sym, row_number() OVER (PARTITION BY sym) rn FROM trades ORDER BY price * 2",
+                            """
+                            sym\trn
+                            A\t1
+                            B\t1
+                            A\t2
+                            C\t1
+                            """
+                    },
+                    {"SELECT DISTINCT sym, row_number() OVER () rn FROM trades ORDER BY price * 2", rowNumbers},
+                    {"SELECT DISTINCT sym, row_number() OVER () rn FROM trades ORDER BY row_number() OVER () * 2", rowNumbers},
+            };
+            for (String[] query : queries) {
+                assertOrderByHiddenKey(query[0], query[1], true);
+            }
+
+            // a re-sort over the query drops its ORDER BY
+            assertQuery("SELECT * FROM (" + queries[0][0] + ") ORDER BY rn DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\trn
+                            C\t4
+                            A\t3
+                            B\t2
+                            A\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderByExpressionWhenColumnHasAliasInJoinedSubquery() throws Exception {
         assertQuery("""
                 select * from\s

@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
@@ -111,6 +112,174 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             sym\tavg
                             A\t100.0
                             B\t300.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinBindVariableInSelectList() throws Exception {
+        // A bind variable is constant per query, so, as with a regular GROUP BY, the optimizer lifts it
+        // to the projection above the horizon join instead of making it a grouping key. It used to put it
+        // in a virtual model under the horizon model, which hid the join columns from the horizon model:
+        // compilation failed an assertion (an ArrayIndexOutOfBoundsException with assertions disabled)
+        // and leaked native memory.
+        assertMemoryLeak(() -> {
+            createHorizonTradesAndQuoteTables();
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE empty_trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "x");
+            bindVariableService.setDouble(1, 0.5);
+
+            final String expectedCount = """
+                    tag\tc
+                    x\t8
+                    """;
+            assertQuery("SELECT $1 tag, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("functions: [$0::string,c]")
+                    .returns(expectedCount);
+            assertQuery("SELECT $1 tag, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h GROUP BY tag")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedCount);
+            assertQuery("SELECT $1 tag, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h GROUP BY 1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedCount);
+            // the master is a sub-query, but its SelectedRecord factory still supports page frames, so, as
+            // with FROM trades t, the horizon join factory follows the randomly chosen parallel flag
+            assertQuery("SELECT $1 tag, count() c FROM (SELECT * FROM trades) t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedCount);
+            assertQuery("""
+                    SELECT count() c, $1 tag, sum(q.bid) + $2 s
+                    FROM trades t
+                    HORIZON JOIN quotes q ON (sym)
+                        LIST (0s, 1s) AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c\ttag\ts
+                            8\tx\t280.5
+                            """);
+            // the bind variable isn't a key, so an empty master still gives one row, as with a regular GROUP BY
+            assertQuery("SELECT $1 tag, count() c FROM empty_trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            tag\tc
+                            x\t0
+                            """);
+
+            final String oneSecond = String.valueOf(getSecondsDivisor());
+            assertQuery("""
+                    SELECT $1 tag, t.sym, h.offset, avg(q.bid) a
+                    FROM trades t
+                    HORIZON JOIN quotes q ON (sym)
+                        LIST (0s, 1s) AS h
+                    ORDER BY sym, offset
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("keys: [sym,offset]")
+                    .returns("""
+                            tag\tsym\toffset\ta
+                            x\tA\t0\t20.0
+                            x\tA\t#1s\t40.0
+                            x\tB\t0\t20.0
+                            x\tB\t#1s\t60.0
+                            x\tC\t0\t40.0
+                            x\tC\t#1s\t40.0
+                            """.replace("#1s", oneSecond));
+            assertQuery("""
+                    SELECT $1 tag, t.sym, count() c
+                    FROM trades t
+                    HORIZON JOIN bids b ON (sym)
+                    HORIZON JOIN asks k ON (sym)
+                        LIST (0s, 1s) AS h
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tag\tsym\tc
+                            x\tA\t4
+                            x\tB\t2
+                            x\tC\t2
+                            """);
+            assertQuery("""
+                    SELECT DISTINCT $1 tag, t.sym
+                    FROM trades t
+                    HORIZON JOIN quotes q ON (sym)
+                        LIST (0s, 1s) AS h
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tag\tsym
+                            x\tA
+                            x\tB
+                            x\tC
+                            """);
+
+            // sub-queries
+            assertQuery("""
+                    SELECT count() n
+                    FROM (
+                        SELECT $1 tag, count() c
+                        FROM trades t
+                        HORIZON JOIN quotes q ON (sym)
+                            LIST (0s, 1s) AS h
+                    )
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            n
+                            1
+                            """);
+            assertQuery("""
+                    SELECT tag, sym, c
+                    FROM (
+                        SELECT $1 tag, t.sym, count() c
+                        FROM trades t
+                        HORIZON JOIN quotes q ON (sym)
+                            LIST (0s, 1s) AS h
+                    )
+                    ORDER BY sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            tag\tsym\tc
+                            x\tA\t4
+                            x\tB\t2
+                            x\tC\t2
+                            """);
+
+            // an undefined bind variable becomes a STRING, as in any projection
+            bindVariableService.clear();
+            assertQuery("SELECT $1 tag, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            tag\tc
+                            \t8
                             """);
         });
     }
@@ -1218,6 +1387,315 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinLoopingRecordSink() throws Exception {
+        // RecordSinkFactory.getInstanceClass() returns null when the looping sink is forced, or for a
+        // key too large for bytecode with chunked copiers disabled. The horizon generators used to
+        // read a null class as "no join key": the join silently matched the latest right-hand row
+        // of any key, and the single-threaded multi-slave factories failed with an NPE instead.
+        // Each of the eight horizon factories must keep the key with the LoopingRecordSink fallback.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, RecordSinkFactory.SINK_TYPE_LOOPING);
+            createHorizonTradesAndQuoteTables();
+
+            final String oneSecond = String.valueOf(getSecondsDivisor());
+            final String keyedResult = """
+                    sym\toffset\ta
+                    A\t0\t20.0
+                    A\t#1s\t40.0
+                    B\t0\t20.0
+                    B\t#1s\t60.0
+                    C\t0\t40.0
+                    C\t#1s\t40.0
+                    """.replace("#1s", oneSecond);
+            final String multiKeyedResult = """
+                    sym\toffset\ta\tk
+                    A\t0\t20.0\t21.0
+                    A\t#1s\t40.0\t41.0
+                    B\t0\t20.0\t21.0
+                    B\t#1s\t60.0\t61.0
+                    C\t0\t40.0\t41.0
+                    C\t#1s\t40.0\t41.0
+                    """.replace("#1s", oneSecond);
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String singlePlan = isParallel ? "Async Horizon Join workers: 1 offsets: 2" : "Horizon Join offsets: 2";
+                final String multiPlan = isParallel ? "Async Multi Horizon Join workers: 1 offsets: 2" : "Multi Horizon Join offsets: 2";
+
+                assertQuery("""
+                        SELECT t.sym, h.offset, avg(q.bid) a
+                        FROM trades t
+                        HORIZON JOIN quotes q ON (sym)
+                            LIST (0s, 1s) AS h
+                        ORDER BY sym, offset
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(singlePlan)
+                        .returns(keyedResult);
+                assertQuery("SELECT avg(q.bid) a, count() c FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining(singlePlan)
+                        .returns("""
+                                a\tc
+                                35.0\t8
+                                """);
+                assertQuery("""
+                        SELECT t.sym, h.offset, avg(b.bid) a, avg(k.ask) k
+                        FROM trades t
+                        HORIZON JOIN bids b ON (sym)
+                        HORIZON JOIN asks k ON (sym)
+                            LIST (0s, 1s) AS h
+                        ORDER BY sym, offset
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(multiPlan)
+                        .returns(multiKeyedResult);
+                assertQuery("""
+                        SELECT avg(b.bid) a, avg(k.ask) k
+                        FROM trades t
+                        HORIZON JOIN bids b ON (sym)
+                        HORIZON JOIN asks k ON (sym)
+                            LIST (0s, 1s) AS h
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining(multiPlan)
+                        .returns("""
+                                a\tk
+                                35.0\t36.0
+                                """);
+                // a keyed slave next to a slave without a join key
+                assertQuery("""
+                        SELECT t.sym, h.offset, avg(b.bid) a, avg(k.ask) k
+                        FROM trades t
+                        HORIZON JOIN bids b ON (sym)
+                        HORIZON JOIN asks k
+                            LIST (0s, 1s) AS h
+                        ORDER BY sym, offset
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(multiPlan)
+                        .returns("""
+                                sym\toffset\ta\tk
+                                A\t0\t20.0\t51.0
+                                A\t#1s\t40.0\t56.0
+                                B\t0\t20.0\t51.0
+                                B\t#1s\t60.0\t61.0
+                                C\t0\t40.0\t61.0
+                                C\t#1s\t40.0\t61.0
+                                """.replace("#1s", oneSecond));
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinLoopingRecordSinkMixedKeyTypes() throws Exception {
+        // The LoopingRecordSink fallback must write the key the same way on both sides, so it needs
+        // the per-side write flags of the generated sinks: symbol as string (SYMBOL vs STRING),
+        // string as varchar (VARCHAR vs SYMBOL), and timestamp as nanos (TIMESTAMP_NS vs TIMESTAMP).
+        // A missing or swapped flag makes the key bytes differ, and the row doesn't match.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, RecordSinkFactory.SINK_TYPE_LOOPING);
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE orders (ts #TIMESTAMP, sym SYMBOL, region SYMBOL, venue VARCHAR, k TIMESTAMP_NS, qty LONG) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, region STRING, venue SYMBOL, k TIMESTAMP, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE mids (ts #TIMESTAMP, sym SYMBOL, mid DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            // TSLA goes first, so the two tables assign different symbol keys to AAPL. The rows at
+            // 0.5s and 1.6s differ from the orders in one key column each; the last one is the
+            // latest row overall at both horizon timestamps.
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('1970-01-01T00:00:00.100000Z', 'TSLA', 'US', 'X', '2000-01-01T00:00:00.000000Z', 1.0),
+                        ('1970-01-01T00:00:00.500000Z', 'AAPL', 'US', 'X', '2000-01-01T00:00:00.000000Z', 100.0),
+                        ('1970-01-01T00:00:00.500000Z', 'AAPL', 'EU', 'X', '2000-01-01T00:00:00.000000Z', 105.0),
+                        ('1970-01-01T00:00:00.500000Z', 'AAPL', 'US', 'Y', '2000-01-01T00:00:00.000000Z', 120.0),
+                        ('1970-01-01T00:00:00.500000Z', 'AAPL', 'US', 'X', '2000-01-02T00:00:00.000000Z', 130.0),
+                        ('1970-01-01T00:00:01.500000Z', 'AAPL', 'US', 'X', '2000-01-01T00:00:00.000000Z', 110.0),
+                        ('1970-01-01T00:00:01.500000Z', 'AAPL', 'EU', 'X', '2000-01-01T00:00:00.000000Z', 115.0),
+                        ('1970-01-01T00:00:01.600000Z', 'AAPL', 'EU', 'Y', '2000-01-01T00:00:00.000000Z', 999.0)
+                    """);
+            execute("""
+                    INSERT INTO mids VALUES
+                        ('1970-01-01T00:00:00.500000Z', 'AAPL', 1.0),
+                        ('1970-01-01T00:00:01.500000Z', 'AAPL', 2.0),
+                        ('1970-01-01T00:00:01.600000Z', 'TSLA', 9.0)
+                    """);
+            execute("""
+                    INSERT INTO orders VALUES
+                        ('1970-01-01T00:00:01.000000Z', 'AAPL', 'US', 'X', '2000-01-01T00:00:00.000000000Z', 100),
+                        ('1970-01-01T00:00:01.000000Z', 'AAPL', 'EU', 'X', '2000-01-01T00:00:00.000000000Z', 200)
+                    """);
+
+            final String on = "ON (t.sym = p.sym AND t.region = p.region AND t.venue = p.venue AND t.k = p.k)";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                // At offset 0 (1s): US -> 100.0, EU -> 105.0. At offset 1s (2s): US -> 110.0, EU -> 115.0.
+                assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, t.region, avg(p.price) " +
+                        "FROM orders t HORIZON JOIN prices p " + on + " LIST (0, 1s) AS h " +
+                        "ORDER BY sec_offs, t.region")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                sec_offs\tregion\tavg
+                                0\tEU\t105.0
+                                0\tUS\t100.0
+                                1\tEU\t115.0
+                                1\tUS\t110.0
+                                """);
+                assertQuery("SELECT avg(p.price), sum(t.qty) FROM orders t HORIZON JOIN prices p " + on + " LIST (0, 1s) AS h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                avg\tsum
+                                107.5\t600
+                                """);
+                assertQuery("SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, t.region, avg(p.price), avg(m.mid) " +
+                        "FROM orders t HORIZON JOIN prices p " + on + " HORIZON JOIN mids m ON (t.sym = m.sym) LIST (0, 1s) AS h " +
+                        "ORDER BY sec_offs, t.region")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                sec_offs\tregion\tavg\tavg1
+                                0\tEU\t105.0\t1.0
+                                0\tUS\t100.0\t1.0
+                                1\tEU\t115.0\t2.0
+                                1\tUS\t110.0\t2.0
+                                """);
+                assertQuery("SELECT avg(p.price), avg(m.mid) FROM orders t HORIZON JOIN prices p " + on +
+                        " HORIZON JOIN mids m ON (t.sym = m.sym) LIST (0, 1s) AS h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                avg\tavg1
+                                107.5\t1.5
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinLoopingRecordSinkWorkerPool() throws Exception {
+        // Workers use their own ASOF join key sinks, built from the same template as the owner's.
+        // Each trade's price equals its quote's bid, so a match on the right key gives d = 0.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
+            setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, RecordSinkFactory.SINK_TYPE_LOOPING);
+
+            final int workerCount = 4;
+            WorkerPool pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+                        engine.execute(
+                                """
+                                        CREATE TABLE quotes AS (
+                                            SELECT ('S' || (x % 5))::SYMBOL sym, (x % 5)::DOUBLE bid,
+                                                   timestamp_sequence('2000-01-01', 1_000_000) ts
+                                            FROM long_sequence(1_000)
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR
+                                        """,
+                                sqlExecutionContext
+                        );
+                        engine.execute("CREATE TABLE bids AS (SELECT * FROM quotes) TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
+                        engine.execute("CREATE TABLE asks AS (SELECT sym, bid + 1 ask, ts FROM quotes) TIMESTAMP(ts) PARTITION BY HOUR", sqlExecutionContext);
+                        engine.execute(
+                                """
+                                        CREATE TABLE trades AS (
+                                            SELECT ('S' || (x % 5))::SYMBOL sym, (x % 5)::DOUBLE price,
+                                                   timestamp_sequence('2000-01-01T00:00:10', 100_000) ts
+                                            FROM long_sequence(5_000)
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR
+                                        """,
+                                sqlExecutionContext
+                        );
+
+                        assertQuery("""
+                                SELECT t.sym, count() c, count(q.bid) m, sum(abs(q.bid - t.price)) d
+                                FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY sym
+                                """)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .withPlanContaining("Async Horizon Join workers: " + workerCount)
+                                .returns("""
+                                        sym\tc\tm\td
+                                        S0\t2000\t2000\t0.0
+                                        S1\t2000\t2000\t0.0
+                                        S2\t2000\t2000\t0.0
+                                        S3\t2000\t2000\t0.0
+                                        S4\t2000\t2000\t0.0
+                                        """);
+                        assertQuery("""
+                                SELECT count() c, count(q.bid) m, sum(abs(q.bid - t.price)) d
+                                FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h
+                                """)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .withPlanContaining("Async Horizon Join workers: " + workerCount)
+                                .returns("""
+                                        c\tm\td
+                                        10000\t10000\t0.0
+                                        """);
+                        assertQuery("""
+                                SELECT t.sym, count(b.bid) m, sum(abs(b.bid - t.price)) d, sum(abs(k.ask - t.price - 1)) e
+                                FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY sym
+                                """)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .withPlanContaining("Async Multi Horizon Join workers: " + workerCount)
+                                .returns("""
+                                        sym\tm\td\te
+                                        S0\t2000\t0.0\t0.0
+                                        S1\t2000\t0.0\t0.0
+                                        S2\t2000\t0.0\t0.0
+                                        S3\t2000\t0.0\t0.0
+                                        S4\t2000\t0.0\t0.0
+                                        """);
+                        assertQuery("""
+                                SELECT count(b.bid) m, sum(abs(b.bid - t.price)) d, sum(abs(k.ask - t.price - 1)) e
+                                FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h
+                                """)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .withPlanContaining("Async Multi Horizon Join workers: " + workerCount)
+                                .returns("""
+                                        m\td\te
+                                        10000\t0.0\t0.0
+                                        """);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
@@ -1245,6 +1723,61 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(// Missing RANGE or LIST
                             91, "unexpected token [AS]");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNestedWindowFunctionNotAllowed() throws Exception {
+        // A window function nested in a select expression used to skip the HORIZON JOIN window check.
+        // The column went to a window model that pre-empted the horizon model, and code generation
+        // failed with "Invalid column" at position 0. A window function next to an aggregate reached
+        // the horizon model as a plain aggregate: sum(q.bid) - sum(q.bid) OVER () returned 0.
+        assertMemoryLeak(() -> {
+            createHorizonTradesAndQuoteTables();
+
+            final String hj = " FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h";
+            final String[][] queries = {
+                    {"SELECT h.offset, row_number() OVER () + 1 rn" + hj, "row_number"},
+                    {"SELECT h.offset, avg(q.bid) a, row_number() OVER () + 1 rn" + hj, "row_number"},
+                    {"SELECT t.sym, h.offset, (row_number() OVER ())::string rn" + hj, "row_number"},
+                    {"SELECT h.offset, CASE WHEN h.offset > 0 THEN 1 WHEN row_number() OVER () > 1 THEN 2 ELSE rank() OVER () END x" + hj, "row_number"},
+                    {"SELECT h.offset, coalesce(q.bid, lag(q.bid) OVER (), 0) x" + hj, "lag"},
+                    {"SELECT h.offset, avg(q.bid) OVER () + 1 x" + hj, "avg"},
+                    {"SELECT h.offset, max(avg(q.bid) OVER ()) x" + hj, "avg"},
+                    {"SELECT h.offset, sum(q.bid) - sum(q.bid) OVER () x" + hj, "sum(q.bid) OVER"},
+                    {"SELECT h.offset, avg(q.bid) a, row_number() OVER () + 1 rn" + hj + " GROUP BY h.offset", "row_number"},
+                    {"SELECT DISTINCT h.offset, row_number() OVER () + 1 rn" + hj, "row_number"},
+                    {"SELECT h.offset, avg(q.bid) a, row_number() OVER w + 1 rn" + hj + " WINDOW w AS ()", "row_number"},
+                    {"SELECT h.offset, avg(q.bid) a" + hj + " ORDER BY row_number() OVER ()", "row_number"},
+                    {"SELECT h.offset, avg(b.bid) a, row_number() OVER () + 1 rn FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h", "row_number"},
+            };
+            for (String[] query : queries) {
+                final String sql = query[0];
+                final int position = sql.indexOf(query[1]);
+                final String message = "WINDOW functions are not allowed in HORIZON JOIN queries";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(position, message);
+
+                final String outerPrefix = "SELECT count() FROM (";
+                assertQuery(outerPrefix + sql + ")")
+                        .noLeakCheck()
+                        .fails(outerPrefix.length() + position, message);
+            }
+
+            final String oneSecond = String.valueOf(getSecondsDivisor());
+            // a window function over a HORIZON JOIN sub-query is allowed
+            assertQuery(
+                    "SELECT offset, a, row_number() OVER (ORDER BY a DESC) + 1 rn " +
+                            "FROM (SELECT h.offset, avg(q.bid) a" + hj + ") ORDER BY a"
+            )
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            offset\ta\trn
+                            0\t25.0\t3
+                            #1s\t45.0\t2
+                            """.replace("#1s", oneSecond));
         });
     }
 
@@ -1954,6 +2487,265 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOrderByExpressionOverNonSelectedColumn() throws Exception {
+        // ORDER BY an expression over a column that the select list does not output, such as
+        // t.price * 2, adds the expression to the horizon model as a hidden key, so the groups split
+        // by it, as they do with a plain GROUP BY, and the query returns 8 rows. The projection above
+        // the horizon model used to reference that key as a regular column, so the query, and SELECT *
+        // over it, returned an extra column named "column". A count(), a UNION ALL or a re-sort over
+        // the query drops its ORDER BY, and then nothing above the horizon model references the hidden
+        // key. Top-down column pruning must keep the key in the horizon keys; otherwise the horizon
+        // join regroups by (sym, offset) and the outer query sees 6 merged rows.
+        assertMemoryLeak(() -> {
+            createHorizonTradesAndQuoteTables();
+
+            final String oneSecond = String.valueOf(getSecondsDivisor());
+            final String expected = """
+                    sym\toffset\ta
+                    A\t0\t10.0
+                    A\t#1s\t50.0
+                    B\t0\t20.0
+                    B\t#1s\t60.0
+                    A\t0\t30.0
+                    A\t#1s\t30.0
+                    C\t0\t40.0
+                    C\t#1s\t40.0
+                    """.replace("#1s", oneSecond);
+            final String expectedResorted = """
+                    sym\toffset\ta
+                    A\t0\t10.0
+                    A\t0\t30.0
+                    A\t#1s\t30.0
+                    A\t#1s\t50.0
+                    B\t0\t20.0
+                    B\t#1s\t60.0
+                    C\t0\t40.0
+                    C\t#1s\t40.0
+                    """.replace("#1s", oneSecond);
+            final String[] queries = {
+                    "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
+                    "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY abs(t.price), h.offset",
+                    "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) RANGE FROM 0s TO 1s STEP 1s AS h ORDER BY t.price * 2, h.offset",
+                    "SELECT DISTINCT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
+                    "SELECT t.sym, h.offset, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
+            };
+            for (String sql : queries) {
+                assertOrderByHiddenKey(sql, expected, true);
+                assertHorizonOrderByHiddenKeyResorted(sql, "sym, offset, a", expectedResorted);
+            }
+
+            // the sort still reads the hidden key
+            assertQuery(queries[0])
+                    .noLeakCheck()
+                    .assertsPlan(
+                            "SelectedRecord\n" +
+                                    "    Encode sort light\n" +
+                                    "      keys: [column, offset]\n" +
+                                    "        VirtualRecord\n" +
+                                    "          functions: [sym,offset,a,column]\n" +
+                                    "            " + getHorizonJoinPlanType() + " offsets: 2\n" +
+                                    "              keys: [sym,offset,column]\n" +
+                                    "              values: [avg(q.bid)]\n" +
+                                    "                PageFrame\n" +
+                                    "                    Row forward scan\n" +
+                                    "                    Frame forward scan on: trades\n" +
+                                    "                PageFrame\n" +
+                                    "                    Row forward scan\n" +
+                                    "                    Frame forward scan on: quotes\n"
+                    );
+
+            // ORDER BY t.price * 2, t.sym leaves the order of the two offsets of each trade open, so
+            // only the wrappers and the re-sort assert this query
+            final String tieOnOffset = "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, t.sym";
+            assertRowCountInWrappers(tieOnOffset, 8);
+            assertHorizonOrderByHiddenKeyResorted(tieOnOffset, "sym, offset, a", expectedResorted);
+
+            // a filter on a selected column keeps the groups split as well
+            assertQuery("SELECT count() FROM (" + tieOnOffset + ") WHERE sym = 'A'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            4
+                            """);
+
+            // the horizon model keeps the hidden key, while the projection above it drops it
+            assertQuery("SELECT count() FROM (" + tieOnOffset + ")")
+                    .noLeakCheck()
+                    .assertsPlan(
+                            "Count\n" +
+                                    "    VirtualRecord\n" +
+                                    "      functions: [sym,offset,a]\n" +
+                                    "        " + getHorizonJoinPlanType() + " offsets: 2\n" +
+                                    "          keys: [sym,offset,column]\n" +
+                                    "          values: [avg(q.bid)]\n" +
+                                    "            PageFrame\n" +
+                                    "                Row forward scan\n" +
+                                    "                Frame forward scan on: trades\n" +
+                                    "            PageFrame\n" +
+                                    "                Row forward scan\n" +
+                                    "                Frame forward scan on: quotes\n"
+                    );
+
+            // without aggregates
+            final String noAggregates = "SELECT t.sym, h.offset FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset";
+            final String expectedNoAggregates = """
+                    sym\toffset
+                    A\t0
+                    A\t#1s
+                    B\t0
+                    B\t#1s
+                    A\t0
+                    A\t#1s
+                    C\t0
+                    C\t#1s
+                    """.replace("#1s", oneSecond);
+            assertOrderByHiddenKey(noAggregates, expectedNoAggregates, true);
+            assertHorizonOrderByHiddenKeyResorted(
+                    noAggregates,
+                    "sym, offset",
+                    """
+                            sym\toffset
+                            A\t0
+                            A\t0
+                            A\t#1s
+                            A\t#1s
+                            B\t0
+                            B\t#1s
+                            C\t0
+                            C\t#1s
+                            """.replace("#1s", oneSecond)
+            );
+
+            // a select expression over an aggregate
+            final String aggregateExpression = "SELECT t.sym, h.offset, avg(q.bid) + 1 a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset";
+            final String expectedAggregateExpression = """
+                    sym\toffset\ta
+                    A\t0\t11.0
+                    A\t#1s\t51.0
+                    B\t0\t21.0
+                    B\t#1s\t61.0
+                    A\t0\t31.0
+                    A\t#1s\t31.0
+                    C\t0\t41.0
+                    C\t#1s\t41.0
+                    """.replace("#1s", oneSecond);
+            assertOrderByHiddenKey(aggregateExpression, expectedAggregateExpression, true);
+            assertHorizonOrderByHiddenKeyResorted(
+                    aggregateExpression,
+                    "sym, offset, a",
+                    """
+                            sym\toffset\ta
+                            A\t0\t11.0
+                            A\t0\t31.0
+                            A\t#1s\t31.0
+                            A\t#1s\t51.0
+                            B\t0\t21.0
+                            B\t#1s\t61.0
+                            C\t0\t41.0
+                            C\t#1s\t41.0
+                            """.replace("#1s", oneSecond)
+            );
+
+            // an expression over the offset, which the select list does not output either
+            final String offsetExpression = "SELECT t.sym, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY h.offset * 2, t.sym";
+            final String expectedOffsetExpression = """
+                    sym\ta
+                    A\t20.0
+                    B\t20.0
+                    C\t40.0
+                    A\t40.0
+                    B\t60.0
+                    C\t40.0
+                    """;
+            assertOrderByHiddenKey(offsetExpression, expectedOffsetExpression, true);
+            assertHorizonOrderByHiddenKeyResorted(
+                    offsetExpression,
+                    "sym, a",
+                    """
+                            sym\ta
+                            A\t20.0
+                            A\t40.0
+                            B\t20.0
+                            B\t60.0
+                            C\t40.0
+                            C\t40.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOrderByNonSelectedColumn() throws Exception {
+        // A HORIZON JOIN with aggregates, GROUP BY or DISTINCT groups by its non-aggregate columns,
+        // so, as with a regular GROUP BY, ORDER BY can reference only the columns it outputs. The
+        // optimizer used to append the ORDER BY column to the horizon model, and code generation
+        // failed at position 0, or crashed and leaked when the query was a sub-query.
+        assertMemoryLeak(() -> {
+            createHorizonTradesAndQuoteTables();
+
+            final String[][] queries = {
+                    {"SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.ts", "t.ts"},
+                    {"SELECT h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.sym", "t.sym"},
+                    {"SELECT h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY a, q.bid DESC", "q.bid"},
+                    // the output alias collides with the right-hand table column
+                    {"SELECT h.offset, avg(t.price) bid FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY q.bid DESC", "q.bid"},
+                    {"SELECT h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY h.timestamp", "h.timestamp"},
+                    {"SELECT t.sym, h.offset FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h GROUP BY t.sym, h.offset ORDER BY t.ts", "t.ts"},
+                    {"SELECT DISTINCT t.sym, h.offset FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.ts", "t.ts"},
+                    {"SELECT t.sym, h.offset, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY k.ask", "k.ask"},
+                    // an expression column puts a virtual model on top of the horizon model
+                    {"SELECT upper(t.sym) u, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price", "t.price"},
+            };
+            for (String[] query : queries) {
+                final String sql = query[0];
+                final int position = sql.lastIndexOf(query[1]);
+                final String message = "ORDER BY expressions must appear in select list. Invalid column: " + query[1];
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(position, message);
+
+                final String outerPrefix = "SELECT count() FROM (";
+                assertQuery(outerPrefix + sql + ")")
+                        .noLeakCheck()
+                        .fails(outerPrefix.length() + position, message);
+            }
+
+            // the column feeds a select expression and is also selected
+            assertQuery("""
+                    SELECT upper(t.sym) u, t.sym, sum(t.price) s
+                    FROM trades t
+                    HORIZON JOIN quotes q ON (sym)
+                        LIST (0s, 1s) AS h
+                    ORDER BY t.sym DESC
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            u\tsym\ts
+                            C\tC\t80.0
+                            B\tB\t40.0
+                            A\tA\t80.0
+                            """);
+            assertQuery("""
+                    SELECT t.sym = 'A' AS is_a, avg(q.bid) a
+                    FROM trades t
+                    HORIZON JOIN quotes q ON (sym)
+                        LIST (0s, 1s) AS h
+                    ORDER BY is_a
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            is_a\ta
+                            false\t40.0
+                            true\t30.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinParallelExecution() throws Exception {
         assertMemoryLeak(() -> {
             // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset
@@ -2330,6 +3122,146 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             1\t3.3333333333333335
                             2\t5.333333333333333
                             """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSubQueryDateaddFilter() throws Exception {
+        // The optimiser matched a dateadd() over the master timestamp by name against the master table,
+        // so it wrapped a filter on the dateadd() column in and_offset and pushed the wrapper down. The
+        // pushdown stops at the horizon join, so the wrapper reached the function compiler and failed
+        // with "unknown function name: and_offset". It now becomes a dateadd() filter above the join.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-01', 1_000_000), 'S' || (x % 5), 100 + (x % 7) FROM long_sequence(20)");
+            execute("INSERT INTO bids SELECT timestamp_sequence('2023-12-31T23:59', 370_000), 'S' || (x % 5), 99 + (x % 3) FROM long_sequence(600)");
+            execute("INSERT INTO asks SELECT ts, sym, bid + 2 FROM bids");
+
+            final String firstFourSeconds = replaceExpectedMasterTimestamp("""
+                    x
+                    2024-01-01T00:00:01.000000Z
+                    2024-01-01T00:00:02.000000Z
+                    2024-01-01T00:00:03.000000Z
+                    2024-01-01T00:00:04.000000Z
+                    """);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x
+                        FROM (SELECT t.ts, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) LIST (0s, 1s) AS h)
+                    )
+                    WHERE x < '2024-01-01T00:00:05'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlanContaining("Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:05", getHorizonJoinPlanType())
+                    .returns(firstFourSeconds);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x
+                        FROM (
+                            SELECT t.ts, avg(b.bid) b, avg(a.ask) a
+                            FROM trades t
+                            HORIZON JOIN bids b ON (sym)
+                            HORIZON JOIN asks a ON (sym)
+                            LIST (0s, 1s) AS h
+                        )
+                    )
+                    WHERE x < '2024-01-01T00:00:05'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .withPlanContaining("Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:05", getMultiHorizonJoinPlanType())
+                    .returns(firstFourSeconds);
+            // the horizon timestamp as the key
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x
+                        FROM (SELECT h.timestamp ts, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) LIST (0s, 1s) AS h)
+                    )
+                    WHERE x < '2024-01-01T00:00:05'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .returns(firstFourSeconds);
+            // a filter pushed into the master scan would change max(t.ts) and let all five symbols in
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT dateadd('s', 1, ts) x, sym
+                        FROM (SELECT max(t.ts) ts, t.sym FROM trades t HORIZON JOIN bids b ON (sym) LIST (0s, 1s) AS h)
+                    )
+                    WHERE x < '2024-01-01T00:00:18'
+                    ORDER BY x
+                    """)
+                    .noLeakCheck()
+                    .timestamp("x")
+                    .returns(replaceExpectedMasterTimestamp("""
+                            x\tsym
+                            2024-01-01T00:00:16.000000Z\tS1
+                            2024-01-01T00:00:17.000000Z\tS2
+                            """));
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSubQueryDateaddIsNotDesignatedTimestamp() throws Exception {
+        // A keyed horizon join emits its groups in hash order. The optimiser matched a dateadd() over
+        // the master timestamp by name against the master table, and the projection above the horizon
+        // join made it its designated timestamp: ORDER BY skipped the sort and SAMPLE BY bucketed
+        // unordered rows without an error.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-01', 1_000_000), 'S' || (x % 5), 100 + (x % 7) FROM long_sequence(2_000)");
+            execute("INSERT INTO bids SELECT timestamp_sequence('2023-12-31T23:59', 370_000), 'S' || (x % 5), 99 + (x % 3) FROM long_sequence(6_000)");
+            execute("INSERT INTO asks SELECT ts, sym, bid + 2 FROM bids");
+
+            final String[] horizonQueries = {
+                    "SELECT t.ts, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) LIST (0s, 1s) AS h",
+                    "SELECT t.ts, avg(b.bid) b, avg(a.ask) a FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks a ON (sym) LIST (0s, 1s) AS h",
+            };
+            for (String horizon : horizonQueries) {
+                assertQuery("SELECT dateadd('s', 1, ts) x FROM (" + horizon + ") ORDER BY x LIMIT 3")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .sizeMayVary()
+                        .returns(replaceExpectedMasterTimestamp("""
+                                x
+                                2024-01-01T00:00:01.000000Z
+                                2024-01-01T00:00:02.000000Z
+                                2024-01-01T00:00:03.000000Z
+                                """));
+                assertExceptionNoLeakCheck(
+                        "SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + horizon + ")) SAMPLE BY 10m",
+                        0,
+                        "base query does not provide designated TIMESTAMP column"
+                );
+                assertQuery("SELECT x, count() FROM (SELECT dateadd('s', 1, ts) x FROM (" + horizon + ") ORDER BY x) SAMPLE BY 10m")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .noRandomAccess()
+                        .returns(replaceExpectedMasterTimestamp("""
+                                x\tcount
+                                2024-01-01T00:00:00.000000Z\t599
+                                2024-01-01T00:10:00.000000Z\t600
+                                2024-01-01T00:20:00.000000Z\t600
+                                2024-01-01T00:30:00.000000Z\t201
+                                """));
+                // control: the bare master timestamp keeps its sort
+                assertQuery("SELECT ts x FROM (" + horizon + ") ORDER BY x LIMIT 1")
+                        .noLeakCheck()
+                        .timestamp("x")
+                        .sizeMayVary()
+                        .returns(replaceExpectedMasterTimestamp("""
+                                x
+                                2024-01-01T00:00:00.000000Z
+                                """));
+            }
         });
     }
 
@@ -7044,6 +7976,15 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
+    // Asserts that a re-sort, which drops the ORDER BY of a HORIZON JOIN query with a hidden ORDER BY key,
+    // still sees the query's rows, as assertRowCountInWrappers() does for count() and UNION ALL.
+    private void assertHorizonOrderByHiddenKeyResorted(String sql, String sortKeys, String expectedResorted) throws Exception {
+        assertQuery("SELECT * FROM (" + sql + ") ORDER BY " + sortKeys)
+                .noLeakCheck()
+                .expectSize()
+                .returns(expectedResorted);
+    }
+
     /**
      * Creates orders (master) with SYMBOL sym and region, prices with SYMBOL sym and STRING region,
      * and mids with SYMBOL sym. HORIZON JOIN compares t.sym = p.sym as int symbol keys and
@@ -7075,6 +8016,36 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:01.000000Z', 'AAPL', 'US', 100),
                     ('1970-01-01T00:00:01.000000Z', 'AAPL', 'EU', 200)
                 """);
+    }
+
+    private void createHorizonTradesAndQuoteTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute(
+                """
+                        INSERT INTO trades VALUES
+                            ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                            ('2000-01-01T00:00:01.000000Z', 'B', 20.0),
+                            ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                            ('2000-01-01T00:00:03.000000Z', 'C', 40.0)
+                        """
+        );
+        // avg(bid) per (sym, offset) at LIST (0s, 1s): A 20/40, B 20/60, C 40/40
+        execute(
+                """
+                        INSERT INTO quotes VALUES
+                            ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                            ('2000-01-01T00:00:00.000000Z', 'B', 20.0),
+                            ('2000-01-01T00:00:00.000000Z', 'C', 40.0),
+                            ('2000-01-01T00:00:01.000000Z', 'A', 50.0),
+                            ('2000-01-01T00:00:02.000000Z', 'A', 30.0),
+                            ('2000-01-01T00:00:02.000000Z', 'B', 60.0)
+                        """
+        );
+        execute("INSERT INTO bids SELECT ts, sym, bid FROM quotes");
+        execute("INSERT INTO asks SELECT ts, sym, bid + 1 FROM quotes");
     }
 
     private String getHorizonJoinPlanType() {

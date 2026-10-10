@@ -211,6 +211,59 @@ public class SimpleTimestampSamplerTest {
     }
 
     @Test
+    public void testRoundNegativeStart() throws NumericException {
+        // ALIGN TO FIRST OBSERVATION starts the grid at the first row, so a first row before 1970 gives the grid a
+        // negative start. A timestamp between the grid start and 1970 that fell between two grid points rounded
+        // one bucket low, see SampleByTest.testSampleByNegativeTimestampFirstObservationFillLinear().
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long bucket = timestampDriver.fromHours(1);
+        final SimpleTimestampSampler sampler = new SimpleTimestampSampler(bucket, timestampType.getTimestampType());
+        final long start = timestampDriver.parseFloorLiteral("1969-12-31T20:00:00.000000000Z");
+        sampler.setStart(start);
+
+        final String[] src = new String[]{
+                "1969-12-31T18:00:00.000000000Z",
+                "1969-12-31T18:30:00.000000000Z",
+                "1969-12-31T20:00:00.000000000Z",
+                "1969-12-31T20:30:00.000000000Z",
+                "1969-12-31T21:00:00.000000000Z",
+                "1969-12-31T23:59:59.999999999Z",
+                "1970-01-01T00:00:00.000000000Z",
+                "1970-01-01T00:30:00.000000000Z",
+        };
+        final String[] rounded = new String[]{
+                "1969-12-31T18:00:00.000000000Z",
+                "1969-12-31T18:00:00.000000000Z",
+                "1969-12-31T20:00:00.000000000Z",
+                "1969-12-31T20:00:00.000000000Z",
+                "1969-12-31T21:00:00.000000000Z",
+                "1969-12-31T23:00:00.000000000Z",
+                "1970-01-01T00:00:00.000000000Z",
+                "1970-01-01T00:00:00.000000000Z",
+        };
+        Assert.assertEquals(src.length, rounded.length);
+
+        for (int i = 0; i < src.length; i++) {
+            final long ts = timestampDriver.parseFloorLiteral(src[i]);
+            final long roundedTs = sampler.round(ts);
+            Assert.assertEquals(
+                    "expected " + rounded[i] + ", got " + Nanos.toString(timestampDriver.toNanos(roundedTs)),
+                    timestampDriver.parseFloorLiteral(rounded[i]),
+                    roundedTs
+            );
+        }
+
+        // timestamps sampled every 7 minutes plus one tick, from two buckets before the grid start to two buckets
+        // after 1970, round down to the grid
+        final long step = timestampDriver.fromMinutes(7) + 1;
+        for (long ts = start - 2 * bucket; ts < 2 * bucket; ts += step) {
+            final long roundedTs = sampler.round(ts);
+            Assert.assertEquals(0, (roundedTs - start) % bucket);
+            Assert.assertTrue("timestamp " + ts + " rounded to " + roundedTs, roundedTs <= ts && ts < roundedTs + bucket);
+        }
+    }
+
+    @Test
     public void testSimple() throws NumericException {
         final StringSink sink = new StringSink();
         final TimestampDriver timestampDriver = timestampType.getDriver();

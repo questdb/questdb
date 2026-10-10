@@ -61,6 +61,9 @@ public class ExpressionNode implements Mutable, Sinkable {
     public boolean innerPredicate = false;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
     public boolean isConstantExpression;
+    // SqlOptimiser.wrapInAndOffset sets it on the and_offset wrappers it inserts during predicate
+    // pushdown, which tells them from a hand-written and_offset call.
+    public boolean isOptimiserAndOffset;
     // A synthetic timestamp reference keeps the column live without declaring output order.
     // Code generation inherits the input factory's designation, including no designation.
     public boolean isTimestampOrderInherited;
@@ -228,6 +231,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         // their own copy, which they need anyway - a sub-query factory is not thread-safe
         copy.scalarBoundCompileCache = node.scalarBoundCompileCache;
         copy.isConstantExpression = node.isConstantExpression;
+        copy.isOptimiserAndOffset = node.isOptimiserAndOffset;
         copy.isTimestampOrderInherited = node.isTimestampOrderInherited;
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
@@ -317,6 +321,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         paramCount = 0;
         intrinsicValue = IntrinsicModel.UNDEFINED;
         isConstantExpression = false;
+        isOptimiserAndOffset = false;
         isTimestampOrderInherited = false;
         queryModel = null;
         innerPredicate = false;
@@ -347,6 +352,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.scalarBoundHolder = other.scalarBoundHolder;
         this.scalarBoundCompileCache = other.scalarBoundCompileCache;
         this.isConstantExpression = other.isConstantExpression;
+        this.isOptimiserAndOffset = other.isOptimiserAndOffset;
         this.isTimestampOrderInherited = other.isTimestampOrderInherited;
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;

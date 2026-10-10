@@ -100,8 +100,6 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             @NotNull RecordCursorFactory masterFactory,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
-            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -133,8 +131,6 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     horizonJoinMetadata,
                     slaveStates,
                     perSlaveAsOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClasses,
-                    slaveAsOfJoinMapSinkClasses,
                     masterTimestampColumnIndex,
                     offsets,
                     keyTypes,
@@ -465,7 +461,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                 final RecordSink masterSink = atom.getMasterAsOfJoinSink(slotId, s);
                 final RecordSink slaveSink = atom.getSlaveAsOfJoinMapSink(slotId, s);
 
-                if (asOfJoinMap != null && masterSink != null && slaveSink != null) {
+                if (asOfJoinMap != null) {
                     final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, s, masterRecord);
                     final SymbolTranslatingRecord symbolTranslatingRecord =
                             masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;

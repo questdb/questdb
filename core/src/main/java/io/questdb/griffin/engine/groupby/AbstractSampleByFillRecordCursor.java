@@ -49,7 +49,8 @@ public abstract class AbstractSampleByFillRecordCursor extends AbstractNoRecordS
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc
     ) {
         super(
                 configuration,
@@ -66,7 +67,8 @@ public abstract class AbstractSampleByFillRecordCursor extends AbstractNoRecordS
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                isFromToUtc
         );
         record = new SampleByFillRecord(recordFunctions, placeholderFunctions);
         assert recordFunctions.size() == placeholderFunctions.size();

@@ -67,7 +67,8 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            boolean isFromToUtc
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
@@ -101,7 +102,8 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
                     sampleFromFunc,
                     sampleFromFuncPos,
                     sampleToFunc,
-                    sampleToFuncPos
+                    sampleToFuncPos,
+                    isFromToUtc
 
             );
             peeker.setCursor(cursor);
