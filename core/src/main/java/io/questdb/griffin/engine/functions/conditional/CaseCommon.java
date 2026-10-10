@@ -111,6 +111,12 @@ public class CaseCommon {
             throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
         }
 
+        // geohash types carry their precision, so they are absent from the escalation map;
+        // values of the same geohash type need no conversion
+        if (commonType == valueType && ColumnType.isGeoHash(commonType)) {
+            return commonType;
+        }
+
         if (ColumnType.isDecimal(commonType) || ColumnType.isDecimal(valueType)) {
             return getDecimalCommonType(commonType, valueType, valuePos);
         }
