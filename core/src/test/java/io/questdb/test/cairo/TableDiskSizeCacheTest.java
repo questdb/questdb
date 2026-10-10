@@ -277,6 +277,45 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDetectsInPlaceParquetUpdate() throws Exception {
+        // O3PartitionJob updates a Parquet file with more than one row group in place
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01', 8_000_000L), 'a', x FROM long_sequence(10_000)");
+            // the cache measures the last partition on every call, keep 2024-01-01 sealed
+            execute("INSERT INTO x VALUES ('2024-01-03T00:00:00.000000Z', 'a', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            engine.releaseAllWriters();
+            setClockPastRacyWindow();
+            assertDiskSize("x");
+
+            final long nameTxn;
+            final long parquetFileSize;
+            try (TableReader reader = engine.getReader("x")) {
+                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+                nameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                parquetFileSize = reader.getTxFile().getPartitionParquetFileSize(0);
+            }
+
+            // An upsert of existing keys merges a row group into the Parquet file in place: the
+            // directory keeps its name, row count and modification time, only the Parquet file
+            // size changes.
+            execute("INSERT INTO x SELECT '2024-01-01T10:00:00.000000Z'::TIMESTAMP + (x - 1) * 8_000_000L, 'a', -x FROM long_sequence(20)");
+            drainWalQueue();
+            engine.releaseAllWriters();
+            try (TableReader reader = engine.getReader("x")) {
+                Assert.assertEquals(nameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                Assert.assertEquals(10_000, reader.getTxFile().getPartitionSize(0));
+                Assert.assertTrue(reader.getTxFile().getPartitionParquetFileSize(0) > parquetFileSize);
+            }
+            assertDiskSize("x");
+        });
+    }
+
+    @Test
     public void testDetectsNewFilesInSealedPartition() throws Exception {
         assertMemoryLeak(() -> {
             createDailyTable("x", false);
