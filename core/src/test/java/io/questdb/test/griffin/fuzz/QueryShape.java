@@ -35,6 +35,7 @@ package io.questdb.test.griffin.fuzz;
  */
 public enum QueryShape {
     GROUP_BY,
+    HASH_JOIN_GROUP_BY,
     HORIZON_JOIN,
     LATEST_ON,
     POSTING,

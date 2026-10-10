@@ -3542,18 +3542,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select max(i) from (select * from a join a b on i )")
                 .ddl("create table a (i int, d double)")
                 .assertsPlan("""
-                        GroupBy vectorized: false
-                          values: [max(i)]
-                            SelectedRecord
-                                Hash Join Light
-                                  condition: b.i=a.i
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
+                        Async Hash Join Group By workers: 1
+                          logicalJoinType: inner
+                          physicalJoinType: inner
+                          inputSwapped: false
+                          condition: a.i=b.i
+                          buildStrategy: shared
+                          aggregation: scalar
+                          values: [max(a.i)]
+                            Probe
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            Build
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
                         """);
     }
 
@@ -4213,9 +4217,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
+                // A RIGHT join preserves b, so the predicate filters b before the join. LEFT and FULL
+                // NULL-extend b, so it stays a filter above the join.
                 assertQuery("select * from a " + joinType + " join b on i where b.i is not null")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    Filter filter: b.i!=null\n" + "        " + factoryType + "\n" + "          condition: b.i=a.i\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n");
+                        .assertsPlan("RIGHT".equals(joinType)
+                                ? "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b.i=a.i\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: i!=null\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n"
+                                : "SelectedRecord\n" + "    Filter filter: b.i!=null\n" + "        " + factoryType + "\n" + "          condition: b.i=a.i\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n");
             }
         });
     }
@@ -5729,14 +5737,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (int i = 0; i < joinTypes.length; i++) {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
+                // The scalar count over a LEFT or RIGHT equi-join takes the fused hash join
+                // GROUP BY, which carries the predicate as an attribute of its own instead of a
+                // Filter node above the join. FULL OUTER and the temporal joins keep both.
+                boolean isFused = i < 2;
+                boolean isSwapped = "RIGHT".equals(joinType);
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value<>T2.value")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                        // A RIGHT join pushes the predicate into T2, its preserved side, where
+                        // the filter compiler folds value=value away: fixed-width NULLs compare
+                        // equal, so the predicate holds for every row.
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? null : "postJoinFilter: T2.value=T2.value", false)
+                                : "Count\n" + "    Filter filter: T2.value=T2.value\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T2.value=1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? "probeFilter: value!=1" : "postJoinFilter: T2.value!=1", isSwapped)
+                                : "Count\n" + "    Filter filter: T2.value!=1\n" + "        " + factoryType + "\n" + (i < 3 ? "          condition: T2.created=T1.created\n" : "") + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "            Hash\n" : "") + (i < 3 ? "    " : "") + "            PageFrame\n" + (i < 3 ? "    " : "") + "                Row forward scan\n" + (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n");
 
                 // Push the predicate down to the 'left' table for joins that keep every left
                 // row (LEFT OUTER, LT, ASOF). RIGHT and FULL OUTER NULL-extend the left table,
@@ -5744,9 +5764,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") + "WHERE not T1.value=1")
                         .noLeakCheck()
-                        .assertsPlan(isLeftNulled
-                                ? "Count\n" + "    Filter filter: T1.value!=1\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n"
-                                : "Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? "postJoinFilter: T1.value!=1" : "probeFilter: value!=1", !isSwapped)
+                                : isLeftNulled
+                                  ? "Count\n" + "    Filter filter: T1.value!=1\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n"
+                                  : "Count\n" + "    " + factoryType + "\n" + (i < 3 ? "      condition: T2.created=T1.created\n" : "") + "        Async JIT Filter workers: 1\n" + "          filter: value!=1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + (i < 3 ? "        Hash\n" : "") + (i < 3 ? "    " : "") + "        PageFrame\n" + (i < 3 ? "    " : "") + "            Row forward scan\n" + (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n");
             }
 
             // two joins
@@ -5755,6 +5777,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 // RIGHT and FULL OUTER NULL-extend T1, so a T1 predicate stays a post-join filter.
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
+                // The three-input queries below keep the ordinary plan; the two parent-model
+                // ones are two-input joins that the fused hash join GROUP BY takes.
+                boolean isFused = i < 2;
+                boolean isSwapped = "RIGHT".equals(joinType);
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1")
                         .noLeakCheck()
@@ -5762,9 +5788,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T1.value=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
                                 : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
+                // A RIGHT join preserves T2, so the predicate narrows T2's scan to an interval.
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T2.created=1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: 1=T2.created\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
+                        .assertsPlan(isSwapped
+                                ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Interval forward scan on: tab\n" + "                      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000001Z\")]\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
+                                : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: 1=T2.created\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T3.value=1")
                         .noLeakCheck()
@@ -5773,16 +5802,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 // where clause in parent model
                 assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value1<>value1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? null : "postJoinFilter: T2.value=T2.value", false)
+                                : "Count\n" + "    SelectedRecord\n" + "        Filter filter: T2.value=T2.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n");
 
                 // value is T1 (the master): RIGHT/FULL OUTER NULL-extend it, so the tautological
                 // not value<>value (T1.value=T1.value) stays a post-join filter instead of pushing
                 // into the master sub-query. The count is unchanged; only the plan moves.
                 assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value<>value")
                         .noLeakCheck()
-                        .assertsPlan(isLeftNulled
-                                ? "Count\n" + "    SelectedRecord\n" + "        Filter filter: T1.value=T1.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n"
-                                : "Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
+                        .assertsPlan(isFused
+                                ? fusedCountPlan(isSwapped, isSwapped ? "postJoinFilter: T1.value=T1.value" : null, false)
+                                : isLeftNulled
+                                  ? "Count\n" + "    SelectedRecord\n" + "        Filter filter: T1.value=T1.value\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n"
+                                  : "Count\n" + "    SelectedRecord\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
             }
         });
     }
@@ -6752,6 +6785,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .returns("k\tcid\tbid\nnull\tnull\t5\n");
 
+                // the non-equi outer join runs at its SQL position, so the inner joins drop the b row
+                // it NULL-extends: c.k = NULL matches no f row. Master ran the inner joins first and
+                // returned that row as (null,100,null,null), which the NULL bind value kept.
                 assertQuery("""
                         SELECT *
                         FROM (
@@ -7257,18 +7293,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,sum+COUNT*10,sum1+COUNT1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
 
             assertQuery("SELECT sum(tabb.x),sum(taba.x),sum(10+taba.x), sum(10+tabb.x) " + "FROM taba " + "join tabb on (id)")
@@ -7276,18 +7317,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,COUNT*10+sum1,COUNT1*10+sum]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x1),count(x)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(tabb.x),sum(taba.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
         });
     }
@@ -7575,18 +7621,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,sum*10,sum1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
 
             assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(10*taba.x), sum(10*tabb.x) " + "FROM taba " + "join tabb on (id)")
@@ -7594,18 +7645,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,10*sum,10*sum1]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
         });
     }
@@ -7757,18 +7813,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,sum-COUNT*10,sum1-COUNT1*10]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
 
             assertQuery("SELECT sum(taba.x),sum(tabb.x),sum(10-taba.x), sum(10-tabb.x) " + "FROM taba " + "join tabb on (id)")
@@ -7776,18 +7837,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,sum1,COUNT*10-sum,COUNT1*10-sum1]
-                                GroupBy vectorized: false
-                                  values: [sum(x),sum(x1),count(x),count(x1)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: tabb.id=taba.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: taba
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: tabb
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: taba.id=tabb.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(taba.x),sum(tabb.x),count(taba.x),count(tabb.x)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
                             """);
         });
     }
@@ -7830,18 +7896,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             VirtualRecord
                               functions: [sum,count,SUM1,SUM1+count1,sum+count*1,SUM1*2,sum,count1]
-                                GroupBy vectorized: false
-                                  values: [sum(resolutIONWidth),count(resolutIONWidth),sum(ResolutionWidth1),count(*)]
-                                    SelectedRecord
-                                        Hash Join Light
-                                          condition: h2.id=h1.id
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: hits1
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: hits2
+                                Async Hash Join Group By workers: 1
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: h1.id=h2.id
+                                  buildStrategy: shared
+                                  buildPayload: copied when the probe is large enough
+                                  aggregation: scalar
+                                  values: [sum(h1.ResolutionWidth),count(h1.ResolutionWidth),sum(h2.ResolutionWidth),count(*)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits1
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits2
                             """);
         });
     }
@@ -13476,6 +13547,33 @@ public class ExplainPlanTest extends AbstractCairoTest {
             return isLong256StrFactory(((NegatingFunctionFactory) factory).getDelegate());
         }
         return factory instanceof EqLong256StrFunctionFactory;
+    }
+
+    /**
+     * The plan of a scalar {@code count()} over an equi-join of two {@code tab} scans that the
+     * fused hash join GROUP BY takes. {@code filterAttr} is the operator's own predicate
+     * attribute, or null when the query has none. Only a post-join filter reads a build column,
+     * which makes the build carry a payload that the operator may copy.
+     */
+    private static String fusedCountPlan(boolean isSwapped, String filterAttr, boolean isJitFilter) {
+        return (isJitFilter ? "Async JIT Hash Join Group By workers: 1\n" : "Async Hash Join Group By workers: 1\n")
+                + "  logicalJoinType: " + (isSwapped ? "right outer" : "left outer") + "\n"
+                + "  physicalJoinType: left outer\n"
+                + "  inputSwapped: " + isSwapped + "\n"
+                + "  condition: " + (isSwapped ? "T2.created=T1.created" : "T1.created=T2.created") + "\n"
+                + "  buildStrategy: shared\n"
+                + (filterAttr != null && filterAttr.startsWith("postJoinFilter") ? "  buildPayload: copied when the probe is large enough\n" : "")
+                + "  aggregation: scalar\n"
+                + "  values: [count(*)]\n"
+                + (filterAttr == null ? "" : "  " + filterAttr + "\n")
+                + "    Probe\n"
+                + "        PageFrame\n"
+                + "            Row forward scan\n"
+                + "            Frame forward scan on: tab\n"
+                + "    Build\n"
+                + "        PageFrame\n"
+                + "            Row forward scan\n"
+                + "            Frame forward scan on: tab\n";
     }
 
     private void assertBindVarPlan(String type) throws Exception {

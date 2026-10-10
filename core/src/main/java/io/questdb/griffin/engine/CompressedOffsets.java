@@ -41,7 +41,8 @@ package io.questdb.griffin.engine;
  * copies of this arithmetic. Keeping one copy keeps the unsigned contract, and any future
  * correction to it, in a single place.
  * <p>
- * The biased 8-byte-aligned trio backs {@link io.questdb.cairo.map.OrderedMap}'s hash table. Its
+ * The biased 8-byte-aligned trio backs {@link io.questdb.cairo.map.OrderedMap}'s hash table and
+ * {@link io.questdb.griffin.engine.join.IntHashJoinBuild}'s payload references. Its
  * offsets carry a {@code +1} bias so that 0 can mark an empty slot, which makes it a third encoding
  * rather than a duplicate - but the unsigned contract above binds it just as hard, and its
  * emptiness sentinel lives here so a test can pin it at the boundary without a 16GB heap.

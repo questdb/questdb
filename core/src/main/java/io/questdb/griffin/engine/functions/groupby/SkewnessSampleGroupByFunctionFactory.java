@@ -56,7 +56,7 @@ public class SkewnessSampleGroupByFunctionFactory implements FunctionFactory {
         return new SkewnessSampleGroupByFunction(args.getQuick(0));
     }
 
-    private static class SkewnessSampleGroupByFunction extends AbstractSkewnessGroupByFunction {
+    static class SkewnessSampleGroupByFunction extends AbstractSkewnessGroupByFunction {
 
         public SkewnessSampleGroupByFunction(@NotNull Function arg) {
             super(arg);

@@ -49,7 +49,7 @@ public class RegressionR2FunctionFactory implements FunctionFactory {
         return new RegressionR2Function(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class RegressionR2Function extends AbstractRegressionGroupByFunction {
+    static class RegressionR2Function extends AbstractRegressionGroupByFunction {
 
         public RegressionR2Function(@NotNull Function arg0, @NotNull Function arg1) {
             super(arg0, arg1);

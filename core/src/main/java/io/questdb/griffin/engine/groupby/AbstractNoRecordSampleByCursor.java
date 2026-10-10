@@ -25,6 +25,9 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -38,6 +41,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -57,7 +61,18 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected long sampleLocalEpoch;
     protected long topTzOffset;
     private boolean areTimestampsInitialized;
+    // True when the base cursor starts with NULL-timestamp rows; see hasNextNullTimestampRow().
+    private boolean hasNullTimestampGroup;
+    // True when baseRecord holds a row that nextBaseRow() returns before it reads on.
+    // Its timestamp is in pendingTimestamp: a sub-query's timestamp expression, such as
+    // timestamp_sequence(), may return another value when read twice.
+    private boolean hasPendingRow;
     private boolean isNotKeyedLoopInitialized;
+    // True while hasNext() returns the NULL-timestamp group.
+    private boolean isNullTimestampGroup;
+    // True once the cursor has read the first base row to look for NULL timestamps.
+    private boolean isNullTimestampGroupChecked;
+    private long pendingTimestamp;
     private long rowId;
     private long topLocalEpoch;
     private long topNextDst;
@@ -132,6 +147,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
+        resetNullTimestampGroup();
         sampleFromFunc.init(baseCursor, executionContext);
         sampleToFunc.init(baseCursor, executionContext);
         allocator.setMemoryTracker(executionContext.getMemoryTracker());
@@ -162,6 +178,42 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
+        resetNullTimestampGroup();
+    }
+
+    private void aggregateNullTimestampRows(Map map, RecordSink keySink, boolean isStamped) {
+        do {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final long timestamp = baseRecord.getTimestamp(timestampIndex);
+            if (timestamp != Numbers.LONG_NULL) {
+                setPendingRow(timestamp);
+                return;
+            }
+            final MapKey key = map.withKey();
+            keySink.copy(baseRecord, key);
+            final MapValue value = key.createValue();
+            if (value.isNew()) {
+                if (isStamped) {
+                    value.putLong(0, Numbers.LONG_NULL);
+                }
+                groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+            } else {
+                groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
+            }
+        } while (baseCursor.hasNext());
+    }
+
+    private void aggregateNullTimestampRows(MapValue value) {
+        groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+        while (baseCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final long timestamp = baseRecord.getTimestamp(timestampIndex);
+            if (timestamp != Numbers.LONG_NULL) {
+                setPendingRow(timestamp);
+                return;
+            }
+            groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
+        }
     }
 
     private void kludge(long newTzOffset) {
@@ -169,6 +221,41 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         sampleLocalEpoch += (newTzOffset - tzOffset);
         nextSampleLocalEpoch = sampleLocalEpoch;
         tzOffset = newTzOffset;
+    }
+
+    private void resetNullTimestampGroup() {
+        hasNullTimestampGroup = false;
+        hasPendingRow = false;
+        isNullTimestampGroup = false;
+        isNullTimestampGroupChecked = false;
+    }
+
+    private void setPendingRow(long timestamp) {
+        hasPendingRow = true;
+        pendingTimestamp = timestamp;
+    }
+
+    // Reads the first base row once. When its timestamp is NULL, starts the
+    // NULL-timestamp group on it and returns true. Otherwise leaves the row to
+    // nextBaseRow() and returns false, as it does on every later call.
+    private boolean startNullTimestampGroup() {
+        if (isNullTimestampGroupChecked) {
+            return false;
+        }
+        isNullTimestampGroupChecked = true;
+        if (!baseCursor.hasNext()) {
+            return false;
+        }
+        final long timestamp = baseRecord.getTimestamp(timestampIndex);
+        if (timestamp != Numbers.LONG_NULL) {
+            setPendingRow(timestamp);
+            return false;
+        }
+        hasNullTimestampGroup = true;
+        isNullTimestampGroup = true;
+        // Keyed fill cursors return a row as data when its stamp equals the bucket epoch.
+        sampleLocalEpoch = Numbers.LONG_NULL;
+        return true;
     }
 
     protected long adjustDst(long timestamp, @Nullable MapValue mapValue, long nextSampleTimestamp) {
@@ -210,17 +297,76 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         return baseRecord.getTimestamp(timestampIndex) + tzOffset;
     }
 
+    /**
+     * Returns the NULL-timestamp group ahead of the grid, one row per key. A sub-query
+     * can declare a nullable expression as its designated timestamp, and ascending
+     * order puts NULL first, so the group is the run of NULL-timestamp rows at the head
+     * of the base cursor. Its rows carry a NULL timestamp. They neither anchor the grid
+     * nor seed key discovery or fill values, so the grid is the one the query returns
+     * without them. Keyed subclasses call this before they touch their map for the
+     * grid, and then clear or rebuild it.
+     *
+     * @param isStamped true when value slot 0 holds the bucket epoch of the key's last data
+     */
+    protected boolean hasNextNullTimestampRow(Map map, RecordSink keySink, RecordCursor mapCursor, boolean isStamped) {
+        if (isNullTimestampGroup) {
+            if (mapCursor.hasNext()) {
+                return true;
+            }
+            isNullTimestampGroup = false;
+            return false;
+        }
+        if (!startNullTimestampGroup()) {
+            return false;
+        }
+        map.clear();
+        aggregateNullTimestampRows(map, keySink, isStamped);
+        // rewind the map iterator
+        map.getCursor();
+        return mapCursor.hasNext();
+    }
+
+    /**
+     * Not-keyed counterpart of {@link #hasNextNullTimestampRow(Map, RecordSink, RecordCursor, boolean)}:
+     * returns the NULL-timestamp group as one row, aggregated into value.
+     */
+    protected boolean hasNextNullTimestampRow(MapValue value) {
+        if (isNullTimestampGroup) {
+            isNullTimestampGroup = false;
+            return false;
+        }
+        if (!startNullTimestampGroup()) {
+            return false;
+        }
+        aggregateNullTimestampRows(value);
+        return true;
+    }
+
     protected void initTimestamps() {
         if (areTimestampsInitialized) {
             return;
         }
 
-        if (!baseCursor.hasNext()) {
-            baseRecord = null;
-            return;
+        long timestamp;
+        if (hasPendingRow) {
+            hasPendingRow = false;
+            timestamp = pendingTimestamp;
+        } else {
+            if (!baseCursor.hasNext()) {
+                baseRecord = null;
+                return;
+            }
+            timestamp = baseRecord.getTimestamp(timestampIndex);
+            // A keyed fill cursor rewinds after key discovery, which brings back the
+            // rows that the NULL-timestamp group returned already.
+            while (hasNullTimestampGroup && timestamp == Numbers.LONG_NULL) {
+                if (!baseCursor.hasNext()) {
+                    baseRecord = null;
+                    return;
+                }
+                timestamp = baseRecord.getTimestamp(timestampIndex);
+            }
         }
-
-        final long timestamp = baseRecord.getTimestamp(timestampIndex);
 
         if (rules != null) {
             tzOffset = rules.getOffset(timestamp);
@@ -253,6 +399,16 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
         sampleLocalEpoch = nextSampleLocalEpoch = topLocalEpoch;
         areTimestampsInitialized = true;
+    }
+
+    // Reads the next base row, starting with the row that the NULL-timestamp
+    // group check left in baseRecord. Key discovery starts here, after the group.
+    protected boolean nextBaseRow() {
+        if (hasPendingRow) {
+            hasPendingRow = false;
+            return true;
+        }
+        return baseCursor.hasNext();
     }
 
     protected void nextSamplePeriod(long timestamp) {
@@ -321,7 +477,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
         @Override
         public long getTimestamp(Record rec) {
-            return sampleLocalEpoch - tzOffset;
+            return isNullTimestampGroup ? Numbers.LONG_NULL : sampleLocalEpoch - tzOffset;
         }
 
         @Override

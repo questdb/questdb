@@ -85,6 +85,9 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
 
     @Override
     public boolean hasNext() {
+        if (hasNextNullTimestampRow(value)) {
+            return true;
+        }
         initTimestamps();
 
         if (baseRecord == null && !gapFill && !endFill) {

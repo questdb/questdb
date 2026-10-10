@@ -134,6 +134,9 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    // The alias prefix of the join model that LateralJoinRewriter adds to a LATERAL body for the
+    // distinct outer values. LateralJoinRewriter keeps the same literal in its private OUTER_REF_PREFIX.
+    private static final String LATERAL_OUTER_REF_PREFIX = "__qdb_outer_ref__";
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
     // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
@@ -182,6 +185,12 @@ public class SqlOptimiser implements Mutable {
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
+    // scratch for isTakeoverClosingCycle(): the join models left to visit, and those visited
+    private final IntList ancestorStack = new IntList();
+    private final IntHashSet ancestorsVisited = new IntHashSet();
+    // scratch for findJoinModelsToAnchor() and anchorJoinModels(): the join models that the chain reaches
+    // from the first model, in the order in which they join it
+    private final IntList anchoredJoinModels = new IntList();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
@@ -203,6 +212,9 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
+    // Indexes of the later ASOF and LT joins that run ahead of the level's first non-equi RIGHT/FULL
+    // OUTER join; constrainRightAndFullJoinOrder() fills it through canRunBeforeOuterJoin().
+    private final IntHashSet joinsBeforeOuterJoin = new IntHashSet();
     private final LowerCaseCharSequenceIntHashMap lateralCountCarrierRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> lateralCountTemplateMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LateralJoinRewriter lateralJoinRewriter;
@@ -271,11 +283,15 @@ public class SqlOptimiser implements Mutable {
     private ObjList<JoinContext> emittedJoinClauses;
     // Index of the SUBSAMPLE mirror scope currently reserving names; 0 outside a wrapper walk.
     private int subsampleNameScopeDepth;
-    // True when the current join level contains a non-equi RIGHT/FULL OUTER join that
-    // homogenizeCrossJoins turns into a CROSS_RIGHT/CROSS_FULL and reorderTables appends last. Such a
-    // join NULL-extends tables that execute before it, but masterNullingJoinIndex (model order) cannot
-    // see the reorder, so analyseEquals defers single-table WHERE predicates to the exec-order-aware
-    // assignFilters instead of pushing them down eagerly. Filled by precomputeHasNonEquiNullingJoin.
+    // True when the current join level contains a non-equi RIGHT/FULL OUTER join, which
+    // homogenizeCrossJoins turns into a CROSS_RIGHT/CROSS_FULL. analyseEquals then defers
+    // single-table WHERE predicates to the exec-order-aware assignFilters instead of pushing them
+    // down eagerly. constrainRightAndFullJoinOrder keeps such a join at its SQL position, so
+    // masterNullingJoinIndex (model order) agrees with the execution order, except for an ASOF or LT
+    // join that it runs ahead of the outer join (see canRunBeforeOuterJoin); the outer join then
+    // NULL-extends that join's slave, and only the deferral keeps a predicate on it above the outer
+    // join. Elsewhere the deferral is conservative: it can cost a pushdown, never a row. Filled by
+    // precomputeHasNonEquiNullingJoin.
     private boolean hasNonEquiNullingJoin;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
@@ -623,6 +639,21 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * Returns true when a join of the model's level is a RIGHT or FULL join. Its output follows
+     * the slave and null-extends the master, so it keeps neither the master's order nor its
+     * timestamps.
+     */
+    private static boolean hasRightOrFullJoin(IQueryModel model) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (isRightOrFullJoinType(joinModels.getQuick(i).getJoinType())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Returns true when every leaf in the expression tree is a literal constant
     // (no function calls, bind variables, or column references). Used to decide
     // whether a constWhereClause can be evaluated at compile time by the code
@@ -636,6 +667,68 @@ public class SqlOptimiser implements Mutable {
             case ExpressionNode.OPERATION -> isCompileTimeConstant(node.lhs) && isCompileTimeConstant(node.rhs);
             default -> false;
         };
+    }
+
+    /**
+     * Checks whether two equalities that share a column in the join context of the model at
+     * slaveIndex may give way to the equality they imply, placed on the model at targetIndex.
+     * mergeContexts() then drops one of the two, so the implied equality has to reject every row that
+     * the dropped one rejects.
+     * <p>
+     * When the target is the slave itself, the implied equality filters the slave's rows before its
+     * join, as a conjunct of the slave's ON clause would, unless that join keeps the slave's unmatched
+     * rows, as a master-nulling join does. Any other target is on the master side of the slave's join,
+     * and the implied equality filters that side. Equality is transitive, so the rows that pass the
+     * filter match the slave's rows on the kept equality exactly where they did on both, and the
+     * rows that fail it matched none. An inner join and a RIGHT OUTER join drop the master rows that
+     * they do not match, so their output stays the same. The implied equality cannot replace the
+     * dropped one when:
+     * <ul>
+     * <li>the slave's join is any other outer or barrier join: it keeps or picks master rows by its
+     * equalities, so they imply no filter of other tables;</li>
+     * <li>the target's join is such a join: there the implied equality changes which rows the join
+     * matches, NULL-extends or picks, instead of dropping them;</li>
+     * <li>a master-nulling join sees other master rows than it would without the filter. For the
+     * first model, whose filter applies after the last join of the level, these are the slave's join
+     * and every later join: they still match the rows that the filter removes afterwards, so they do
+     * not NULL-extend the rows that those matched. For any other target, these are the joins between
+     * the target and the slave: they no longer see the rows that the filter removes, so they
+     * NULL-extend the rows that only those matched, and the NULL keys of such a row can match the
+     * equality that the slave keeps.</li>
+     * </ul>
+     */
+    private static boolean isImpliedEqualityPlaceable(IQueryModel parent, int targetIndex, int slaveIndex) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final int slaveJoinType = joinModels.getQuick(slaveIndex).getJoinType();
+        if (targetIndex == slaveIndex) {
+            return !isMasterNullingJoinType(slaveJoinType);
+        }
+        if (joinBarriers.contains(joinModels.getQuick(targetIndex).getJoinType())
+                || (joinBarriers.contains(slaveJoinType) && slaveJoinType != IQueryModel.JOIN_RIGHT_OUTER)) {
+            return false;
+        }
+        // the joins that see other master rows because of the filter
+        final int lo = targetIndex == 0 ? slaveIndex : targetIndex + 1;
+        final int hi = targetIndex == 0 ? joinModels.size() : slaveIndex;
+        for (int i = lo; i < hi; i++) {
+            if (isMasterNullingJoinType(joinModels.getQuick(i).getJoinType())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Returns true for a join model whose alias starts with the prefix that LateralJoinRewriter gives
+     * the join model it adds to a LATERAL body for the distinct outer values. That model stands for
+     * "once per outer value" and is no table of the body's FROM clause, so
+     * {@link #constrainRightAndFullJoinOrder} keeps it out of the SQL prefix. The test reads the alias
+     * only, so a table that a query aliases with this prefix passes it as well. The rewriter's
+     * count-driver model carries another prefix and keeps its prefix edges.
+     */
+    private static boolean isLateralOuterRefModel(IQueryModel model) {
+        final ExpressionNode alias = model.getAlias();
+        return alias != null && Chars.startsWith(alias.token, LATERAL_OUTER_REF_PREFIX);
     }
 
     /**
@@ -656,25 +749,22 @@ public class SqlOptimiser implements Mutable {
                 || joinType == IQueryModel.JOIN_CROSS_FULL;
     }
 
-    /**
-     * Returns true for a join whose result depends on which master rows arrive NULL-extended: INNER
-     * and CROSS drop or multiply them, RIGHT and FULL OUTER drop the unmatched ones. Such a join
-     * cannot run before an earlier non-equi RIGHT/FULL OUTER join, see
-     * {@code constrainJoinsAfterReorderedNullingJoins}. A CROSS join counts only when a later join
-     * depends on it: doReorderTables otherwise appends it after the outer join already.
-     */
-    private static boolean isNullingJoinConsumer(IQueryModel model) {
-        final int joinType = model.getJoinType();
-        return joinType == IQueryModel.JOIN_INNER
-                || joinType == IQueryModel.JOIN_RIGHT_OUTER
-                || joinType == IQueryModel.JOIN_FULL_OUTER
-                || (joinType == IQueryModel.JOIN_CROSS && model.getDependencies().size() > 0);
-    }
-
     private static boolean isOrderedByDesignatedTimestamp(IQueryModel model) {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
+    }
+
+    /**
+     * Returns true for RIGHT and FULL OUTER joins, including the JOIN_CROSS_RIGHT / JOIN_CROSS_FULL
+     * variants {@code homogenizeCrossJoins} produces for a non-equi ON clause.
+     * {@link #constrainRightAndFullJoinOrder} keeps each of them at its SQL position.
+     */
+    private static boolean isRightOrFullJoinType(int joinType) {
+        return joinType == IQueryModel.JOIN_RIGHT_OUTER
+                || joinType == IQueryModel.JOIN_FULL_OUTER
+                || joinType == IQueryModel.JOIN_CROSS_RIGHT
+                || joinType == IQueryModel.JOIN_CROSS_FULL;
     }
 
     /**
@@ -720,6 +810,13 @@ public class SqlOptimiser implements Mutable {
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token).getColumnType() == ColumnType.SYMBOL;
     }
 
+    // true when the column, from position lo on, is the designated timestamp of the table or table
+    // function that the model reads
+    private static boolean isTableTimestamp(IQueryModel table, CharSequence column, int lo) {
+        final ExpressionNode timestamp = table.getTimestamp();
+        return timestamp != null && Chars.equalsIgnoreCase(timestamp.token, column, lo, column.length());
+    }
+
     /**
      * Checks if the token is a time function that returns the current time.
      * These functions cannot be pushed through dateadd transformations because
@@ -731,6 +828,85 @@ public class SqlOptimiser implements Mutable {
                 || isSysdateKeyword(token)
                 || isSystimestampKeyword(token)
                 || isCurrentTimestampKeyword(token);
+    }
+
+    /**
+     * Returns true when the explicit TIMESTAMP(col) clause of the model names the designated timestamp
+     * of the table that drives the join chains below it, the order that optimiseJoins() keeps where the
+     * order is observed. The method follows col through the projections of the nested models and, at
+     * each join chain, into the chain's first model, down to a table or table function. It returns false
+     * when col belongs to another model of a join chain, when col is not that table's designated
+     * timestamp, and when it cannot follow col: a set operation, or a computed or ambiguous column.
+     */
+    private static boolean isTimestampOfFirstTable(IQueryModel model) {
+        CharSequence column = model.getTimestamp().token;
+        int lo = 0;
+        IQueryModel nested = model.getNestedModel();
+        while (nested != null && nested.getUnionModel() == null) {
+            final int hi = column.length();
+            final int dot = Chars.indexOfLastUnquoted(column, '.', lo, hi);
+            final ObjList<IQueryModel> joinModels = nested.getJoinModels();
+            if (joinModels.size() > 1) {
+                // the first model of the chain is the chain's own model
+                if (dot > -1) {
+                    if (nested.getModelAliasIndex(column, lo, dot) != 0) {
+                        return false;
+                    }
+                    lo = dot + 1;
+                } else {
+                    if (!nested.getAliasToColumnMap().contains(column, lo, hi)) {
+                        return false;
+                    }
+                    for (int i = 1, n = joinModels.size(); i < n; i++) {
+                        if (joinModels.getQuick(i).getAliasToColumnMap().contains(column, lo, hi)) {
+                            return false;
+                        }
+                    }
+                }
+                if (nested.getNestedModel() == null) {
+                    return isTableTimestamp(nested, column, lo);
+                }
+                nested = nested.getNestedModel();
+                continue;
+            }
+            if (dot > -1) {
+                return false;
+            }
+            final ObjList<QueryColumn> columns = nested.getBottomUpColumns();
+            if (columns.size() > 0) {
+                QueryColumn projected = null;
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    if (Chars.equalsIgnoreCase(columns.getQuick(i).getAlias(), column, lo, hi)) {
+                        projected = columns.getQuick(i);
+                        break;
+                    }
+                }
+                if (projected == null || projected.getAst().type != LITERAL) {
+                    return false;
+                }
+                column = projected.getAst().token;
+                lo = 0;
+            } else if (nested.getNestedModel() == null) {
+                return isTableTimestamp(nested, column, lo);
+            }
+            nested = nested.getNestedModel();
+        }
+        return false;
+    }
+
+    /**
+     * Returns true when a WHERE predicate that reads only the table of a join model with this join
+     * type may filter that table before the join, as far as the table's own join goes: every join
+     * type outside {@link #joinBarriers}, and RIGHT OUTER, which preserves its right side. A row
+     * that such a predicate rejects then yields no output row whether the predicate runs before or
+     * after the join, as for the master of a LEFT join. A LEFT or FULL join NULL-extends its right
+     * side, and an ASOF, SPLICE or other barrier join picks its right rows by its own rules, so a
+     * predicate on that side stays after the join. An inner-join ON conjunct keeps its own routing.
+     * The caller still keeps the predicate above a later join that NULL-extends the table; see
+     * {@link #masterNullingJoinIndexInOrder}.
+     */
+    private static boolean isWherePushableBelowJoin(int joinType, ExpressionNode node) {
+        return joinBarriers.excludes(joinType) || (joinType == IQueryModel.JOIN_RIGHT_OUTER && !node.innerPredicate);
     }
 
     private static void linkDependencies(IQueryModel model, int parent, int child) {
@@ -1232,29 +1408,39 @@ public class SqlOptimiser implements Mutable {
         return qc;
     }
 
-    private void addFilterOrEmitJoin(IQueryModel parent, int idx, int ai, CharSequence an, ExpressionNode ao, int bi, CharSequence bn, ExpressionNode bo) {
+    private void addFilterOrEmitJoin(IQueryModel parent, int slaveIndex, int idx, int ai, CharSequence an, ExpressionNode ao, int bi, CharSequence bn, ExpressionNode bo) {
         if (ai == bi && Chars.equals(an, bn)) {
             deletedContexts.add(idx);
             return;
         }
 
+        if (!isImpliedEqualityPlaceable(parent, Math.max(ai, bi), slaveIndex)) {
+            // the slave keeps both equalities
+            return;
+        }
+
+        // mergeContexts() keeps one of these nodes in the slave's join key. moveWhereInsideSubQueries()
+        // rewrites the column references of a filter that it moves into a sub-query in place, so the
+        // implied equality uses copies
+        final ExpressionNode aNode = ExpressionNode.deepClone(expressionNodePool, ao);
+        final ExpressionNode bNode = ExpressionNode.deepClone(expressionNodePool, bo);
         if (ai == bi) {
             // (same table)
             OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
             ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
             node.paramCount = 2;
-            node.lhs = ao;
-            node.rhs = bo;
+            node.lhs = aNode;
+            node.rhs = bNode;
             addWhereNode(parent, ai, node);
         } else {
             // (different tables)
             JoinContext jc = contextPool.next();
             jc.aIndexes.add(ai);
             jc.aNames.add(an);
-            jc.aNodes.add(ao);
+            jc.aNodes.add(aNode);
             jc.bIndexes.add(bi);
             jc.bNames.add(bn);
-            jc.bNodes.add(bo);
+            jc.bNodes.add(bNode);
             jc.slaveIndex = Math.max(ai, bi);
             jc.parents.add(Math.min(ai, bi));
             emittedJoinClauses.add(jc);
@@ -1449,43 +1635,40 @@ public class SqlOptimiser implements Mutable {
         tempIntList.add(joinIndex);
     }
 
+    // The source of an ON conjunct that references several models is the highest of them: every
+    // master-nulling join that executes between the last of them and the conjunct's join also
+    // executes after that model, so modelOnJoinIndexAfterNullingBoundary() finds it from there.
     private void addModelOnPredicateFromCollectedIndexes(ExpressionNode node, int joinIndex) {
         int sourceIndex = -1;
-        final int aSize = literalCollectorAIndexes.size();
-        if (aSize == 1) {
-            sourceIndex = literalCollectorAIndexes.get(0);
-        } else if (aSize > 1) {
-            return;
+        for (int i = 0, n = literalCollectorAIndexes.size(); i < n; i++) {
+            sourceIndex = Math.max(sourceIndex, literalCollectorAIndexes.get(i));
         }
-
-        final int bSize = literalCollectorBIndexes.size();
-        if (bSize == 1) {
-            final int bIndex = literalCollectorBIndexes.get(0);
-            if (sourceIndex > -1 && sourceIndex != bIndex) {
-                return;
-            }
-            sourceIndex = bIndex;
-        } else if (bSize > 1) {
-            return;
+        for (int i = 0, n = literalCollectorBIndexes.size(); i < n; i++) {
+            sourceIndex = Math.max(sourceIndex, literalCollectorBIndexes.get(i));
         }
-
         if (sourceIndex > -1) {
             addModelOnPredicate(node, sourceIndex, joinIndex);
         }
     }
 
-    private void addModelOnPredicateIfSingleModel(IQueryModel parent, ExpressionNode node, int joinIndex) throws SqlException {
+    private void addModelOnPredicateFromReferencedModels(IQueryModel parent, ExpressionNode node, int joinIndex) throws SqlException {
         tempIntHashSet.clear();
         literalCollector.withModel(parent);
         literalCollector.resetCounts();
         traversalAlgo.traverse(node, literalCollector.to(tempIntHashSet));
-        if (tempIntHashSet.size() == 1) {
-            addModelOnPredicate(node, tempIntHashSet.get(0), joinIndex);
+        int sourceIndex = -1;
+        for (int i = 0, n = tempIntHashSet.size(); i < n; i++) {
+            sourceIndex = Math.max(sourceIndex, tempIntHashSet.get(i));
+        }
+        if (sourceIndex > -1) {
+            addModelOnPredicate(node, sourceIndex, joinIndex);
         }
     }
 
+    // An edge may point against model order: constrainRightAndFullJoinOrder() runs an ASOF or LT
+    // join ahead of an earlier RIGHT/FULL OUTER join.
     private void addOrderingConstraint(IQueryModel parent, int parentIndex, int childIndex) {
-        assert parentIndex < childIndex;
+        assert parentIndex != childIndex;
         final IQueryModel childModel = parent.getJoinModels().getQuick(childIndex);
         JoinContext childContext = childModel.getJoinContext();
         if (childContext == null) {
@@ -1818,7 +2001,10 @@ public class SqlOptimiser implements Mutable {
                         OperatorExpression op = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence())
                                 .getOperatorDefinition(token);
                         ExpressionNode node = expressionNodePool.next().of(OPERATION, op.operator.token, op.precedence, 0);
-                        node.lhs = jc.aNodes.getQuick(k);
+                        // moveWhereInsideSubQueries() rewrites the column references of a filter that it
+                        // moves into a sub-query in place, so each filter takes its own copy of the join
+                        // key's column: a shared one would be renamed once per filter
+                        node.lhs = ExpressionNode.deepClone(expressionNodePool, jc.aNodes.getQuick(k));
                         node.rhs = constNode;
                         node.paramCount = 2;
                         addWhereNode(model, jc.slaveIndex, node);
@@ -1946,9 +2132,8 @@ public class SqlOptimiser implements Mutable {
                     final int nullingJoinIndex = masterNullingJoinIndex(bColIndex);
                     // Defer a single-model inner ON conjunct until assignFilters has the final order.
                     // It may push to the source only when doing so cannot change the match set of a
-                    // nulling join before the conjunct's INNER origin. A reordering non-equi RIGHT/FULL
-                    // OUTER (hasNonEquiNullingJoin) executes last after homogenizing to CROSS, so it can
-                    // NULL-extend even a table masterNullingJoinIndex misses in model order.
+                    // nulling join before the conjunct's INNER origin. A WHERE predicate also defers
+                    // when the level has a non-equi RIGHT/FULL OUTER (hasNonEquiNullingJoin).
                     if (joinIndex >= 0 || (nullingJoinIndex < 0 && !hasNonEquiNullingJoin)) {
                         // single table reference + constant
                         jc = contextPool.next();
@@ -1972,8 +2157,8 @@ public class SqlOptimiser implements Mutable {
                         // Keep the predicate post-join. Register a non-null literal constant for the
                         // transitive slave prune ONLY when a model-order master-nulling join makes it
                         // result-neutral (RIGHT/FULL OUTER set joins; addTransitiveFilters skips SPLICE).
-                        // With only a reordering non-equi CROSS join (nullingJoinIndex < 0), the prune is
-                        // not neutral, so skip registration. A bind variable is excluded: it can be NULL
+                        // With only hasNonEquiNullingJoin set (nullingJoinIndex < 0), no such join makes the
+                        // prune neutral, so skip registration. A bind variable is excluded: it can be NULL
                         // at runtime, and `null = null` is TRUE, so pushing it would change which rows survive.
                         parent.addParsedWhereNode(node, innerPredicate);
                         if (nullingJoinIndex >= 0 && node.lhs.type == CONSTANT) {
@@ -2006,16 +2191,15 @@ public class SqlOptimiser implements Mutable {
                             } else if (masterNullingJoinIndex(lhi) >= 0 || hasNonEquiNullingJoin) {
                                 // a.c1 = a.c2 on a master-nulled table: defer to assignFilters so the
                                 // post-join anchor is chosen in execution order (WHERE-origin only).
-                                // Also defers when a reordering non-equi RIGHT/FULL OUTER NULL-extends
-                                // lhi out of model order; pushing would empty lhi and change which rows
-                                // that join NULL-extends, leaking NULL-master rows. Checked before the
+                                // Also defers when the level has a non-equi RIGHT/FULL OUTER
+                                // (hasNonEquiNullingJoin, conservative). Checked before the
                                 // barrier-slave branch below: when lhi is itself barrier-joined but a
                                 // further nulling join sits above it, that branch would anchor at lhi's
                                 // own join, below the nulling join, and leak.
                                 parent.addParsedWhereNode(node, innerPredicate);
                             } else if (jc.slaveIndex != joinIndex &&
-                                    joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
-                                // we can't push anything into another left/right join
+                                    !isWherePushableBelowJoin(parent.getJoinModels().get(jc.slaveIndex).getJoinType(), node)) {
+                                // we can't push anything into another barrier join, see isWherePushableBelowJoin()
                                 addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                             } else {
                                 addWhereNode(parent, lhi, node);
@@ -2061,6 +2245,12 @@ public class SqlOptimiser implements Mutable {
                             // it, that branch would anchor at the higher table's own join, below the
                             // nulling join, and leak.
                             parent.addParsedWhereNode(node, innerPredicate);
+                        } else if (jc.slaveIndex < joinIndex && hasRightOrFullJoinBetween(parent, jc.slaveIndex, joinIndex)) {
+                            // An inner-join ON equality of two earlier tables. As a key or a filter of the
+                            // later table's join, it would drop rows before a RIGHT/FULL OUTER join, which then
+                            // NULL-extends the rows that only those matched, and the NULL-extended rows would
+                            // bypass the equality. Keep it a filter of its own join.
+                            addPostJoinWhereClause(parent.getJoinModels().getQuick(joinIndex), node);
                         } else if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                             //we can't push anything into another left/right join
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
@@ -2103,8 +2293,8 @@ public class SqlOptimiser implements Mutable {
                         // Keep post-join. Register a non-null literal constant for the transitive slave
                         // prune ONLY when a model-order master-nulling join makes it result-neutral
                         // (RIGHT/FULL OUTER; skipped for SPLICE in addTransitiveFilters; see the case 0
-                        // branch). With only a reordering non-equi CROSS join (nullingJoinIndex < 0) the
-                        // prune is not neutral, so skip it. A bind variable is excluded for the same reason.
+                        // branch). With only hasNonEquiNullingJoin set (nullingJoinIndex < 0) no such join
+                        // makes the prune neutral, so skip it. A bind variable is excluded for the same reason.
                         parent.addParsedWhereNode(node, innerPredicate);
                         if (nullingJoinIndex >= 0 && node.rhs.type == CONSTANT) {
                             registerTransitiveFilterFact(
@@ -2163,7 +2353,42 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void applyModelOnOrderingConstraints(IQueryModel parent) {
+    /**
+     * Makes the join chain reach the join models that findJoinModelsToAnchor() collected: each of
+     * them, in the order in which it joined the set, hands the equalities that it holds with the
+     * models that joined after it over to those models. The later model then depends on the earlier
+     * one, so doReorderTables() runs it after the earlier one, as the slave of a hash join. Each
+     * model keeps the equality that links it to the set, and no equality lands in the context of
+     * the first model, which has no master to compare with.
+     */
+    private void anchorJoinModels(IQueryModel parent) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        for (int i = 1, n = anchoredJoinModels.size(); i < n; i++) {
+            final int index = anchoredJoinModels.getQuick(i);
+            final IQueryModel jm = joinModels.getQuick(index);
+            JoinContext jc = jm.getJoinContext();
+            while (jc != null) {
+                // the equalities with one of the models that joined the set after this one
+                int to = -1;
+                clausesToSteal.clear();
+                for (int k = 0, kc = jc.aIndexes.size(); k < kc; k++) {
+                    final int ai = jc.aIndexes.getQuick(k);
+                    final int other = ai != index ? ai : jc.bIndexes.getQuick(k);
+                    if ((to == -1 || to == other) && anchoredJoinModels.indexOf(other, 0, i) == -1) {
+                        to = other;
+                        clausesToSteal.add(k);
+                    }
+                }
+                if (to == -1) {
+                    break;
+                }
+                takeOverClauses(parent, jm, to);
+                jc = jm.getJoinContext();
+            }
+        }
+    }
+
+    private void applyOrderingConstraints(IQueryModel parent) {
         for (int i = 2 * tempExprs.size(), n = tempIntList.size(); i < n; i += 2) {
             addOrderingConstraint(parent, tempIntList.getQuick(i), tempIntList.getQuick(i + 1));
         }
@@ -2216,8 +2441,8 @@ public class SqlOptimiser implements Mutable {
                     // condition has no table references
                     postFilterRemoved.add(k);
                     parent.setConstWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, parent.getConstWhereClause(), node));
-                } else if (rs == 1 && // single table reference and this table is not joined via OUTER or ASOF
-                        joinBarriers.excludes(parent.getJoinModels().getQuick(refs.get(0)).getJoinType())) {
+                } else if (rs == 1 && // single table reference, and the table's own join lets it filter the table
+                        isWherePushableBelowJoin(parent.getJoinModels().getQuick(refs.get(0)).getJoinType(), node)) {
                     // Only a WHERE predicate is held back from a master-nulling join; an inner-join ON
                     // conjunct gates that inner join, which runs first, so it pushes down as usual.
                     final int nullingJoinIndex = node.innerPredicate ? -1 : masterNullingJoinIndexInOrder(refs.get(0));
@@ -2416,6 +2641,38 @@ public class SqlOptimiser implements Mutable {
         return current;
     }
 
+    /**
+     * Returns true when the ASOF or LT join model may execute before the RIGHT/FULL OUTER join at
+     * {@code outerJoinIndex}, the first one of its level, although it follows it in SQL. Such a join
+     * keeps every master row, and the NULL timestamp of a NULL-extended master row matches no slave
+     * row, so it returns the same rows on either side of the outer join. After the outer join it
+     * cannot execute at all, because the outer join's output has no designated timestamp. Its join
+     * keys must read only the outer join's prefix or the slaves of the earlier ASOF and LT joins in
+     * {@link #joinsBeforeOuterJoin}, which execute before the outer join too. The level must also
+     * have a non-equi RIGHT/FULL OUTER join: analyseEquals() then leaves every single-table WHERE
+     * predicate to assignFilters(), which keeps a predicate on the hoisted slave above the outer join
+     * that NULL-extends it.
+     */
+    private boolean canRunBeforeOuterJoin(IQueryModel model, int outerJoinIndex) {
+        if (!hasNonEquiNullingJoin) {
+            return false;
+        }
+        final int joinType = model.getJoinType();
+        if (joinType != IQueryModel.JOIN_ASOF && joinType != IQueryModel.JOIN_LT) {
+            return false;
+        }
+        final JoinContext context = model.getJoinContext();
+        if (context != null) {
+            for (int i = 0, n = context.parents.size(); i < n; i++) {
+                final int parentIndex = context.parents.get(i);
+                if (parentIndex >= outerJoinIndex && joinsBeforeOuterJoin.excludes(parentIndex)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private boolean checkForChildAggregates(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -2612,6 +2869,19 @@ public class SqlOptimiser implements Mutable {
         windowFunctionHashMap.clear();
         windowColumnListPool.clear();
         referencedAliasesSet.clear();
+    }
+
+    /**
+     * Returns a copy of a projection column's AST for use as an explicit GROUP BY
+     * key that names the column by alias or position. The GROUP BY loop in
+     * rewriteSelectClause0() hands the key to emitLiterals(), which rewrites its
+     * literals to translating model aliases in place. Without the copy, that
+     * rewrite would also strip the table prefixes from the projection column,
+     * and rewriteSelect0HandleOperation() would then fail to resolve an
+     * unqualified name that more than one joined table carries.
+     */
+    private ExpressionNode cloneProjectionAstForGroupBy(QueryColumn qc) {
+        return deepClone(expressionNodePool, qc.getAst());
     }
 
     /**
@@ -2909,61 +3179,70 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    private void constrainJoinsAfterReorderedNullingJoins(IQueryModel parent) throws SqlException {
+    /**
+     * Keeps every RIGHT and FULL OUTER join at its SQL position in the execution order. Its master is
+     * the whole SQL prefix, so every model before it must execute before it, and every model after it
+     * must execute after it. Without these edges, doReorderTables() appends a model without context
+     * parents (a CROSS JOIN, or the CROSS_RIGHT / CROSS_FULL that homogenizeCrossJoins() makes of a
+     * non-equi ON clause) after the ordered models. A later join then runs before the outer join,
+     * which NULL-extends that join's rows instead of dropping them, and a prefix model runs after it,
+     * which multiplies or drops the outer join's unmatched rows. reorderTables() applies the edges
+     * through applyOrderingConstraints() after each swapJoinOrder() pass, which may rebuild a context
+     * and drop them. Applying them only then leaves the models after the outer join free to take over
+     * each other's equalities, as they could before.
+     * <p>
+     * A later ASOF or LT join that {@link #canRunBeforeOuterJoin} admits is the exception: it
+     * executes after the prefix of the level's first RIGHT/FULL join and before that join.
+     * <p>
+     * The join model that LateralJoinRewriter adds to a LATERAL body for the distinct outer values
+     * is not part of the SQL prefix, see {@link #isLateralOuterRefModel}. The rewriter inserts it at
+     * join index 1, or appends its clone to a set-operation branch, and doReorderTables() runs it
+     * after the body's joins when it has no join context and no join depends on it, so the body's
+     * correlated conditions test each joined row against each outer value. A prefix edge would run
+     * it inside the outer join's master, where the outer join NULL-extends it for its unmatched
+     * rows, which then reach no outer row.
+     */
+    private void constrainRightAndFullJoinOrder(IQueryModel parent) {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
-        tempIntHashSet.clear();
-        // A later INNER, CROSS, RIGHT or FULL OUTER join consumes the non-equi outer join's output,
-        // whatever its own ON clause references, so it must execute after the outer join.
-        // doReorderTables appends the context-free CROSS_RIGHT/CROSS_FULL after every model it can
-        // order, so without this edge the later join runs first and the outer join NULL-extends its
-        // rows instead of letting the later join drop or multiply them. LEFT OUTER, ASOF and LT joins
-        // keep every master row either way and stay unconstrained, as does SPLICE.
-        for (int boundaryIndex = 1, n = joinModels.size(); boundaryIndex < n; boundaryIndex++) {
-            final int joinType = joinModels.getQuick(boundaryIndex).getJoinType();
-            if (joinType != IQueryModel.JOIN_CROSS_RIGHT && joinType != IQueryModel.JOIN_CROSS_FULL) {
+        final int n = joinModels.size();
+        int firstOuterJoinIndex = -1;
+        for (int i = 1; i < n; i++) {
+            if (!isRightOrFullJoinType(joinModels.getQuick(i).getJoinType())) {
                 continue;
             }
-            boolean isChecked = false;
-            for (int laterIndex = boundaryIndex + 1; laterIndex < n; laterIndex++) {
-                if (!isNullingJoinConsumer(joinModels.getQuick(laterIndex))) {
-                    continue;
-                }
-                // An ON clause that references a later model needs that model joined first, and
-                // the outer join then NULL-extends it by design; keep such a join's current order.
-                if (!isChecked) {
-                    if (isForwardReferencingOuterJoin(parent, boundaryIndex)) {
-                        break;
+            if (firstOuterJoinIndex < 0) {
+                firstOuterJoinIndex = i;
+                // in model order, so that a join keyed on the slave of an earlier admitted join is admitted too
+                joinsBeforeOuterJoin.clear();
+                for (int laterIndex = i + 1; laterIndex < n; laterIndex++) {
+                    if (canRunBeforeOuterJoin(joinModels.getQuick(laterIndex), i)) {
+                        joinsBeforeOuterJoin.add(laterIndex);
                     }
-                    isChecked = true;
                 }
-                recordNullingJoinPrefix(parent, boundaryIndex);
-                // Record the edge without applying it: reorderTables applies it after clause
-                // stealing, so a CROSS consumer can still take over a join key from a later model.
-                tempIntList.add(boundaryIndex);
-                tempIntList.add(laterIndex);
+            }
+            for (int prefixIndex = 0; prefixIndex < i; prefixIndex++) {
+                if (!isLateralOuterRefModel(joinModels.getQuick(prefixIndex))) {
+                    recordOrderingConstraint(prefixIndex, i);
+                }
+            }
+            for (int laterIndex = i + 1; laterIndex < n; laterIndex++) {
+                if (joinsBeforeOuterJoin.excludes(laterIndex)) {
+                    recordOrderingConstraint(i, laterIndex);
+                }
             }
         }
-
-        for (int i = 0, n = tempExprs.size(); i < n; i++) {
-            final int sourceIndex = tempIntList.getQuick(2 * i);
-            final int originIndex = tempIntList.getQuick(2 * i + 1);
-            for (int boundaryIndex = 1; boundaryIndex < originIndex; boundaryIndex++) {
-                final IQueryModel boundaryModel = joinModels.getQuick(boundaryIndex);
-                final int joinType = boundaryModel.getJoinType();
-                if (joinType != IQueryModel.JOIN_CROSS_RIGHT && joinType != IQueryModel.JOIN_CROSS_FULL) {
-                    continue;
+        if (firstOuterJoinIndex < 0) {
+            return;
+        }
+        for (int laterIndex = firstOuterJoinIndex + 1; laterIndex < n; laterIndex++) {
+            if (joinsBeforeOuterJoin.contains(laterIndex)) {
+                for (int prefixIndex = 0; prefixIndex < firstOuterJoinIndex; prefixIndex++) {
+                    if (!isLateralOuterRefModel(joinModels.getQuick(prefixIndex))) {
+                        recordOrderingConstraint(prefixIndex, laterIndex);
+                    }
                 }
-
-                // Keep every prefix model before the boundary, regardless of which model the
-                // later INNER-ON predicate references.
-                recordNullingJoinPrefix(parent, boundaryIndex);
-
-                // When the source belongs to the prefix, the boundary must execute before the
-                // logical INNER origin so assignFilters keeps the gate at that origin. When the
-                // source follows the boundary, only keep the source after it; source pushdown is
-                // then safe because it cannot alter the outer join's already-established match set.
-                final int constrainedIndex = sourceIndex <= boundaryIndex ? originIndex : sourceIndex;
-                recordOrderingConstraint(parent, boundaryIndex, constrainedIndex);
+                // the only edge against model order: the later join executes before the outer join
+                recordOrderingConstraint(laterIndex, firstOuterJoinIndex);
             }
         }
     }
@@ -3875,7 +4154,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private int doReorderTables(IQueryModel parent, IntList ordered) {
+    private int doReorderTables(IQueryModel parent, IntList ordered, boolean isFirstModelFirst) {
         tempCrossIndexes.clear();
         ordered.clear();
         this.orderingStack.clear();
@@ -3886,7 +4165,8 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             IQueryModel q = joinModels.getQuick(i);
             if (q.getJoinContext() == null || q.getJoinContext().parents.size() == 0) {
-                if (q.getDependencies().size() > 0) {
+                // orderingStack polls the lowest index first, so the first model runs first
+                if (q.getDependencies().size() > 0 || (i == 0 && isFirstModelFirst)) {
                     orderingStack.add(i);
                 } else {
                     tempCrossIndexes.add(i);
@@ -3916,7 +4196,12 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, k = dependencies.size(); i < k; i++) {
                 int depIndex = dependencies.get(i);
                 JoinContext jc = joinModels.getQuick(depIndex).getJoinContext();
-                if (jc != null && --jc.inCount == 0) {
+                // inCount counts the context parents, so only an edge from a parent counts down. Other
+                // edges, such as createImpliedDependencies() links from model 0 to a time series join
+                // keyed on another model, or addOuterJoinExpression() links from the preceding model,
+                // would otherwise release the model before a parent that a hoisted ASOF or LT join
+                // holds back (see constrainRightAndFullJoinOrder())
+                if (jc != null && jc.parents.contains(index) && --jc.inCount == 0) {
                     orderingStack.add(depIndex);
                 }
             }
@@ -4909,6 +5194,48 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
+    /**
+     * Collects in anchoredJoinModels the join models that the join chain can reach from the first
+     * model through equalities, in the order in which anchorJoinModels() hands their equalities
+     * over, and returns the number of cross joins that the hand-over removes. It reads the join
+     * contexts and changes none. Only the first runSize models take part, the ones before the first
+     * barrier join, so every model stays on its side of each barrier join.
+     * <p>
+     * reorderTables() keeps an equality in the context of the model with the higher index, unless a
+     * model without context parents takes it over from a model that keeps another equality. A model
+     * that no equality links to an earlier model, and whose dependents hold equalities with it
+     * alone, therefore stays without parents, and doReorderTables() runs it as the slave of a cross
+     * join. A first model that drives the chain takes over no equality, so it cannot run after such
+     * a model instead.
+     * <p>
+     * A model joins the set when an equality links it to a model of the set, see
+     * isJoinModelAnchorable(). The set never depends on a model outside it, so the hand-over cannot
+     * close a cycle of context parents.
+     */
+    private int findJoinModelsToAnchor(IQueryModel parent, int runSize) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        int crossJoinCount = 0;
+        anchoredJoinModels.clear();
+        anchoredJoinModels.add(0);
+        boolean isGrowing = true;
+        while (isGrowing) {
+            isGrowing = false;
+            for (int i = 1; i < runSize; i++) {
+                if (anchoredJoinModels.contains(i) || !isJoinModelAnchorable(parent, i, runSize)) {
+                    continue;
+                }
+                final JoinContext jc = joinModels.getQuick(i).getJoinContext();
+                if (jc == null || jc.parents.size() == 0) {
+                    // without context parents, the model is the slave of a cross join
+                    crossJoinCount++;
+                }
+                anchoredJoinModels.add(i);
+                isGrowing = true;
+            }
+        }
+        return crossJoinCount;
+    }
+
     private QueryColumn findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -5553,6 +5880,32 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    /**
+     * Returns true when a RIGHT or FULL OUTER join executes after the model at {@code sourceIndex} and
+     * before the join at {@code joinIndex}. Every RIGHT/FULL OUTER join keeps its SQL position, but an
+     * ASOF or LT join that {@link #canRunBeforeOuterJoin} admits executes before the level's first one,
+     * which it follows in SQL. Runs before {@link #constrainRightAndFullJoinOrder}, so it takes every
+     * such ASOF or LT join as admitted: one it does not admit has no timestamp to join on.
+     * <p>
+     * A SPLICE join does not count, because nothing keeps it at its SQL position. When analyseEquals()
+     * keeps an ON equality of two models before it on the later model's join, reorderTables() runs both
+     * models before the SPLICE join, whose master then has no random access, so the query fails to
+     * compile. Moved to its own join, the equality would leave a pure cross join that reorderTables()
+     * runs after the SPLICE join, which would then splice only part of its master and return rows.
+     */
+    private boolean hasRightOrFullJoinBetween(IQueryModel parent, int sourceIndex, int joinIndex) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final int sourceJoinType = joinModels.getQuick(sourceIndex).getJoinType();
+        final boolean isHoistable = hasNonEquiNullingJoin
+                && (sourceJoinType == IQueryModel.JOIN_ASOF || sourceJoinType == IQueryModel.JOIN_LT);
+        for (int i = isHoistable ? 1 : sourceIndex + 1; i < joinIndex; i++) {
+            if (isRightOrFullJoinType(joinModels.getQuick(i).getJoinType())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean hasUnsupportedFunctionOrOperationInEquals(
             ExpressionNode node,
             int lhsColumnCount,
@@ -5663,6 +6016,34 @@ public class SqlOptimiser implements Mutable {
             int index = -1;
             for (int i = 0, n = joinModels.size(); i < n; i++) {
                 if (joinModels.getQuick(i).getColumnNameToAliasMap().excludes(columnName)) {
+                    continue;
+                }
+                if (index != -1) {
+                    return true;
+                }
+                index = i;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns true when more than one join model may expose the unqualified column
+     * name. Unlike isAmbiguousColumn(), it reads the alias-to-column maps, which
+     * validateColumnAndGetModelIndex() resolves names against and which are the only
+     * maps that rewriteSelectClause() fills for a sub-query join model. Before that
+     * rewrite, as in rewriteSampleBy(), a sub-query join model has no columns yet and
+     * counts as exposing every name.
+     */
+    private boolean isAmbiguousJoinColumn(IQueryModel model, CharSequence columnName) {
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.');
+        if (dot == -1) {
+            final ObjList<IQueryModel> joinModels = model.getJoinModels();
+            int index = -1;
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final LowerCaseCharSequenceObjHashMap<QueryColumn> columns = joinModels.getQuick(i).getAliasToColumnMap();
+                final boolean isUnexpanded = joinModels.getQuick(i).getNestedModel() != null && columns.size() == 0;
+                if (!isUnexpanded && columns.excludes(columnName)) {
                     continue;
                 }
                 if (index != -1) {
@@ -5870,23 +6251,57 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * True when the ON clause of the homogenized CROSS_RIGHT/CROSS_FULL join at {@code boundaryIndex}
-     * references a model that follows it in model order, e.g. {@code a RIGHT JOIN b ON b.k = c.k
-     * JOIN c ...}. analyseEquals files such a conjunct in the outer join expression without a join
-     * context, so that model can only execute before the outer join.
+     * Returns true when the sub-query is the set of an IN or NOT IN predicate of the model. The order of
+     * a set's rows cannot change the predicate's result. The parser registers the sub-query with the
+     * model whose WHERE clause, column, GROUP BY or ORDER BY expression holds the predicate, and for
+     * UPDATE with the model above the one that holds the WHERE clause.
      */
-    private boolean isForwardReferencingOuterJoin(IQueryModel parent, int boundaryIndex) throws SqlException {
-        final ExpressionNode onClause = parent.getJoinModels().getQuick(boundaryIndex).getOuterJoinExpressionClause();
-        if (onClause == null) {
-            return false;
+    private boolean isInSetSubQuery(IQueryModel model, ExpressionNode query) {
+        if (isInSetSubQuery(model.getWhereClause(), query)) {
+            return true;
         }
-        final IntHashSet refs = intHashSetPool.next();
-        literalCollector.withModel(parent);
-        literalCollector.resetCounts();
-        traversalAlgo.traverse(onClause, literalCollector.to(refs));
-        for (int i = 0, n = refs.size(); i < n; i++) {
-            if (refs.get(i) > boundaryIndex) {
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (isInSetSubQuery(columns.getQuick(i).getAst(), query)) {
                 return true;
+            }
+        }
+        final ObjList<ExpressionNode> groupBy = model.getGroupBy();
+        for (int i = 0, n = groupBy.size(); i < n; i++) {
+            if (isInSetSubQuery(groupBy.getQuick(i), query)) {
+                return true;
+            }
+        }
+        final ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            if (isInSetSubQuery(orderBy.getQuick(i), query)) {
+                return true;
+            }
+        }
+        final IQueryModel nested = model.getNestedModel();
+        return nested != null && isInSetSubQuery(nested.getWhereClause(), query);
+    }
+
+    private boolean isInSetSubQuery(ExpressionNode node, ExpressionNode query) {
+        sqlNodeStack.clear();
+        // pre-order iterative tree traversal
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.rhs == query && node.paramCount == 2 && isInKeyword(node.token)) {
+                    return true;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    final ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
             }
         }
         return false;
@@ -5903,6 +6318,50 @@ public class SqlOptimiser implements Mutable {
         } catch (NumericException ne) {
             return false;
         }
+    }
+
+    /**
+     * Checks whether the model at the given index can join the set that findJoinModelsToAnchor()
+     * collects in anchoredJoinModels. An equality has to link the model to a model of the set, so
+     * that it runs as the slave of a hash join. anchorJoinModels() hands the equalities that the
+     * model holds with models outside the set over to those models, so each context parent outside
+     * the set has to come from an equality and to precede the first barrier join.
+     */
+    private boolean isJoinModelAnchorable(IQueryModel parent, int index, int runSize) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final JoinContext jc = joinModels.getQuick(index).getJoinContext();
+        if (jc != null) {
+            final int clauseCount = jc.aIndexes.size();
+            boolean isLinked = false;
+            for (int i = 0, n = jc.parents.size(); i < n; i++) {
+                final int parentIndex = jc.parents.get(i);
+                boolean isEqualityParent = false;
+                for (int k = 0; k < clauseCount; k++) {
+                    final int ai = jc.aIndexes.getQuick(k);
+                    if ((ai != index ? ai : jc.bIndexes.getQuick(k)) == parentIndex) {
+                        isEqualityParent = true;
+                        break;
+                    }
+                }
+                if (anchoredJoinModels.contains(parentIndex)) {
+                    isLinked |= isEqualityParent;
+                } else if (parentIndex >= runSize || !isEqualityParent) {
+                    // a model after the first barrier join, or an ordering constraint, holds this model back
+                    return false;
+                }
+            }
+            if (isLinked) {
+                return true;
+            }
+        }
+        // the equalities that a model of the set is going to hand over still sit in its context
+        for (int i = 1, n = anchoredJoinModels.size(); i < n; i++) {
+            final JoinContext anchoredContext = joinModels.getQuick(anchoredJoinModels.getQuick(i)).getJoinContext();
+            if (anchoredContext != null && anchoredContext.parents.contains(index)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isLateralCountTemplateResolvable(
@@ -6164,6 +6623,27 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Returns true when the model reads its rows in their order: SAMPLE BY without the GROUP BY rewrite,
+     * LATEST ON, window functions, and first() / last(), which keep the first or the last row of a group.
+     */
+    private boolean isOrderReadingModel(IQueryModel model) {
+        if (model.getSampleBy() != null
+                || model.getLatestBy().size() > 0
+                || model.getSelectModelType() == IQueryModel.SELECT_MODEL_WINDOW) {
+            return true;
+        }
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
+            final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                if (hasOrderedGroupByFunc(columns.getQuick(i).getAst())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean isResolvableColumn(
             IQueryModel baseModel,
             IQueryModel innerVirtualModel,
@@ -6217,6 +6697,52 @@ public class SqlOptimiser implements Mutable {
 
     private boolean isSimpleIntegerColumn(ExpressionNode column, IQueryModel model) {
         return checkSimpleIntegerColumn(column, model) != null;
+    }
+
+    /**
+     * Checks whether taking over the equalities that the join context "from" holds with the model at
+     * index "to" would close a cycle of join-context parents. The take-over makes the model of "from"
+     * a parent of "to", so it closes a cycle when "to" already has to execute before that model, that
+     * is, when the walk up from the parents that "from" keeps reaches "to". Besides join-context
+     * parents, the walk follows the ordering constraints that applyOrderingConstraints() adds after
+     * the pass, because doReorderTables() counts them as parents too. It ignores dependencies, which
+     * never hold a model back on their own. doReorderTables() cannot order a cycle: the first pass
+     * then keeps a partial order that stops at the cycle, and a later pass that reorderTables()
+     * rejects still keeps the moved equalities, which vanish from the plan when they land in the
+     * context of the model that executes first.
+     */
+    private boolean isTakeoverClosingCycle(IQueryModel parent, JoinContext from, int to) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final int fromIndex = from.slaveIndex;
+        ancestorStack.clear();
+        ancestorsVisited.clear();
+        ancestorsVisited.add(fromIndex);
+        // the parents of the clauses that "from" keeps, as moveClauses() assigns them
+        for (int i = 0, n = from.aIndexes.size(); i < n; i++) {
+            final int ai = from.aIndexes.getQuick(i);
+            final int bi = from.bIndexes.getQuick(i);
+            if (ai != to && bi != to) {
+                ancestorStack.add(ai != fromIndex ? ai : bi);
+            }
+        }
+        pushOrderingConstraintParents(fromIndex);
+        while (ancestorStack.size() > 0) {
+            final int index = ancestorStack.getLast();
+            ancestorStack.setPos(ancestorStack.size() - 1);
+            if (index == to) {
+                return true;
+            }
+            if (ancestorsVisited.add(index)) {
+                final JoinContext context = joinModels.getQuick(index).getJoinContext();
+                if (context != null) {
+                    for (int i = 0, n = context.parents.size(); i < n; i++) {
+                        ancestorStack.add(context.parents.get(i));
+                    }
+                }
+                pushOrderingConstraintParents(index);
+            }
+        }
+        return false;
     }
 
     private boolean isTimestampLiteral(ExpressionNode node, CharSequence timestampColumn) {
@@ -6500,25 +7026,25 @@ public class SqlOptimiser implements Mutable {
                     // a.x = ?.x
                     //  |     ?
                     // a.x = ?.y
-                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bbi, bbn, bbo);
+                    addFilterOrEmitJoin(parent, a.slaveIndex, k, abi, abn, abo, bbi, bbn, bbo);
                     break;
                 } else if (abi == bai && Chars.equals(abn, ban)) {
                     // a.y = b.x
                     //    /
                     // b.x = a.x
-                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bbi, bbn, bbo);
+                    addFilterOrEmitJoin(parent, a.slaveIndex, k, aai, aan, aao, bbi, bbn, bbo);
                     break;
                 } else if (aai == bbi && Chars.equals(aan, bbn)) {
                     // a.x = b.x
                     //     \
                     // b.y = a.x
-                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bai, ban, bao);
+                    addFilterOrEmitJoin(parent, a.slaveIndex, k, abi, abn, abo, bai, ban, bao);
                     break;
                 } else if (abi == bbi && Chars.equals(abn, bbn)) {
                     // a.x = b.x
                     //        |
                     // a.y = b.x
-                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bai, ban, bao);
+                    addFilterOrEmitJoin(parent, a.slaveIndex, k, aai, aan, aao, bai, ban, bao);
                     break;
                 }
             }
@@ -6776,6 +7302,16 @@ public class SqlOptimiser implements Mutable {
                     // Create a new expression; the branch or a shared CTE still owns the original.
                     timestamp = makeModelAlias(setAndGetModelAlias(nested), timestamp);
                 }
+                if (hasRightOrFullJoin(nested)) {
+                    // The declaration orders the master, not the output of a RIGHT or FULL join.
+                    // The hoisted reference then only keeps the column live and declares no
+                    // order: code generation takes the designated timestamp from the join, which
+                    // has none. Flag a new expression; the holder or a shared CTE may still own
+                    // the original.
+                    final ExpressionNode unordered = nextLiteral(timestamp.token, timestamp.position);
+                    unordered.isTimestampOrderInherited = true;
+                    timestamp = unordered;
+                }
                 model.setTimestamp(timestamp);
                 model.setExplicitTimestamp(isExplicitTimestamp);
                 if (!nested.hasSharedRefs()) {
@@ -6877,11 +7413,10 @@ public class SqlOptimiser implements Mutable {
                     final int tableIndex = literalCollectorAIndexes.get(0);
                     final IQueryModel parent = model.getJoinModels().getQuick(tableIndex);
 
-                    // Do not move where clauses inside outer join models because that'd change result
+                    // Do not move where clauses inside outer join models because that'd change result,
+                    // except into the preserved right side of a RIGHT OUTER join
                     int joinType = parent.getJoinType();
-                    if (tableIndex > 0
-                            && (joinBarriers.contains(joinType))
-                    ) {
+                    if (tableIndex > 0 && !isWherePushableBelowJoin(joinType, node)) {
                         // A WHERE predicate on a barrier-joined table must still stay above a LATER
                         // master-nulling join that NULL-extends that table; anchoring at the table's
                         // own barrier join would leak the downstream NULL-master rows. An ON conjunct
@@ -7340,7 +7875,8 @@ public class SqlOptimiser implements Mutable {
     private void optimiseExpressionModels(
             IQueryModel model,
             SqlExecutionContext executionContext,
-            SqlParserCallback sqlParserCallback
+            SqlParserCallback sqlParserCallback,
+            boolean isOrderTracked
     ) throws SqlException {
         if (!model.isOptimisable()) {
             return;
@@ -7353,7 +7889,10 @@ public class SqlOptimiser implements Mutable {
                 // for expression models that have been converted to
                 // the joins, the query model will be set to null.
                 if (node.queryModel != null) {
-                    IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
+                    // the order of an IN set's rows cannot change the result, unlike the order of
+                    // the rows of a scalar sub-query, which yields its first row
+                    final boolean isOrderObserved = !isInSetSubQuery(model, node);
+                    IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback, isOrderObserved, isOrderTracked);
                     if (optimised != node.queryModel) {
                         node.queryModel = optimised;
                     }
@@ -7362,7 +7901,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         if (model.getNestedModel() != null) {
-            optimiseExpressionModels(model.getNestedModel(), executionContext, sqlParserCallback);
+            optimiseExpressionModels(model.getNestedModel(), executionContext, sqlParserCallback, isOrderTracked);
         }
 
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
@@ -7370,23 +7909,53 @@ public class SqlOptimiser implements Mutable {
         // as usual, we already optimised self (index=0), now optimised others
         if (m > 1) {
             for (int i = 1; i < m; i++) {
-                optimiseExpressionModels(joinModels.getQuick(i), executionContext, sqlParserCallback);
+                optimiseExpressionModels(joinModels.getQuick(i), executionContext, sqlParserCallback, isOrderTracked);
             }
         }
 
         // call out to union models
         if (model.getUnionModel() != null) {
-            optimiseExpressionModels(model.getUnionModel(), executionContext, sqlParserCallback);
+            optimiseExpressionModels(model.getUnionModel(), executionContext, sqlParserCallback, isOrderTracked);
         }
     }
 
-    private void optimiseJoins(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    /**
+     * Optimises the joins of the model and of the models it nests.
+     *
+     * @param isOrderObserved true when the order of the model's rows can change the query result
+     * @param isOrderRead     true when an operator above the model reads the rows in their order, such as
+     *                        first(), a window function or SAMPLE BY. A sort between that operator and the
+     *                        model then does not decide the order alone: the model's ORDER BY can belong to
+     *                        the operator's own SELECT, which sorts the operator's output.
+     * @param isOrderTracked  false below an explicit TIMESTAMP(col) clause that names a column other than
+     *                        the designated timestamp of the table that drives the join chains below it, see
+     *                        isTimestampOfFirstTable(). The clause declares the order of col, and a chain
+     *                        that runs its first model first would not stream rows in that order. No level
+     *                        of the subtree then observes the order, so its join chains keep the order that
+     *                        the cost model picks. The caller of optimise() can also turn the tracking off
+     *                        for the whole query.
+     */
+    private void optimiseJoins(
+            IQueryModel model,
+            SqlExecutionContext sqlExecutionContext,
+            boolean isOrderObserved,
+            boolean isOrderRead,
+            boolean isOrderTracked
+    ) throws SqlException {
         if (!model.isOptimisable()) {
             return;
         }
         ObjList<IQueryModel> joinModels = model.getJoinModels();
 
         int n = joinModels.size();
+        // the order of the rows that reach the model from its join chain or its nested model: an operator
+        // that reads the rows in order observes it, GROUP BY outputs its groups in an order of its own,
+        // ORDER BY sorts the rows, and LIMIT keeps the first or the last ones
+        final boolean isOrderReading = isOrderReadingModel(model);
+        final boolean isGroupBy = !isOrderReading && model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY;
+        final boolean isSourceOrderRead = isOrderTracked && (isOrderReading || (!isGroupBy && isOrderRead));
+        final boolean isSourceOrderObserved = isSourceOrderRead
+                || (isOrderTracked && !isGroupBy && model.getOrderBy().size() == 0 && (isOrderObserved || model.getLimitLo() != null));
         if (n > 1) {
             // the const maps are scratch state scoped to this block: processJoinConditions
             // (via analyseEquals/analyseRegex) populates them and addTransitiveFilters reads
@@ -7414,9 +7983,8 @@ public class SqlOptimiser implements Mutable {
             // seed the model-order anchors masterNullingJoinIndex reads in analyseEquals below (a
             // RIGHT/FULL OUTER not yet homogenized into a CROSS variant is master-nulling either way)
             precomputeNullingJoinAnchors(model);
-            // flag a non-equi RIGHT/FULL OUTER that will reorder past later tables; masterNullingJoinIndex
-            // (model order) cannot see that reorder, so analyseEquals defers single-table WHERE
-            // predicates to assignFilters when this is set
+            // flag a non-equi RIGHT/FULL OUTER; analyseEquals defers single-table WHERE predicates to
+            // assignFilters when this is set (conservatively, see hasNonEquiNullingJoin)
             precomputeHasNonEquiNullingJoin(model);
             processJoinConditions(model, where, false, model, -1);
 
@@ -7427,25 +7995,41 @@ public class SqlOptimiser implements Mutable {
             processEmittedJoinClauses(model);
             createImpliedDependencies(model);
             homogenizeCrossJoins(model);
-            constrainJoinsAfterReorderedNullingJoins(model);
-            reorderTables(model);
+            constrainRightAndFullJoinOrder(model);
+            reorderTables(model, isSourceOrderObserved);
             assignFilters(model);
             alignJoinClauses(model);
             addTransitiveFilters(model, sqlExecutionContext);
             mergeConstIntoPostJoinWhereClause(model);
         }
 
+        boolean hasTimeSeriesJoin = false;
+        for (int i = 1; i < n; i++) {
+            hasTimeSeriesJoin |= joinsRequiringTimestamp[joinModels.getQuick(i).getJoinType()];
+        }
         for (int i = 0; i < n; i++) {
-            IQueryModel m = model.getJoinModels().getQuick(i).getNestedModel();
+            final IQueryModel joinModel = model.getJoinModels().getQuick(i);
+            final boolean isJoinModelOrderTracked = isOrderTracked
+                    && (!joinModel.hasExplicitTimestamp() || isTimestampOfFirstTable(joinModel));
+            // the join chain streams the rows of its first model, and a time series join reads both of
+            // its sides in timestamp order
+            final boolean isJoinModelOrderObserved = isJoinModelOrderTracked && (isSourceOrderObserved
+                    || (i == 0 ? hasTimeSeriesJoin : joinsRequiringTimestamp[joinModel.getJoinType()]));
+            IQueryModel m = joinModel.getNestedModel();
             if (m != null) {
                 clearConstNameMaps();
-                optimiseJoins(m, sqlExecutionContext);
+                optimiseJoins(m, sqlExecutionContext, isJoinModelOrderObserved, isSourceOrderRead, isJoinModelOrderTracked);
             }
 
-            m = model.getJoinModels().getQuick(i).getUnionModel();
+            m = joinModel.getUnionModel();
             if (m != null) {
                 clearConstNameMaps();
-                optimiseJoins(m, sqlExecutionContext);
+                // the next branch of a set operation, a sibling of the model
+                if (i == 0) {
+                    optimiseJoins(m, sqlExecutionContext, isOrderObserved, isOrderRead, isOrderTracked);
+                } else {
+                    optimiseJoins(m, sqlExecutionContext, isJoinModelOrderObserved, isSourceOrderRead, isJoinModelOrderTracked);
+                }
             }
         }
     }
@@ -7703,10 +8287,10 @@ public class SqlOptimiser implements Mutable {
     /**
      * Sets {@link #hasNonEquiNullingJoin} for the current level. A RIGHT/FULL OUTER join whose ON
      * clause carries no plain cross-table equality gets no join context, so {@code homogenizeCrossJoins}
-     * turns it into a CROSS_RIGHT/CROSS_FULL that {@code reorderTables} appends last, NULL-extending
-     * every table joined before it. Runs before processJoinConditions, while the join types are still
-     * RIGHT/FULL OUTER and no context has been built, so it predicts the homogenization by inspecting
-     * the raw criteria instead of reading the (not-yet-built) context.
+     * turns it into a CROSS_RIGHT/CROSS_FULL, which NULL-extends every table joined before it. Runs
+     * before processJoinConditions, while the join types are still RIGHT/FULL OUTER and no context
+     * has been built, so it predicts the homogenization by inspecting the raw criteria instead of
+     * reading the (not-yet-built) context.
      */
     private void precomputeHasNonEquiNullingJoin(IQueryModel parent) throws SqlException {
         hasNonEquiNullingJoin = false;
@@ -7887,10 +8471,16 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void processEmittedJoinClauses(IQueryModel model) {
-        // pick up join clauses emitted at initial analysis stage
-        // as we merge contexts at this level no more clauses is to be emitted
-        for (int i = 0, k = emittedJoinClauses.size(); i < k; i++) {
-            addJoinContext(model, emittedJoinClauses.getQuick(i));
+        // pick up join clauses emitted at initial analysis stage; merging one of them into its slave's
+        // context may emit another, with a lower slave index, so the loop runs until none is emitted
+        for (int i = 0; i < emittedJoinClauses.size(); i++) {
+            final JoinContext emitted = emittedJoinClauses.getQuick(i);
+            addJoinContext(model, emitted);
+            // like any other join clause, an emitted one makes its slave depend on its parent;
+            // without the link, doReorderTables() never counts this parent as done, so it may never release the slave
+            for (int p = 0, pn = emitted.parents.size(); p < pn; p++) {
+                linkDependencies(model, emitted.parents.get(p), emitted.slaveIndex);
+            }
         }
     }
 
@@ -7947,7 +8537,7 @@ public class SqlOptimiser implements Mutable {
                         break;
                     default:
                         if (isMovableInnerPredicate) {
-                            addModelOnPredicateIfSingleModel(parent, n, joinIndex);
+                            addModelOnPredicateFromReferencedModels(parent, n, joinIndex);
                         }
                         if (joinBarriers.contains(joinModel.getJoinType())) {
                             addOuterJoinExpression(parent, joinModel, joinIndex, n);
@@ -8051,6 +8641,17 @@ public class SqlOptimiser implements Mutable {
 
         // process join models and their join conditions
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        // reorderTables() can make the first join model a slave when it is a table without a timestamp:
+        // swapJoinOrder0() moves clauses into its join context, which the loop below skips. This block
+        // emits only the qualified literals, since each resolves to its own model, while a lookup by
+        // vanilla name searches every join model and could bind a same-named column of another table.
+        final JoinContext firstModelContext = model.getJoinContext();
+        if (joinModels.size() > 1 && firstModelContext != null) {
+            for (int k = 0, z = firstModelContext.aIndexes.size(); k < z; k++) {
+                emitLiteralsTopDown(firstModelContext.aNodes.getQuick(k), model);
+                emitLiteralsTopDown(firstModelContext.bNodes.getQuick(k), model);
+            }
+        }
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             final IQueryModel jm = joinModels.getQuick(i);
             final JoinContext jc = jm.getJoinContext();
@@ -8066,8 +8667,10 @@ public class SqlOptimiser implements Mutable {
                     // resolved within the join model's own scope (e.g. v2 internally
                     // uses aliases like "v1", "t0"). Using the plain column name
                     // allows the column to be found in the join model's alias map.
+                    // alignJoinClauses() puts the join model's own column on the "a"
+                    // side, so the "b" name belongs to another model: emitting it would
+                    // add a same-named join model column that nothing references.
                     addTopDownColumn(jc.aNames.getQuick(k), jm);
-                    addTopDownColumn(jc.bNames.getQuick(k), jm);
 
                     if (papaModel != null) {
                         emitLiteralsTopDown(jc.aNodes.getQuick(k), papaModel);
@@ -8432,6 +9035,16 @@ public class SqlOptimiser implements Mutable {
         return op;
     }
 
+    // Adds to ancestorStack the parents that the ordering constraints recorded by
+    // constrainRightAndFullJoinOrder() give the model at childIndex, as applyOrderingConstraints() reads them.
+    private void pushOrderingConstraintParents(int childIndex) {
+        for (int i = 2 * tempExprs.size(), n = tempIntList.size(); i < n; i += 2) {
+            if (tempIntList.getQuick(i + 1) == childIndex) {
+                ancestorStack.add(tempIntList.getQuick(i));
+            }
+        }
+    }
+
     private void pushPivotFiltersToInnerModel(IQueryModel model, IQueryModel innerModel) throws SqlException {
         final ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
         ExpressionNode pushedFilter = null;
@@ -8513,21 +9126,9 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
-    // A non-equi outer join consumes the complete logical prefix as its master, so every prefix
-    // model must execute before the boundary. tempIntHashSet marks a boundary whose prefix is
-    // already recorded, so each boundary materializes its prefix only once.
-    private void recordNullingJoinPrefix(IQueryModel parent, int boundaryIndex) {
-        if (tempIntHashSet.add(boundaryIndex)) {
-            for (int prefixIndex = 0; prefixIndex < boundaryIndex; prefixIndex++) {
-                recordOrderingConstraint(parent, prefixIndex, boundaryIndex);
-            }
-        }
-    }
-
-    private void recordOrderingConstraint(IQueryModel parent, int parentIndex, int childIndex) {
+    private void recordOrderingConstraint(int parentIndex, int childIndex) {
         tempIntList.add(parentIndex);
         tempIntList.add(childIndex);
-        addOrderingConstraint(parent, parentIndex, childIndex);
     }
 
     /**
@@ -8647,7 +9248,7 @@ public class SqlOptimiser implements Mutable {
      * table "c" leaving "b" without clauses.
      */
     @SuppressWarnings({"StatementWithEmptyBody"})
-    private void reorderTables(IQueryModel model) {
+    private void reorderTables(IQueryModel model, boolean isOrderObserved) {
         ObjList<IQueryModel> joinModels = model.getJoinModels();
         int n = joinModels.size();
 
@@ -8662,23 +9263,46 @@ public class SqlOptimiser implements Mutable {
 
         int cost = Integer.MAX_VALUE;
         int root = -1;
+        final IQueryModel first = joinModels.getQuick(0);
+        // true when the first model has to stay first in the join chain, see the take-over loop below
+        final boolean isFirstModelDriver = first.getTimestamp() != null || first.getNestedModel() != null || first.getTableNameExpr() == null;
+        // A first model that no equality links runs after the models that equalities link, so the chain
+        // would stream their rows and declare their timestamp. Keep it first when the order of the chain's
+        // rows can change the result, see optimiseJoins(). Otherwise it stays last: its cross join then
+        // multiplies the chain's output rather than the input of every later join.
+        final boolean isFirstModelFirst = isFirstModelDriver && isOrderObserved;
 
         // analyse state of tree for each set of n-1 crosses
         for (int z = 0, zc = tempCrosses.size(); z < zc; z++) {
             for (int i = 0; i < zc; i++) {
                 if (z != i) {
                     int to = tempCrosses.getQuick(i);
-                    final JoinContext jc = joinModels.getQuick(to).getJoinContext();
+                    // a barrier join must not take over a later inner join's equality: code generation
+                    // ignores the join context of a CROSS_LEFT/CROSS_RIGHT/CROSS_FULL join, so the
+                    // equality would be lost, and an outer join would turn it into a match condition
+                    // that NULL-extends the rows the inner join filters out
+                    if (joinBarriers.contains(joinModels.getQuick(to).getJoinType())) {
+                        continue;
+                    }
+                    // the first model drives the join chain, so the chain's rows and timestamps follow its
+                    // order; taking over equalities would make it a slave that runs after another model.
+                    // Keep it first when it may carry a time order: it has a timestamp, or it is not a
+                    // table or table function but a sub-query, CTE or view, whose order this level cannot
+                    // see. A table without a timestamp may take over, which can replace a cross join by
+                    // hash joins.
+                    if (to == 0 && isFirstModelDriver) {
+                        continue;
+                    }
                     // look above i up to OUTER join
-                    for (int k = i - 1; k > -1 && swapJoinOrder(model, to, k, jc); k--) ;
+                    for (int k = i - 1; k > -1 && swapJoinOrder(model, to, k); k--) ;
                     // look below i for up to OUTER join
-                    for (int k = i + 1; k < n && swapJoinOrder(model, to, k, jc); k++) ;
+                    for (int k = i + 1; k < n && swapJoinOrder(model, to, k); k++) ;
                 }
             }
 
-            applyModelOnOrderingConstraints(model);
+            applyOrderingConstraints(model);
             IntList ordered = model.nextOrderedJoinModels();
-            int thisCost = doReorderTables(model, ordered);
+            int thisCost = doReorderTables(model, ordered, isFirstModelFirst);
 
             // we have to have root, even if it is expensive
             // so the first iteration sets the root regardless
@@ -8691,6 +9315,29 @@ public class SqlOptimiser implements Mutable {
         }
 
         assert root != -1;
+
+        // A first model that drives the chain takes over no equality, so the chosen order may cross
+        // join a model that equalities link to the chain. The chain reaches such a model through hash
+        // joins instead, see findJoinModelsToAnchor(). This applies only when the first model runs
+        // first: without an equality of its own, it runs last unless isFirstModelFirst holds. The last
+        // pass leaves the join contexts that code generation reads, so the hand-over also requires that
+        // they yield the cost of the chosen order: they then hold no cycle, and each model that leaves a
+        // cross join lowers the cost.
+        if (isFirstModelDriver && cost != Integer.MAX_VALUE && model.getOrderedJoinModels().getQuick(0) == 0) {
+            int runSize = 1;
+            while (runSize < n && joinBarriers.excludes(joinModels.getQuick(runSize).getJoinType())) {
+                runSize++;
+            }
+            final IntList ordered = model.nextOrderedJoinModels();
+            if (findJoinModelsToAnchor(model, runSize) > 0 && doReorderTables(model, ordered, isFirstModelFirst) == cost) {
+                anchorJoinModels(model);
+                // the hand-over rebuilds join contexts, which drops their ordering constraints
+                applyOrderingConstraints(model);
+                final int anchoredCost = doReorderTables(model, ordered, isFirstModelFirst);
+                assert anchoredCost < cost;
+                model.setOrderedJoinModels(ordered);
+            }
+        }
     }
 
     private ExpressionNode replaceColumnWithAlias(ExpressionNode node, IQueryModel model) throws SqlException {
@@ -10634,7 +11281,7 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                if (timestampAlias == null && nested.getJoinModels().size() > 1 && isAmbiguousColumn(nested, timestampColumn)) {
+                if (timestampAlias == null && nested.getJoinModels().size() > 1 && isAmbiguousJoinColumn(nested, timestampColumn)) {
                     // We're dealing with a join, let's check if the timestamp needs a prefix.
                     final CharSequence tableAlias = nested.getAlias() != null ? nested.getAlias().token : nested.getTableName();
                     final CharacterStoreEntry e = characterStore.newEntry();
@@ -12024,8 +12671,13 @@ public class SqlOptimiser implements Mutable {
                 // this is to handle cases where we use system tables, which are prefixed
                 // downstream code cannot handle `"sys.telemetry.wal".created`
                 // it will break in `where` optimization and later metadata lookups
-                final CharSequence tableName = toAddWhereClause.getTableName();
+                CharSequence tableName = toAddWhereClause.getTableName();
                 if (tableName != null) {
+                    // an aliased table is visible under its alias only, which a join requires
+                    final ExpressionNode tableAlias = toAddWhereClause.getAlias();
+                    if (tableAlias != null) {
+                        tableName = tableAlias.token;
+                    }
                     CharacterStoreEntry e = characterStore.newEntry();
                     if (Chars.indexOf(tableName, '.') != -1) {
                         // Table name has . in the name, quote it
@@ -12242,19 +12894,14 @@ public class SqlOptimiser implements Mutable {
             final int beforeSplit = groupByModel.getBottomUpColumns().size();
 
             final ExpressionNode originalNode = qc.getAst();
-            // if the alias is in groupByAliases, it means that we've already seen
-            // the column in the GROUP BY clause and emitted literals for it to
-            // the inner models; in this case, if we add a missing table prefix to
-            // column's nodes, it may break the references; to avoid that, clone the node
-            ExpressionNode node = groupByAliases.indexOf(qc.getAlias()) != -1
-                    ? deepClone(expressionNodePool, originalNode)
-                    : originalNode;
-
-            // add table or alias prefix to the literal arguments of this function or operator
-            addMissingTablePrefixesForGroupByQueries(node, baseModel, innerVirtualModel);
+            // add table or alias prefix to the literal arguments of this function or operator;
+            // a GROUP BY key that names this column by alias or position has its own copy of
+            // the AST (see cloneProjectionAstForGroupBy()), so the prefixes cannot break the
+            // key's inner model references
+            addMissingTablePrefixesForGroupByQueries(originalNode, baseModel, innerVirtualModel);
 
             // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
-            node = rewriteGroupBySelectExpression(node, groupByModel, groupByNodes, groupByAliases);
+            final ExpressionNode node = rewriteGroupBySelectExpression(originalNode, groupByModel, groupByNodes, groupByAliases);
             if (originalNode == node) {
                 rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
             } else {
@@ -12744,7 +13391,7 @@ public class SqlOptimiser implements Mutable {
                     QueryColumn qc = model.getAliasToColumnMap().get(node.token);
                     if (qc != null && (qc.getAst().type != LITERAL || !Chars.equals(node.token, qc.getAst().token))) {
                         originalNodePosition = node.position;
-                        node = qc.getAst();
+                        node = cloneProjectionAstForGroupBy(qc);
                         alias = qc.getAlias();
                     }
                 } else if (node.type == CONSTANT) { // group by column index
@@ -12759,7 +13406,7 @@ public class SqlOptimiser implements Mutable {
                         QueryColumn qc = columns.getQuick(columnIdx);
 
                         originalNodePosition = node.position;
-                        node = qc.getAst();
+                        node = cloneProjectionAstForGroupBy(qc);
                         alias = qc.getAlias();
                     } catch (NumericException e) {
                         // ignore
@@ -13178,6 +13825,11 @@ public class SqlOptimiser implements Mutable {
             CharSequence timestamp = baseModel.getTimestamp().token;
             // does model already select timestamp column?
             if (innerVirtualModel.getColumnNameToAliasMap().excludes(timestamp)) {
+                // An ambiguous name resolves only when qualified with the master's alias,
+                // and the translating model then renames it, so it is no longer redundant.
+                if (translationIsRedundant && isAmbiguousJoinColumn(baseModel, timestamp)) {
+                    translationIsRedundant = false;
+                }
                 // no, do we rename columns? does model select timestamp under a new name?
                 if (translationIsRedundant) {
                     // columns were not renamed
@@ -13197,7 +13849,8 @@ public class SqlOptimiser implements Mutable {
                         e.put(baseModel.getName()).put('.').put(timestamp);
                         final CharSequence prefixedTimestampName = e.toImmutable();
                         if (translatingModel.getColumnNameToAliasMap().excludes(prefixedTimestampName)) {
-                            if (baseModel.getJoinModels().size() > 0 && isAmbiguousColumn(baseModel, baseModel.getTimestamp().token)) {
+                            final boolean isTimestampAmbiguous = isAmbiguousJoinColumn(baseModel, timestamp);
+                            if (isTimestampAmbiguous) {
                                 // add prefixed column since the name is ambiguous
                                 addTimestampToProjection(
                                         prefixedTimestampName,
@@ -13216,6 +13869,17 @@ public class SqlOptimiser implements Mutable {
                                         innerVirtualModel,
                                         windowModel
                                 );
+                            }
+                            if (baseModel.getJoinModels().size() > 1) {
+                                // The SAMPLE BY model reads only its aggregate arguments from the
+                                // translating model, so top-down column pruning would drop the
+                                // timestamp, and with it the master's timestamp from the join.
+                                // A declared timestamp keeps both in the projection. It declares no
+                                // order: code generation takes the designated timestamp from the join,
+                                // which has none when the join does not keep the master's order, as
+                                // with a RIGHT, FULL or SPLICE join.
+                                translatingModel.setTimestamp(nextLiteral(isTimestampAmbiguous ? prefixedTimestampName : timestamp));
+                                translatingModel.getTimestamp().isTimestampOrderInherited = true;
                             }
                         }
                     }
@@ -14032,12 +14696,11 @@ public class SqlOptimiser implements Mutable {
     /**
      * Moves reversible join clauses, such as a.x = b.x from table "from" to table "to".
      *
-     * @param to      target table index
-     * @param from    source table index
-     * @param context context of target table index
+     * @param to   target table index
+     * @param from source table index
      * @return false if "from" is outer joined table, otherwise - true
      */
-    private boolean swapJoinOrder(IQueryModel parent, int to, int from, final JoinContext context) {
+    private boolean swapJoinOrder(IQueryModel parent, int to, int from) {
         ObjList<IQueryModel> joinModels = parent.getJoinModels();
         IQueryModel jm = joinModels.getQuick(from);
         if (joinBarriers.contains(jm.getJoinType())) {
@@ -14046,12 +14709,12 @@ public class SqlOptimiser implements Mutable {
 
         final JoinContext that = jm.getJoinContext();
         if (that != null && that.parents.contains(to)) {
-            swapJoinOrder0(parent, jm, to, context);
+            swapJoinOrder0(parent, jm, to);
         }
         return true;
     }
 
-    private void swapJoinOrder0(IQueryModel parent, IQueryModel jm, int to, JoinContext jc) {
+    private void swapJoinOrder0(IQueryModel parent, IQueryModel jm, int to) {
         final JoinContext that = jm.getJoinContext();
         clausesToSteal.clear();
         int zc = that.aIndexes.size();
@@ -14065,15 +14728,26 @@ public class SqlOptimiser implements Mutable {
         assert clausesToSteal.size() > 0;
 
         if (clausesToSteal.size() < zc) {
-            IQueryModel target = parent.getJoinModels().getQuick(to);
-            if (jc == null) {
-                target.setContext(jc = contextPool.next());
+            if (isTakeoverClosingCycle(parent, that, to)) {
+                return;
             }
-            jc.slaveIndex = to;
-            jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
-            if (target.getJoinType() == IQueryModel.JOIN_CROSS) {
-                target.setJoinType(IQueryModel.JOIN_INNER);
-            }
+            takeOverClauses(parent, jm, to);
+        }
+    }
+
+    // Moves the clauses of the join model "jm" that clausesToSteal lists to the model at index "to".
+    private void takeOverClauses(IQueryModel parent, IQueryModel jm, int to) {
+        IQueryModel target = parent.getJoinModels().getQuick(to);
+        // "to" may take over clauses from several models in one scan, so each take-over adds
+        // to the context that the previous one created
+        JoinContext jc = target.getJoinContext();
+        if (jc == null) {
+            target.setContext(jc = contextPool.next());
+        }
+        jc.slaveIndex = to;
+        jm.setContext(moveClauses(parent, jm.getJoinContext(), jc, clausesToSteal));
+        if (target.getJoinType() == IQueryModel.JOIN_CROSS) {
+            target.setJoinType(IQueryModel.JOIN_INNER);
         }
     }
 
@@ -15229,13 +15903,52 @@ public class SqlOptimiser implements Mutable {
             @Transient SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
+        return optimise(model, sqlExecutionContext, sqlParserCallback, true);
+    }
+
+    /**
+     * Optimises the query model.
+     *
+     * @param isOrderTracked false for the SELECT of INSERT AS SELECT and of CREATE TABLE AS SELECT. No level of
+     *                       the query, its sub-queries included, then keeps the first model of a join chain
+     *                       first for the order of the rows, so every join chain keeps the order that the cost
+     *                       model picks and the query declares the designated timestamp of that order. LIMIT,
+     *                       window functions and the other clauses that read the order of their rows then read
+     *                       that order.
+     */
+    IQueryModel optimise(
+            @Transient final IQueryModel model,
+            @Transient SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback,
+            boolean isOrderTracked
+    ) throws SqlException {
+        return optimise(model, sqlExecutionContext, sqlParserCallback, isOrderTracked, isOrderTracked);
+    }
+
+    /**
+     * Optimises the query model.
+     *
+     * @param isOrderObserved false when nothing reads the order of the query's rows, as for the set of an IN
+     *                        predicate. The query's own clauses, such as LIMIT or SAMPLE BY, still read the
+     *                        order of the rows they consume.
+     * @param isOrderTracked  false when no level of the query may keep the first model of a join chain first
+     *                        for the order of the rows, see optimise(IQueryModel, SqlExecutionContext,
+     *                        SqlParserCallback, boolean)
+     */
+    IQueryModel optimise(
+            @Transient final IQueryModel model,
+            @Transient SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback,
+            boolean isOrderObserved,
+            boolean isOrderTracked
+    ) throws SqlException {
         if (!model.isOptimisable()) {
             return model;
         }
         IQueryModel rewrittenModel = model;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
-            optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
+            optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback, isOrderTracked);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewrittenModel = rewritePivot(rewrittenModel, sqlExecutionContext);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
@@ -15261,7 +15974,7 @@ public class SqlOptimiser implements Mutable {
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);
-            optimiseJoins(rewrittenModel, sqlExecutionContext);
+            optimiseJoins(rewrittenModel, sqlExecutionContext, isOrderObserved, false, isOrderTracked);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
