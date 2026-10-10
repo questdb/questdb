@@ -1912,6 +1912,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             dedupColSinkAddr,
                             dedupColumnIndex,
                             columnType,
+                            metadata.getColumnNullPolicy(i),
                             columnSize,
                             columnTop
                     );
@@ -2122,12 +2123,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static boolean hasLegacyRequiredNoSentinelColumn(ParquetMetaFileReader meta, int parquetColumnCount) {
         for (int i = 0; i < parquetColumnCount; i++) {
             if (meta.getColumnMaxDefLevel(i) == 0) {
-                final int srcTag = ColumnType.tagOf(meta.getColumnType(i));
-                if (srcTag == ColumnType.BOOLEAN
-                        || srcTag == ColumnType.BYTE
-                        || srcTag == ColumnType.SHORT
-                        || srcTag == ColumnType.CHAR
-                        || srcTag == ColumnType.SYMBOL) {
+                final boolean isOptionalByConvention = switch (meta.getColumnNullPolicy(i)) {
+                    case SENTINEL -> ColumnType.isSymbol(meta.getColumnType(i));
+                    case NONE -> true;
+                };
+                if (isOptionalByConvention) {
                     return true;
                 }
             }
@@ -2296,6 +2296,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     dedupColSinkAddr,
                                     dedupColumnIndex++,
                                     columnType,
+                                    tableWriterMetadata.getColumnNullPolicy(columnIndex),
                                     columnSize,
                                     columnTop
                             );

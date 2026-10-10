@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.log.Log;
@@ -484,6 +485,14 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
 
         public CharSequence getColumnName(int columnIndex) {
             return columnNames.getQuick(columnIndex);
+        }
+
+        /**
+         * How the stored column represents NULL: the NULL policy of the type stored in the file;
+         * see {@link ParquetDecoder#getColumnNullPolicy(int)}.
+         */
+        public NullPolicy getColumnNullPolicy(int columnIndex) {
+            return ColumnType.getTypeDriver(getColumnType(columnIndex)).getNullPolicy();
         }
 
         public int getColumnType(int columnIndex) {

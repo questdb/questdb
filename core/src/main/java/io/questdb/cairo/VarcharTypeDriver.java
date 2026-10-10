@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -31,6 +33,12 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharTypeConstant;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -46,7 +54,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.ColumnType.VARCHAR_AUX_SHL;
 
-public class VarcharTypeDriver implements ColumnTypeDriver {
+public final class VarcharTypeDriver implements ColumnTypeDriver {
     public static final VarcharTypeDriver INSTANCE = new VarcharTypeDriver();
     public static final int VARCHAR_AUX_WIDTH_BYTES = 2 * Long.BYTES;
     public static final int VARCHAR_HEADER_FLAG_NULL = 4;
@@ -59,6 +67,8 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     // and the full value in data memory.
     public static final int VARCHAR_MAX_BYTES_FULLY_INLINED = 9;
     public static final long VARCHAR_MAX_COLUMN_SIZE = 1L << 48;
+    // implicit-cast targets, best match first; see TypeDriver.getImplicitCasts()
+    private static final short[] IMPLICIT_CASTS = {ColumnType.VARCHAR, ColumnType.STRING, ColumnType.CHAR, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.FLOAT, ColumnType.SHORT, ColumnType.BYTE, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.SYMBOL, ColumnType.IPv4};
     private static final int FULLY_INLINED_STRING_OFFSET = 1;
     private static final int HEADER_FLAGS_WIDTH = 4;
     private static final int HEADER_FLAG_ASCII = 2;
@@ -530,8 +540,120 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setVarchar(index);
+        return columnType;
+    }
+
+    @Override
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return PhysicalDescriptor.Accessor.VARCHAR;
+    }
+
+    @Override
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return PhysicalDescriptor.Arithmetic.NONE;
+    }
+
+    @Override
     public long getAuxVectorOffset(long row) {
         return VARCHAR_AUX_WIDTH_BYTES * row;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    @Override
+    public PhysicalDescriptor.Movement getMovement() {
+        return PhysicalDescriptor.Movement.VAR;
+    }
+
+    /**
+     * VARCHAR_SLICE, which this driver also serves, has a name of its own.
+     */
+    @Override
+    public String getName(int columnType) {
+        return switch (columnType) {
+            case ColumnType.VARCHAR -> "VARCHAR";
+            case ColumnType.VARCHAR_SLICE -> "VARCHAR_SLICE";
+            default -> ColumnType.UNKNOWN_NAME;
+        };
+    }
+
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return VarcharConstant.NULL;
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return TableUtils.NULL_LEN;
+    }
+
+    /**
+     * VARCHAR keeps NULL in the aux entry header.
+     */
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getPgArrayOid() {
+        return PgTypeOids.PG_ARR_VARCHAR;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_VARCHAR;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.TEXT;
+    }
+
+    /**
+     * VARCHAR; this driver also serves VARCHAR_SLICE, the transient in-memory slice of a varchar.
+     */
+    @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.VARCHAR;
+    }
+
+    @Override
+    public char getSignatureChar() {
+        return 'ø';
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.VARCHAR ? VarcharTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.VARCHAR;
+    }
+
+    @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    /**
+     * Always a new instance: {@link VarcharColumn} is not thread-safe, so it is never pooled.
+     */
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return new VarcharColumn(columnIndex);
     }
 
     @Override

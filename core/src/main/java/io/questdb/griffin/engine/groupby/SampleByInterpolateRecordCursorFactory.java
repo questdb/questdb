@@ -31,9 +31,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -143,35 +145,32 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 GroupByFunction function = groupByFunctions.getQuick(i);
                 if (function.isScalar()) {
                     groupByScalarFunctions.add(function);
-                    switch (ColumnType.tagOf(function.getType())) {
-                        case ColumnType.BYTE:
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);
-                            break;
-                        case ColumnType.SHORT:
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_SHORT);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_SHORT);
-                            break;
-                        case ColumnType.INT:
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_INT);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_INT);
-                            break;
-                        case ColumnType.LONG:
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_LONG);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_LONG);
-                            break;
-                        case ColumnType.DOUBLE:
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);
-                            break;
-                        case ColumnType.FLOAT:
-                            storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
-                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
-                            break;
-                        default:
+                    final TypeDriver driver = ColumnType.findTypeDriver(function.getType());
+                    if (driver == null) {
+                        Misc.freeObjList(groupByScalarFunctions);
+                        throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
+                    }
+                    // a type unlike its family's namesake would be interpolated with the namesake's NULL
+                    if (!PhysicalDescriptor.isLikeFamilyNamesake(driver)) {
+                        Misc.freeObjList(groupByScalarFunctions);
+                        throw PhysicalDescriptor.noFamilyArm(driver.getTypeName(), "SAMPLE BY FILL(LINEAR)");
+                    }
+                    final InterpolationUtil.Steps steps = switch (driver.getAccessor()) {
+                        case BYTE -> InterpolationUtil.Steps.BYTE;
+                        case SHORT -> InterpolationUtil.Steps.SHORT;
+                        case INT -> InterpolationUtil.Steps.INT;
+                        case LONG -> InterpolationUtil.Steps.LONG;
+                        case DOUBLE -> InterpolationUtil.Steps.DOUBLE;
+                        case FLOAT -> InterpolationUtil.Steps.FLOAT;
+                        case BOOLEAN, CHAR, DATE, TIMESTAMP, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT,
+                             GEOLONG, BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
+                             DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL -> {
                             Misc.freeObjList(groupByScalarFunctions);
                             throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
-                    }
+                        }
+                    };
+                    storeYFunctions.add(steps.storeY());
+                    interpolatorFunctions.add(steps.interpolator());
                 } else {
                     groupByTwoPointFunctions.add(function);
                 }

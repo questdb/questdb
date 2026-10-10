@@ -135,13 +135,14 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             TableUtils.allocateDiskSpaceToPage(ff, fd, (rowCount + sourceColumnTop) << shl);
             long mappedAddress = TableUtils.mapAppendColumnBuffer(ff, fd, rowCount << shl, sourceColumnTop << shl, true, MEMORY_TAG);
             try {
-                TableUtils.setNull(columnType, mappedAddress, sourceColumnTop);
+                ColumnType.getTypeDriver(columnType).setNull(mappedAddress, sourceColumnTop);
                 if (commitMode != CommitMode.NOSYNC) {
                     TableUtils.msync(ff, mappedAddress, sourceColumnTop << shl, commitMode == CommitMode.ASYNC);
                 }
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, rowCount << shl, sourceColumnTop << shl, MEMORY_TAG);
             }
+            // validity batch site: a column with a validity bitmap would mark these rows NULL here
         }
     }
 

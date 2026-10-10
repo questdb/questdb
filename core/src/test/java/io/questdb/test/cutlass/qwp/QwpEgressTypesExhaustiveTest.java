@@ -730,6 +730,46 @@ public class QwpEgressTypesExhaustiveTest extends AbstractReusedServerQwpEgressT
     }
 
     @Test
+    public void testFiveDimensionDoubleArray() throws Exception {
+        // a 5-dimension array type sets bit 16, the geohash flag; the column must still travel as
+        // an array, read through the real client
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute("CREATE TABLE t(a DOUBLE[][][][][], part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO t VALUES (ARRAY[[[[[1.0, 2.0]]]]], 1::TIMESTAMP)");
+                serverMain.awaitTable("t");
+
+                final byte[] wireType = {0};
+                final int[] count = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT a FROM t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            wireType[0] = batch.getColumnWireType(0);
+                            for (int r = 0; r < batch.getRowCount(); r++, count[0]++) {
+                                Assert.assertFalse("row " + r + " must be non-null", batch.isNull(0, r));
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertEquals(QwpConstants.TYPE_DOUBLE_ARRAY, wireType[0]);
+                Assert.assertEquals(1, count[0]);
+            }
+        });
+    }
+
+    @Test
     public void testFloat() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {

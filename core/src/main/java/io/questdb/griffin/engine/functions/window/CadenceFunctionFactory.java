@@ -29,7 +29,9 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -48,7 +50,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -135,8 +136,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         // anything not convertible to LONG (e.g. a bind variable already bound to a non-numeric type).
         coerceRuntimeConstantType(strideArg, ColumnType.LONG, sqlExecutionContext, "stride must be an integer", stridePosition);
         final short strideTypeTag = ColumnType.tagOf(strideArg.getType());
-        if (strideTypeTag != ColumnType.INT && strideTypeTag != ColumnType.LONG
-                && strideTypeTag != ColumnType.SHORT && strideTypeTag != ColumnType.BYTE) {
+        if (!ColumnType.isIntegral(strideTypeTag)) {
             throw SqlException.$(stridePosition, "integer expected for stride");
         }
 
@@ -168,8 +168,7 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
                         seedPosition
                 );
                 final short seedTypeTag = ColumnType.tagOf(seedArg.getType());
-                if (seedTypeTag != ColumnType.INT && seedTypeTag != ColumnType.LONG
-                        && seedTypeTag != ColumnType.SHORT && seedTypeTag != ColumnType.BYTE) {
+                if (!ColumnType.isIntegral(seedTypeTag)) {
                     throw SqlException.$(seedPosition, "integer or NULL expected for seed");
                 }
                 seedFunc = seedArg;
@@ -346,8 +345,10 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
                 seedFunc.init(symbolTableSource, executionContext);
                 // Preserve cadence(1)'s no-op behavior: a correctly typed but unset seed is not read.
                 if (stride > 1) {
-                    final long seed = seedFunc.getLong(null);
-                    if (seed == Numbers.LONG_NULL) {
+                    // the seed reads at its type's tier; only the type's own NULL is "not set"
+                    final TypeDriver driver = ColumnType.getTypeDriver(seedFunc.getType());
+                    final long seed = PhysicalDescriptor.getIntegerAtTier(seedFunc, driver);
+                    if (PhysicalDescriptor.isNullAtTier(driver, seed)) {
                         throw SqlException.$(seedPosition, "seed must be set");
                     }
                     offset = deterministicOffset(seed, stride);

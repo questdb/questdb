@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Decimal128;
@@ -87,7 +88,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
         if (valueTypes != null) {
             for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
                 int columnType = valueTypes.getColumnType(i);
-                if (ColumnType.tagOf(columnType) == ColumnType.LONG256) {
+                if (PhysicalDescriptor.accessorOf(columnType) == PhysicalDescriptor.Accessor.LONG256) {
                     if (long256A == null) {
                         long256A = new Long256Impl[nColumns];
                         long256B = new Long256Impl[nColumns];

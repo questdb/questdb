@@ -47,6 +47,7 @@ import io.questdb.griffin.model.ExportModel;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -58,6 +59,8 @@ import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
 
+    // ExportQueryProcessor.putValue() arm per column, computed once from the metadata
+    final IntList columnOpcodes = new IntList();
     final StringSink fileName = new StringSink();
     final HybridColumnMaterializer materializer = new HybridColumnMaterializer();
     final DirectLongList materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
@@ -195,6 +198,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         arrayState.clear();
         columnValueFullySent = true;
         metadata = null;
+        columnOpcodes.clear();
         try {
             releaseExportEntry();
         } catch (Throwable th) {

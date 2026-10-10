@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -55,7 +56,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -112,6 +112,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final IntList fillModes;
     private Function fromFunc;
     private final boolean hasPrevFill;
+    private final boolean hasValueFill;
     private Function offsetFunc;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
@@ -159,7 +160,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             IntList fixedPrevSrcCols,
             IntList fixedPrevTypeTags,
             IntList prevValueSlot,
-            boolean isPrevPositioningNeeded
+            boolean isPrevPositioningNeeded,
+            boolean hasValueFill
     ) {
         super(metadata);
         // True if any column uses self-prev or cross-column prev fill.
@@ -219,6 +221,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.constantFills = constantFills;
         this.fillModes = fillModes;
         this.hasPrevFill = localHasPrevFill;
+        this.hasValueFill = hasValueFill;
         this.cursor = cursorLocal;
     }
 
@@ -259,7 +262,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             sink.attr("fill").val("mixed");
         } else if (hasPrevFill) {
             sink.attr("fill").val("prev");
-        } else if (hasAnyNonNullConstantFill()) {
+        } else if (hasValueFill) {
             sink.attr("fill").val("value");
         } else {
             sink.attr("fill").val("null");
@@ -326,20 +329,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         return false;
     }
 
-    private boolean hasAnyNonNullConstantFill() {
-        // The !(f instanceof NullConstant) filter excludes both NULL fills
-        // and the timestamp slot (always FILL_CONSTANT/NullConstant.NULL).
-        for (int i = 0, n = fillModes.size(); i < n; i++) {
-            if (fillModes.getQuick(i) == FILL_CONSTANT) {
-                Function f = constantFills.getQuick(i);
-                if (f != null && !(f instanceof NullConstant)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
         // Per-column dispatch codes compiled by compileDispatchPlan(). Two parallel
         // tables: fillDispatchCode for fill rows, dataDispatchCode (all DISPATCH_BASE)
@@ -373,6 +362,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final FillRecord fillRecord = new FillRecord();
         private final FillTimestampHolder fillTimestampFunc;
         private final IntList fixedPrevSrcCols;
+        // per fixed-size PREV cache slot, the source's PhysicalDescriptor.Accessor opcode, which
+        // the slot's per-row switches dispatch on
         private final IntList fixedPrevTypeTags;
         private final Function fromFunc;
         private boolean hasDataForCurrentBucket;
@@ -843,10 +834,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case ColumnType.LONG256 -> value.putLong256(slot, Long256Impl.NULL_LONG256);
                     case ColumnType.DECIMAL128 -> value.putDecimal128Null(slot);
                     case ColumnType.DECIMAL256 -> value.putDecimal256Null(slot);
-                    default -> {
-                        assert false : "unsupported fixed-size FILL(PREV) source type: "
-                                + ColumnType.nameOf(fixedPrevTypeTags.getQuick(i));
-                    }
+                    // a family the slot key admits with no pre-fill arm here
+                    default -> throw PhysicalDescriptor.noFamilyArm(
+                            ColumnType.nameOf(fixedPrevTypeTags.getQuick(i)),
+                            "SAMPLE BY FILL(PREV)"
+                    );
                 }
             }
         }

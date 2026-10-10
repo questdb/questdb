@@ -24,23 +24,23 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.vm.api.MemoryOM;
-import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.columns.StrColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.StrTypeConstant;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.LPSZ;
 
-import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
-
-public class StringTypeDriver implements ColumnTypeDriver {
+public final class StringTypeDriver extends NPlusOneAuxTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
+    // implicit-cast targets, best match first; see TypeDriver.getImplicitCasts()
+    private static final short[] IMPLICIT_CASTS = {ColumnType.STRING, ColumnType.VARCHAR, ColumnType.CHAR, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.FLOAT, ColumnType.SHORT, ColumnType.BYTE, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.SYMBOL, ColumnType.IPv4};
 
     public static void appendValue(MemoryA auxMem, MemoryA dataMem, CharSequence value) {
         auxMem.putLong(dataMem.putStr(value));
@@ -52,132 +52,114 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long auxRowsToBytes(long rowCount) {
-        return rowCount << LEGACY_VAR_SIZE_AUX_SHL;
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setStr(index);
+        return columnType;
     }
 
     @Override
-    public void configureAuxMemMA(MemoryMA auxMem) {
-        auxMem.putLong(0);
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return PhysicalDescriptor.Accessor.STRING;
     }
 
     @Override
-    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, int opts, int madviseOpts) {
-        auxMem.of(
-                ff,
-                fileName,
-                dataAppendPageSize,
-                -1,
-                MemoryTag.MMAP_TABLE_WRITER,
-                opts,
-                madviseOpts
-        );
-        auxMem.putLong(0L);
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return PhysicalDescriptor.Arithmetic.NONE;
     }
 
     @Override
-    public void configureAuxMemO3RSS(MemoryARW auxMem) {
-        // string starts with 8-byte offset
-        auxMem.putLong(0);
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
     }
 
     @Override
-    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, int opts) {
-        auxMem.ofOffset(
-                ff,
-                fd,
-                false,
-                fileName,
-                rowLo << LEGACY_VAR_SIZE_AUX_SHL,
-                (rowHi + 1) << LEGACY_VAR_SIZE_AUX_SHL,
-                memoryTag,
-                opts
-        );
+    public PhysicalDescriptor.Movement getMovement() {
+        return PhysicalDescriptor.Movement.VAR;
     }
 
     @Override
-    public void configureDataMemOM(
-            FilesFacade ff,
-            MemoryR auxMem,
-            MemoryOM dataMem,
-            long dataFd,
-            LPSZ fileName,
-            long rowLo,
-            long rowHi,
-            int memoryTag,
-            int opts
-    ) {
-        dataMem.ofOffset(
-                ff,
-                dataFd,
-                false,
-                fileName,
-                auxMem.getLong(rowLo << LEGACY_VAR_SIZE_AUX_SHL),
-                auxMem.getLong(rowHi << LEGACY_VAR_SIZE_AUX_SHL),
-                memoryTag,
-                opts
-        );
+    public String getName(int columnType) {
+        return columnType == ColumnType.STRING ? "STRING" : ColumnType.UNKNOWN_NAME;
     }
 
     @Override
-    public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
-        return Vect.dedupMergeStrBinColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
+    public ConstantFunction getNullConstant(int columnType) {
+        return StrConstant.NULL;
+    }
+
+    /**
+     * The 4-byte length prefix of a NULL string, NULL_LEN, in both halves of the long. The aux
+     * entry holds the data offset, as for any string.
+     */
+    @Override
+    public long getNullLong(int longIndex) {
+        return Numbers.encodeLowHighInts(TableUtils.NULL_LEN, TableUtils.NULL_LEN);
+    }
+
+    /**
+     * STRING keeps NULL in the length prefix.
+     */
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
     }
 
     @Override
-    public long getAuxVectorOffset(long row) {
-        return row << LEGACY_VAR_SIZE_AUX_SHL;
+    public int getPgArrayOid() {
+        return 0;
     }
 
     @Override
-    public long getAuxVectorSize(long storageRowCount) {
-        return (storageRowCount + 1) << LEGACY_VAR_SIZE_AUX_SHL;
+    public int getPgOid() {
+        return PgTypeOids.PG_VARCHAR;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.TEXT;
+    }
+
+    @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.STRING;
+    }
+
+    @Override
+    public char getSignatureChar() {
+        return 's';
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.STRING ? StrTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.STRING;
+    }
+
+    @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    /**
+     * Always a new instance: {@link StrColumn} is not thread-safe, so it is never pooled.
+     */
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return new StrColumn(columnIndex);
     }
 
     @Override
     public long getDataVectorMinEntrySize() {
         return Integer.BYTES;
-    }
-
-    @Override
-    public long getDataVectorOffset(long auxMemAddr, long row) {
-        // It's tempting to assert the result.
-        //        assert (row == 0 && result == 0) || result > 0;
-        // However, we can't do that, because the partition attach/detach mechanism has to be able to gracefully
-        // recover from attempts to attach damaged partition data. Throwing AssertError makes it impossible,
-        // unless we want to catch AssertError in the partition attach code.
-        return Unsafe.getLong(auxMemAddr + (row << LEGACY_VAR_SIZE_AUX_SHL));
-    }
-
-    @Override
-    public long getDataVectorSize(long auxMemAddr, long rowLo, long rowHi) {
-        return getDataVectorOffset(auxMemAddr, rowHi + 1) - getDataVectorOffset(auxMemAddr, rowLo);
-    }
-
-    @Override
-    public long getDataVectorSizeAt(long auxMemAddr, long row) {
-        return getDataVectorOffset(auxMemAddr, row + 1);
-    }
-
-    @Override
-    public long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row) {
-        long auxFileOffset = getAuxVectorOffset(row + 1);
-        long dataOffset = row > -1 ? ff.readNonNegativeLong(auxFd, auxFileOffset) : 0;
-
-        if (dataOffset < 0 || dataOffset > 1L << 40 || (row > -1 && dataOffset == 0)) {
-            throw CairoException.critical(ff.errno())
-                    .put("Invalid variable file length offset read from offset file [auxFd=").put(auxFd)
-                    .put(", offset=").put(auxFileOffset)
-                    .put(", fileSize=").put(ff.length(auxFd))
-                    .put(", result=").put(dataOffset)
-                    .put(']');
-        }
-        return dataOffset;
-    }
-
-    @Override
-    public long getMinAuxVectorSize() {
-        return Long.BYTES;
     }
 
     @Override
@@ -196,30 +178,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
         }
         return false;
 
-    }
-
-    @Override
-    public long mergeShuffleColumnFromManyAddresses(
-            long indexFormat,
-            long primaryAddressList,
-            long secondaryAddressList,
-            long outPrimaryAddress,
-            long outSecondaryAddress,
-            long mergeIndex,
-            long destVarOffset,
-            long destDataSize
-    ) {
-        return Vect.mergeShuffleStringColumnFromManyAddresses(
-                indexFormat,
-                (int) getDataVectorMinEntrySize(),
-                primaryAddressList,
-                secondaryAddressList,
-                outPrimaryAddress,
-                outSecondaryAddress,
-                mergeIndex,
-                destVarOffset,
-                destDataSize
-        );
     }
 
     @Override
@@ -248,102 +206,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3copyAuxVector(
-            FilesFacade ff,
-            long srcAddr,
-            long srcLo,
-            long srcHi,
-            long dstAddr,
-            long dstFileOffset,
-            long dstFd,
-            boolean mixedIOFlag
-    ) {
-        // srcHi is inclusive, and we also copy 1 extra entry due to N+1 aux vector structure
-        final long len = (srcHi + 1 - srcLo + 1) << LEGACY_VAR_SIZE_AUX_SHL;
-        O3Utils.copyFixedSizeCol(
-                ff,
-                srcAddr,
-                srcLo,
-                dstAddr,
-                dstFileOffset,
-                dstFd,
-                mixedIOFlag,
-                len,
-                LEGACY_VAR_SIZE_AUX_SHL
-        );
-    }
-
-    @Override
-    public void o3sort(
-            long sortedTimestampsAddr,
-            long sortedTimestampsRowCount,
-            MemoryCR srcDataMem,
-            MemoryCR srcAuxMem,
-            MemoryCARW dstDataMem,
-            MemoryCARW dstAuxMem
-    ) {
-        // ensure we have enough memory allocated
-        final long srcDataAddr = srcDataMem.addressOf(0);
-        final long srcAuxAddr = srcAuxMem.addressOf(0);
-        // exclude the trailing offset from shuffling
-        final long tgtAuxAddr = dstAuxMem.resize(getAuxVectorSize(sortedTimestampsRowCount));
-        final long tgtDataAddr = dstDataMem.resize(getDataVectorSizeAt(srcAuxAddr, sortedTimestampsRowCount - 1));
-
-        assert srcDataAddr != 0;
-        assert srcAuxAddr != 0;
-        assert tgtDataAddr != 0;
-        assert tgtAuxAddr != 0;
-
-        // add max offset so that we do not have conditionals inside loop
-        final long offset = Vect.sortStringColumn(
-                sortedTimestampsAddr,
-                sortedTimestampsRowCount,
-                srcDataAddr,
-                srcAuxAddr,
-                tgtDataAddr,
-                tgtAuxAddr
-        );
-        dstDataMem.jumpTo(offset);
-        dstAuxMem.jumpTo(sortedTimestampsRowCount << LEGACY_VAR_SIZE_AUX_SHL);
-        dstAuxMem.putLong(offset);
-    }
-
-    @Override
-    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount) {
-        // For STRING storage aux vector (mem) contains N+1 offsets. Where N is the
-        // row count. Offset indexes are 0 based, so reading Nth element of the vector gives
-        // the size of the data vector.
-        auxMem.jumpTo(rowCount << LEGACY_VAR_SIZE_AUX_SHL);
-        // it is safe to read offset from the raw memory pointer because paged
-        // memories (which MemoryMA is) have power-of-2 page size.
-
-        final long dataMemOffset = rowCount > 0 ? Unsafe.getLong(auxMem.getAppendAddress()) : 0;
-
-        // Jump to the end of file to correctly trim the file
-        auxMem.jumpTo((rowCount + 1) << LEGACY_VAR_SIZE_AUX_SHL);
-        return dataMemOffset;
-    }
-
-    @Override
-    public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
-        if (pos > 0) {
-            // Jump to the number of records written to read length of var column correctly
-            auxMem.jumpTo(pos << LEGACY_VAR_SIZE_AUX_SHL);
-            long m1pos = Unsafe.getLong(auxMem.getAppendAddress());
-            // Jump to the end of file to correctly trim the file
-            auxMem.jumpTo((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);
-            long dataSizeBytes = m1pos + ((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);
-            dataMem.jumpTo(m1pos);
-            return dataSizeBytes;
-        }
-
-        dataMem.jumpTo(0);
-        auxMem.jumpTo(0);
-        auxMem.putLong(0);
-        return Long.BYTES;
-    }
-
-    @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
         Vect.memset(dataMemAddr, rowCount * Integer.BYTES, -1);
     }
@@ -358,19 +220,4 @@ public class StringTypeDriver implements ColumnTypeDriver {
         Vect.setStringColumnNullRefs(auxMemAddr, initialOffset, columnTop);
     }
 
-    @Override
-    public void shiftCopyAuxVector(
-            long shift,
-            long src,
-            long srcLo,
-            long srcHi,
-            long dstAddr,
-            long dstAddrSize
-    ) {
-        // +2 because
-        // 1. srcHi is inclusive
-        // 2. we copy 1 extra entry due to N+1 string aux vector structure
-        assert (srcHi - srcLo + 2) * 8 <= dstAddrSize;
-        Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
-    }
 }

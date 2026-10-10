@@ -1653,6 +1653,24 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseOverFiveDimensionArray() throws Exception {
+        // a 5-dimension array type sets bit 16, the geohash flag, and CASE picked a geohash
+        // function for it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE[][][][][], b BOOLEAN)");
+            execute("INSERT INTO t VALUES (ARRAY[[[[[1.0, 2.0]]]]], true), (ARRAY[[[[[3.0]]]]], false)");
+            assertQuery("SELECT CASE WHEN b THEN a END c FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c
+                            [[[[[1.0,2.0]]]]]
+                            null
+                            """);
+        });
+    }
+
+    @Test
     public void testCaseWhen() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP, i int, a DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -4644,6 +4662,43 @@ public class ArrayTest extends AbstractCairoTest {
                             []
                             null
                             """);
+        });
+    }
+
+    @Test
+    public void testUpdateVarcharIntoFiveDimensionArrayRefused() throws Exception {
+        // a 5-dimension array type sets bit 16, the geohash flag's bit, so the implicit cast of a
+        // VARCHAR into it must not take the geohash cast; it is refused as for a 1-dimension array
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a DOUBLE[])");
+            execute("CREATE TABLE t5 (a DOUBLE[][][][][])");
+            execute("INSERT INTO t1 VALUES (ARRAY[1.0])");
+            execute("INSERT INTO t5 VALUES (ARRAY[[[[[1.0]]]]])");
+            assertExceptionNoLeakCheck("UPDATE t1 SET a = '{2.0}'::VARCHAR", 25, "inconvertible types: VARCHAR -> DOUBLE[]");
+            assertExceptionNoLeakCheck("UPDATE t5 SET a = '{{{{{2.0}}}}}'::VARCHAR", 33, "inconvertible types: VARCHAR -> DOUBLE[][][][][]");
+            assertQuery("t5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            [[[[[1.0]]]]]
+                            """);
+        });
+    }
+
+    @Test
+    public void testWithinRefusesFiveDimensionArray() throws Exception {
+        // within() takes a geohash column; a 5-dimension array column passed its type check, as
+        // bit 16 marked the column a geohash
+        configOverrideUseWithinLatestByOptimisation();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, a DOUBLE[][][][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('x', ARRAY[[[[[1.0]]]]], 0::TIMESTAMP)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t WHERE a WITHIN(#u33) LATEST ON ts PARTITION BY s",
+                    24,
+                    "GeoHash column type expected"
+            );
         });
     }
 

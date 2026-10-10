@@ -25,6 +25,9 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.WindowExpression;
@@ -75,8 +78,6 @@ public class ExpressionParser {
     private static final Log LOG = LogFactory.getLog(ExpressionParser.class);
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
-    // columnTypes that an expression can be cast into, in addition to the range BOOLEAN…LONG256
-    private static final IntHashSet moreCastTargetTypes = new IntHashSet();
     private static final IntHashSet nonLiteralBranches = new IntHashSet(); // branches that can't be followed by constants
     private final OperatorRegistry activeRegistry;
     private final IntStack argStackDepthStack = new IntStack();
@@ -158,10 +159,21 @@ public class ExpressionParser {
         this.stopOnTopINOperator = stopOnTop;
     }
 
-    private static boolean cannotCastTo(int targetTag, boolean isFromNull) {
-        return (targetTag < ColumnType.BOOLEAN || targetTag > ColumnType.LONG256) &&
-                (!isFromNull || (targetTag != ColumnType.BINARY && targetTag != ColumnType.INTERVAL)) &&
-                !moreCastTargetTypes.contains(targetTag);
+    /**
+     * Whether {@code cast(x as <type>)} and the {@code <type> 'literal'} form refuse the target
+     * type at parse time. Geohash and decimal targets are parsed on their own branches and do not
+     * reach this; {@code isFromNull} is the {@code cast(null as ...)} case, which admits two more
+     * targets. A -1 tag (an unknown type name) is {@link ColumnTypeTag#UNKNOWN} and is refused.
+     */
+    static boolean cannotCastTo(int targetTag, boolean isFromNull) {
+        // the DECIMAL pseudo type is the decimal CAST target, with its precision and scale
+        if (ColumnTypeTag.of(targetTag) == ColumnTypeTag.DECIMAL) {
+            return false;
+        }
+        // a stored type's driver decides; storedTypeDriverOf() returns null for the other pseudo
+        // types and for VARCHAR_SLICE, which are refused
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(targetTag);
+        return driver == null || !driver.isCastTarget(isFromNull);
     }
 
     private static boolean hasOffset(WindowExpression windowExpr) {
@@ -2563,12 +2575,6 @@ public class ExpressionParser {
         caseKeywords.put("when", IDX_WHEN);
         caseKeywords.put("then", IDX_THEN);
         caseKeywords.put("else", IDX_ELSE);
-
-        moreCastTargetTypes.add(ColumnType.UUID);
-        moreCastTargetTypes.add(ColumnType.IPv4);
-        moreCastTargetTypes.add(ColumnType.VARCHAR);
-        moreCastTargetTypes.add(ColumnType.ARRAY);
-        moreCastTargetTypes.add(ColumnType.DECIMAL);
 
         allFunctions.put("<>", "<>all");
         allFunctions.put("!=", "<>all");

@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -200,13 +201,19 @@ public final class DecimalUtil {
             short s = (short) ColumnType.getDecimalScale(type);
             return Numbers.encodeLowHighShorts(p, s);
         }
-        return switch (tag) {
-            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG ->
-                    Numbers.encodeLowHighShorts((short) 19, (short) 0);
-            case ColumnType.INT -> Numbers.encodeLowHighShorts((short) 10, (short) 0);
-            case ColumnType.SHORT -> Numbers.encodeLowHighShorts((short) 5, (short) 0);
-            case ColumnType.BYTE -> Numbers.encodeLowHighShorts((short) 3, (short) 0);
-            default -> 0;
+        final TypeDriver driver = ColumnType.findTypeDriver(type);
+        // pseudo types have no type driver and no precision
+        if (driver == null) {
+            return 0;
+        }
+        // an integer's precision is the number of digits of its largest value, which its arithmetic
+        // tier (PhysicalDescriptor.Arithmetic) gives; DATE and TIMESTAMP are 64-bit counts of their
+        // unit
+        return switch (driver.getRelationKind()) {
+            case INT -> integerPrecisionScale(driver);
+            case TEMPORAL -> Numbers.encodeLowHighShorts((short) 19, (short) 0);
+            case UNDEF, BOOL, CHAR, FLOAT, TEXT, SYMBOL, LONG256, LONG128, UUID, IPV4, BINARY, GEO, DECIMAL, ARRAY,
+                 INTERVAL, PSEUDO, NULL -> 0;
         };
     }
 
@@ -727,6 +734,20 @@ public final class DecimalUtil {
         sink.clear();
         Decimal64.toSink(sink, value, scale, precision);
         return toFloat(sink);
+    }
+
+    private static int integerPrecisionScale(TypeDriver driver) {
+        final short precision = switch (driver.getArithmetic()) {
+            case I8 -> 3;
+            case I16 -> 5;
+            case I32 -> 10;
+            case I64 -> 19;
+            // no existing integer type is unsigned; the PR that adds one decides its precision here
+            case U8, U16, U32 -> throw CairoException.nonCritical()
+                    .put("no decimal precision for an unsigned integer type [type=").put(driver.getTypeName()).put(']');
+            case F32, F64, WIDE, NONE -> 0;
+        };
+        return precision == 0 ? 0 : Numbers.encodeLowHighShorts(precision, (short) 0);
     }
 
     /**

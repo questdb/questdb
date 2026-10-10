@@ -38,6 +38,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -774,234 +775,241 @@ public class SqlOptimiser implements Mutable {
     private static boolean printRecordColumnOrNull(Record record, RecordMetadata metadata, StringSink sink, int position) throws SqlException {
         final int columnType = metadata.getColumnType(0);
         sink.clear();
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.STRING:
-            case ColumnType.ARRAY_STRING: {
-                final CharSequence val = record.getStrA(0);
-                if (val == null) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
+        // the value as a SQL literal; the column's WireKind gives its text form and its NULL test
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            final short tag = ColumnType.tagOf(columnType);
+            if (tag == ColumnType.ARRAY_STRING) {
+                return printStrOrNull(record.getStrA(0), sink);
             }
-            case ColumnType.SYMBOL: {
-                final CharSequence val = record.getSymA(0);
-                if (val == null) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.VARCHAR: {
-                final var val = record.getVarcharA(0);
-                if (val == null) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.INT: {
-                final int val = record.getInt(0);
-                if (val == Numbers.INT_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.LONG: {
-                final long val = record.getLong(0);
-                if (val == Numbers.LONG_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.SHORT: {
-                // short and byte doesn't have null
-                final short val = record.getShort(0);
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.BYTE: {
-                final byte val = record.getByte(0);
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.DOUBLE: {
-                final double val = record.getDouble(0);
-                if (!Numbers.isFinite(val)) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.FLOAT: {
-                final float val = record.getFloat(0);
-                if (!Numbers.isFinite(val)) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.DATE: {
-                final long val = record.getDate(0);
-                if (val == Numbers.LONG_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.putISODateMillis(val);
-                return false;
-            }
-            case ColumnType.TIMESTAMP: {
-                final long val = record.getTimestamp(0);
-                if (val == Numbers.LONG_NULL) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.putISODate(ColumnType.getTimestampDriver(columnType), val);
-                return false;
-            }
-            case ColumnType.CHAR: {
-                final char val = record.getChar(0);
-                if (val == 0) {
-                    sink.put("NULL");
-                    return true;
-                }
-                sink.put(val);
-                return false;
-            }
-            case ColumnType.BOOLEAN: {
-                sink.put(record.getBool(0));
-                return false;
-            }
-            case ColumnType.NULL: {
+            if (tag == ColumnType.NULL) {
                 sink.put("NULL");
                 return true;
             }
-            case ColumnType.GEOBYTE: {
+            throw SqlException.$(position, "unsupported PIVOT FOR column type: ").put(ColumnType.nameOf(columnType));
+        }
+        return switch (kind) {
+            case STRING -> printStrOrNull(record.getStrA(0), sink);
+            case SYMBOL -> {
+                final CharSequence val = record.getSymA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    yield true;
+                }
+                sink.put(val);
+                yield false;
+            }
+            case VARCHAR -> {
+                final var val = record.getVarcharA(0);
+                if (val == null) {
+                    sink.put("NULL");
+                    yield true;
+                }
+                sink.put(val);
+                yield false;
+            }
+            case INT -> {
+                final int val = record.getInt(0);
+                if (val == Numbers.INT_NULL) {
+                    sink.put("NULL");
+                    yield true;
+                }
+                sink.put(val);
+                yield false;
+            }
+            case LONG -> {
+                final long val = record.getLong(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    yield true;
+                }
+                sink.put(val);
+                yield false;
+            }
+            case SHORT -> {
+                // short and byte doesn't have null
+                final short val = record.getShort(0);
+                sink.put(val);
+                yield false;
+            }
+            case BYTE -> {
+                final byte val = record.getByte(0);
+                sink.put(val);
+                yield false;
+            }
+            case DOUBLE -> {
+                final double val = record.getDouble(0);
+                if (!Numbers.isFinite(val)) {
+                    sink.put("NULL");
+                    yield true;
+                }
+                sink.put(val);
+                yield false;
+            }
+            case FLOAT -> {
+                final float val = record.getFloat(0);
+                if (!Numbers.isFinite(val)) {
+                    sink.put("NULL");
+                    yield true;
+                }
+                sink.put(val);
+                yield false;
+            }
+            case DATE -> {
+                final long val = record.getDate(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    yield true;
+                }
+                sink.putISODateMillis(val);
+                yield false;
+            }
+            case TIMESTAMP -> {
+                final long val = record.getTimestamp(0);
+                if (val == Numbers.LONG_NULL) {
+                    sink.put("NULL");
+                    yield true;
+                }
+                sink.putISODate(ColumnType.getTimestampDriver(columnType), val);
+                yield false;
+            }
+            case CHAR -> {
+                final char val = record.getChar(0);
+                if (val == 0) {
+                    sink.put("NULL");
+                    yield true;
+                }
+                sink.put(val);
+                yield false;
+            }
+            case BOOLEAN -> {
+                sink.put(record.getBool(0));
+                yield false;
+            }
+            case GEOBYTE -> {
                 final byte val = record.getGeoByte(0);
                 if (val == GeoHashes.BYTE_NULL) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 sink.put(val);
-                return false;
+                yield false;
             }
-            case ColumnType.GEOSHORT: {
+            case GEOSHORT -> {
                 final short val = record.getGeoShort(0);
                 if (val == GeoHashes.SHORT_NULL) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 sink.put(val);
-                return false;
+                yield false;
             }
-            case ColumnType.GEOINT: {
+            case GEOINT -> {
                 final int val = record.getGeoInt(0);
                 if (val == GeoHashes.INT_NULL) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 sink.put(val);
-                return false;
+                yield false;
             }
-            case ColumnType.GEOLONG: {
+            case GEOLONG -> {
                 final long val = record.getGeoLong(0);
                 if (val == GeoHashes.NULL) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 sink.put(val);
-                return false;
+                yield false;
             }
-            case ColumnType.LONG128:
-                // fall through
-            case ColumnType.UUID: {
+            case LONG128, UUID -> {
                 final long hi = record.getLong128Hi(0);
                 final long lo = record.getLong128Lo(0);
                 if (Uuid.isNull(lo, hi)) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 Uuid uuid = new Uuid(lo, hi);
                 uuid.toSink(sink);
-                return false;
+                yield false;
             }
-            case ColumnType.IPv4: {
+            case IPV4 -> {
                 final int val = record.getIPv4(0);
                 if (val == IPv4_NULL) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 Numbers.intToIPv4Sink(sink, val);
-                return false;
+                yield false;
             }
-            case ColumnType.DECIMAL8: {
+            case DECIMAL8 -> {
                 final byte val = record.getDecimal8(0);
                 if (val == Decimals.DECIMAL8_NULL) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
+                yield false;
             }
-            case ColumnType.DECIMAL16: {
+            case DECIMAL16 -> {
                 final short val = record.getDecimal16(0);
                 if (val == Decimals.DECIMAL16_NULL) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
+                yield false;
             }
-            case ColumnType.DECIMAL32: {
+            case DECIMAL32 -> {
                 final int val = record.getDecimal32(0);
                 if (val == Decimals.DECIMAL32_NULL) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
+                yield false;
             }
-            case ColumnType.DECIMAL64: {
+            case DECIMAL64 -> {
                 final long val = record.getDecimal64(0);
                 if (val == Decimals.DECIMAL64_NULL) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 Decimals.append(val, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
+                yield false;
             }
-            case ColumnType.DECIMAL128: {
+            case DECIMAL128 -> {
                 final var decimal = Misc.getThreadLocalDecimal128();
                 record.getDecimal128(0, decimal);
                 if (decimal.isNull()) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
+                yield false;
             }
-            case ColumnType.DECIMAL256: {
+            case DECIMAL256 -> {
                 final var decimal = Misc.getThreadLocalDecimal256();
                 record.getDecimal256(0, decimal);
                 if (decimal.isNull()) {
                     sink.put("NULL");
-                    return true;
+                    yield true;
                 }
                 Decimals.append(decimal, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType), sink);
-                return false;
+                yield false;
             }
-            default:
-                throw SqlException.$(position, "unsupported PIVOT FOR column type: ").put(ColumnType.nameOf(columnType));
+            case LONG256, BINARY, ARRAY, INTERVAL ->
+                    throw SqlException.$(position, "unsupported PIVOT FOR column type: ").put(ColumnType.nameOf(columnType));
+        };
+    }
+
+    private static boolean printStrOrNull(CharSequence val, StringSink sink) {
+        if (val == null) {
+            sink.put("NULL");
+            return true;
         }
+        sink.put(val);
+        return false;
     }
 
     private static void pushDownLimitAdvice(IQueryModel model, IQueryModel nestedModel, boolean rowCountChanges) {
@@ -2595,11 +2603,7 @@ public class SqlOptimiser implements Mutable {
         final int dot = Chars.indexOfLastUnquoted(tok, '.');
         QueryColumn qc = getQueryColumn(model, tok, dot);
 
-        if (qc != null &&
-                (qc.getColumnType() == ColumnType.BYTE ||
-                        qc.getColumnType() == ColumnType.SHORT ||
-                        qc.getColumnType() == ColumnType.INT ||
-                        qc.getColumnType() == ColumnType.LONG)) {
+        if (qc != null && ColumnType.isIntegral(qc.getColumnType())) {
             return qc;
         }
         return null;
@@ -7806,11 +7810,14 @@ public class SqlOptimiser implements Mutable {
                                     .put(columnCount);
                         }
                         final int columnType = inListMetadata.getColumnMetadata(0).getColumnType();
-                        final boolean quote = switch (ColumnType.tagOf(columnType)) {
-                            case ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.TIMESTAMP,
-                                 ColumnType.DATE, ColumnType.CHAR, ColumnType.UUID, ColumnType.IPv4, ColumnType.ARRAY,
-                                 ColumnType.LONG128, ColumnType.LONG256 -> true;
-                            default -> false;
+                        // whether the value's SQL literal is quoted, by the column's WireKind
+                        final WireKind kind = WireKind.of(columnType);
+                        final boolean quote = kind != null && switch (kind) {
+                            case SYMBOL, STRING, VARCHAR, TIMESTAMP, DATE, CHAR, UUID, IPV4, ARRAY, LONG128,
+                                 LONG256 -> true;
+                            case BOOLEAN, BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, GEOBYTE, GEOSHORT, GEOINT,
+                                 GEOLONG, BINARY, INTERVAL, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                                 DECIMAL256 -> false;
                         };
                         int valueCount = 0;
                         tempCharSequenceHashSet.clear();
@@ -8406,8 +8413,13 @@ public class SqlOptimiser implements Mutable {
         ExpressionNode count = expressionNodePool.next();
         count.token = "COUNT";
         count.type = FUNCTION;
-        // INT and LONG are nullable, so we need to use COUNT(column) for them.
-        if (qc.getColumnType() == ColumnType.INT || qc.getColumnType() == ColumnType.LONG) {
+        // COUNT(column) skips NULLs, so for a type without NULL it equals COUNT(*). The model knows
+        // only the column's type, which is enough: a column of a type without NULL holds no NULLs.
+        final boolean hasNulls = switch (ColumnType.getTypeDriver(qc.getColumnType()).getNullPolicy()) {
+            case SENTINEL -> true;
+            case NONE -> false;
+        };
+        if (hasNulls) {
             count.paramCount = 1;
             count.rhs = column;
         } else {
@@ -11138,11 +11150,8 @@ public class SqlOptimiser implements Mutable {
             if (!constant && !func.isRuntimeConstant()) {
                 throw SqlException.$(node.position, "seed must be a constant, bind variable, or NULL");
             }
-            if (constant) {
-                final int tag = ColumnType.tagOf(func.getType());
-                if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
-                    throw SqlException.$(node.position, "integer or NULL expected for seed");
-                }
+            if (constant && !ColumnType.isIntegral(func.getType())) {
+                throw SqlException.$(node.position, "integer or NULL expected for seed");
             }
             // A constant integer or a bind-variable / runtime-constant seed migrates.
         } finally {
@@ -11276,10 +11285,7 @@ public class SqlOptimiser implements Mutable {
             if (!func.isConstant()) {
                 return false;
             }
-            final int tag = ColumnType.tagOf(func.getType());
-            if (tag != ColumnType.DOUBLE && tag != ColumnType.FLOAT
-                    && tag != ColumnType.INT && tag != ColumnType.LONG
-                    && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
+            if (!ColumnType.isIntegralOrFloat(func.getType())) {
                 return false;
             }
             final double compdev = func.getDouble(null);

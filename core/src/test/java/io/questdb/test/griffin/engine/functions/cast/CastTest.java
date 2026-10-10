@@ -1112,6 +1112,32 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastBindVariableToTextArrayNeedsConstant() throws Exception {
+        assertException("SELECT $1::text[]", 7, "constant expected");
+        // a column has no value at compile time either
+        assertQuery("SELECT s::text[] FROM t")
+                .ddl("CREATE TABLE t (s STRING)")
+                .fails(7, "constant expected");
+    }
+
+    @Test
+    public void testCastCharToLong256SameOnEveryPath() throws Exception {
+        // a column keeps the cast from folding into a constant, which reads getLong256A() alone;
+        // the printed rows read getLong256(rec, sink), the second pass getLong256A() and getLong256B()
+        assertQuery("SELECT c::LONG256 l FROM t")
+                .ddl("CREATE TABLE t AS (SELECT '7'::CHAR c FROM long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        l
+                        0x07
+                        """);
+        // a CHAR that is not a digit has no LONG value on any path
+        assertQuery("SELECT c::LONG256 l FROM u")
+                .ddl("CREATE TABLE u AS (SELECT 'm'::CHAR c FROM long_sequence(1))")
+                .fails(0, "inconvertible value: m [CHAR -> LONG]");
+    }
+
+    @Test
     public void testCharToBoolean() throws Exception {
         assertQuery("select a::boolean from tab")
                 .ddl("create table tab (a char)")
@@ -1324,26 +1350,26 @@ public class CastTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         x
-                        0x30
-                        0x31
-                        0x31
-                        0x31
-                        0x32
-                        0x32
-                        0x33
-                        0x34
-                        0x34
-                        0x37
-                        0x37
-                        0x37
-                        0x38
-                        0x38
-                        0x38
-                        0x38
-                        0x38
-                        0x39
-                        0x39
-                        0x39
+                        0x00
+                        0x01
+                        0x01
+                        0x01
+                        0x02
+                        0x02
+                        0x03
+                        0x04
+                        0x04
+                        0x07
+                        0x07
+                        0x07
+                        0x08
+                        0x08
+                        0x08
+                        0x08
+                        0x08
+                        0x09
+                        0x09
+                        0x09
                         """);
     }
 

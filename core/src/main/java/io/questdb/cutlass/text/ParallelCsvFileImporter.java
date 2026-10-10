@@ -41,6 +41,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -864,42 +865,51 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         // workers will import data into temp tables without remapping
         final IntList remapIndex = new IntList();
         remapIndex.setPos(types.size());
-        for (int i = 0, n = types.size(); i < n; i++) {
-            final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
-            final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
-            remapIndex.set(i, idx);
+        try {
+            for (int i = 0, n = types.size(); i < n; i++) {
+                final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
+                final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
+                remapIndex.set(i, idx);
 
-            final int columnType = metadata.getColumnType(idx);
-            final TypeAdapter detectedAdapter = types.getQuick(i);
-            final int detectedType = detectedAdapter.getType();
-            if (detectedType != columnType) {
-                // when DATE type is mis-detected as STRING we
-                // would not have either date format nor locale to
-                // use when populating this field
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.DATE:
-                        logTypeError(i, detectedType);
-                        types.setQuick(i, BadDateAdapter.INSTANCE);
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        // different timestamp type
-                        if (detectedAdapter instanceof TimestampAdapter) {
-                            ((TimestampAdapter) detectedAdapter).reCompileDateFormat(ColumnType.getTimestampDriver(columnType).getTimestampDateFormatFactory());
-                        } else if (detectedAdapter instanceof TimestampCompatibleAdapter) {
-                            types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter, columnType));
-                        } else {
+                final int columnType = metadata.getColumnType(idx);
+                final TypeAdapter detectedAdapter = types.getQuick(i);
+                final int detectedType = detectedAdapter.getType();
+                if (detectedType != columnType) {
+                    // when DATE type is mis-detected as STRING we
+                    // would not have either date format nor locale to
+                    // use when populating this field
+                    // every wire kind is listed, so javac names this switch for a new one
+                    switch (WireKind.of(columnType)) {
+                        case DATE -> {
                             logTypeError(i, detectedType);
-                            types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                            types.setQuick(i, BadDateAdapter.INSTANCE);
                         }
-                        break;
-                    case ColumnType.BINARY:
-                        writer.close();
-                        throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
-                    default:
-                        types.setQuick(i, typeManager.getTypeAdapter(columnType));
-                        break;
+                        case TIMESTAMP -> {
+                            // different timestamp type
+                            if (detectedAdapter instanceof TimestampAdapter) {
+                                ((TimestampAdapter) detectedAdapter).reCompileDateFormat(ColumnType.getTimestampDriver(columnType).getTimestampDateFormatFactory());
+                            } else if (detectedAdapter instanceof TimestampCompatibleAdapter) {
+                                types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter, columnType));
+                            } else {
+                                logTypeError(i, detectedType);
+                                types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                            }
+                        }
+                        case BINARY ->
+                                throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
+                        case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE,
+                             GEOSHORT, GEOINT, GEOLONG, UUID, LONG128, IPV4, VARCHAR, ARRAY, INTERVAL, DECIMAL8,
+                             DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256 ->
+                                types.setQuick(i, typeManager.getTypeAdapter(columnType));
+                        // a type without a wire kind gets no adapter: getTypeAdapter() refuses it
+                        case null -> types.setQuick(i, typeManager.getTypeAdapter(columnType));
+                    }
                 }
             }
+        } catch (Throwable th) {
+            // the writer becomes this.writer only after the loop, so an exit by exception closes it here
+            writer.close();
+            throw th;
         }
 
         // at this point we've to use target table columns names otherwise

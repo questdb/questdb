@@ -49,6 +49,11 @@ public class RecordSinkFactory {
     public static final int SINK_TYPE_CHUNKED = 2;  // Force chunked bytecode sink
     public static final int SINK_TYPE_LOOPING = 3;  // Force loop-based sink
     public static final int SINK_TYPE_SINGLE_METHOD = 1;   // Force single-method bytecode sink
+    /**
+     * The opcode of a column or key function the sinks write nothing for (a NULL type).
+     * Every other opcode is the type tag the sink arm is named after.
+     */
+    static final int SINK_NONE = -1;
     // Bytecode size estimate for standard column types: aload + aload + iconst + invokeInterface x2
     // 1 + 1 + 2 + 5 + 5 = 14 bytes
     private static final int BASE_BYTECODE_PER_COLUMN = 14;
@@ -641,29 +646,66 @@ public class RecordSinkFactory {
      * - lmul: 1 byte
      */
     private static int estimateColumnBytecodeSize(int type) {
-        int tag = ColumnType.tagOf(type);
-
-        return switch (tag) {
-            case ColumnType.UUID, ColumnType.LONG128 ->
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);
+        if (accessor == null) {
+            // a type without an accessor family: NULL generates no bytecode, a pseudo type and
+            // VARCHAR_SLICE the standard pattern
+            return ColumnType.tagOf(type) == ColumnType.NULL ? 0 : BASE_BYTECODE_PER_COLUMN;
+        }
+        return switch (accessor) {
+            case UUID, LONG128 ->
                 // aload + (aload + iconst + invokeInterface) x2 + invokeInterface
                 // 1 + (1+2+5)*2 + 5 = 22 bytes
                     22;
-            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+            case DECIMAL128, DECIMAL256 ->
                 // aload + aload + iconst + aload + getfield + dup_x2 + invokeInterface x2
                 // 1+1+2+1+3+1+5+5 = 19 bytes
                     19;
-            case ColumnType.ARRAY ->
+            case ARRAY ->
                 // aload + aload + iconst + iconst(type) + invokeInterface x2
                 // 1+1+2+3+5+5 = 17 bytes (extra iconst for array type)
                     17;
-            case ColumnType.NULL ->
-                // No bytecode generated
-                    0;
-            default ->
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, IPv4, VARCHAR, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 INTERVAL ->
                 // Standard pattern: aload + aload + iconst + invokeInterface x2
                 // 1+1+2+5+5 = 14 bytes
                     BASE_BYTECODE_PER_COLUMN;
         };
+    }
+
+    /**
+     * The error for an opcode {@link #sinkOpcode} yields but no sink arm handles: sinkOpcode() and
+     * the sink arms are out of step.
+     */
+    static IllegalStateException noSinkArm(int type) {
+        return new IllegalStateException("no sink arm [type=" + ColumnType.nameOf(type) + "]");
+    }
+
+    /**
+     * The sink arm for a column or key function of this type: the opcode of the type's accessor
+     * family, so a type that reads and writes like an existing one takes that type's arm; RECORD
+     * for a nested record, {@link #SINK_NONE} for a NULL type (nothing is written), and an
+     * exception for a type no sink copies. {@code kind} names the source in that exception:
+     * "column" or "function".
+     */
+    static int sinkOpcode(int type, String kind) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(type);
+        if (accessor != null) {
+            return accessor.opcode();
+        }
+        final short tag = ColumnType.tagOf(type);
+        if (tag == ColumnType.RECORD) {
+            return ColumnType.RECORD;
+        }
+        if (tag == ColumnType.NULL) {
+            return SINK_NONE;
+        }
+        throw unexpectedType(type, kind);
+    }
+
+    static IllegalArgumentException unexpectedType(int type, String kind) {
+        return new IllegalArgumentException("Unexpected " + kind + " type: " + ColumnType.nameOf(type));
     }
 
     /**
@@ -902,8 +944,12 @@ public class RecordSinkFactory {
             for (int i = 0; i < functionSize1; i++) {
                 final Function func = keyFunctions.getQuick(i);
                 final int type = func.getType();
+                final int opcode = sinkOpcode(type, "function");
+                if (opcode == SINK_NONE) {
+                    continue;
+                }
 
-                switch (ColumnType.tagOf(type)) {
+                switch (opcode) {
                     case ColumnType.INT:
                         asm.aload(2);
                         asm.aload(0);
@@ -1150,7 +1196,7 @@ public class RecordSinkFactory {
                         asm.invokeInterface(wPutDecimal256, 1);
                         break;
                     default:
-                        break;
+                        throw noSinkArm(type);
                 }
             }
         }
@@ -1182,6 +1228,12 @@ public class RecordSinkFactory {
                         asm.invokeInterface(wSkip, 1);
                         continue;
                     }
+                    // a skipped var-size column has no arm
+                    throw unexpectedType(type, "column");
+                }
+                final int opcode = sinkOpcode(type, "column");
+                if (opcode == SINK_NONE) {
+                    continue;
                 }
 
                 final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
@@ -1190,7 +1242,7 @@ public class RecordSinkFactory {
 
                 int skewedIdx = getSkewedIndex(index, skewIndex);
 
-                switch (factor * ColumnType.tagOf(type)) {
+                switch (opcode) {
                     case ColumnType.INT:
                         asm.aload(2);
                         asm.aload(1);
@@ -1431,10 +1483,8 @@ public class RecordSinkFactory {
                         asm.invokeInterface(rGetArray, 2);
                         asm.invokeInterface(wPutArray, 1);
                         break;
-                    case ColumnType.NULL:
-                        break; // ignore
                     default:
-                        throw new IllegalArgumentException("Unexpected column type: " + ColumnType.nameOf(type));
+                        throw noSinkArm(type);
                 }
             }
 
@@ -1713,12 +1763,18 @@ public class RecordSinkFactory {
                     asm.invokeInterface(wSkip, 1);
                     continue;
                 }
+                // a skipped var-size column has no arm
+                throw unexpectedType(type, "column");
+            }
+            final int opcode = sinkOpcode(type, "column");
+            if (opcode == SINK_NONE) {
+                continue;
             }
             final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
             final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
             final boolean timestampAsNanos = writeTimestampAsNanos != null && writeTimestampAsNanos.get(index);
             int skewedIndex;
-            switch (factor * ColumnType.tagOf(type)) {
+            switch (opcode) {
                 case ColumnType.INT:
                     asm.aload(2);
                     asm.aload(1);
@@ -1984,10 +2040,8 @@ public class RecordSinkFactory {
                     asm.invokeInterface(wPutDecimal256, 1);
                     // stack: []
                     break;
-                case ColumnType.NULL:
-                    break; // ignore
                 default:
-                    throw new IllegalArgumentException("Unexpected column type: " + ColumnType.nameOf(type));
+                    throw noSinkArm(type);
             }
         }
 
@@ -2000,8 +2054,12 @@ public class RecordSinkFactory {
         for (int i = 0; i < functionSize; i++) {
             final Function func = keyFunctions.getQuick(i);
             final int type = func.getType();
+            final int opcode = sinkOpcode(type, "function");
+            if (opcode == SINK_NONE) {
+                continue;
+            }
 
-            switch (ColumnType.tagOf(type)) {
+            switch (opcode) {
                 case ColumnType.INT:
                     asm.aload(2);
                     asm.aload(0);
@@ -2282,10 +2340,8 @@ public class RecordSinkFactory {
                     asm.invokeInterface(wPutDecimal256, 1);
                     // stack: []
                     break;
-                case ColumnType.NULL:
-                    break; // ignore
                 default:
-                    throw new IllegalArgumentException("Unexpected function type: " + ColumnType.nameOf(type));
+                    throw noSinkArm(type);
             }
         }
 

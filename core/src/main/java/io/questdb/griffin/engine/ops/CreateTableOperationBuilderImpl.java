@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,7 +41,6 @@ import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
-import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
@@ -50,7 +51,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable {
-    private static final IntList castGroups = new IntList();
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
@@ -436,12 +436,15 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
     }
 
-    private static boolean hasCastGroup(int columnType) {
-        return ColumnType.tagOf(columnType) < castGroups.size();
-    }
-
     private static boolean isIPv4Cast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
+    }
+
+    // the copier moves the 16 bytes unchanged between UUID and LONG128
+    private static boolean isUuidLong128Cast(int from, int to) {
+        final short fromTag = ColumnType.tagOf(from);
+        final short toTag = ColumnType.tagOf(to);
+        return (fromTag == ColumnType.UUID && toTag == ColumnType.LONG128) || (fromTag == ColumnType.LONG128 && toTag == ColumnType.UUID);
     }
 
     private static void parquetClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
@@ -494,30 +497,18 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (from == to || isIPv4Cast(from, to)) {
             return true;
         }
-        if (!hasCastGroup(from) || !hasCastGroup(to)) {
-            // The group table stops at VARCHAR, so the decimal, array and NULL tags have no entry,
-            // and no single group could express a decimal's precision and scale or an array's
-            // dimensionality. INSERT ... SELECT gates the very same record copier on
-            // isConvertibleFrom, so deferring to it admits exactly the pairs the copier implements.
-            return ColumnType.isConvertibleFrom(from, to);
+        final int fromGroup = RelationRules.ctasCastGroup(ColumnType.tagOf(from));
+        final int toGroup = RelationRules.ctasCastGroup(ColumnType.tagOf(to));
+        if (fromGroup == -1 || toGroup == -1) {
+            // No group covers LONG256, the geohashes, UUID, LONG128, IPv4, the decimals, the arrays,
+            // INTERVAL, NULL or the pseudo types: no single group could express a geohash's bits, a
+            // decimal's precision and scale or an array's dimensionality. Their casts follow
+            // isConvertibleFrom, as INSERT ... SELECT into the very same record copier does, except
+            // UUID and LONG128, which CTAS has always converted into each other
+            return ColumnType.isConvertibleFrom(from, to) || isUuidLong128Cast(from, to);
         }
-        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
-    }
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.CHAR, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.VARCHAR, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
+        // the record copier performs the cast, so a pair of one group it has no arm for (a number
+        // into CHAR) would fail only once the table exists; INSERT ... SELECT refuses it the same way
+        return fromGroup == toGroup && RecordToRowCopierUtils.hasCopierArm(from, to);
     }
 }

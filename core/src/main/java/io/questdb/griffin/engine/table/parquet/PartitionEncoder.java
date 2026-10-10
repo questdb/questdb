@@ -260,6 +260,11 @@ public class PartitionEncoder {
                             parquetEncodingConfig
                     );
                 } else {
+                    // A fixed-size column has no secondary data: a SENTINEL column keeps NULL in
+                    // its values and a NONE column has no NULL.
+                    final long validityAddr = switch (metadata.getColumnNullPolicy(i)) {
+                        case SENTINEL, NONE -> 0;
+                    };
                     descriptor.addColumn(
                             columnName,
                             columnType,
@@ -267,7 +272,7 @@ public class PartitionEncoder {
                             colTop,
                             primaryMem.addressOf(0),
                             primaryMem.size(),
-                            0,
+                            validityAddr,
                             0,
                             0,
                             0,

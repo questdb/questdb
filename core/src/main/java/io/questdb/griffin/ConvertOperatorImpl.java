@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
@@ -86,8 +87,12 @@ public class ConvertOperatorImpl implements Closeable {
     private final TableWriter tableWriter;
     private final Clock timer;
     private CharSequence columnName;
+    // the NULL policies of the column being converted and of its target, set before any
+    // conversion task is published
+    private NullPolicy dstNullPolicy;
     private long fixedFd;
     private int partitionUpdated;
+    private NullPolicy srcNullPolicy;
     private SymbolMapReaderImpl symbolMapReader;
     private SymbolMapper symbolMapper;
     private final TableWriter.ColumnTaskHandler cthConvertPartitionHandler = this::cthConvertPartitionHandler;
@@ -130,6 +135,10 @@ public class ConvertOperatorImpl implements Closeable {
     ) {
         clear();
         partitionUpdated = 0;
+        srcNullPolicy = tableWriter.getMetadata().getColumnNullPolicy(existingColIndex);
+        // the target column joins the metadata only after the conversion, so its NULL policy comes
+        // from its type driver
+        dstNullPolicy = ColumnType.getTypeDriver(newType).getNullPolicy();
         convertColumn0(columnName, existingColIndex, existingType, existingIndexType, columnIndex, newType);
     }
 
@@ -437,10 +446,12 @@ public class ConvertOperatorImpl implements Closeable {
                         0,
                         rowCount,
                         existingType,
+                        srcNullPolicy,
                         srcFixFd,
                         srcVarFd,
                         symbolTable,
                         newType,
+                        dstNullPolicy,
                         dstFixFd,
                         dstVarFd,
                         symbolMapper,

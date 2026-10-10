@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="io.questdb.test.cairo.types.TypeConformanceIngestTest" time="122.9" tests="4" errors="0" skipped="0" failures="3">
+  <testcase name="testQwp[UINT32]" classname="io.questdb.test.cairo.types.TypeConformanceIngestTest" time="0.967">
+    <failure message="type=UINT32 row=min path=ingest.qwp mode=wal-day: the value row did not arrive" type="java.lang.AssertionError"><![CDATA[java.lang.AssertionError: type=UINT32 row=min path=ingest.qwp mode=wal-day: the value row did not arrive
+null	omitted	ok
+min	int 0	rejected SCHEMA_MISMATCH HALT: no family arm for UINT32 at QWP WAL append: add the arm or declare the type like its namesake
+	at org.junit.Assert.fail(Assert.java:89)
+	at io.questdb.test.cairo.types.TypeConformanceIngestTest.checkLater(TypeConformanceIngestTest.java:718)
+]]></failure>
+  </testcase>
+  <testcase name="testIlpTcp[UINT32]" classname="io.questdb.test.cairo.types.TypeConformanceIngestTest" time="60.925">
+    <failure message="type=UINT32 row=min path=ingest.ilp-tcp mode=nonwal-day: the value row did not arrive" type="java.lang.AssertionError"><![CDATA[java.lang.AssertionError: type=UINT32 row=min path=ingest.ilp-tcp mode=nonwal-day: the value row did not arrive
+null	omitted
+min	long 0
+	at org.junit.Assert.fail(Assert.java:89)
+]]></failure>
+  </testcase>
+  <testcase name="testIlpHttp[UINT32]" classname="io.questdb.test.cairo.types.TypeConformanceIngestTest" time="0.512">
+    <failure message="type=UINT32 row=min path=ingest.ilp-http mode=wal-day: the value row did not arrive" type="java.lang.AssertionError"><![CDATA[java.lang.AssertionError: type=UINT32 row=min path=ingest.ilp-http mode=wal-day: the value row did not arrive
+min	long 0	error: Could not flush buffer: failed to parse line protocol: errors encountered on line(s): error in line 1: table: dst_w1, column: v; cast error from protocol type: LONG to column type: UINT32
+]]></failure>
+  </testcase>
+  <testcase name="testCsvImport[UINT32]" classname="io.questdb.test.cairo.types.TypeConformanceIngestTest" time="0.858"/>
+</testsuite>

@@ -314,6 +314,10 @@ pub fn column_type_to_parquet_type(
         | ColumnTypeTag::Decimal64
         | ColumnTypeTag::Decimal128
         | ColumnTypeTag::Decimal256 => {
+            #[allow(
+                clippy::wildcard_enum_match_arm,
+                reason = "family-only: the decimal widths, inside the decimal arm"
+            )]
             let size = match column_type.tag() {
                 ColumnTypeTag::Decimal8 => 1,
                 ColumnTypeTag::Decimal16 => 2,
@@ -625,6 +629,10 @@ pub fn is_encoding_valid_for_column_tag(encoding_id: i32, col_type_tag: i32) -> 
 /// Validate that the given encoding is supported for the column type.
 /// Falls back to the default encoding if the combination is unsupported.
 fn validate_encoding(data_type: ColumnType, encoding: Encoding) -> Encoding {
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     let valid = match encoding {
         Encoding::Plain => !matches!(
             data_type.tag(),
@@ -786,7 +794,32 @@ pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
         ColumnTypeTag::Binary | ColumnTypeTag::Varchar | ColumnTypeTag::String => {
             Encoding::DeltaLengthByteArray
         }
-        _ => Encoding::Plain,
+        ColumnTypeTag::Boolean
+        | ColumnTypeTag::Byte
+        | ColumnTypeTag::Short
+        | ColumnTypeTag::Char
+        | ColumnTypeTag::Int
+        | ColumnTypeTag::Long
+        | ColumnTypeTag::Date
+        | ColumnTypeTag::Timestamp
+        | ColumnTypeTag::Float
+        | ColumnTypeTag::Double
+        | ColumnTypeTag::Long256
+        | ColumnTypeTag::GeoByte
+        | ColumnTypeTag::GeoShort
+        | ColumnTypeTag::GeoInt
+        | ColumnTypeTag::GeoLong
+        | ColumnTypeTag::Uuid
+        | ColumnTypeTag::Long128
+        | ColumnTypeTag::IPv4
+        | ColumnTypeTag::Array
+        | ColumnTypeTag::Decimal8
+        | ColumnTypeTag::Decimal16
+        | ColumnTypeTag::Decimal32
+        | ColumnTypeTag::Decimal64
+        | ColumnTypeTag::Decimal128
+        | ColumnTypeTag::Decimal256
+        | ColumnTypeTag::VarcharSlice => Encoding::Plain,
     }
 }
 

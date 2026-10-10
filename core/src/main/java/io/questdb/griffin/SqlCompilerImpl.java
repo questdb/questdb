@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
@@ -44,6 +45,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistry;
@@ -179,7 +181,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
     // introduces. Shared so the two cannot drift apart.
     private static final String UPDATE_WITH_JOIN_NOT_SUPPORTED = "UPDATE statements with join are not supported yet for WAL tables";
-    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
+    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.MAX_TAG + 1][ColumnType.MAX_TAG + 1];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -642,14 +644,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         clear();
         lexer.of(expression);
         parser.expr(lexer, listener, this);
-    }
-
-    private static void addSupportedConversion(short fromType, short... toTypes) {
-        for (short toType : toTypes) {
-            columnConversionSupport[fromType][toType] = true;
-            // Make it symmetrical
-            columnConversionSupport[toType][fromType] = true;
-        }
     }
 
     // returns number of copied rows
@@ -3755,7 +3749,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
-                    if (ColumnType.isConvertibleFrom(fromType, toType)) {
+                    // the copier writes every column but the designated timestamp, so a pair it has
+                    // no arm for would store NULL
+                    if (ColumnType.isConvertibleFrom(fromType, toType)
+                            && (index == writerTimestampIndex || RecordToRowCopierUtils.hasCopierArm(fromType, toType))) {
                         listColumnFilter.add(index + 1);
                     } else {
                         throw SqlException.inconvertibleTypes(
@@ -3810,7 +3807,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 for (int i = 0; i < n; i++) {
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(i);
-                    if (ColumnType.isConvertibleFrom(fromType, toType)) {
+                    // as above: the copier must have an arm for every column but the designated timestamp
+                    if (ColumnType.isConvertibleFrom(fromType, toType)
+                            && (i == writerTimestampIndex || RecordToRowCopierUtils.hasCopierArm(fromType, toType))) {
                         continue;
                     }
 
@@ -5638,7 +5637,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             function.assignType(columnType, bindVariableService);
         }
 
-        if (ColumnType.isConvertibleFrom(function.getType(), columnType)) {
+        // the designated timestamp is written apart from the copier; any other column needs a
+        // copier arm for the value's type, else it goes through the implicit cast or is refused
+        if (ColumnType.isConvertibleFrom(function.getType(), columnType)
+                && (metadataColumnIndex == metadataTimestampIndex || RecordToRowCopierUtils.hasCopierArm(function.getType(), columnType))) {
             if (metadataColumnIndex == metadataTimestampIndex) {
                 return;
             }
@@ -6229,46 +6231,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
 
-        short[] numericTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.DATE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL};
-        addSupportedConversion(ColumnType.BYTE, numericTypes);
-        addSupportedConversion(ColumnType.SHORT, numericTypes);
-        addSupportedConversion(ColumnType.INT, numericTypes);
-        addSupportedConversion(ColumnType.LONG, numericTypes);
-        addSupportedConversion(ColumnType.FLOAT, numericTypes);
-        addSupportedConversion(ColumnType.DOUBLE, numericTypes);
-        addSupportedConversion(ColumnType.TIMESTAMP, numericTypes);
-        addSupportedConversion(ColumnType.BOOLEAN, numericTypes);
-        addSupportedConversion(ColumnType.DATE, numericTypes);
-
-        //region Decimals
-        for (short i = ColumnType.DECIMAL8; i <= ColumnType.DECIMAL256; i++) {
-            for (short j = ColumnType.DECIMAL8; j <= ColumnType.DECIMAL256; j++) {
-                addSupportedConversion(i, j);
+        // the column types ALTER TABLE ... ALTER COLUMN ... TYPE converts a column to, by rule A
+        // (RelationRules.alter); each target must be backed by a converter on both the native and the
+        // parquet path, or by ConvertOperatorImpl rewriting parquet to native first.
+        // TypeRelationGoldenTest.testColumnConversionSupport pins the matrix
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            if (tag.code() >= 0) {
+                for (short toTag : RelationRules.alter(tag.code())) {
+                    columnConversionSupport[tag.code()][toTag] = true;
+                }
             }
-            // Integer -> DECIMAL is supported on both the native and parquet paths; the reverse
-            // direction (DECIMAL -> {BYTE, SHORT, INT, LONG}) is not implemented in either the
-            // C++ converter kernel or the Rust parquet decoder, so register it one-way only.
-            // DOUBLE and FLOAT go both ways, but only on the native path: ConvertOperatorImpl
-            // rewrites a parquet partition to native before converting it.
-            columnConversionSupport[ColumnType.BYTE][i] = true;
-            columnConversionSupport[ColumnType.SHORT][i] = true;
-            columnConversionSupport[ColumnType.INT][i] = true;
-            columnConversionSupport[ColumnType.LONG][i] = true;
-            addSupportedConversion(i, ColumnType.DOUBLE, ColumnType.FLOAT);
-            addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
-            addSupportedConversion(ColumnType.STRING, i);
-            addSupportedConversion(ColumnType.VARCHAR, i);
         }
-        //endregion
-
-        // Other exotics <-> strings
-        addSupportedConversion(ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-        addSupportedConversion(ColumnType.UUID, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-        addSupportedConversion(ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-
-        // Strings <-> Strings
-        addSupportedConversion(ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-        addSupportedConversion(ColumnType.STRING, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-        addSupportedConversion(ColumnType.VARCHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
     }
 }

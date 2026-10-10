@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -62,7 +63,9 @@ public class CopyWalSegmentUtils {
             long rowCount,
             SegmentColumnRollSink columnRollSink,
             int commitMode,
+            NullPolicy nullPolicy,
             int newColumnType,
+            NullPolicy newNullPolicy,
             @Nullable SymbolTable symbolTable,
             @Nullable SymbolMapWriterLite symbolMapWriter
     ) {
@@ -144,10 +147,12 @@ public class CopyWalSegmentUtils {
                         startRowNumber,
                         rowCount,
                         columnType,
+                        nullPolicy,
                         srcFixFd,
                         srcVarFd,
                         symbolTable,
                         newColumnType,
+                        newNullPolicy,
                         dstFixFd,
                         dstVarFd,
                         symbolMapWriter,

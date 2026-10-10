@@ -26,8 +26,10 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
@@ -61,32 +63,8 @@ import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory;
-import io.questdb.griffin.engine.functions.columns.ArrayColumn;
-import io.questdb.griffin.engine.functions.columns.BinColumn;
-import io.questdb.griffin.engine.functions.columns.BooleanColumn;
-import io.questdb.griffin.engine.functions.columns.ByteColumn;
-import io.questdb.griffin.engine.functions.columns.CharColumn;
-import io.questdb.griffin.engine.functions.columns.DateColumn;
-import io.questdb.griffin.engine.functions.columns.DecimalColumn;
-import io.questdb.griffin.engine.functions.columns.DoubleColumn;
-import io.questdb.griffin.engine.functions.columns.FloatColumn;
-import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
-import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
-import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
-import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
-import io.questdb.griffin.engine.functions.columns.IPv4Column;
-import io.questdb.griffin.engine.functions.columns.IntColumn;
-import io.questdb.griffin.engine.functions.columns.IntervalColumn;
-import io.questdb.griffin.engine.functions.columns.Long128Column;
-import io.questdb.griffin.engine.functions.columns.Long256Column;
-import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.RecordColumn;
-import io.questdb.griffin.engine.functions.columns.ShortColumn;
-import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
-import io.questdb.griffin.engine.functions.columns.TimestampColumn;
-import io.questdb.griffin.engine.functions.columns.UuidColumn;
-import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
@@ -188,44 +166,51 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.invalidColumn(position, name);
         }
 
-        int columnType = metadata.getColumnType(index);
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN -> BooleanColumn.newInstance(index);
-            case ColumnType.BYTE -> ByteColumn.newInstance(index);
-            case ColumnType.SHORT -> ShortColumn.newInstance(index);
-            case ColumnType.CHAR -> new CharColumn(index);
-            case ColumnType.INT -> IntColumn.newInstance(index);
-            case ColumnType.LONG -> LongColumn.newInstance(index);
-            case ColumnType.FLOAT -> FloatColumn.newInstance(index);
-            case ColumnType.DOUBLE -> DoubleColumn.newInstance(index);
-            case ColumnType.STRING ->
-                // we cannot use a pooled StrColumn instance, because it is not thread-safe
-                    new StrColumn(index);
-            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE ->
-                // we cannot use a pooled VarcharColumn instance, because it is not thread-safe
-                    new VarcharColumn(index);
-            case ColumnType.SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index));
-            case ColumnType.BINARY -> BinColumn.newInstance(index);
-            case ColumnType.DATE -> DateColumn.newInstance(index);
-            case ColumnType.TIMESTAMP -> TimestampColumn.newInstance(index, columnType);
-            case ColumnType.RECORD -> new RecordColumn(index, metadata.getMetadata(index));
-            case ColumnType.GEOBYTE -> GeoByteColumn.newInstance(index, columnType);
-            case ColumnType.GEOSHORT -> GeoShortColumn.newInstance(index, columnType);
-            case ColumnType.GEOINT -> GeoIntColumn.newInstance(index, columnType);
-            case ColumnType.GEOLONG -> GeoLongColumn.newInstance(index, columnType);
-            case ColumnType.NULL -> NullConstant.NULL;
-            case ColumnType.LONG256 -> Long256Column.newInstance(index);
-            case ColumnType.LONG128 -> Long128Column.newInstance(index);
-            case ColumnType.UUID -> UuidColumn.newInstance(index);
-            case ColumnType.IPv4 -> IPv4Column.newInstance(index);
-            case ColumnType.INTERVAL -> IntervalColumn.newInstance(index, columnType);
-            case ColumnType.ARRAY -> new ArrayColumn(index, columnType);
-            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> new DecimalColumn(index, columnType);
-            default -> throw SqlException.position(position)
+        final int columnType = metadata.getColumnType(index);
+        final ColumnTypeTag tag = ColumnTypeTag.of(columnType);
+        // SYMBOL's column function needs the symbol table, which its type driver does not have
+        if (tag == ColumnTypeTag.SYMBOL) {
+            return new SymbolColumn(index, metadata.isSymbolTableStatic(index));
+        }
+        // the pseudo types a column can have: a nested record, and the untyped NULL
+        if (tag == ColumnTypeTag.RECORD) {
+            return new RecordColumn(index, metadata.getMetadata(index));
+        }
+        if (tag == ColumnTypeTag.NULL) {
+            return NullConstant.NULL;
+        }
+        final TypeDriver driver = ColumnType.findTypeDriver(columnType);
+        if (driver == null) {
+            throw SqlException.position(position)
                     .put("unsupported column type ")
                     .put(ColumnType.nameOf(columnType));
-        };
+        }
+        return driver.newColumnFunction(index, columnType);
+    }
+
+    /**
+     * Whether a type name token becomes a {@link Constants#getTypeConstant(int) type constant}
+     * here, the cast target of {@code cast(x as <type>)}: a stored type whose driver returns a type
+     * constant, and the pseudo types that are CAST targets. Geohash and decimal type names take
+     * their own paths further down {@code createConstant}; the rest are not cast targets.
+     */
+    static boolean isTypeConstantTag(ColumnTypeTag tag) {
+        final TypeDriver driver = ColumnType.findTypeDriver(tag.code());
+        if (driver == null) {
+            // the pseudo types that are CAST targets have no type driver; Constants holds their
+            // constants
+            return tag == ColumnTypeTag.REGCLASS || tag == ColumnTypeTag.REGPROCEDURE || tag == ColumnTypeTag.ARRAY_STRING;
+        }
+        // ARRAY answers true although ArrayTypeDriver has no type constant for the bare tag (asked
+        // with it, Constants.getArrayTypeConstant throws): createConstant looks the constant up by
+        // the whole array type, which a DOUBLE array has. A cast to an array of another element
+        // type fails there with an UnsupportedOperationException, a known inconsistency. The
+        // geohash tags answer true as well, as CastTargetTagTest pins
+        if (tag == ColumnTypeTag.GEOBYTE || tag == ColumnTypeTag.GEOSHORT || tag == ColumnTypeTag.GEOINT
+                || tag == ColumnTypeTag.GEOLONG || tag == ColumnTypeTag.ARRAY) {
+            return true;
+        }
+        return driver.getTypeConstant(tag.code()) != null;
     }
 
     @Override
@@ -835,18 +820,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         // type constant for 'CAST' operation
         final int columnType = ColumnType.typeOf(tok);
-        final short columnTag = ColumnType.tagOf(columnType);
-        if (
-                (columnTag >= ColumnType.BOOLEAN && columnTag <= ColumnType.BINARY)
-                        || columnTag == ColumnType.REGCLASS
-                        || columnTag == ColumnType.REGPROCEDURE
-                        || columnTag == ColumnType.ARRAY_STRING
-                        || columnTag == ColumnType.UUID
-                        || columnTag == ColumnType.IPv4
-                        || columnTag == ColumnType.VARCHAR
-                        || columnTag == ColumnType.INTERVAL
-                        || columnTag == ColumnType.ARRAY
-        ) {
+        if (isTypeConstantTag(ColumnTypeTag.of(columnType))) {
             return Constants.getTypeConstant(columnType);
         }
 

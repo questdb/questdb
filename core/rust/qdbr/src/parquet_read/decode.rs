@@ -392,6 +392,10 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     let column_type = col_info.column_type;
 
     let primitive_type = &page.descriptor.primitive_type;
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 PhysicalType"
+    )]
     let supported = match primitive_type.physical_type {
         PhysicalType::Int32 => decode_int32_dispatch::<FILTERED, FILL_NULLS>(
             page,
@@ -1410,6 +1414,10 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+#[allow(
+    clippy::wildcard_enum_match_arm,
+    reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+)]
 fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -1859,7 +1867,25 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 _ => Ok(false),
             }
         }
-        _ => Ok(false),
+        // the fixed-width types have no byte-array decode; a new tag decides here
+        ColumnTypeTag::Boolean
+        | ColumnTypeTag::Byte
+        | ColumnTypeTag::Short
+        | ColumnTypeTag::Char
+        | ColumnTypeTag::Int
+        | ColumnTypeTag::Long
+        | ColumnTypeTag::Date
+        | ColumnTypeTag::Timestamp
+        | ColumnTypeTag::Float
+        | ColumnTypeTag::Double
+        | ColumnTypeTag::Long256
+        | ColumnTypeTag::GeoByte
+        | ColumnTypeTag::GeoShort
+        | ColumnTypeTag::GeoInt
+        | ColumnTypeTag::GeoLong
+        | ColumnTypeTag::Uuid
+        | ColumnTypeTag::Long128
+        | ColumnTypeTag::IPv4 => Ok(false),
     }
 }
 
@@ -3264,7 +3290,36 @@ pub(super) fn sliced_page_row_count(
                     None
                 }
             }
-            _ => Some(header.num_values as usize),
+            // For primitive types number of rows matches the number of values.
+            ColumnTypeTag::Boolean
+            | ColumnTypeTag::Byte
+            | ColumnTypeTag::Short
+            | ColumnTypeTag::Char
+            | ColumnTypeTag::Int
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::Float
+            | ColumnTypeTag::Double
+            | ColumnTypeTag::String
+            | ColumnTypeTag::Symbol
+            | ColumnTypeTag::Long256
+            | ColumnTypeTag::GeoByte
+            | ColumnTypeTag::GeoShort
+            | ColumnTypeTag::GeoInt
+            | ColumnTypeTag::GeoLong
+            | ColumnTypeTag::Binary
+            | ColumnTypeTag::Uuid
+            | ColumnTypeTag::Long128
+            | ColumnTypeTag::IPv4
+            | ColumnTypeTag::Varchar
+            | ColumnTypeTag::Decimal8
+            | ColumnTypeTag::Decimal16
+            | ColumnTypeTag::Decimal32
+            | ColumnTypeTag::Decimal64
+            | ColumnTypeTag::Decimal128
+            | ColumnTypeTag::Decimal256
+            | ColumnTypeTag::VarcharSlice => Some(header.num_values as usize),
         },
     }
 }
@@ -3306,7 +3361,35 @@ pub(super) fn page_row_count(page: &DataPage, column_type: ColumnType) -> Parque
                     }
                 }
                 // For primitive types number of rows matches the number of values.
-                _ => Ok(header.num_values as usize),
+                ColumnTypeTag::Boolean
+                | ColumnTypeTag::Byte
+                | ColumnTypeTag::Short
+                | ColumnTypeTag::Char
+                | ColumnTypeTag::Int
+                | ColumnTypeTag::Long
+                | ColumnTypeTag::Date
+                | ColumnTypeTag::Timestamp
+                | ColumnTypeTag::Float
+                | ColumnTypeTag::Double
+                | ColumnTypeTag::String
+                | ColumnTypeTag::Symbol
+                | ColumnTypeTag::Long256
+                | ColumnTypeTag::GeoByte
+                | ColumnTypeTag::GeoShort
+                | ColumnTypeTag::GeoInt
+                | ColumnTypeTag::GeoLong
+                | ColumnTypeTag::Binary
+                | ColumnTypeTag::Uuid
+                | ColumnTypeTag::Long128
+                | ColumnTypeTag::IPv4
+                | ColumnTypeTag::Varchar
+                | ColumnTypeTag::Decimal8
+                | ColumnTypeTag::Decimal16
+                | ColumnTypeTag::Decimal32
+                | ColumnTypeTag::Decimal64
+                | ColumnTypeTag::Decimal128
+                | ColumnTypeTag::Decimal256
+                | ColumnTypeTag::VarcharSlice => Ok(header.num_values as usize),
             }
         }
     }
@@ -5389,6 +5472,10 @@ mod tests {
     // reference for what the header-less empty-buffer page must decode to.
     fn compliant_zero_value_delta_values(encoding: Encoding) -> Vec<u8> {
         let mut values = Vec::new();
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+        )]
         match encoding {
             Encoding::DeltaLengthByteArray => {
                 parquet2::encoding::delta_length_byte_array::encode(
@@ -5575,6 +5662,10 @@ mod tests {
         let n = strings.len();
 
         let mut values = Vec::new();
+        #[allow(
+            clippy::wildcard_enum_match_arm,
+            reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+        )]
         match encoding {
             Encoding::DeltaLengthByteArray => {
                 parquet2::encoding::delta_length_byte_array::encode(

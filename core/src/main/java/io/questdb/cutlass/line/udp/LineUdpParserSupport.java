@@ -29,9 +29,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cutlass.line.LineUtils;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -39,6 +43,8 @@ import io.questdb.std.str.Utf8StringSink;
 
 public class LineUdpParserSupport {
     private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
+    private static final Long256Acceptor NOOP_LONG256_ACCEPTOR = (_, _, _, _) -> {
+    };
 
     public static int getValueType(CharSequence value) {
         return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, true);
@@ -95,7 +101,7 @@ public class LineUdpParserSupport {
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return defaultFloatColumnType;
                     }
-                    if (SqlKeywords.isNanKeyword(value)) {
+                    if (SqlKeywords.isNanKeyword(value) || isInfinity(value)) {
                         return defaultFloatColumnType;
                     }
                     if (value.charAt(0) == '"') {
@@ -105,6 +111,26 @@ public class LineUdpParserSupport {
             }
         }
         return ColumnType.NULL;
+    }
+
+    /**
+     * Tells whether a quoted string field holds a LONG256 in the form ILP over TCP stores from a
+     * string: 0x and an even count of hex digits, at most 64, between the quotes, as
+     * {@link Numbers#extractLong256(CharSequence, Long256Acceptor)} takes it.
+     *
+     * @param value the field value, quotes included
+     */
+    public static boolean isLong256String(CharSequence value) {
+        final int len = value.length();
+        if (len > 4 && (len & 1) == 0 && len < 69 && value.charAt(1) == '0' && value.charAt(2) == 'x') {
+            try {
+                Long256FromCharSequenceDecoder.decode(value, 3, len - 1, NOOP_LONG256_ACCEPTOR);
+                return true;
+            } catch (ImplicitCastException e) {
+                return false;
+            }
+        }
+        return false;
     }
 
     /**
@@ -128,7 +154,10 @@ public class LineUdpParserSupport {
     ) {
         if (!value.isEmpty()) {
             try {
-                switch (ColumnType.tagOf(columnType)) {
+                // the column's ILP kind (LineUtils.columnKind()): its accessor family's tag,
+                // GEOHASH for every geohash width or DECIMAL for every decimal width; kinds without
+                // an arm are ignored
+                switch (LineUtils.columnKind(columnType)) {
                     case ColumnType.LONG:
                         row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                         break;
@@ -177,6 +206,11 @@ public class LineUdpParserSupport {
                         row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                         break;
                     case ColumnType.LONG256:
+                        if (value.charAt(0) == '"') {
+                            // a string field, which the parser admits only when isLong256String()
+                            row.putLong256(columnIndex, value, 3, value.length() - 1);
+                            break;
+                        }
                         int limit = value.length() - 1;
                         if (value.charAt(limit) != 'i') {
                             limit++;
@@ -189,42 +223,10 @@ public class LineUdpParserSupport {
                     case ColumnType.CHAR:
                         row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
                         break;
-                    case ColumnType.GEOBYTE:
-                        row.putByte(
+                    case ColumnType.GEOHASH:
+                        // the row picks the geohash column's storage width
+                        row.putGeoHash(
                                 columnIndex,  // skip quotes
-                                (byte) GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    case ColumnType.GEOSHORT:
-                        row.putShort(
-                                columnIndex,
-                                (short) GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    case ColumnType.GEOINT:
-                        row.putInt(
-                                columnIndex,
-                                (int) GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    case ColumnType.GEOLONG:
-                        row.putLong(
-                                columnIndex,
                                 GeoHashes.fromStringTruncatingNl(
                                         value,
                                         1,
@@ -251,12 +253,18 @@ public class LineUdpParserSupport {
         }
     }
 
+    // the spellings ILP over TCP parses as a float: Numbers.parseDouble() takes Infinity,
+    // case-sensitive, with an optional sign
+    private static boolean isInfinity(CharSequence value) {
+        return Chars.equals(value, "Infinity") || Chars.equals(value, "-Infinity") || Chars.equals(value, "+Infinity");
+    }
+
     private static boolean isTrue(CharSequence value) {
         return (value.charAt(0) | 32) == 't';
     }
 
     private static void putNullValue(TableWriter.Row row, int columnIndex, int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
+        switch (LineUtils.columnKind(columnType)) {
             case ColumnType.BOOLEAN:
                 row.putBool(columnIndex, false);
                 break;
@@ -283,6 +291,7 @@ public class LineUdpParserSupport {
                 break;
             case ColumnType.IPv4:
                 row.putIPv4(columnIndex, Numbers.IPv4_NULL);
+                // known inconsistency: no break, so an IPv4 NULL also runs the SHORT arm
             case ColumnType.SHORT:
                 row.putShort(columnIndex, (short) 0);
                 break;
@@ -301,17 +310,9 @@ public class LineUdpParserSupport {
             case ColumnType.LONG256:
                 row.putLong256(columnIndex, "");
                 break;
-            case ColumnType.GEOBYTE:
-                row.putByte(columnIndex, GeoHashes.BYTE_NULL);
-                break;
-            case ColumnType.GEOSHORT:
-                row.putShort(columnIndex, GeoHashes.SHORT_NULL);
-                break;
-            case ColumnType.GEOINT:
-                row.putInt(columnIndex, GeoHashes.INT_NULL);
-                break;
-            case ColumnType.GEOLONG:
-                row.putLong(columnIndex, GeoHashes.NULL);
+            case ColumnType.GEOHASH:
+                // every width's NULL is all ones; the row narrows it to the column's storage width
+                row.putGeoHash(columnIndex, GeoHashes.NULL);
                 break;
             default:
                 // unsupported types are ignored

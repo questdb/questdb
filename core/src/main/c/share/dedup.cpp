@@ -34,6 +34,12 @@
 #include "dedup_comparers.h"
 #include "ooo.h"
 
+// Every switch over VarLayout in this file lists each layout, so a new layout fails the build at
+// every var-size comparer choice here. None of these switches has a default, so -Wswitch catches
+// the missing layout; -Wswitch-enum also catches it in a switch that has a default.
+#pragma GCC diagnostic error "-Wswitch"
+#pragma GCC diagnostic error "-Wswitch-enum"
+
 #define assertm(exp, msg) assert(((void)msg, exp))
 
 constexpr int64_t error_not_sorted = -1;
@@ -338,28 +344,29 @@ int64_t dedup_sorted_timestamp_index_many_addresses(
                     break;
                 }
                 case -1: {
-                    switch ((ColumnType) (col_key->column_type)) {
-                        case ColumnType::VARCHAR: {
+                    switch (var_layout(col_key->column_type)) {
+                        case VarLayout::VARCHAR: {
                             diff = compare_dedup_varchar_column<TIdx>(col_key, l, r, segment_bits, segment_mask);
                             break;
                         }
-                        case ColumnType::STRING: {
+                        case VarLayout::STRING: {
                             diff = compare_str_bin_dedup_column<int32_t, 2, TIdx>(col_key, l, r, segment_bits,
                                                                                   segment_mask);
                             break;
                         }
-                        case ColumnType::BINARY: {
+                        case VarLayout::BINARY: {
                             diff = compare_str_bin_dedup_column<int64_t, 1, TIdx>(col_key, l, r, segment_bits,
                                                                                   segment_mask);
                             break;
                         }
-                        case ColumnType::SYMBOL: {
+                        case VarLayout::SYMBOL: {
                             // Very special case, it's the symbol that is re-mapped into a single buffer
                             // e.g. the values do not come from multiple segments but from a single buffer
                             diff = compare_dedup_symbol_column<TIdx>(col_key, l, r);
                             break;
                         }
-                        default: {
+                        case VarLayout::NONE:
+                        case VarLayout::ARRAY: {
                             assertm(false, "unsupported column type");
                             return -1;
                         }
@@ -1000,8 +1007,8 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                 );
             }
             case -1: {
-                switch ((ColumnType) (col_key->column_type)) {
-                    case ColumnType::VARCHAR: {
+                switch (var_layout(col_key->column_type)) {
+                    case VarLayout::VARCHAR: {
                         return merge_dedup_long_index_int_keys(
                                 src, data_lo, data_hi,
                                 index, index_lo, index_hi,
@@ -1009,7 +1016,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 *reinterpret_cast<const MergeVarcharColumnComparer *>(src_keys)
                         );
                     }
-                    case ColumnType::STRING: {
+                    case VarLayout::STRING: {
                         return merge_dedup_long_index_int_keys(
                                 src, data_lo, data_hi,
                                 index, index_lo, index_hi,
@@ -1017,7 +1024,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 *reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(src_keys)
                         );
                     }
-                    case ColumnType::BINARY: {
+                    case VarLayout::BINARY: {
                         return merge_dedup_long_index_int_keys(
                                 src, data_lo, data_hi,
                                 index, index_lo, index_hi,
@@ -1025,7 +1032,9 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 *reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(src_keys)
                         );
                     }
-                    default: {
+                    case VarLayout::NONE:
+                    case VarLayout::ARRAY:
+                    case VarLayout::SYMBOL: {
                         assertm(false, "unsupported column type");
                         return 0;
                     }
@@ -1074,23 +1083,25 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                     break;
                 }
                 case -1: {
-                    switch ((ColumnType) (col_key->column_type)) {
-                        case ColumnType::VARCHAR: {
+                    switch (var_layout(col_key->column_type)) {
+                        case VarLayout::VARCHAR: {
                             const auto &comparer = *reinterpret_cast<const MergeVarcharColumnComparer *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
-                        case ColumnType::STRING: {
+                        case VarLayout::STRING: {
                             const auto &comparer = *reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
-                        case ColumnType::BINARY: {
+                        case VarLayout::BINARY: {
                             const auto &comparer = *reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
-                        default: {
+                        case VarLayout::NONE:
+                        case VarLayout::ARRAY:
+                        case VarLayout::SYMBOL: {
                             assertm(false, "unsupported column type");
                             return 0;
                         }
@@ -1165,23 +1176,25 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                             *reinterpret_cast<const SortColumnComparer<int256> *>(src_keys)
                     );
                 case -1:
-                    switch ((ColumnType) (col_key->column_type)) {
-                        case ColumnType::VARCHAR:
+                    switch (var_layout(col_key->column_type)) {
+                        case VarLayout::VARCHAR:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortVarcharColumnComparer *>(src_keys)
                             );
-                        case ColumnType::STRING:
+                        case VarLayout::STRING:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(src_keys)
                             );
-                        case ColumnType::BINARY:
+                        case VarLayout::BINARY:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(src_keys)
                             );
-                        default:
+                        case VarLayout::NONE:
+                        case VarLayout::ARRAY:
+                        case VarLayout::SYMBOL:
                             assertm(false, "unsupported column type");
                             return -1;
 
@@ -1228,23 +1241,25 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         break;
                     }
                     case -1: {
-                        switch ((ColumnType) (col_key->column_type)) {
-                            case ColumnType::VARCHAR: {
+                        switch (var_layout(col_key->column_type)) {
+                            case VarLayout::VARCHAR: {
                                 const auto &comparer = *reinterpret_cast<const SortVarcharColumnComparer *>(col_key);
                                 diff = comparer(l, r);
                                 break;
                             }
-                            case ColumnType::STRING: {
+                            case VarLayout::STRING: {
                                 const auto &comparer = *reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(col_key);
                                 diff = comparer(l, r);
                                 break;
                             }
-                            case ColumnType::BINARY: {
+                            case VarLayout::BINARY: {
                                 const auto &comparer = *reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(col_key);
                                 diff = comparer(l, r);
                                 break;
                             }
-                            default: {
+                            case VarLayout::NONE:
+                            case VarLayout::ARRAY:
+                            case VarLayout::SYMBOL: {
                                 assertm(false, "unsupported column type");
                                 return -1;
                             }
@@ -1473,8 +1488,8 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
             );
         }
         case -1: {
-            switch ((ColumnType) (column_type)) {
-                case ColumnType::VARCHAR: {
+            switch (var_layout(column_type)) {
+                case VarLayout::VARCHAR: {
                     return is_varchar_column_merge_identical(
                             column_top1, lo1_pos, hi1_pos, (const VarcharAuxEntryInlined *) aux1,
                             (const uint8_t *) data1,
@@ -1483,28 +1498,29 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isColumnReplaceIdentical(
                             merge_index, merge_index_rows
                     );
                 }
-                case ColumnType::STRING: {
+                case VarLayout::STRING: {
                     return is_str_bin_column_merge_identical<int32_t>(
                             column_top1, lo1_pos, hi1_pos, (const int64_t *) aux1, (const uint8_t *) data1,
                             column_top2, lo2_pos, hi2_pos, (const int64_t *) aux2, (const uint8_t *) data2,
                             merge_index, merge_index_rows, 2
                     );
                 }
-                case ColumnType::BINARY: {
+                case VarLayout::BINARY: {
                     return is_str_bin_column_merge_identical<int64_t>(
                             column_top1, lo1_pos, hi1_pos, (const int64_t *) aux1, (const uint8_t *) data1,
                             column_top2, lo2_pos, hi2_pos, (const int64_t *) aux2, (const uint8_t *) data2,
                             merge_index, merge_index_rows, 1
                     );
                 }
-                case ColumnType::ARRAY: {
+                case VarLayout::ARRAY: {
                     return is_array_column_merge_identical(
                             column_top1, lo1_pos, hi1_pos, (const ArrayAuxEntry *) aux1, (const uint8_t *) data1,
                             column_top2, lo2_pos, hi2_pos, (const ArrayAuxEntry *) aux2, (const uint8_t *) data2,
                             merge_index, merge_index_rows
                     );
                 }
-                default:
+                case VarLayout::NONE:
+                case VarLayout::SYMBOL:
                     assertm(false, "unsupported column type");
                     return false;
             }

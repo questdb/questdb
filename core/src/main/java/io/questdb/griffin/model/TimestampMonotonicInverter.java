@@ -26,7 +26,9 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -203,8 +205,17 @@ public class TimestampMonotonicInverter extends UntypedFunction {
             final long v = f.getTimestamp(null);
             return v == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestampDriver.from(v, ColumnType.getTimestampType(type));
         }
-        // int and long bounds both read as long: IntFunction.getLong() widens and
-        // maps INT_NULL to LONG_NULL, the no-rows sentinel checked by the caller.
-        return f.getLong(null);
+        final TypeDriver driver = ColumnType.getTypeDriver(type);
+        return switch (driver.getArithmetic()) {
+            // an integer bound reads at its type's tier; only the type's own NULL becomes
+            // LONG_NULL, the no-rows sentinel checked by the caller
+            case I8, I16, I32, I64, U8, U16, U32 -> {
+                final long v = PhysicalDescriptor.getIntegerAtTier(f, driver);
+                yield PhysicalDescriptor.isNullAtTier(driver, v) ? Numbers.LONG_NULL : v;
+            }
+            // any other bound, text among them, reads through getLong(), which parses text and
+            // maps NULL to LONG_NULL
+            case F32, F64, WIDE, NONE -> f.getLong(null);
+        };
     }
 }

@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -53,6 +55,11 @@ import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
+    /**
+     * The opcode {@link #preTouchOpcode} yields for a column {@link #preTouchColumns} does not
+     * touch; the per-row switch has no arm for it.
+     */
+    static final int PRE_TOUCH_NONE = -1;
     private final IntList columnTypes;
     private final Function filter;
     private final IntHashSet filterUsedColumnIndexes;
@@ -64,6 +71,7 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
+    private final IntList preTouchOpcodes;
     private final double preTouchThreshold;
     private IntHashSet lateMatSkipColumnIndexes;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
@@ -96,6 +104,32 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         this.columnTypes = columnTypes;
         this.preTouchEnabled = preTouchEnabled;
         this.preTouchThreshold = configuration.getSqlParallelFilterPreTouchThreshold();
+        final int columnCount = columnTypes.size();
+        this.preTouchOpcodes = new IntList(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            preTouchOpcodes.add(preTouchOpcode(columnTypes.getQuick(i)));
+        }
+    }
+
+    /**
+     * The arm {@link #preTouchColumns} takes for a column of this type, decided once per column
+     * at construction: its accessor family's opcode for the families the pre-touch reads (one word of
+     * the value, or the header of a var-size one), {@link #PRE_TOUCH_NONE} for the rest.
+     */
+    static int preTouchOpcode(int columnType) {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        // pseudo types and VARCHAR_SLICE never name a table column
+        if (driver == null) {
+            return PRE_TOUCH_NONE;
+        }
+        final PhysicalDescriptor.Accessor accessor = driver.getAccessor();
+        return switch (accessor) {
+            case BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, STRING, SYMBOL, LONG256,
+                 GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID, IPv4, VARCHAR -> accessor.opcode();
+            // ARRAY, LONG128, INTERVAL and the DECIMALs have no pre-touch arm: the filter reads them cold
+            case LONG128, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, INTERVAL ->
+                    PRE_TOUCH_NONE;
+        };
     }
 
     @Override
@@ -200,9 +234,8 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         for (long p = 0, n = rows.size(); p < n; p++) {
             long r = rows.get(p);
             record.setRowIndex(r);
-            for (int i = 0; i < columnTypes.size(); i++) {
-                int columnType = columnTypes.getQuick(i);
-                switch (ColumnType.tagOf(columnType)) {
+            for (int i = 0; i < preTouchOpcodes.size(); i++) {
+                switch (preTouchOpcodes.getQuick(i)) {
                     case ColumnType.BOOLEAN:
                         sum += record.getBool(i) ? 1 : 0;
                         break;

@@ -1,0 +1,331 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.Function;
+import org.jetbrains.annotations.Nullable;
+
+/**
+ * A type's physical form as three closed sets, each returned by the type's driver: {@link
+ * Movement}, how storage moves a value; {@link Arithmetic}, how it computes, compares and sorts;
+ * {@link Accessor}, the getter and putter family records read and write it with. Code that only
+ * moves or computes values switches on these sets instead of the tag, so a type that stores like an
+ * existing one adds no arm there. None of the sets says anything about NULL: code that decides NULL
+ * reads the column's {@link NullPolicy}.
+ * <p>
+ * Only code that already dispatches on the record getter keys on {@link Accessor}: the getter
+ * decides what a column-top row reads as, so two types of one width may still need different
+ * getters.
+ */
+public final class PhysicalDescriptor {
+
+    private PhysicalDescriptor() {
+    }
+
+    /**
+     * The accessor family of a stored column type, or null for a pseudo type and for
+     * VARCHAR_SLICE, the transient read_parquet type that no record-access layout stores. Asked
+     * once per column at setup.
+     */
+    public static @Nullable Accessor accessorOf(int columnType) {
+        final TypeDriver driver = storedTypeDriverOf(columnType);
+        return driver != null ? driver.getAccessor() : null;
+    }
+
+    /**
+     * The opcode of a column type's accessor family ({@link Accessor#opcode()}), or -1 for a pseudo
+     * type and for VARCHAR_SLICE. Safe in per-row code: it reads a table filled from the type
+     * drivers on first use and calls no driver.
+     */
+    public static short accessorOpcodeOf(int columnType) {
+        final short tag = ColumnType.tagOf(columnType);
+        return tag >= 0 && tag <= ColumnType.MAX_TAG ? Opcodes.ACCESSOR[tag] : -1;
+    }
+
+    /**
+     * The opcode of the per-row arm that compares or sort-encodes values of this type: the accessor
+     * family's opcode when the type orders like the tag the family is named after, which holds for
+     * every existing type. Throws {@link CairoException} for a type that reads through a family but
+     * orders differently, such as an unsigned type on INT's accessor: no arm exists for it.
+     *
+     * @param site the label of the asking site, as the refusal names it
+     */
+    public static short compareOpcode(TypeDriver driver, CharSequence site) {
+        if (!isOrderedLikeFamily(driver)) {
+            throw CairoException.critical(0).put("no compare arm for ").put(driver.getTypeName()).put(" at ").put(site)
+                    .put(": add a compare arm or declare the type ordered like its family");
+        }
+        return driver.getAccessor().opcode();
+    }
+
+    /**
+     * The accessor family a setup-time switch that computes or decides NULL may dispatch on: the
+     * type's accessor when the type is like its family's namesake
+     * ({@link #isLikeFamilyNamesake(TypeDriver)}), which every existing type is. Any other type
+     * would take the namesake's range check and NULL sentinel in the family's arm, so this throws
+     * instead, naming the type and the site. Asked once per column at setup, never per row.
+     * <p>
+     * No existing type reaches this refusal, at any site that guards with it or with {@link
+     * #noFamilyArm}, so no test of this repository runs a refusing site's cleanup; the conformance
+     * kit runs it once a type registered later declares the site refused.
+     *
+     * @param site the label of the asking site, as the refusal names it
+     */
+    public static Accessor familyArmOf(TypeDriver driver, CharSequence site) {
+        if (!isLikeFamilyNamesake(driver)) {
+            throw noFamilyArm(driver.getTypeName(), site);
+        }
+        return driver.getAccessor();
+    }
+
+    /**
+     * The opcode form of {@link #familyArmOf(TypeDriver, CharSequence)} for the per-row switches
+     * that dispatch on the getter: the accessor's opcode for a stored type like its family's
+     * namesake, -1 for a pseudo type, for VARCHAR_SLICE and for a type with no family arm, so
+     * those switches' default arms fire. It reads a table, as {@link #accessorOpcodeOf(int)}
+     * does.
+     */
+    public static short familyArmOpcodeOf(int columnType) {
+        final short tag = ColumnType.tagOf(columnType);
+        return tag >= 0 && tag <= ColumnType.MAX_TAG ? Opcodes.FAMILY_ARM[tag] : -1;
+    }
+
+    /**
+     * The value of an integer function at its type's arithmetic tier, as a long: getLong for a
+     * 64-bit tier, getInt for a narrower one, and the unsigned value for an unsigned tier. Unlike
+     * IntFunction's getLong, it keeps a 32-bit value equal to INT's sentinel as that value, so
+     * that {@link #isNullAtTier(TypeDriver, long)} decides by the type's own NULL policy whether
+     * the value is NULL. Reads a constant or runtime-constant function, at setup or once per
+     * execution, never per row.
+     */
+    public static long getIntegerAtTier(Function function, TypeDriver driver) {
+        final Arithmetic arithmetic = driver.getArithmetic();
+        return switch (arithmetic) {
+            case I64 -> function.getLong(null);
+            case I8, I16, I32, U8, U16, U32 -> atTier(arithmetic, function.getInt(null));
+            case F32, F64, WIDE, NONE -> throw CairoException.critical(0).put("not an integer tier [type=")
+                    .put(driver.getTypeName()).put(", arithmetic=").put(arithmetic.name()).put(']');
+        };
+    }
+
+    /**
+     * Whether a stored column type reads through an accessor family but has no family arm. A
+     * default arm of a switch keyed on {@link #familyArmOpcodeOf(int)} that an existing type can
+     * also reach tests this first, so it raises {@link #noFamilyArm(CharSequence, CharSequence)}
+     * only for such a type and keeps its own text for every other.
+     */
+    public static boolean isFamilyArmMissing(int columnType) {
+        return accessorOpcodeOf(columnType) != -1 && familyArmOpcodeOf(columnType) == -1;
+    }
+
+    /**
+     * Whether a value read at the type's arithmetic tier
+     * ({@link #getIntegerAtTier(Function, TypeDriver)}) is the type's NULL. Only a type whose NULL
+     * policy is a sentinel has a NULL value, and only its own sentinel is that value; a never-null
+     * type reads every bit pattern, its minimum included, as a value.
+     */
+    public static boolean isNullAtTier(TypeDriver driver, long value) {
+        return driver.getNullPolicy() == NullPolicy.SENTINEL
+                && value == atTier(driver.getArithmetic(), driver.getNullAsLong());
+    }
+
+    /**
+     * Whether a type computes and represents NULL as its accessor family's namesake does: the
+     * same arithmetic tier and the same NULL policy. Every existing type is its own namesake.
+     * An unsigned or a never-null type on INT's accessor is not.
+     */
+    public static boolean isLikeFamilyNamesake(TypeDriver driver) {
+        final TypeDriver namesake = ColumnType.getTypeDriver(driver.getAccessor().opcode());
+        return driver.getArithmetic() == namesake.getArithmetic()
+                && driver.getNullPolicy() == namesake.getNullPolicy();
+    }
+
+    /**
+     * Whether values of this type order like the tag its accessor family is named after, that is,
+     * both have the same arithmetic tier. Code that reads a value through the family's getter and
+     * then compares, sorts or range-scans it may use the family's arm only when this is true.
+     */
+    public static boolean isOrderedLikeFamily(TypeDriver driver) {
+        return driver.getArithmetic() == ColumnType.getTypeDriver(driver.getAccessor().opcode()).getArithmetic();
+    }
+
+    /**
+     * The refusal a site raises for a type that has no family arm there, naming the type, the
+     * site and the decision its author has to make.
+     */
+    public static CairoException noFamilyArm(CharSequence typeName, CharSequence site) {
+        return CairoException.critical(0).put("no family arm for ").put(typeName).put(" at ").put(site)
+                .put(": add the arm or declare the type like its namesake");
+    }
+
+    // a sign-extended value of at most 32 bits as the tier reads it: unsigned tiers drop the sign
+    private static long atTier(Arithmetic arithmetic, long value) {
+        return switch (arithmetic) {
+            case U8 -> value & 0xFFL;
+            case U16 -> value & 0xFFFFL;
+            case U32 -> value & 0xFFFF_FFFFL;
+            case I8, I16, I32, I64, F32, F64, WIDE, NONE -> value;
+        };
+    }
+
+    /**
+     * The type driver of a stored column type, or null for a pseudo type and for VARCHAR_SLICE (see
+     * {@link #accessorOf(int)}).
+     */
+    public static @Nullable TypeDriver storedTypeDriverOf(int columnType) {
+        final short tag = ColumnType.tagOf(columnType);
+        if (tag == ColumnType.VARCHAR_SLICE) {
+            return null;
+        }
+        return TypeDrivers.find(columnType);
+    }
+
+    /**
+     * The getter and putter family a type's values are read and written with: the record getters,
+     * the row and sink putters and the map-key putters. Each existing type is its own family. A new
+     * type may return an existing family and then takes that family's arm at the per-row switches
+     * on the getter, except that a switch that computes or decides NULL requires it to be like the
+     * family's namesake ({@link PhysicalDescriptor#familyArmOf}) and a compare switch requires it
+     * to order like the namesake ({@link PhysicalDescriptor#compareOpcode}). {@link #opcode()} is
+     * the tag the family is named after, the value those switches dispatch on.
+     */
+    public enum Accessor {
+        BOOLEAN(ColumnType.BOOLEAN),
+        BYTE(ColumnType.BYTE),
+        SHORT(ColumnType.SHORT),
+        CHAR(ColumnType.CHAR),
+        INT(ColumnType.INT),
+        LONG(ColumnType.LONG),
+        DATE(ColumnType.DATE),
+        TIMESTAMP(ColumnType.TIMESTAMP),
+        FLOAT(ColumnType.FLOAT),
+        DOUBLE(ColumnType.DOUBLE),
+        STRING(ColumnType.STRING),
+        SYMBOL(ColumnType.SYMBOL),
+        LONG256(ColumnType.LONG256),
+        GEOBYTE(ColumnType.GEOBYTE),
+        GEOSHORT(ColumnType.GEOSHORT),
+        GEOINT(ColumnType.GEOINT),
+        GEOLONG(ColumnType.GEOLONG),
+        BINARY(ColumnType.BINARY),
+        UUID(ColumnType.UUID),
+        LONG128(ColumnType.LONG128),
+        IPv4(ColumnType.IPv4),
+        VARCHAR(ColumnType.VARCHAR),
+        ARRAY(ColumnType.ARRAY),
+        DECIMAL8(ColumnType.DECIMAL8),
+        DECIMAL16(ColumnType.DECIMAL16),
+        DECIMAL32(ColumnType.DECIMAL32),
+        DECIMAL64(ColumnType.DECIMAL64),
+        DECIMAL128(ColumnType.DECIMAL128),
+        DECIMAL256(ColumnType.DECIMAL256),
+        INTERVAL(ColumnType.INTERVAL);
+
+        private final short opcode;
+
+        Accessor(short opcode) {
+            this.opcode = opcode;
+        }
+
+        /**
+         * The tag this family is named after: the arm value the per-row switches dispatch on.
+         */
+        public short opcode() {
+            return opcode;
+        }
+    }
+
+    /**
+     * The arithmetic tier: width, integer or floating-point representation, and signedness. Code
+     * that computes, compares, sorts or takes a minimum or maximum switches on it instead of the
+     * tag. {@link #WIDE} is a 16- or 32-byte value with comparators of its own; {@link #NONE} has
+     * no arithmetic order here (symbol keys, intervals, var-size values).
+     */
+    public enum Arithmetic {
+        I8,
+        I16,
+        I32,
+        I64,
+        U8,
+        U16,
+        U32,
+        F32,
+        F64,
+        WIDE,
+        NONE
+    }
+
+    /**
+     * The data-movement tier: the width class of a fixed-size value, or {@link #VAR} for a
+     * var-size layout, whose values live in a data vector addressed through an aux vector. Code
+     * on this tier copies, shuffles, sizes and fills values; it never compares or sorts them.
+     */
+    public enum Movement {
+        W1(0),
+        W2(1),
+        W4(2),
+        W8(3),
+        W16(4),
+        W32(5),
+        VAR(-1);
+
+        private final int pow2Size;
+
+        Movement(int pow2Size) {
+            this.pow2Size = pow2Size;
+        }
+
+        /**
+         * log2 of the value width in bytes; -1 for {@link #VAR}.
+         */
+        public int pow2Size() {
+            return pow2Size;
+        }
+
+        /**
+         * The value width in bytes; 0 for {@link #VAR}, whose data vector has no fixed stride.
+         */
+        public int size() {
+            return pow2Size < 0 ? 0 : 1 << pow2Size;
+        }
+    }
+
+    /**
+     * The accessor opcodes by tag, filled from the type drivers on first use. The holder class
+     * keeps the fill out of every static initialiser the type drivers reach.
+     */
+    private static final class Opcodes {
+        static final short[] ACCESSOR = new short[ColumnType.MAX_TAG + 1];
+        static final short[] FAMILY_ARM = new short[ColumnType.MAX_TAG + 1];
+
+        static {
+            for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+                final TypeDriver driver = storedTypeDriverOf(tag);
+                ACCESSOR[tag] = driver != null ? driver.getAccessor().opcode() : -1;
+                FAMILY_ARM[tag] = driver != null && isLikeFamilyNamesake(driver) ? driver.getAccessor().opcode() : -1;
+            }
+        }
+    }
+}

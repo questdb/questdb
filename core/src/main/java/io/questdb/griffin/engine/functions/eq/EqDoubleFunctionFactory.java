@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -71,16 +73,23 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
+    // x = NULL (or NaN): the NULL test of the operand's accessor family; every family without one of
+    // its own, and every pseudo type, reads as a DOUBLE, whose NULL is NaN. A type unlike its family's
+    // namesake is refused, since the family's test would read the namesake's NULL
     private static Function dispatchUnaryFunc(Function operand, int operandType) {
-        return switch (ColumnType.tagOf(operandType)) {
-            case ColumnType.INT -> new FuncIntIsNaN(operand);
-            case ColumnType.LONG -> new FuncLongIsNaN(operand);
-            case ColumnType.DATE -> new FuncDateIsNaN(operand);
-            case ColumnType.TIMESTAMP -> new FuncTimestampIsNaN(operand);
-            case ColumnType.FLOAT -> new FuncFloatIsNaN(operand);
-            default ->
-                // double
-                    new FuncDoubleIsNaN(operand);
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(operandType);
+        if (driver == null) {
+            return new FuncDoubleIsNaN(operand);
+        }
+        return switch (PhysicalDescriptor.familyArmOf(driver, "= NULL")) {
+            case INT -> new FuncIntIsNaN(operand);
+            case LONG -> new FuncLongIsNaN(operand);
+            case DATE -> new FuncDateIsNaN(operand);
+            case TIMESTAMP -> new FuncTimestampIsNaN(operand);
+            case FLOAT -> new FuncFloatIsNaN(operand);
+            case BOOLEAN, BYTE, SHORT, CHAR, DOUBLE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG,
+                 BINARY, UUID, LONG128, IPv4, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128,
+                 DECIMAL256, INTERVAL -> new FuncDoubleIsNaN(operand);
         };
     }
 

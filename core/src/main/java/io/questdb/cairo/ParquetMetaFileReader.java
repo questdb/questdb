@@ -446,6 +446,14 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return flyweightColName.of(nameAddr, nameAddr + nameLength, true);
     }
 
+    /**
+     * How the stored column represents NULL, from its stored type's type driver; see {@link
+     * io.questdb.griffin.engine.table.parquet.ParquetDecoder#getColumnNullPolicy(int)}.
+     */
+    public NullPolicy getColumnNullPolicy(int columnIndex) {
+        return ColumnType.getTypeDriver(getColumnType(columnIndex)).getNullPolicy();
+    }
+
     public int getColumnType(int columnIndex) {
         return Unsafe.getInt(columnDescriptorAddr(columnIndex) + COL_DESC_COL_TYPE_OFF);
     }
