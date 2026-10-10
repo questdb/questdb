@@ -24,7 +24,14 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewSymbolCache;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -100,6 +107,108 @@ public class LiveViewOutputSymbolCacheTest extends AbstractLiveViewTest {
                             ts\tfalse\t0
                             g\ttrue\t128
                             s\tfalse\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFlushesOfNewSymbolsKeepTheSlotStampedAndTheCacheInStep() throws Exception {
+        // The normal path of the flush-time in-step check: with no recovery in between, every
+        // flush of a lead that brings new values - on two SYMBOL columns, with repeats and a
+        // NULL - commits exactly the ids the drain interned them at. The flush must find the
+        // tier's symbol cache in step with the view's table and re-stamp the slot as a subset
+        // of disk, never take the out-of-step fallback that un-stamps it and marks it stale.
+        // Both columns default to CACHE, and the check must read the committed values from the
+        // mapped symbol files: a cached valueOf() would leave a String per checked id on the
+        // heap of the reader it checks against, which on the flush is the view's pooled reader.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, r SYMBOL, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, g, r, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY g ORDER BY ts ANCHOR DAILY '00:00')");
+            final String[] commits = {
+                    """
+                    ('1970-01-01T00:00:01.000000Z', 'a', 'east', 1.0),
+                    ('1970-01-01T00:00:02.000000Z', 'b', NULL, 2.0)""",
+                    """
+                    ('1970-01-01T00:00:03.000000Z', 'c', 'west', 3.0),
+                    ('1970-01-01T00:00:04.000000Z', 'a', 'east', 4.0)""",
+                    """
+                    ('1970-01-01T00:00:05.000000Z', 'd', 'north', 5.0),
+                    ('1970-01-01T00:00:06.000000Z', 'b', 'west', 6.0)"""
+            };
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int c = 0; c < commits.length; c++) {
+                    execute("INSERT INTO base VALUES " + commits[c]);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+
+                    final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertFalse("a normal flush must not mark the tier stale", instance.isTierStale());
+                    final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                    final LiveViewSymbolCache cache = tier.getSymbolCache();
+                    final LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
+                    try (TableReader reader = getReader("lv")) {
+                        Assert.assertEquals("a normal flush must re-stamp the slot", reader.getSeqTxn(), slot.lvSeqTxn());
+                        Assert.assertEquals(0, slot.leadRowCount());
+                        Assert.assertEquals(2, cache.symbolColumnCount());
+                        if (c == 0) {
+                            // The pool hands this test the reader the first flush returned. That
+                            // flush's lead holds only values new to the table, so its row copy
+                            // resolves none of them through the reader, and its in-step check is
+                            // the only thing left that could have filled the reader's cache.
+                            for (int i = 0; i < 2; i++) {
+                                final int col = cache.symbolColumnIndexAt(i);
+                                Assert.assertEquals(
+                                        "the flush's in-step check must not fill the pooled reader's value cache [col=" + col + ']',
+                                        0,
+                                        ((SymbolMapReaderImpl) reader.getSymbolMapReader(col)).getCacheSize()
+                                );
+                            }
+                        }
+                    }
+                    // A reader off the pool starts with an empty value cache, so whatever it holds
+                    // after the check, the check put there.
+                    try (TableReader reader = newOffPoolReader(configuration, "lv")) {
+                        for (int i = 0; i < 2; i++) {
+                            final int col = cache.symbolColumnIndexAt(i);
+                            final SymbolMapReaderImpl committed = (SymbolMapReaderImpl) reader.getSymbolMapReader(col);
+                            Assert.assertTrue(committed.isCached());
+                            Assert.assertTrue(
+                                    "the cache must be in step with the committed symbols [col=" + col + ']',
+                                    cache.isInStepWith(col, committed)
+                            );
+                            Assert.assertEquals(
+                                    "the in-step check must not fill the reader's value cache [col=" + col + ']',
+                                    0,
+                                    committed.getCacheSize()
+                            );
+                        }
+                    }
+                }
+            }
+
+            assertQuery("SELECT ts, g, r, s FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tg\tr\ts
+                            1970-01-01T00:00:01.000000Z\ta\teast\t1.0
+                            1970-01-01T00:00:02.000000Z\tb\t\t2.0
+                            1970-01-01T00:00:03.000000Z\tc\twest\t3.0
+                            1970-01-01T00:00:04.000000Z\ta\teast\t5.0
+                            1970-01-01T00:00:05.000000Z\td\tnorth\t5.0
+                            1970-01-01T00:00:06.000000Z\tb\twest\t8.0
+                            """);
+            assertQuery("SELECT r, count() FROM lv ORDER BY r")
+                    .expectSize()
+                    .returns("""
+                            r\tcount
+                            \t1
+                            east\t2
+                            north\t1
+                            west\t2
                             """);
         });
     }

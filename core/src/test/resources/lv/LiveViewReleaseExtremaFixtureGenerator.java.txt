@@ -1,0 +1,234 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.lv;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+
+/**
+ * NOT A REGRESSION TEST. Run under an unmodified 10.0.x checkout to emit the third
+ * cross-version checkpoint fixture, the one whose functions this branch deliberately
+ * cannot restore.
+ * <p>
+ * The other two fixtures carry views whose state layout did not move, so both prove a
+ * released ladder <b>carries forward</b>. This one is the opposite case and the only
+ * one in the suite: an anchored cumulative {@code max}/{@code min} over DOUBLE and
+ * LONG, which is
+ * {@code MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction}
+ * and its LONG twin. Both dropped the redundant "initialized" byte from their frozen
+ * image on this branch and bumped {@code checkpointStateFormatVersion()} 1 -&gt; 2 for
+ * it, so a root 10.0.x wrote under version 1 must not resolve to them.
+ * <p>
+ * The fixture exists to pin what an upgrade of such a view actually costs: the ladder
+ * is retired and the window recomputes from the base table, once, while the view stays
+ * valid and serves correct rows throughout. That is the intended outcome of the bump
+ * rather than a defect, and it is worth a released-bytes case precisely because it is
+ * a silent restart-time cost that no fault counter and no invalid flag records.
+ * <p>
+ * Only the two bumped classes are in the view. A {@code sum} beside them would be
+ * retired by the same restore and prove nothing extra about which function forced it.
+ * <p>
+ * mvn -pl core -Dtest=LiveViewReleaseExtremaFixtureGenerator -Dlv.fixture.out=/path/to/extrema.zip test
+ */
+public class LiveViewReleaseExtremaFixtureGenerator extends AbstractLiveViewTest {
+
+    private static final String DAILY_ANCHOR = "2026-01-01T";
+    /**
+     * Distinct partition keys. Two is enough: this fixture is about a function's state
+     * version, not about the shape of the map that holds it.
+     */
+    private static final int KEYS = 2;
+
+    @After
+    public void resetClock() {
+        setCurrentMicros(-1);
+    }
+
+    @Before
+    public void setUpCadence() {
+        // One logical boundary per commit, so the view carries a multi-entry timeline and
+        // the retirement the upgrade performs is visible as a boundary count collapsing.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        configOverrideMangleTableDirNames(false);
+        setCurrentMicros(0);
+    }
+
+    @Test
+    public void generate() throws Exception {
+        final String out = System.getProperty("lv.fixture.out");
+        Assert.assertNotNull("-Dlv.fixture.out=<zip path> is required", out);
+
+        createExtremaShape();
+
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, "lv_extrema");
+            for (int second = 0; second <= 40; second += 10) {
+                insertExtrema(second);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+        }
+
+        report("lv_extrema");
+        System.out.println("FIXTURE-END-MICROS=" + currentMicros);
+
+        // Quiesce every mapped file before the copy, exactly as a clean shutdown would.
+        engine.getLiveViewRegistry().clear();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+
+        zipDirectory(new File(root).toPath(), new File(out));
+        System.out.println("FIXTURE-WRITTEN=" + out + " bytes=" + new File(out).length());
+    }
+
+    private static String timestamp(int secondOfDay) {
+        return DAILY_ANCHOR + String.format("09:%02d:%02d.000000Z", secondOfDay / 60, secondOfDay % 60);
+    }
+
+    private static void copy(InputStream is, OutputStream os, byte[] buffer) throws IOException {
+        int read;
+        while ((read = is.read(buffer)) > 0) {
+            os.write(buffer, 0, read);
+        }
+    }
+
+    private static void zipDirectory(Path srcRoot, File dest) throws IOException {
+        final List<Path> files = new ArrayList<>();
+        try (java.util.stream.Stream<Path> walk = Files.walk(srcRoot)) {
+            walk.filter(Files::isRegularFile)
+                    .filter(f -> !f.getFileName().toString().endsWith(".lock"))
+                    .forEach(files::add);
+        }
+        // Deterministic entry order, so a regenerated fixture diffs cleanly.
+        Collections.sort(files);
+        try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(dest))) {
+            final byte[] buffer = new byte[64 * 1024];
+            for (int i = 0, n = files.size(); i < n; i++) {
+                final Path file = files.get(i);
+                final ZipEntry entry = new ZipEntry(srcRoot.relativize(file).toString().replace('\\', '/'));
+                entry.setTime(0L);
+                zip.putNextEntry(entry);
+                try (InputStream is = Files.newInputStream(file)) {
+                    copy(is, zip, buffer);
+                }
+                zip.closeEntry();
+            }
+        }
+    }
+
+    private int countSealedBoundaries(LiveViewInstance instance) {
+        final int[] count = {0};
+        try (
+                io.questdb.std.str.Path checkpointsDir = new io.questdb.std.str.Path()
+                        .of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(engine.getConfiguration());
+                LiveViewCheckpointTimelineReader reader =
+                        new LiveViewCheckpointTimelineReader(engine.getConfiguration())
+        ) {
+            store.of(checkpointsDir);
+            reader.of(checkpointsDir);
+            try (LiveViewCheckpointGenerationPin pin = store.pin()) {
+                reader.iterateAll(pin.getTimelineRootRef(), entry -> count[0]++);
+            }
+        }
+        return count[0];
+    }
+
+    /**
+     * The anchored cumulative extrema view. The DOUBLE and LONG columns select the two
+     * factories that bumped their state version, and {@code min} rides the same class as
+     * {@code max} with the comparator reversed.
+     */
+    private void createExtremaShape() throws Exception {
+        execute("CREATE TABLE ext (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE, qty LONG) "
+                + "TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        execute("CREATE LIVE VIEW lv_extrema FLUSH EVERY 100ms START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, "
+                + "max(amount) OVER w AS running_max, "
+                + "min(amount) OVER w AS running_min, "
+                + "max(qty) OVER w AS running_qty_max, "
+                + "min(qty) OVER w AS running_qty_min "
+                + "FROM ext WINDOW w AS ("
+                + "PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+    }
+
+    /**
+     * Values that rise and fall inside each key, so a restored extremum that came back as
+     * this row's own value rather than the running one is visible in the output.
+     */
+    private void insertExtrema(int second) throws Exception {
+        final StringBuilder sql = new StringBuilder("INSERT INTO ext VALUES ");
+        for (int k = 0; k < KEYS; k++) {
+            if (k > 0) {
+                sql.append(", ");
+            }
+            final int varied = (second * 37 + 11 + k * 17) % 89;
+            sql.append("('").append(timestamp(second + k)).append("', 'acct-").append(k + 1).append("', ")
+                    .append(varied + 0.5).append(", ")
+                    .append(varied * 1_000L + k).append(')');
+        }
+        execute(sql.toString());
+    }
+
+    private void report(String viewName) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' must be registered", instance);
+        Assert.assertFalse(viewName + ": the fixture must not carry an invalid view", instance.isInvalid());
+        final int boundaries = countSealedBoundaries(instance);
+        Assert.assertTrue(
+                viewName + ": the fixture must carry at least two sealed boundaries, got " + boundaries,
+                boundaries >= 2
+        );
+        System.out.println("FIXTURE-" + viewName + "-LADDER-ENTRIES=" + boundaries);
+        System.out.println("FIXTURE-" + viewName + "-HEAD-LV-SEQ-TXN=" + instance.getHeadCheckpointLvSeqTxn());
+        System.out.println("FIXTURE-" + viewName + "-HEAD-BASE-SEQ-TXN=" + instance.getHeadCheckpointBaseSeqTxn());
+        System.out.println("FIXTURE-" + viewName + "-HEAD-MAX-TS=" + instance.getHeadCheckpointMaxTs());
+    }
+}

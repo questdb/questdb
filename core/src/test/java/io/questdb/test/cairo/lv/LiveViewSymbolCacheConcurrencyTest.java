@@ -27,20 +27,25 @@ package io.questdb.test.cairo.lv;
 import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.lv.LiveViewSymbolTable;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Concurrency unit coverage for {@link LiveViewSymbolCache}. The cache is a
@@ -70,6 +75,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class LiveViewSymbolCacheConcurrencyTest {
 
     private static final int COL = 0;
+    // The SYMBOL column of the in-memory tier the rewind tests build, behind a timestamp column.
+    private static final int TIER_COL = 1;
+    private static final long TIER_PAGE_SIZE = 4096L;
     // Allocation budget for a single intern that lands far past the ids already stored.
     // A sparse store pays a page plus its index; a dense one pays four bytes per id in
     // the gap, which is 16MB at the committed counts the sparsity tests use.
@@ -548,6 +556,186 @@ public class LiveViewSymbolCacheConcurrencyTest {
         Assert.assertEquals(1, overlay.keyOf("v1"));
     }
 
+    @Test
+    public void testRewindRefusesOnlyAPinOnASlotWhoseHorizonReachesTheBand() throws Exception {
+        // tryRewindSymbolCache takes back the symbol ids at and above the view table's committed
+        // count. A reader that pins a slot whose horizon reaches that band can resolve an id the
+        // rewind re-binds, so the pin refuses the rewind and nothing changes. A pin on a slot whose
+        // horizon stops at or below the committed count cannot, so the rewind goes ahead: it holds
+        // and re-stamps every slot no reader pins, leaves a pinned slot's horizon alone, and takes
+        // the band back with both slots pinned as well. The readers keep every key and value.
+        TestUtils.assertMemoryLeak(() -> {
+            final IntList types = new IntList();
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            final IntList committedCounts = new IntList();
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, TIER_PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                Assert.assertEquals(0, cache.intern(TIER_COL, "acct-1", NOT_FOUND_READER));
+                Assert.assertEquals(1, cache.intern(TIER_COL, "acct-2", NOT_FOUND_READER));
+                // The pinned slot holds a two-account lead, acct-3 and acct-4.
+                Assert.assertEquals(2, cache.intern(TIER_COL, "acct-3", NOT_FOUND_READER));
+                Assert.assertEquals(3, cache.intern(TIER_COL, "acct-4", NOT_FOUND_READER));
+                final int leadIdx = tier.getPublishedIdx();
+                fillLeadSlot(tier, leadIdx, 2, 3);
+                Assert.assertEquals(4, tier.getSlot(leadIdx).newSymbolMaxId(TIER_COL));
+                final int leadPin = tier.acquireRead();
+                Assert.assertEquals(leadIdx, leadPin);
+                final LiveViewSymbolTable leadReader = new LiveViewSymbolTable().of(
+                        new CommittedSymbols("acct-1", "acct-2"), cache, TIER_COL, tier.getSlot(leadPin).newSymbolMaxId(TIER_COL), false, false
+                );
+                // A discarded pass strands acct-5 past the lead.
+                cache.onO3();
+                Assert.assertEquals(4, cache.intern(TIER_COL, "acct-5", NOT_FOUND_READER));
+
+                // The table committed acct-3 alone: the pinned slot lists acct-4 past it.
+                committedCounts.extendAndSet(TIER_COL, 3);
+                Assert.assertFalse("a pin on a slot whose horizon reaches the band must refuse the rewind", tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals(5, cache.newSymbolMaxIdExclusive(TIER_COL));
+                Assert.assertEquals("acct-5", cache.newSymbolValueOf(TIER_COL, 4).toString());
+                assertReaderSeesAccounts(leadReader, "acct-1", "acct-2", "acct-3", "acct-4");
+                // The refusal left no writer sentinel behind.
+                final int otherIdx = 1 - leadIdx;
+                Assert.assertNotNull(tier.tryAcquireWrite(otherIdx));
+                tier.releaseWriteWithoutPublish(otherIdx);
+
+                // The table committed acct-4 too: the pinned slot lists nothing past it.
+                committedCounts.setQuick(TIER_COL, 4);
+                Assert.assertTrue("a pin on a slot below the band must not refuse the rewind", tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals(4, cache.newSymbolMaxIdExclusive(TIER_COL));
+                Assert.assertNull(cache.newSymbolValueOf(TIER_COL, 4));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(TIER_COL, "acct-5", 0, 5));
+                Assert.assertEquals("the pinned slot must keep its horizon", 4, tier.getSlot(leadIdx).newSymbolMaxId(TIER_COL));
+                Assert.assertEquals("the free slot must be re-stamped from the rewound cache", 4, tier.getSlot(otherIdx).newSymbolMaxId(TIER_COL));
+                assertReaderSeesAccounts(leadReader, "acct-1", "acct-2", "acct-3", "acct-4");
+
+                // A read pins the other slot once it is published. With both slots pinned below
+                // the band, the rewind holds no sentinel at all and re-stamps nothing.
+                Assert.assertNotNull(tier.tryAcquireWrite(otherIdx));
+                tier.publishSwap(otherIdx);
+                final int otherPin = tier.acquireRead();
+                Assert.assertEquals(otherIdx, otherPin);
+                final LiveViewSymbolTable otherReader = new LiveViewSymbolTable().of(
+                        new CommittedSymbols("acct-1", "acct-2", "acct-3", "acct-4"), cache, TIER_COL, tier.getSlot(otherPin).newSymbolMaxId(TIER_COL), false, false
+                );
+                cache.onO3();
+                Assert.assertEquals(4, cache.intern(TIER_COL, "acct-6", NOT_FOUND_READER));
+                Assert.assertEquals(5, cache.intern(TIER_COL, "acct-3", NOT_FOUND_READER));
+                Assert.assertTrue("pins on two slots below the band must not refuse the rewind", tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals(4, cache.newSymbolMaxIdExclusive(TIER_COL));
+                Assert.assertEquals(4, tier.getSlot(leadIdx).newSymbolMaxId(TIER_COL));
+                Assert.assertEquals(4, tier.getSlot(otherIdx).newSymbolMaxId(TIER_COL));
+                assertReaderSeesAccounts(leadReader, "acct-1", "acct-2", "acct-3", "acct-4");
+                assertReaderSeesAccounts(otherReader, "acct-1", "acct-2", "acct-3", "acct-4");
+                // The re-bound id goes to the next value new to the lead.
+                Assert.assertEquals(4, cache.intern(TIER_COL, "acct-7", NOT_FOUND_READER));
+                assertReaderSeesAccounts(leadReader, "acct-1", "acct-2", "acct-3", "acct-4");
+
+                // Both pins drop cleanly: the rewind left neither refcount touched.
+                tier.releaseRead(otherPin);
+                tier.releaseRead(leadPin);
+                for (int slotIdx = 0; slotIdx < 2; slotIdx++) {
+                    Assert.assertNotNull(tier.tryAcquireWrite(slotIdx));
+                    tier.releaseWriteWithoutPublish(slotIdx);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRewindUnderAReaderPinnedBelowTheBandKeepsEveryKeyItResolves() throws Exception {
+        // The refresh worker takes back a stranded band of symbol ids, interns new values at the
+        // ids it re-binds and takes them back again, over and over, while a reader on another
+        // thread pins a slot whose horizon stops at the view table's committed count: the slot of
+        // a lead the table has since committed. tryRewindSymbolCache runs without that slot's
+        // writer sentinel, so the reader keeps resolving its keys and values lock-free right
+        // through the truncation of the id -> string store, the re-pointing of the reverse index
+        // and the prune behind each re-stamp. Every key and value it saw before the first rewind
+        // must resolve the same way throughout, and no value the worker interns may reach it.
+        TestUtils.assertMemoryLeak(() -> {
+            final IntList types = new IntList();
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            final int committedCount = 3;
+            final int rounds = 2_000;
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(TIER_COL, committedCount);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, TIER_PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                Assert.assertEquals(0, cache.intern(TIER_COL, "acct-1", NOT_FOUND_READER));
+                Assert.assertEquals(1, cache.intern(TIER_COL, "acct-2", NOT_FOUND_READER));
+                Assert.assertEquals(2, cache.intern(TIER_COL, "acct-3", NOT_FOUND_READER));
+                final int pinnedIdx = tier.getPublishedIdx();
+                fillLeadSlot(tier, pinnedIdx, 2);
+                Assert.assertEquals(committedCount, tier.getSlot(pinnedIdx).newSymbolMaxId(TIER_COL));
+
+                final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+                final AtomicBoolean isWriterDone = new AtomicBoolean();
+                final AtomicLong probes = new AtomicLong();
+                final CountDownLatch readerReady = new CountDownLatch(1);
+                final Thread reader = new Thread(() -> {
+                    final int pin = tier.acquireRead();
+                    try {
+                        Assert.assertEquals(pinnedIdx, pin);
+                        // The reader's disk table predates acct-3's commit, so acct-3 resolves
+                        // from the cache, at the id the slot's row carries.
+                        final LiveViewSymbolTable overlay = new LiveViewSymbolTable().of(
+                                new CommittedSymbols("acct-1", "acct-2"), cache, TIER_COL, tier.getSlot(pin).newSymbolMaxId(TIER_COL), false, false
+                        );
+                        assertReaderSeesAccounts(overlay, "acct-1", "acct-2", "acct-3");
+                        probes.incrementAndGet();
+                        readerReady.countDown();
+                        while (!isWriterDone.get()) {
+                            assertReaderSeesAccounts(overlay, "acct-1", "acct-2", "acct-3");
+                            Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, overlay.keyOf("acct-4"));
+                            probes.incrementAndGet();
+                        }
+                        // The writer's last rewind happens-before this check.
+                        assertReaderSeesAccounts(overlay, "acct-1", "acct-2", "acct-3");
+                        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, overlay.keyOf("acct-4"));
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        readerReady.countDown();
+                        if (pin >= 0) {
+                            tier.releaseRead(pin);
+                        }
+                    }
+                }, "lv-symbol-rewind-reader");
+                reader.start();
+                try {
+                    readerReady.await();
+                    for (int round = 0; round < rounds && errors.isEmpty(); round++) {
+                        // A pass the next recovery discards: it re-interns acct-3 above the
+                        // committed count, which puts a newer node on acct-3's reverse-index chain,
+                        // and a value new to the view.
+                        cache.onO3();
+                        Assert.assertEquals(committedCount, cache.intern(TIER_COL, "acct-3", NOT_FOUND_READER));
+                        Assert.assertEquals(committedCount + 1, cache.intern(TIER_COL, "acct-4", NOT_FOUND_READER));
+                        Assert.assertEquals(committedCount + 2, cache.intern(TIER_COL, "round-" + round, NOT_FOUND_READER));
+                        Assert.assertTrue("the pinned slot stops below the band [round=" + round + ']', tier.tryRewindSymbolCache(committedCounts));
+                        Assert.assertEquals(committedCount, cache.newSymbolMaxIdExclusive(TIER_COL));
+                        // Let the reader probe at least once between two rewinds.
+                        final long seen = probes.get();
+                        while (probes.get() == seen && errors.isEmpty() && reader.isAlive()) {
+                            Thread.onSpinWait();
+                        }
+                    }
+                } finally {
+                    isWriterDone.set(true);
+                    reader.join();
+                }
+                if (!errors.isEmpty()) {
+                    throw new AssertionError("a rewind disturbed a reader pinned below the band", errors.peek());
+                }
+                Assert.assertTrue("the reader must have probed between the rewinds", probes.get() > rounds);
+                Assert.assertEquals("the pinned slot must keep its horizon", committedCount, tier.getSlot(pinnedIdx).newSymbolMaxId(TIER_COL));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(TIER_COL, "acct-4", 0, committedCount + 3));
+                Assert.assertEquals(2, cache.newSymbolKeyOf(TIER_COL, "acct-3", 0, committedCount + 3));
+            }
+        });
+    }
+
     // Both soaks race their readers against a writer interning 2M values, and both bound the reader
     // loop by the writer's done flag. A reader that the scheduler starves until the writer finishes
     // therefore probes nothing, contributes no error, and leaves the test green while proving
@@ -560,6 +748,30 @@ public class LiveViewSymbolCacheConcurrencyTest {
                     probeCounts[r] > 0
             );
         }
+    }
+
+    // Asserts that a pinned slot's symbol table lists exactly these accounts, each under the key
+    // of its position and resolving back to it - what a WINDOW JOIN or a scan enumerates.
+    private static void assertReaderSeesAccounts(LiveViewSymbolTable overlay, String... accounts) {
+        Assert.assertEquals(accounts.length, overlay.getSymbolCount());
+        for (int key = 0; key < accounts.length; key++) {
+            Assert.assertEquals("key " + key, accounts[key], String.valueOf(overlay.valueOf(key)));
+            Assert.assertEquals("account " + accounts[key], key, overlay.keyOf(accounts[key]));
+        }
+    }
+
+    // Writes one lead row per id into slotIdx under its writer sentinel and releases it, which
+    // stamps the slot's symbol horizon from the cache, as a lead publish does.
+    private static void fillLeadSlot(LiveViewInMemoryTier tier, int slotIdx, int... ids) {
+        final LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(slotIdx);
+        Assert.assertNotNull(slot);
+        for (int row = 0; row < ids.length; row++) {
+            slot.putLong(row, 0, row + 1);
+            slot.putInt(row, TIER_COL, ids[row]);
+        }
+        slot.setRowCount(ids.length);
+        slot.setLeadRowCount(ids.length);
+        tier.releaseWriteWithoutPublish(slotIdx);
     }
 
     // Loads the intern path's classes on a throwaway cache so a measured intern sees
@@ -758,6 +970,46 @@ public class LiveViewSymbolCacheConcurrencyTest {
                 Assert.assertNull(cache.newSymbolValueOf(COL, id + 1));
                 Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(COL));
             }
+        }
+    }
+
+    // The disk symbol table a reader's overlay sits on: the values the view's table had committed
+    // when the reader opened, at the ids of their positions.
+    private static final class CommittedSymbols implements StaticSymbolTable {
+        private final String[] values;
+
+        private CommittedSymbols(String... values) {
+            this.values = values;
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return values.length;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            for (int key = 0; key < values.length; key++) {
+                if (Chars.equals(values[key], value)) {
+                    return key;
+                }
+            }
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return key >= 0 && key < values.length ? values[key] : null;
         }
     }
 

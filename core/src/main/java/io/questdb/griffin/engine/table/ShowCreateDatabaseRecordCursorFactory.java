@@ -165,7 +165,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     // has no per-object source position, so it passes 0. An object dropped between collection and emit
     // is skipped by appendObjectDdl, so this 0 surfaces only for a genuine error that aborts the dump.
     protected RecordCursorFactory liveViewFactory(TableToken token) {
-        return new ShowCreateLiveViewRecordCursorFactory(token, 0);
+        return new ShowCreateLiveViewRecordCursorFactory(token, 0, false);
     }
 
     protected RecordCursorFactory matViewFactory(TableToken token) {

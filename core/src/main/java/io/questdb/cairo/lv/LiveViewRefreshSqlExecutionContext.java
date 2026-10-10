@@ -156,7 +156,14 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
             // routes the refresh into LiveViewRefreshJob's recompile-and-recover path.
             // Unlike checkReaderVersion, the pinned reader must NOT be closed here: it
             // is owned by the refresh method's own try/finally.
-            if (version > -1 && baseTableReader.getMetadataVersion() != version) {
+            // A version that moved by SYMBOL capacity alone is served: the compiled plan
+            // depends on nothing a capacity change touches (LiveViewBaseMetadataSnapshot
+            // says why), and the writer's auto-scale changes the capacity on every
+            // doubling of a growing key set, so refusing it would cost the view a
+            // recompile and a runtime restore each time.
+            if (version > -1
+                    && baseTableReader.getMetadataVersion() != version
+                    && !isSymbolCapacityOnlyChange(version)) {
                 throw TableReferenceOutOfDateException.of(
                         tableToken,
                         tableToken.getTableId(),
@@ -201,5 +208,42 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
         this.refreshingInstance = refreshingInstance;
         setCancelledFlag(refreshingInstance != null ? refreshingInstance.getRefreshCancelledFlag() : NEVER_CANCELLED);
         getCircuitBreaker().resetTimer();
+    }
+
+    /**
+     * Snapshots the metadata of the pinned base reader, which is the metadata a plan
+     * compiled on this context records. Null when no base reader is pinned or its metadata
+     * cannot be read; a plan without a snapshot counts every base metadata change as drift.
+     */
+    @Nullable
+    LiveViewBaseMetadataSnapshot snapshotBaseMetadata() {
+        return baseTableReader != null
+                ? LiveViewBaseMetadataSnapshot.of(getCairoEngine().getConfiguration(), baseTableReader)
+                : null;
+    }
+
+    // Asks the plans of the view being refreshed whether the pinned base reader differs from
+    // the metadata a plan compiled at compiledMetadataVersion saw by SYMBOL capacities alone.
+    // The primary and the isolated repair runtime compile separately, so either can be the one
+    // at that version. No bound view, no plan at that version or no snapshot all answer false.
+    private boolean isSymbolCapacityOnlyChange(long compiledMetadataVersion) {
+        final LiveViewInstance instance = refreshingInstance;
+        if (instance == null) {
+            return false;
+        }
+        if (isSymbolCapacityOnlyChange(instance.getCompiledPlan(), compiledMetadataVersion)) {
+            return true;
+        }
+        final LiveViewRepairRuntime repairRuntime = instance.getRepairRuntime();
+        return repairRuntime != null && isSymbolCapacityOnlyChange(repairRuntime.getPlan(), compiledMetadataVersion);
+    }
+
+    private boolean isSymbolCapacityOnlyChange(@Nullable LiveViewCompiledPlan plan, long compiledMetadataVersion) {
+        final LiveViewBaseMetadataSnapshot snapshot = plan != null ? plan.getBaseMetadataSnapshot() : null;
+        return snapshot != null && snapshot.isSymbolCapacityOnlyChange(
+                getCairoEngine().getConfiguration(),
+                compiledMetadataVersion,
+                baseTableReader
+        );
     }
 }

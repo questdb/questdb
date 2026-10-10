@@ -185,6 +185,25 @@ public final class LiveViewSnapshotKeyCodec {
     }
 
     /**
+     * Whether the first key column of the entry at {@code offset} is null.
+     * <p>
+     * It answers for a guarded {@code count(k)} over the very column its window partitions
+     * by, which is exactly whether that call counts its partition's rows or none of them.
+     * The compiler admits that form only for a single-column key whose argument is a SYMBOL
+     * or VARCHAR, and both reach a checkpoint key as the STRING their resolved value is, so
+     * the null test is the length prefix this codec writes for a null string.
+     */
+    public static boolean isLeadingKeyColumnNull(LiveViewStatePageReader source, long offset, ColumnTypes keyTypes) {
+        final int type = ColumnType.tagOf(keyTypes.getColumnType(0));
+        if (type != ColumnType.STRING) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint key cannot test a leading column of this type [type=")
+                    .put(ColumnType.nameOf(type)).put(']');
+        }
+        return source.getInt(offset) < 0;
+    }
+
+    /**
      * Page-bounded counterpart used by the versioned checkpoint store.
      */
     public static long readKey(MapKey dst, LiveViewStatePageReader source, long offset, ColumnTypes keyTypes) {

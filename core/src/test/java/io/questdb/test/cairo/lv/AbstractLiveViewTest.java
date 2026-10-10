@@ -26,8 +26,14 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
+import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -36,12 +42,16 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
+
+import java.lang.reflect.Field;
 
 /**
  * Shared driver helpers for the live view tests. Every test in this package advances a live view by
@@ -61,6 +71,16 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // deadline rather than leaving the view waiting on the clock.
     protected static final long CLOCK_ADVANCE_MICROS = 250_000;
     protected static final int REFRESH_QUIESCENCE_PASSES = 512;
+    // The refresh-retry backoff LiveViewRefreshJob documents: after a faulting turn no worker
+    // re-drives the view for the first wait, each consecutive faulting turn doubles it, and no wait
+    // exceeds the cap. Mirrored here, rather than read from the job, so a change to the schedule
+    // shows up as a failing expectation instead of passing silently.
+    protected static final long REFRESH_RETRY_BACKOFF_BASE_MICROS = 100_000;
+    protected static final long REFRESH_RETRY_BACKOFF_MAX_MICROS = 5_000_000;
+    // Bounds drainJobThroughRetryBackoff. A streak ends within this many waits under any budget the
+    // tests set: the default count budget allows 5 faulting turns, and the 60s default duration
+    // budget about 18 at the capped wait.
+    protected static final int RETRY_BACKOFF_WAITS = 64;
     // Enough passes for the slowest seed in the suite (the parquet base test, which used 2000
     // when the helper was still copy-pasted). The loop exits as soon as the view leaves the
     // SEEDING state, so a generous bound costs nothing on the tests that converge quickly.
@@ -83,6 +103,9 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * Runs the job until it reports no more work, up to a bounded burst. Unlike the two drive*
      * helpers this is not an await - the caller loops over it - so exhausting the bound is not a
      * failure.
+     * <p>
+     * It leaves the clock alone, so a view backing off after a faulting turn stays put: a caller
+     * that means to drive such a view on uses {@link #drainJobThroughRetryBackoff}.
      */
     protected static boolean drainJob(Job job) {
         boolean any = false;
@@ -90,6 +113,77 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             any = true;
         }
         return any;
+    }
+
+    /**
+     * {@link #drainJob} that does not stop at a refresh-retry backoff: whenever the burst ends with
+     * a view waiting out the backoff a faulting turn armed, it moves the simulated clock to that
+     * view's deadline and drains again. So a fault that clears ends with the view refreshed, and one
+     * that does not ends with the view invalidated once a flush-retry budget runs out, as a worker
+     * would leave it; nothing else moves the clock. Fails if the waits do not end within
+     * {@link #RETRY_BACKOFF_WAITS}.
+     */
+    protected static boolean drainJobThroughRetryBackoff(Job job) {
+        boolean any = drainJob(job);
+        for (int i = 0; i < RETRY_BACKOFF_WAITS; i++) {
+            final long retryUs = nextRefreshRetryMicros();
+            if (retryUs == Numbers.LONG_NULL) {
+                return any;
+            }
+            setCurrentMicros(retryUs);
+            any |= drainJob(job);
+        }
+        Assert.fail("live view refresh still backing off after " + RETRY_BACKOFF_WAITS + " waits");
+        return any;
+    }
+
+    /**
+     * The earliest refresh-retry deadline still ahead of the engine's clock among the registered
+     * views that can refresh, or {@link Numbers#LONG_NULL} when none is backing off after a
+     * faulting turn. A deadline the clock already passed is not a wait: the view is due, and
+     * whether the job drives it is the job's answer.
+     */
+    protected static long nextRefreshRetryMicros() {
+        final ObjList<LiveViewInstance> views = new ObjList<>();
+        engine.getLiveViewRegistry().getViews(views);
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        long nextUs = Numbers.LONG_NULL;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            final LiveViewInstance instance = views.getQuick(i);
+            if (instance.isStub() || instance.isDropped() || instance.isInvalid()) {
+                continue;
+            }
+            final long retryUs = instance.getRefreshRetryNotBeforeUs();
+            if (retryUs != Numbers.LONG_NULL && retryUs > nowUs && (nextUs == Numbers.LONG_NULL || retryUs < nextUs)) {
+                nextUs = retryUs;
+            }
+        }
+        return nextUs;
+    }
+
+    /**
+     * How long after the first faulting turn of a streak its {@code turn}-th (counted from 1) runs,
+     * when every turn runs at the deadline the one before it armed.
+     */
+    protected static long refreshRetryStreakMicros(int turn) {
+        long offsetUs = 0;
+        for (int i = 0; i < turn - 1; i++) {
+            offsetUs += Math.min(REFRESH_RETRY_BACKOFF_MAX_MICROS, REFRESH_RETRY_BACKOFF_BASE_MICROS << Math.min(i, 32));
+        }
+        return offsetUs;
+    }
+
+    /**
+     * How many faulting turns a streak charged to the duration budget alone runs, each at the
+     * deadline the one before it armed, before the budget of {@code maxDurationMicros} runs out:
+     * the turn that finds the budget spent is the last.
+     */
+    protected static int refreshRetryTurnsUntilDurationExhausts(long maxDurationMicros) {
+        int turn = 1;
+        while (refreshRetryStreakMicros(turn) < maxDurationMicros) {
+            turn++;
+        }
+        return turn;
     }
 
     /**
@@ -111,6 +205,20 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             }
             Os.pause();
         }
+    }
+
+    /**
+     * The refresh job's private checkpoint timeline writer, for the tests that read what a seal
+     * or a repair left behind in it.
+     */
+    protected static LiveViewCheckpointTimelineStoreWriter checkpointTimelineStoreWriter(
+            LiveViewRefreshJob job
+    ) throws ReflectiveOperationException {
+        final Field field = LiveViewRefreshJob.class.getDeclaredField("checkpointTimelineStoreWriter");
+        field.setAccessible(true);
+        final LiveViewCheckpointTimelineStoreWriter writer = (LiveViewCheckpointTimelineStoreWriter) field.get(job);
+        Assert.assertNotNull("the job must have sealed through its timeline writer", writer);
+        return writer;
     }
 
     /**
@@ -144,6 +252,14 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * engine's own configuration for the time, then puts the clock back. A derived clock answers
      * with the stamp; a pinned real one answers with wall time.
      */
+    private static void assertRestoreRoute(String viewName, int expected, LiveViewInstance instance) {
+        Assert.assertEquals(
+                "live view '" + viewName + "' took the wrong restart recovery route",
+                LiveViewCheckpointRestoreRoute.name(expected),
+                LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
+        );
+    }
+
     private static boolean isEngineMillisecondClockDerivedFromTestClock() {
         // 2100-01-01T00:00:00Z in micros, far enough from now that no real clock reads it.
         final long probeMicros = 4_102_444_800_000_000L;
@@ -209,17 +325,102 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Asserts the named view's restart recovery rebuilt its whole window from the applied base
+     * rather than restoring a published root, and that the rebuild retired the timeline on its
+     * way through. The mirror image of {@link #assertRestoredFromTimeline(String)}: a case that
+     * means to exercise the fallback needs this, because a restore that quietly succeeded would
+     * satisfy the same rows.
+     */
+    protected void assertRebuiltFromAppliedBase(String viewName) {
+        final LiveViewInstance instance = restoreWitnessInstance(viewName);
+        assertRestoreRoute(viewName, LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD, instance);
+        Assert.assertTrue(
+                "live view '" + viewName + "' took the rebuild route without starting a rebuild",
+                instance.getCheckpointRebuildAttempts() > 0
+        );
+    }
+
+    /**
+     * Asserts the named view, carried over from an older checkpoint format, rebuilt its whole
+     * window from the applied base on the upgrade route, and that the rebuild retired the older
+     * directory: nothing is pending any more. Distinct from
+     * {@link #assertRebuiltFromAppliedBase(String)}, whose route a view that merely lost its
+     * timeline takes, with the restatement guard armed.
+     */
+    protected void assertUpgradeRebuilt(String viewName) {
+        final LiveViewInstance instance = restoreWitnessInstance(viewName);
+        assertRestoreRoute(viewName, LiveViewCheckpointRestoreRoute.UPGRADE_REBUILD, instance);
+        Assert.assertTrue(
+                "live view '" + viewName + "' took the upgrade route without starting a rebuild",
+                instance.getCheckpointRebuildAttempts() > 0
+        );
+        Assert.assertTrue(instance.isCheckpointRestoreSucceeded());
+        Assert.assertFalse(
+                "live view '" + viewName + "' rebuilt, but its older-format timeline is still pending retirement",
+                instance.isCheckpointUpgradeRebuildPending()
+        );
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(instance.isInvalid());
+    }
+
+    /**
+     * Asserts the named view's restart recovery restored its window state from a published timeline
+     * root, and that nothing rebuilt or reset on the way there.
+     * <p>
+     * {@code isCheckpointRestoreSucceeded()} alone cannot carry this assertion. Both restart routes
+     * report it: {@code tryRestoreFromTimeline} catches every {@link Throwable} and falls through to
+     * the applied-base rebuild, which recomputes the whole window, produces correct rows, faults no
+     * refresh cycle and fails no seal. A recompute oracle, the fault count and the seal-failure
+     * count are all green over that fallback, so a test that asserts only the flag proves the view
+     * has state - not that the roots it published are the state it came back on.
+     */
+    protected void assertRestoredFromTimeline(String viewName) {
+        final LiveViewInstance instance = restoreWitnessInstance(viewName);
+        assertRestoreRoute(viewName, LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE, instance);
+        Assert.assertEquals(
+                "live view '" + viewName + "' restored, but only after rebuilding from the applied base first",
+                0L,
+                instance.getCheckpointRebuildAttempts()
+        );
+        Assert.assertEquals(
+                "live view '" + viewName + "' restored, but retired the timeline it restored from;"
+                        + " the roots the previous process published are gone",
+                0L,
+                instance.getCheckpointTimelineResets()
+        );
+        Assert.assertTrue(
+                "live view '" + viewName + "' restored without naming the root it came back on",
+                instance.getCheckpointRestoreCheckpointId() != Numbers.LONG_NULL
+                        && instance.getCheckpointRestoreGeneration() != Numbers.LONG_NULL
+        );
+    }
+
+    /**
+     * Moves the simulated clock to where the next refresh pass should run: the earliest deadline a
+     * view backing off after a faulting turn waits for, or {@link #CLOCK_ADVANCE_MICROS} on when no
+     * view is backing off.
+     */
+    protected static void advanceClockToNextRefreshPass() {
+        final long retryUs = nextRefreshRetryMicros();
+        setCurrentMicros(retryUs != Numbers.LONG_NULL ? retryUs : currentMicros + CLOCK_ADVANCE_MICROS);
+    }
+
+    /**
      * Advances the clock and drives the refresh job until it makes no further progress. Fails if the
      * job is still finding work after {@link #REFRESH_QUIESCENCE_PASSES} passes, which means the view
      * never converged and any assertion the caller makes next would be reading a half-refreshed view.
+     * <p>
+     * A view waiting out a refresh-retry backoff is not quiescent: the pass after it runs at the
+     * view's deadline ({@link #advanceClockToNextRefreshPass}), so a fault that clears converges and
+     * one that does not runs a flush-retry budget out, as a worker would leave it.
      */
     protected void driveRefreshToQuiescence(LiveViewRefreshJob job) {
         for (int i = 0; i < REFRESH_QUIESCENCE_PASSES; i++) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            advanceClockToNextRefreshPass();
             drainWalQueue();
             boolean progressed = drainJob(job);
             drainWalQueue();
-            if (!progressed) {
+            if (!progressed && nextRefreshRetryMicros() == Numbers.LONG_NULL) {
                 return;
             }
         }
@@ -241,13 +442,37 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                 completed = true;
                 break;
             }
-            drainJob(job);
+            // The clock stays put while the sweep runs, unless a faulting seed turn left the view
+            // backing off: the sweep resumes at the view's deadline, not on a clock that never
+            // reaches it.
+            drainJobThroughRetryBackoff(job);
         }
         drainWalQueue();
         if (!completed) {
             Assert.fail("seed of live view '" + viewName + "' did not complete within "
                     + SEED_COMPLETION_PASSES + " passes; the view is still SEEDING");
         }
+    }
+
+    /**
+     * Drives one refresh pass at a time until the named view has a repair parked on it, so a
+     * caller can read the durable state a reader would see mid-repair, or what the parked
+     * session itself holds before a later turn resumes or discards it. Fails if the repair
+     * never parks, which would leave every assertion after it vacuous.
+     */
+    protected void driveUntilParked(LiveViewRefreshJob job, String viewName) {
+        for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES; pass++) {
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainWalQueue();
+            job.processNotificationsForTest();
+            drainWalQueue();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+            Assert.assertNotNull("live view '" + viewName + "' must be registered", instance);
+            if (instance.getSuspendedRepair() != null) {
+                return;
+            }
+        }
+        Assert.fail("the repair on '" + viewName + "' never parked on its turn budget");
     }
 
     /**
@@ -275,6 +500,40 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Every logical timeline entry of {@code instance} as {@code (maxTimestamp, effective row
+     * position)}, ascending - the ladder a resume reads to decide how many live-view rows the
+     * root it selects stands on.
+     * <p>
+     * The position is the effective one, so it carries the suffix corrections later repairs
+     * published into {@code LiveViewCheckpointRowPositionDelta} rather than only what the
+     * entry itself stores.
+     */
+    protected LongList snapshotCheckpointLadder(LiveViewInstance instance) {
+        final LongList ladder = new LongList();
+        try (
+                Path checkpointsDir = new Path().of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(engine.getConfiguration());
+                LiveViewCheckpointTimelineReader reader =
+                        new LiveViewCheckpointTimelineReader(engine.getConfiguration());
+                LiveViewCheckpointRowPositionDeltaReader deltaReader =
+                        new LiveViewCheckpointRowPositionDeltaReader(engine.getConfiguration())
+        ) {
+            store.of(checkpointsDir);
+            reader.of(checkpointsDir);
+            deltaReader.of(checkpointsDir);
+            try (LiveViewCheckpointGenerationPin pin = store.pin()) {
+                reader.iterateAll(pin.getTimelineRootRef(), entry -> {
+                    ladder.add(entry.maxTimestamp);
+                    ladder.add(deltaReader.effectivePosition(pin.getRowPositionDeltaRootRef(), entry));
+                });
+            }
+        }
+        return ladder;
+    }
+
+    /**
      * Retires the checkpoint timeline the seed sweep has been sealing into, so a following restart
      * has no resume source and the sweep has to re-run from offset 0 behind its skip-write floor. A
      * no-op when the view has no timeline (nothing has been sealed yet, or the sweep completed and
@@ -287,5 +546,16 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewCheckpointLifecycle.retireTimeline(engine.getConfiguration(), p, null, true);
         }
+    }
+
+    private LiveViewInstance restoreWitnessInstance(String viewName) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        Assert.assertTrue(
+                "live view '" + viewName + "' has not run its restart recovery attempt yet, so it"
+                        + " witnesses no route: drive refresh to quiescence first",
+                instance.isCheckpointRestoreAttempted()
+        );
+        return instance;
     }
 }

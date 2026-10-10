@@ -617,6 +617,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         columnBits.clear();
         coveringColumnIndicesList.clear();
         parquetEncodingConfigs.clear();
+        // A live view's dedup keys name the pair a sparse repair publication upserts on,
+        // not a uniqueness guarantee: the view can emit two rows with the same pair and its
+        // forward commits do not deduplicate them. A plain table that inherited the keys
+        // would collapse those rows, so the copy leaves them out.
+        final boolean isDedupKeyInherited = !likeTableMetadata.getTableToken().isLiveView();
         for (int i = 0; i < likeTableMetadata.getColumnCount(); i++) {
             TableColumnMetadata colMeta = likeTableMetadata.getColumnMetadata(i);
             addColumnBits(
@@ -625,7 +630,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.getSymbolCapacity(),
                     colMeta.getIndexType(),
                     colMeta.getIndexValueBlockCapacity(),
-                    colMeta.isDedupKeyFlag(),
+                    isDedupKeyInherited && colMeta.isDedupKeyFlag(),
                     colMeta.isCovering(),
                     colMeta.getParquetEncodingConfig()
             );
