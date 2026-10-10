@@ -38,8 +38,7 @@ import io.questdb.std.str.Utf8s;
  * Detects environments where a commit mode that promises power-loss durability ({@link CommitMode#SYNC},
  * {@link CommitMode#ADAPTIVE}) cannot deliver it, so startup can say so.
  *
- * <p>It covers what {@link WriteBarrierCheck} (a {@code nobarrier} mount) and {@link FastCommitCheck}
- * (ext4 per-inode journaling) miss:
+ * <p>It covers what {@link WriteBarrierCheck} (a {@code nobarrier} mount) misses:
  *
  * <ol>
  *   <li>{@link #FLUSH_NOT_A_BARRIER_FS}, macOS only. {@code fcntl(F_FULLFSYNC)} is documented for HFS,

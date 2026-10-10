@@ -64,9 +64,7 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
     public void testWithinPageBatchedSyncSurvivesUnderPerInodeJournalViaSyncfs() throws Exception {
         Assume.assumeTrue("batched SYNC flush is Linux-only", Os.isLinux());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        // Force the batched path on: on an ext4 fast_commit mount the production config disables batching
-        // and falls back to per-file fsync. The test harness builds its config with detection off, so this
-        // property is the deterministic enable.
+        // Force the batched path on, whatever the test configuration's default.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
         // A large append page forces the within-page, no-extend regime after the initial allocation.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(BIG_PAGE));

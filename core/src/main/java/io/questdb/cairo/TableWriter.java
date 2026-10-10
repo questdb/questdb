@@ -16119,8 +16119,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (appliesColumnSync(commitMode)) {
             // Per-file sync(async) for SYNC and ASYNC commits. The batched kick, drain and syncfs
             // passes (syncColumnsBatchedSync()) serve only the adaptive durable epoch, which flushes
-            // the whole filesystem whatever the commit mode (see fsyncMaterializedState()); see
-            // FastCommitCheck for why a SYNC commit keeps the per-file msync(MS_SYNC).
+            // the whole filesystem whatever the commit mode (see fsyncMaterializedState()).
             final boolean async = commitMode == CommitMode.ASYNC;
             syncColumns0(async);
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
@@ -16500,7 +16499,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The flush must cover the whole filesystem, not only the open partition: under ADAPTIVE the apply is
         // lazy, so closed and O3-merged partitions can hold non-durable columns that the saved _txn and _cv
         // reference. syncColumns0() msyncs only the open partition's columns, so the non-batched path (non-Linux,
-        // or ext4 fast_commit, where isAdaptiveEpochColumnSyncBatched() is false) adds a filesystem-wide flush,
+        // or isAdaptiveEpochColumnSyncBatched() false) adds a filesystem-wide flush,
         // as the batched path ends with syncfs(). Otherwise recovery could restore an epoch whose rows never
         // reached the disk. The per-commit apply path stays lazy.
         if (ff.isSyncfsFileSystemWide() && configuration.isAdaptiveEpochColumnSyncBatched()) {

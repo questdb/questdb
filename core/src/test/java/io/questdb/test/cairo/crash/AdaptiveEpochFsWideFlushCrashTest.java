@@ -43,7 +43,7 @@ import java.util.List;
  *
  * <p>{@code TableWriter.fsyncMaterializedState()} makes the durable cut. Under ADAPTIVE the apply is lazy,
  * so the columns of closed and O3-merged partitions are not durable until the epoch flush. The non-batched
- * path ({@code isAdaptiveEpochColumnSyncBatched()} false, for ext4 fast_commit mounts) msyncs only the open
+ * path ({@code isAdaptiveEpochColumnSyncBatched()} false) msyncs only the open
  * partition's columns in {@code syncColumns0()}, so it must also end with a filesystem-wide
  * {@code syncfs()}. Otherwise the epoch's {@code _txn} and {@code _cv} reference closed-partition rows that
  * never reached the device; recovery restores that epoch, the WAL replay does not rebuild rows at or below
@@ -90,7 +90,7 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // The test drives the epoch explicitly to count syncfs calls around it; auto-epoch must not fire.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
-        // Force the non-batched path, the ext4 fast_commit case.
+        // Force the non-batched path.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "false");
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
@@ -176,7 +176,7 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
 
     /**
      * Convert-last-partition, non-batched epoch path: the same case on the
-     * {@code fsyncMaterializedStateSyncFs} branch (ext4 fast_commit).
+     * {@code fsyncMaterializedStateSyncFs} branch.
      */
     @Test
     public void testConvertLastPartitionEpochFsWideNonBatched() throws Exception {
@@ -196,7 +196,7 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
 
     /**
      * Graceful-close epoch, non-batched path, all columns closed: the same outcome check on the
-     * {@code fsyncMaterializedStateSyncFs} branch (ext4 fast_commit).
+     * {@code fsyncMaterializedStateSyncFs} branch.
      */
     @Test
     public void testGracefulCloseAllColumnsClosedEpochFsWideNonBatched() throws Exception {

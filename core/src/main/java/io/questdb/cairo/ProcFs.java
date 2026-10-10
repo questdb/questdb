@@ -37,8 +37,8 @@ import io.questdb.std.str.Utf8s;
  * <p>Pseudo-files do not report a usable size: procfs files report 0 from {@code fstat}, and sysfs files
  * report a page while holding a few bytes. A read sized from {@code ff.length(fd)} therefore reads nothing
  * from procfs, or over-reads sysfs and rejects the short read. Both fail silently: the caller sees an
- * empty file, and a detector built on it never detects anything. {@link FastCommitCheck},
- * {@link WriteBarrierCheck} and {@link DurabilityEnvironmentCheck} share this reader for that reason.
+ * empty file, and a detector built on it never detects anything. {@link WriteBarrierCheck} and
+ * {@link DurabilityEnvironmentCheck} share this reader for that reason.
  *
  * <p>The content is fetched with a single {@code pread} of up to {@code maxBytes}, which suits every
  * pseudo-file read here and avoids a torn snapshot from reading procfs incrementally.

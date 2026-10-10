@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurabilityEnvironmentCheck;
-import io.questdb.cairo.FastCommitCheck;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.WriteBarrierCheck;
@@ -592,7 +591,6 @@ public class Bootstrap {
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false);
                 verifyFileOpts(path, cairoConfig);
                 verifyWriteBarriers(cairoConfig);
-                verifyFastCommit(cairoConfig);
                 verifyDurabilityEnvironment(path, cairoConfig);
                 cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
             }
@@ -661,19 +659,6 @@ public class Bootstrap {
         if (insufficientLimits) {
             log.advisoryW().$("make sure to increase fs.file-max and vm.max_map_count limits:\n" +
                     "https://questdb.io/docs/deployment/capacity-planning/#os-configuration").$();
-        }
-    }
-
-    private void verifyFastCommit(CairoConfiguration cairoConfig) {
-        final CharSequence dbRoot = cairoConfig.getDbRoot();
-        if (dbRoot == null) {
-            return;
-        }
-        try {
-            FastCommitCheck.checkAndReport(log, cairoConfig.getFilesFacade(), dbRoot, cairoConfig.getCommitMode());
-        } catch (Throwable t) {
-            // Detection must never break startup.
-            log.debug().$("fast_commit verify failed [reason=").$(t.getMessage()).$(']').$();
         }
     }
 
