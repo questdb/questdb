@@ -28,8 +28,12 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
@@ -56,15 +60,18 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 
 /**
  * A parallel COPY that reported success must survive a power loss in SYNC, and in ADAPTIVE into a WAL table, into a
  * new table as well as into an existing empty one. The importer writes every partition outside the WAL, so nothing
- * can redo it after the crash: the import must be durable before COPY reports it done. Nothing is written back by
- * the kernel here: only the product's own barriers make bytes durable. Where syncfs is filesystem-wide one syncfs
- * makes the import durable; elsewhere the importer flushes file by file. NOSYNC, ASYNC and a non-WAL table in
- * ADAPTIVE promise nothing on a power loss, and the importer makes no flush there.
+ * can redo it after the crash: the import must be durable before COPY reports it done, and a power loss before that
+ * must not leave a table whose _txn names files that are not complete. Unless a test says otherwise, nothing is
+ * written back by the kernel here: only the product's own barriers make bytes durable. Where syncfs is
+ * filesystem-wide one syncfs before the attach and one after it make the import durable; elsewhere the importer
+ * flushes file by file. NOSYNC, ASYNC and a non-WAL table in ADAPTIVE promise nothing on a power loss, and the
+ * importer makes no flush there.
  */
 @RunWith(Parameterized.class)
 public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest {
@@ -205,10 +212,152 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
             // An existing WAL table in ADAPTIVE is flushed by the writer's save point instead.
             if ("sync".equals(commitMode) || ("adaptive".equals(commitMode) && walTable && newTable)) {
                 if (syncfsFileSystemWide) {
-                    Assert.assertEquals("one syncfs makes the import durable", 1, importSyncfsCalls);
+                    Assert.assertEquals("one syncfs before the attach and one after it make the import durable", 2, importSyncfsCalls);
                     Assert.assertEquals("no column file fsync where syncfs is filesystem-wide", 0, importColumnFileFsyncs);
                 } else {
                     Assert.assertTrue("the import is flushed file by file", importColumnFileFsyncs > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPowerLossBeforeTheImportIsDurableLeavesNoCorruptTable() throws Exception {
+        // A power loss before any device flush from the partition move on, before COPY reports done, with or without
+        // the kernel having written _txn and the database root back on its own: after the restart the table is gone
+        // (a created one), or readable with whole imported partitions, never a table whose _txn names partitions with
+        // incomplete column or symbol files.
+        assumeCrashHarnessSupported();
+        Assume.assumeTrue(
+                "nothing is promised on a power loss",
+                "sync".equals(commitMode) || ("adaptive".equals(commitMode) && walTable)
+        );
+        // The file-by-file flush makes about fifty power loss points per row, which takes minutes.
+        Assume.assumeTrue(
+                "the file-by-file sweep is nightly-only; run with -Dquestdb.fuzz.nightly=true",
+                syncfsFileSystemWide || Boolean.getBoolean("questdb.fuzz.nightly")
+        );
+        final AtomicInteger windowStart = new AtomicInteger();
+        final AtomicInteger freezeAt = new AtomicInteger(-1);
+        final AtomicBoolean frozen = new AtomicBoolean();
+        final AtomicBoolean txnWrittenBack = new AtomicBoolean();
+        final AtomicReference<String> txnPath = new AtomicReference<>();
+        final AtomicBoolean writingBack = new AtomicBoolean();
+        final BooleanSupplier poweredOff = () -> {
+            if (!frozen.get() && !writingBack.get() && freezeAt.get() > -1 && crashFf.durabilityOpCount() >= freezeAt.get()) {
+                if (txnWrittenBack.get()) {
+                    // The kernel may have written back the table's _txn, and the database root's files and entries,
+                    // a created table's among them, on its own.
+                    writingBack.set(true);
+                    try {
+                        writeBackMetadata(txnPath.get());
+                    } finally {
+                        writingBack.set(false);
+                    }
+                }
+                // The power fails here: no later flush reaches the disk.
+                frozen.set(true);
+            }
+            return frozen.get();
+        };
+        crashFf = new CrashFaultFilesFacade() {
+            @Override
+            public void fdatasync(long fd) {
+                if (!poweredOff.getAsBoolean()) {
+                    super.fdatasync(fd);
+                }
+            }
+
+            @Override
+            public void fsync(long fd) {
+                if (!poweredOff.getAsBoolean()) {
+                    super.fsync(fd);
+                }
+            }
+
+            @Override
+            public void fsyncAndClose(long fd) {
+                if (poweredOff.getAsBoolean()) {
+                    close(fd);
+                } else {
+                    super.fsyncAndClose(fd);
+                }
+            }
+
+            @Override
+            public boolean isSyncfsFileSystemWide() {
+                return syncfsFileSystemWide;
+            }
+
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (!poweredOff.getAsBoolean()) {
+                    super.msync(addr, len, async);
+                }
+            }
+
+            @Override
+            public int syncFileRange(long fd, long offset, long nbytes, int flags) {
+                return poweredOff.getAsBoolean() ? 0 : super.syncFileRange(fd, offset, nbytes, flags);
+            }
+
+            @Override
+            public void syncfs(long fd) {
+                if (!poweredOff.getAsBoolean()) {
+                    super.syncfs(fd);
+                }
+            }
+        };
+        crashFf.setDbRoot(root);
+        assertMemoryLeak(crashFf, () -> {
+            // The first round records the device flushes from the partition move on; round k loses power after k of
+            // them, before the next one.
+            final List<String> flushes = new ArrayList<>();
+            for (int k = -1; k <= flushes.size(); k++) {
+                for (int variant = k < 0 ? 1 : 0; variant < 2; variant++) {
+                    frozen.set(false);
+                    freezeAt.set(-1);
+                    txnWrittenBack.set(variant == 1);
+                    startRound(k > -1);
+                    final int powerLossAfter = k;
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
+                        importer.of("t", "t.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                        importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                            if (phase == CopyImportTask.PHASE_MOVE_PARTITIONS && status == CopyImportTask.STATUS_STARTED) {
+                                windowStart.set(crashFf.durabilityOpCount());
+                                txnPath.set(java.nio.file.Path.of(root, engine.verifyTableName("t").getDirName(), "_txn").toString());
+                                freezeAt.set(powerLossAfter > -1 ? windowStart.get() + powerLossAfter : -1);
+                            }
+                        });
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                    }
+                    if (k < 0) {
+                        Assert.assertEquals(IMPORTED, rows(engine));
+                        final List<String> log = crashFf.durabilityOpLog();
+                        flushes.addAll(log.subList(windowStart.get(), log.size()));
+                        Assert.assertFalse("the import flushes", flushes.isEmpty());
+                        continue;
+                    }
+                    // Every round makes the same flushes: the power failed during the import, or fails now, after the
+                    // last flush.
+                    Assert.assertEquals(k < flushes.size(), frozen.get());
+                    Assert.assertTrue(poweredOff.getAsBoolean());
+                    final String context = "power loss after flush " + k + " of " + flushes.size()
+                            + (k < flushes.size() ? " [before " + flushes.get(k) + ']' : "")
+                            + (variant == 1 ? ", metadata written back" : "");
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    engine.releaseAllWalWriters();
+                    engine.releaseInactive();
+                    crashFf.crash(root);
+                    // An existing WAL table in ADAPTIVE comes back to the writer's save point instead.
+                    final boolean importerFlushes = "sync".equals(commitMode) || newTable;
+                    final String outcome = context + (importerFlushes && redoLostRenames(txnPath.get()) > 0 ? ", rename lost" : "");
+                    try (CairoEngine restarted = new CairoEngine(configuration)) {
+                        assertNoCorruptImport(restarted, outcome);
+                    } catch (Throwable th) {
+                        throw new AssertionError(outcome + ": " + th, th);
+                    }
                 }
             }
         });
@@ -383,6 +532,28 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         });
     }
 
+    private void assertNoCorruptImport(CairoEngine restarted, String context) throws Exception {
+        TestUtils.drainWalQueue(restarted);
+        if (restarted.getTableTokenIfExists("t") == null) {
+            Assert.assertTrue(context + ": the existing table is gone", newTable);
+            return;
+        }
+        final StringSink sink = new StringSink();
+        restarted.print("SELECT * FROM t", sink);
+        // Each attach is a commit of its own, so the table holds whole imported partitions, with their own values.
+        final String[] imported = IMPORTED.split("\n");
+        final String[] recovered = sink.toString().split("\n");
+        Assert.assertEquals(context, imported[0], recovered[0]);
+        for (int i = 1; i < imported.length; i++) {
+            final String day = imported[i].substring(0, 10);
+            final boolean dayRecovered = sink.toString().contains("\n" + day);
+            Assert.assertEquals(context + ": a partition is attached whole [row=" + imported[i] + ']', dayRecovered, sink.toString().contains(imported[i]));
+        }
+        for (int i = 1; i < recovered.length; i++) {
+            Assert.assertTrue(context + ": unexpected row " + recovered[i], IMPORTED.contains(recovered[i]));
+        }
+    }
+
     private void createTable() throws SqlException {
         execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY" + (walTable ? " WAL" : " BYPASS WAL"));
         drainWalQueue();
@@ -398,6 +569,79 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                     }
                 }
             }
+        }
+    }
+
+    private int redoLostRenames(String txnPath) throws IOException {
+        // An attach renames the partition's .attachable directory and names the partition in _txn; until the table
+        // directory is flushed after it, a power loss can keep _txn but lose the rename. The partition's files then
+        // stay whole in the .attachable directory, as the flush before the attach made them: the rename is redone
+        // here, so the checks after the restart see whether _txn names complete files.
+        final java.nio.file.Path txn = java.nio.file.Path.of(txnPath);
+        if (!Files.exists(txn) || Files.size(txn) == 0) {
+            return 0;
+        }
+        int redone = 0;
+        try (TxReader txReader = new TxReader(crashFf); Path path = new Path()) {
+            txReader.ofRO(path.of(txnPath).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            if (!txReader.unsafeLoadAll()) {
+                return 0;
+            }
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                path.of(txn.getParent().toString());
+                TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, txReader.getPartitionTimestampByIndex(i), txReader.getPartitionNameTxn(i));
+                final java.nio.file.Path partitionDir = java.nio.file.Path.of(path.toString());
+                if (!Files.exists(partitionDir)) {
+                    final String name = partitionDir.getFileName().toString();
+                    final int dot = name.indexOf('.');
+                    final java.nio.file.Path attachable = txn.resolveSibling((dot > 0 ? name.substring(0, dot) : name) + ".attachable");
+                    Assert.assertTrue("_txn names a partition that is nowhere in the table directory: " + name, Files.isDirectory(attachable));
+                    Files.move(attachable, partitionDir);
+                    redone++;
+                }
+            }
+        }
+        return redone;
+    }
+
+    private void startRound(boolean restart) throws Exception {
+        if (restart) {
+            tearDown(true);
+            TestUtils.removeTestPath(root);
+            crashFf.reset();
+            // The teardown resets the overrides, the files facade among them.
+            ff = crashFf;
+            setUp();
+        }
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, Boolean.toString(walTable));
+        // A power loss takes no close-time save point.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        inputRoot = temp.newFolder().getAbsolutePath();
+        inputWorkRoot = temp.newFolder().getAbsolutePath();
+        Files.writeString(java.nio.file.Path.of(inputRoot, "t.csv"), CSV, StandardCharsets.UTF_8);
+        if (!newTable) {
+            createTable();
+        }
+        markDurableBaseline();
+    }
+
+    private void writeBackMetadata(String txnPath) {
+        crashFf.markFileDurable(txnPath);
+        if (walTable && !Files.isDirectory(java.nio.file.Path.of(txnPath).resolveSibling(WalUtils.SEQ_DIR))) {
+            // Until a WAL table the import creates has its sequencer on disk, its registry entry is left alone.
+            return;
+        }
+        final java.io.File[] rootFiles = new java.io.File(root).listFiles(java.io.File::isFile);
+        if (rootFiles != null) {
+            for (java.io.File file : rootFiles) {
+                crashFf.markFileDurable(file.getAbsolutePath());
+            }
+        }
+        try (Path path = new Path()) {
+            final long fd = crashFf.openRONoCache(path.of(root).$());
+            Assert.assertTrue(fd > -1);
+            crashFf.fsyncAndClose(fd);
         }
     }
 

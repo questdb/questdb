@@ -733,6 +733,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void attachPartitions() throws TextImportException {
         phasePrologue(CopyImportTask.PHASE_ATTACH_PARTITIONS);
+        flushPartitionsToAttach();
 
         // Go descending, attaching last partition is more expensive than others
         for (int i = partitions.size() - 1; i > -1; i--) {
@@ -866,12 +867,34 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         // takes no save point; an existing WAL table in ADAPTIVE is flushed by the writer's save point after the
         // attach. Where syncfs is filesystem-wide one sync of the filesystem that holds the table does: a created
         // table is never in a volume, so that sync also covers its entry in the database root and the registry.
-        final int commitMode = configuration.getCommitMode();
-        if (commitMode == CommitMode.SYNC || (commitMode == CommitMode.ADAPTIVE && targetTableCreated && writer.getMetadata().isWalEnabled())) {
+        if (isImportFlushed()) {
             if (ff.isSyncfsFileSystemWide()) {
                 DatabaseCheckpointAgent.syncRestoredState(ff, tmpPath.of(configuration.getDbRoot()).concat(tableToken), false);
             } else {
                 DurableEpochManifest.fsyncTableFiles(configuration, tableToken, metadata.getTimestampType(), partitionBy);
+            }
+        }
+    }
+
+    private void flushPartitionsToAttach() {
+        // An attach names its partition in _txn, which a power loss may bring back before the files the import wrote
+        // (in SYNC the writer flushes _txn at each attach), so the moved partitions and the merged symbol files in
+        // the table root are flushed before the first attach. The flush after the attach covers _txn and the renames.
+        if (isImportFlushed()) {
+            final Path path = tmpPath.of(configuration.getDbRoot()).concat(tableToken);
+            if (ff.isSyncfsFileSystemWide()) {
+                DatabaseCheckpointAgent.syncRestoredState(ff, path, false);
+            } else {
+                // _txn does not name these partitions yet, so DurableEpochManifest.fsyncTableFiles would miss them.
+                final int rootLen = path.size();
+                for (int i = 0, n = partitions.size(); i < n; i++) {
+                    final PartitionInfo partition = partitions.getQuick(i);
+                    if (partition.importedRows > 0) {
+                        path.trimTo(rootLen).concat(partition.name).put(configuration.getAttachPartitionSuffix());
+                        DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size());
+                    }
+                }
+                DurableEpochManifest.fsyncTableRoot(configuration, path, rootLen);
             }
         }
     }
@@ -985,6 +1008,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 symbolCapacities.set(i, symbolWriter.getSymbolCapacity());
             }
         }
+    }
+
+    private boolean isImportFlushed() {
+        final int commitMode = configuration.getCommitMode();
+        return commitMode == CommitMode.SYNC || (commitMode == CommitMode.ADAPTIVE && targetTableCreated && writer.getMetadata().isWalEnabled());
     }
 
     private boolean isOneOfMainDirectories(CharSequence p) {
