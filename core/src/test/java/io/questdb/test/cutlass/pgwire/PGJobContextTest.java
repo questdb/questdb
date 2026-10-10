@@ -6495,6 +6495,37 @@ nodejs code:
     }
 
     @Test
+    public void testInsertLong256HexText() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("CREATE TABLE t (v LONG256)");
+            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO t VALUES (?)")) {
+                // Types.OTHER sends the parameter with no type, so the server types it as LONG256,
+                // and the parameter must accept the 0x-prefixed text that LONG256 values print as
+                insert.setObject(1, "0x02", Types.OTHER);
+                insert.executeUpdate();
+                insert.setObject(1, "0X0100000000000000000000000000000005", Types.OTHER);
+                insert.executeUpdate();
+                insert.setObject(1, "05", Types.OTHER);
+                insert.executeUpdate();
+            }
+            drainWalQueue();
+            try (ResultSet resultSet = connection.prepareStatement("SELECT v FROM t").executeQuery()) {
+                sink.clear();
+                assertResultSet(
+                        """
+                                v[VARCHAR]
+                                0x02
+                                0x0100000000000000000000000000000005
+                                0x05
+                                """,
+                        sink,
+                        resultSet
+                );
+            }
+        });
+    }
+
+    @Test
     public void testInsertNoMemLeak() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {

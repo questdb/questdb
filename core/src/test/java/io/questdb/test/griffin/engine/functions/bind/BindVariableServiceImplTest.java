@@ -1169,6 +1169,59 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSetLong256ToStr() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.LONG256, 0);
+            StringSink sink = new StringSink();
+
+            // the 0x prefix that LONG256 text output carries, in either case
+            bindVariableService.setStr(0, "0x02");
+            bindVariableService.getFunction(0).getLong256(null, sink);
+            TestUtils.assertEquals("0x02", sink);
+
+            sink.clear();
+            bindVariableService.setStr(0, "0X15b30000000000001a0a00000000000003090000000000000378");
+            bindVariableService.getFunction(0).getLong256(null, sink);
+            TestUtils.assertEquals("0x15b30000000000001a0a00000000000003090000000000000378", sink);
+
+            // hex digits without the prefix
+            sink.clear();
+            bindVariableService.setStr(0, "05");
+            bindVariableService.getFunction(0).getLong256(null, sink);
+            TestUtils.assertEquals("0x05", sink);
+
+            sink.clear();
+            bindVariableService.setStr(0, null);
+            bindVariableService.getFunction(0).getLong256(null, sink);
+            TestUtils.assertEquals("", sink);
+
+            try {
+                bindVariableService.setStr(0, "0xg2");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `0xg2` [STRING -> LONG256]");
+            }
+        });
+    }
+
+    @Test
+    public void testSetLong256ToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.LONG256, 0);
+            StringSink sink = new StringSink();
+
+            bindVariableService.setVarchar(0, new Utf8String("0x02"));
+            bindVariableService.getFunction(0).getLong256(null, sink);
+            TestUtils.assertEquals("0x02", sink);
+
+            sink.clear();
+            bindVariableService.setVarchar(0, new Utf8String("05"));
+            bindVariableService.getFunction(0).getLong256(null, sink);
+            TestUtils.assertEquals("0x05", sink);
+        });
+    }
+
+    @Test
     public void testSetLongToByte() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setLong("a", 10);
