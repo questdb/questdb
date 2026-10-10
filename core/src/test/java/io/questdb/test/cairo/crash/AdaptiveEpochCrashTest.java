@@ -53,6 +53,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
@@ -573,7 +574,6 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                     setCommitMode("adaptive");
                     final Scenario s = newScenario("p" + prior + "_" + op);
                     insertRows(s, 0, 2);
-                    insertRows(s, 1, 2);
                     drainWalQueue();
                     engine.releaseAllWalWriters();
                     for (int i = 0; i < prior; i++) {
@@ -582,9 +582,17 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                         drainWalQueue();
                         engine.releaseAllWalWriters();
                     }
+                    // The rows this save point covers are applied lazily, after the baseline, under per-inode
+                    // journaling: only the save point's own flush makes their columns durable.
+                    faultFf.modelSharedJournal = false;
                     markDurableBaseline();
+                    insertRows(s, 1, 2);
+                    drainWalQueue();
+                    engine.releaseAllWalWriters();
                     final boolean crashed = crashAtOperation(s, op, () -> publishSavePoint(s));
-                    if (!crashed) {
+                    if (crashed) {
+                        writeBackLiveState(s);
+                    } else {
                         insertRows(s, 2, 2);
                         drainWalQueue();
                         purgeWal();
@@ -592,6 +600,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                     powerLossAndCheck(s, crashed
                             ? which + ", power loss after durability operation " + op
                             : which + " completed, then rows and a WAL purge under its floor");
+                    faultFf.modelSharedJournal = true;
                     if (!crashed) {
                         break;
                     }
@@ -627,6 +636,9 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                     tracker(s).setLastEpochTs(0);
                     purgeWal();
                     final boolean crashed = crashAtOperation(s, op, () -> drainWalQueue());
+                    if (crashed && tail == 1) {
+                        writeBackLiveState(s);
+                    }
                     if (!crashed) {
                         // The newest save point stands on the applied state, and without a tail so does the older one.
                         if (tracker(s).getDurableEpochSeqTxn() != tracker(s).getWriterTxn()
@@ -1359,6 +1371,16 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
 
     private void tryInsertRows(Scenario s, int day, int count, boolean covered) {
         insertRows(s, day, count, covered, true, false);
+    }
+
+    // After a crash and before the power loss: the commits of the rows a save point covers were acknowledged, so
+    // their WAL and sequencer records are durable, and the kernel wrote the live _txn and _cv back on its own. A
+    // save point that names a state before its columns are durable then loses those rows.
+    private void writeBackLiveState(Scenario s) throws Exception {
+        markWalAndSequencerDurable(s.token);
+        final String tableDir = tableDir(s).toString();
+        faultFf.markFileDurable(tableDir + File.separator + TableUtils.TXN_FILE_NAME);
+        faultFf.markFileDurable(tableDir + File.separator + TableUtils.COLUMN_VERSION_FILE_NAME);
     }
 
     @FunctionalInterface
