@@ -85,6 +85,7 @@ import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -196,7 +197,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     };
     private static final Row NOOP_ROW = new NoOpRow();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
-    private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
     private static final int POSTING_SEAL_PURGE_PENDING_FORMAT = 1;
     private static final int ROW_ACTION_NO_PARTITION = 1;
@@ -1768,9 +1768,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition is already in Parquet format.
         }
 
+        // squashPartitionForce folds the day's splits back into this partition, which can make it
+        // the last one, so decide whether the last partition is converted after the squash
+        squashPartitionForce(partitionIndex);
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
-        squashPartitionForce(partitionIndex);
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;
         try {
@@ -2419,7 +2421,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 txWriter.finishPartitionSizeUpdate(minTimestamp, maxTimestamp);
                 if (activePartitionDropped) {
-                    openLastPartition();
+                    if (isLastPartitionParquet()) {
+                        // The writer does not open a parquet partition, so openLastPartition() would
+                        // leave the append horizon on the dropped partition. Move it to the new last
+                        // partition, as dropPartitionByExactTimestamp() does. Left stale, it fails
+                        // processWalCommit's partition-timestamp consistency assert on the next commit.
+                        partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(maxTimestamp);
+                        // the parquet partition cannot take in-order appends, see isLastPartitionParquetRow()
+                        rowAction = ROW_ACTION_OPEN_PARTITION;
+                    } else {
+                        openLastPartition();
+                    }
                 }
                 txWriter.bumpTruncateVersion();
 
@@ -2429,6 +2441,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 // all partitions are deleted, effectively the same as truncating the table
                 rowAction = ROW_ACTION_OPEN_PARTITION;
+                // No partition is left, the table is empty: see removeAllPartitions()
+                partitionTimestampHi = Long.MIN_VALUE;
+                lastPartitionTimestamp = Long.MIN_VALUE;
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
                 freeColumns(false);
@@ -2999,6 +3014,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
+                if (isLastPartitionParquetRow(timestamp)) {
+                    bumpMasterRef();
+                    return newRowO3(timestamp);
+                }
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
                     txWriter.setMinTimestamp(timestamp);
                     initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
@@ -3177,7 +3196,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @TestOnly
-    public void publishDeferredPostingSealPurgesOnFullQueueForTesting() {
+    public void publishDeferredPostingSealPurgesForTesting() {
         publishDeferredPostingSealPurges(txWriter.getTxn(), true);
     }
 
@@ -3220,6 +3239,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriter();
         rowAction = ROW_ACTION_OPEN_PARTITION;
+        // No partition is left, so reset the append horizon to the state a writer opened on an
+        // empty table starts with. Left stale, it survives the next block apply when that apply
+        // creates an earlier parquet partition: processO3Block only ever raises it and
+        // finishO3Commit only re-syncs a native last partition. processWalCommit's
+        // partition-timestamp consistency assert then fails on the next commit.
+        partitionTimestampHi = Long.MIN_VALUE;
+        lastPartitionTimestamp = Long.MIN_VALUE;
 
         closeActivePartition(false);
         processPartitionRemoveCandidates();
@@ -5439,7 +5465,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void clearO3() {
         this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
-        rowAction = ROW_ACTION_SWITCH_PARTITION;
+        // A parquet last partition cannot take in-order appends, so the next row goes through
+        // ROW_ACTION_OPEN_PARTITION, which re-checks it (see isLastPartitionParquetRow())
+        rowAction = isLastPartitionParquet() ? ROW_ACTION_OPEN_PARTITION : ROW_ACTION_SWITCH_PARTITION;
         // transaction log is either not required or pending
         activeColumns = columns;
         activeNullSetters = nullSetters;
@@ -5505,13 +5533,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void closeDeferredPostingSealPurges0() {
         long currentTableTxn = txWriter != null ? txWriter.getTxn() : -1L;
         if (txWriter != null) {
-            publishDeferredPostingSealPurgesOnClose(currentTableTxn);
+            publishDeferredPostingSealPurges(currentTableTxn, true);
         }
-        // Ready (committed-superseded) tasks the publish attempt could not hand
-        // off would otherwise be dropped, orphaning the superseded .pv/.pc
-        // sidecar files for the process lifetime. Spill them to a table-local
-        // file the next writer open replays. Future (uncommitted) entries are
-        // re-discovered from the posting chain on reopen, so they need no spill.
+        // A writer without a message bus may fail to acquire the purge-log writer.
+        // Spill its remaining ready tasks to a table-local file for the next open.
+        // Recovery rediscovers future (uncommitted) entries from the posting chain,
+        // so they need no spill.
         boolean spilled = spillReadyPostingSealPurges(currentTableTxn);
         for (int i = deferredPostingSealPurges.size() - 1; i >= 0; i--) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
@@ -7251,9 +7278,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     setAppendPosition(newTransientRowCount, false);
                 } else {
                     partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp);
+                    // the parquet partition cannot take in-order appends, see isLastPartitionParquetRow()
+                    rowAction = ROW_ACTION_OPEN_PARTITION;
                 }
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
+                // The only partition is gone, the table is empty: see removeAllPartitions()
+                partitionTimestampHi = Long.MIN_VALUE;
+                lastPartitionTimestamp = Long.MIN_VALUE;
             }
         } else {
             // when we want to delete first partition we must find out minTimestamp from
@@ -7451,10 +7483,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw e;
                 }
             }
-            if (!isEmptyTable()
-                    && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
-                    && !isLastPartitionParquet()) {
-                openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+            if (!isEmptyTable()) {
+                if (isLastPartitionParquet()) {
+                    if (!isLastPartitionClosed()) {
+                        // The commit made a parquet partition the last one while the writer still
+                        // holds the previous native last partition open. The writer cannot append
+                        // into parquet, so there is no partition to switch to; left as is, the
+                        // column append memories keep describing that native partition with
+                        // offsets that a later mid-partition O3 append (which writes through its
+                        // own fds) silently outgrows. The next truncating close
+                        // (doClose -> freeColumns -> MemoryPMARImpl.close(true)) then trims
+                        // every .d back to ceilPageSize(staleOffset) and discards the appended
+                        // rows; a reader or column converter mapping the committed row count
+                        // SIGBUSes past the shortened file.
+                        //
+                        // Close the partition now and reset the open-partition marker, so the
+                        // writer is in the same state as a freshly opened one over a table whose
+                        // last partition is parquet. Nothing reopens the native partition after
+                        // this, so when the memories still describe the partition's current
+                        // version, the close trims the whole append pages the writer
+                        // pre-allocated; left in place, they stay on disk until the partition is
+                        // rewritten. The trim size comes from the writer's partition size, not from
+                        // the append memories, so a stale memory offset cannot cut committed rows.
+                        //
+                        // The trim also keeps the WAL lag rows. The writer stores lag in this
+                        // partition's files after its rows, and until commit00 writes _txn, the
+                        // _txn on disk can still list them as lag: an apply job that ejected or
+                        // stopped persisted them through commitSeqTxn. A restart after a crash in
+                        // that window reads the lag back from these files, so a trim to the
+                        // partition size alone would replay the cut rows as zeros.
+                        // processWalCommitFinishApply resets the lag count only after this method
+                        // returns, so the partition size plus the lag count covers every row the
+                        // _txn on disk can reference. Non-WAL tables keep no lag, their lag count
+                        // is always 0.
+                        //
+                        // _txn describes the open files only while it lists this partition as
+                        // native under the name txn openPartition used. Otherwise the memories
+                        // hold a superseded version whose rows _txn no longer counts, and
+                        // positioning them at the _txn count could read past their data, so close
+                        // without truncating; the purge removes the superseded version.
+                        // convertPartitionNativeToParquet used to leave the writer in that state
+                        // when it converted a day whose last partition was a split.
+                        drainPendingPostingSealPurgesBeforeIndexerRelease();
+                        final int openPartitionRawIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(lastOpenPartitionTs);
+                        if (openPartitionRawIndex > -1
+                                && !txWriter.isPartitionParquetByRawIndex(openPartitionRawIndex)
+                                && txWriter.getPartitionNameTxnByRawIndex(openPartitionRawIndex) == lastOpenPartitionTxnName) {
+                            closeActivePartition(txWriter.getPartitionSizeByRawIndex(openPartitionRawIndex) + txWriter.getLagRowCount());
+                        } else {
+                            closeActivePartition(false);
+                        }
+                        lastOpenPartitionTs = Long.MIN_VALUE;
+                        lastOpenPartitionIsReadOnly = false;
+                    }
+                } else if (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit) {
+                    openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+                }
             }
 
             // Data is written out successfully, however, we can still fail to set append position, for
@@ -7903,8 +7987,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reads column data through the Parquet decoder and wires up the covering
         // sidecars. The native path below assumes native column files; for a
         // Parquet partition the covering seal would dereference a null FilesFacade.
-        // Non-WAL tables cannot have a Parquet active partition (see
-        // convertPartitionNativeToParquet), so this only fires for WAL tables.
+        // Non-WAL tables get one too, e.g. after SET TYPE BYPASS WAL or after
+        // dropping the native partition in front of a Parquet one.
         final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
         if (lastPartitionIndex >= 0 && txWriter.isPartitionParquet(lastPartitionIndex)) {
             try {
@@ -8257,6 +8341,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Returns true when the last partition is parquet and the row falls at or before its end.
+     * The writer keeps no native partition open behind a parquet one, so newRow() merges such
+     * a row in through O3, the path WAL apply uses for parquet partitions. Rows past the end
+     * still switch to a new native partition. Kept out of newRow() so that its bytecode stays
+     * under the JIT inlining threshold (FreqInlineSize).
+     */
+    private boolean isLastPartitionParquetRow(long timestamp) {
+        return timestamp <= partitionTimestampHi && isLastPartitionParquet();
+    }
+
+    /**
      * Checks whether a partition already has a sealed posting index for the
      * given column. The v2 .pk chain has at least one published entry
      * (sealTxn >= 0) iff at least one seal landed for this partition; the
@@ -8576,19 +8671,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         rowAction = ROW_ACTION_O3;
         o3TimestampSetter(timestamp);
         return row;
-    }
-
-    private long nextPostingSealPurgePubSeq(Sequence pubSeq, int retryCount) {
-        long cursor = pubSeq.next();
-        for (int i = 0; cursor < 0 && i < retryCount; i++) {
-            if (i > 0) {
-                Os.sleep(1);
-            } else {
-                Os.pause();
-            }
-            cursor = pubSeq.next();
-        }
-        return cursor;
     }
 
     /**
@@ -11768,6 +11850,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishO3Commit(initialPartitionTimestampHi);
         }
         txWriter.setLagOrdered(true);
+        // Reset the lag count only after finishO3Commit: its parquet-transition trim keeps the lag
+        // rows that the _txn on disk can still reference, and reads their count from txWriter.
         txWriter.setLagRowCount((int) walLagRowCount);
     }
 
@@ -12125,11 +12209,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishDeferredPostingSealPurges(currentTableTxn, true);
     }
 
-    private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull) {
-        publishDeferredPostingSealPurges(currentTableTxn, persistOnQueueFull, 0);
-    }
-
-    private void publishDeferredPostingSealPurges(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
+    private void publishDeferredPostingSealPurges(long currentTableTxn, boolean isDirectPersistAllowed) {
         // Fast path: every caller runs post-join (the 0-body asserts
         // o3PartitionUpdRemaining == 0), so no O3 worker mutates
         // deferredPostingSealPurges here and this size() read needs no lock. It skips
@@ -12139,23 +12219,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         synchronized (parquetSealPurgeLock) {
-            publishDeferredPostingSealPurges0(currentTableTxn, persistOnQueueFull, queueRetryCount);
+            publishDeferredPostingSealPurges0(currentTableTxn, isDirectPersistAllowed);
         }
     }
 
-    private void publishDeferredPostingSealPurges0(long currentTableTxn, boolean persistOnQueueFull, int queueRetryCount) {
+    private void publishDeferredPostingSealPurges0(long currentTableTxn, boolean isDirectPersistAllowed) {
         assert o3PartitionUpdRemaining.get() == 0 : "deferred posting seal-purge publish ran with O3 partition workers in flight";
         if (deferredPostingSealPurges.size() == 0) {
             return;
         }
         if (messageBus == null) {
-            if (persistOnQueueFull) {
+            if (isDirectPersistAllowed) {
                 persistDeferredPostingSealPurgesDirect(currentTableTxn);
             }
             return;
         }
-        Sequence pubSeq = messageBus.getPostingSealPurgePubSeq();
-        RingQueue<PostingSealPurgeTask> queue = messageBus.getPostingSealPurgeQueue();
+        ConcurrentQueue<PostingSealPurgeTask> queue = messageBus.getPostingSealPurgeQueue();
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask deferredTask = deferredPostingSealPurges.getQuick(readPos);
@@ -12170,46 +12249,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
 
-            long cursor = nextPostingSealPurgePubSeq(pubSeq, queueRetryCount);
-            if (cursor < 0) {
-                // A live PostingSealPurgeJob owns the purge-log writer, so
-                // direct persist is mostly useful when no job/message bus owns
-                // that table. Close gives the ring a bounded drain chance first.
-                if (persistOnQueueFull && PostingSealPurgeJob.persistReadyTasksDirect(engine, deferredPostingSealPurges, readPos, n, currentTableTxn)) {
-                    writePos = releaseDirectPersistedPostingSealPurges(readPos, writePos, n, currentTableTxn);
-                } else {
-                    for (int i = readPos; i < n; i++) {
-                        deferredPostingSealPurges.setQuick(writePos++, deferredPostingSealPurges.getQuick(i));
-                    }
-                }
-                break;
-            }
-            try {
-                PostingSealPurgeTask queueTask = queue.get(cursor);
-                queueTask.of(
-                        deferredTask.getTableToken(),
-                        deferredTask.getIndexColumnName(),
-                        deferredTask.getPostingColumnNameTxn(),
-                        deferredTask.getSealTxn(),
-                        deferredTask.getPartitionTimestamp(),
-                        deferredTask.getPartitionNameTxn(),
-                        deferredTask.getPartitionBy(),
-                        deferredTask.getTimestampType(),
-                        deferredTask.getFromTableTxn(),
-                        deferredToTxn
-                );
-            } finally {
-                pubSeq.done(cursor);
-            }
+            queue.enqueue(deferredTask);
             releaseDeferredPostingSealPurgeTask(deferredTask);
         }
         for (int i = deferredPostingSealPurges.size() - 1; i >= writePos; i--) {
             deferredPostingSealPurges.remove(i);
         }
-    }
-
-    private void publishDeferredPostingSealPurgesOnClose(long currentTableTxn) {
-        publishDeferredPostingSealPurges(currentTableTxn, true, POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT);
     }
 
     private void publishPendingPostingSealPurges(long currentTableTxn) {
@@ -12857,8 +12902,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Replays posting seal-purge intents that a prior {@link #closeDeferredPostingSealPurges()}
-     * spilled to {@link #POSTING_SEAL_PURGE_PENDING_FILE_NAME} because the ring
-     * queue was full and the shared purge-log writer was held. Reads are bounded
+     * spilled to {@link #POSTING_SEAL_PURGE_PENDING_FILE_NAME}: a writer without a
+     * message bus could not write them to the shared purge log. Reads are bounded
      * by the on-disk file length so a torn or corrupt file can never read past
      * the mapping; whatever parses cleanly is re-published through the normal
      * path. The file is always removed afterwards: a corrupt file is discarded,
@@ -12958,19 +13003,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (deferredPostingSealPurgeTaskPool != null) {
             deferredPostingSealPurgeTaskPool.release(task);
         }
-    }
-
-    private int releaseDirectPersistedPostingSealPurges(int readPos, int writePos, int n, long currentTableTxn) {
-        assert Thread.holdsLock(parquetSealPurgeLock);
-        for (int i = readPos; i < n; i++) {
-            PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(i);
-            if (task.isEmpty() || task.getToTableTxn() <= currentTableTxn) {
-                releaseDeferredPostingSealPurgeTask(task);
-            } else {
-                deferredPostingSealPurges.setQuick(writePos++, task);
-            }
-        }
-        return writePos;
     }
 
     private void releaseIndexerWriters() {
@@ -14653,9 +14685,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // lastPartitionSquashed == false means a partition survives after the
             // target. openLastPartition would therefore re-open the wrong partition,
             // and it no-ops outright once that last partition is parquet (see
-            // openLastPartitionAndSetAppendPosition), which is exactly how the writer
-            // ends up holding an earlier partition open in the first place. Close
-            // WITHOUT truncating, then re-open the TARGET. openPartition also re-runs
+            // openLastPartitionAndSetAppendPosition). With a parquet last partition,
+            // this branch runs when lastOpenPartitionTs is stale:
+            // convertPartitionNativeToParquet closes a converted last partition without
+            // resetting it, and finishO3Commit resets it only when it finds a partition
+            // open. Once that day is native again, a squash of its splits matches the
+            // stale value and opens the day behind the parquet last partition; the
+            // transition close in the next O3 commit's finishO3Commit releases it.
+            // Close WITHOUT truncating, then re-open the TARGET. openPartition also re-runs
             // configureFollowerAndWriter / configureCoveringIfNeeded /
             // populateDenseIndexerList, so the reseal below and the next commit see
             // live column memories and a dense indexer list that matches indexCount.
