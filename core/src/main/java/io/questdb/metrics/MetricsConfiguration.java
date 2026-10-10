@@ -25,6 +25,46 @@
 package io.questdb.metrics;
 
 public interface MetricsConfiguration {
+    String DEFAULT_PERSIST_EXCLUDE = "worker_pool_fiber_" +
+            "(max_live|mounted|retained|finalizing|outstanding|created|retired|mount|wake|launch|" +
+            "scheduler_publication|scheduler_selection|orphan_recovery|mount_budget_exhaustion)(__.*)?";
+
+    default void appendPersistedMetricDefinitions(MetricSnapshotVisitor visitor) {
+    }
+
+    default CharSequence getPersistExclude() {
+        return DEFAULT_PERSIST_EXCLUDE;
+    }
+
+    default long getPersistIntervalMicros() {
+        return 1_000_000;
+    }
+
+    /**
+     * How often the metrics table syncs to disk when the configured commit mode syncs. Negative, the
+     * default, never syncs: the metrics are node-local and cheap to lose, and syncing every column
+     * file of the wide table is costly. Zero syncs every sample. A positive interval syncs the first
+     * sample after it elapses, so an OS crash or power loss loses at most that much history.
+     */
+    default long getPersistSyncIntervalMicros() {
+        return -1;
+    }
+
+    default CharSequence getPersistTtl() {
+        return "1 WEEK";
+    }
+
+    default long getPersistVirtualIntervalMicros() {
+        return 60_000_000;
+    }
 
     boolean isEnabled();
+
+    default boolean isPersistEnabled() {
+        return false;
+    }
+
+    default boolean isPersistParquetEnabled() {
+        return true;
+    }
 }
