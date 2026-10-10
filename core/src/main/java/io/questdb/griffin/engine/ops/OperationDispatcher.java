@@ -167,8 +167,11 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                     throw CairoException.readOnlyAccess();
                 }
                 OperationFutureImpl future = futurePool.pop();
-                // The future closes the operation from here on: of() when it throws, the caller
-                // through the future otherwise.
+                // The future is responsible for closing the operation from here on, so this method
+                // must not close it too: of() calls close() from its catch block, the caller closes
+                // through the future otherwise. One gap is left for a dedicated fix: on a full writer
+                // command queue, publishAsyncWriterCommand() calls startAsync() before the publish
+                // fails, so close() leaves an UPDATE's plan to a writer that never gets the command.
                 isHandedToFuture = true;
                 future.of(
                         operation,

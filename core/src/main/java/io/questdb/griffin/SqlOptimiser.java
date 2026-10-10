@@ -2338,6 +2338,10 @@ public class SqlOptimiser implements Mutable {
                             _nested.setNestedModel(model);
                             IQueryModel _model = queryModelPool.next();
                             _model.setNestedModel(_nested);
+                            // the wrappers stand for the set operation, so they report errors at
+                            // the position of its first model
+                            _nested.setModelPosition(model.getModelPosition());
+                            _model.setModelPosition(model.getModelPosition());
                             SqlUtil.addSelectStar(_model, queryColumnPool, expressionNodePool);
                             _model.setLimit(limitLo, limitHi);
                             return replaceAndTransferDependents(model, _model);

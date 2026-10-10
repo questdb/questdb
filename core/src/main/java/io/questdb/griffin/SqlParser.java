@@ -7186,18 +7186,22 @@ public class SqlParser {
         checkParseBudget(referencePosition);
         // parseWithClauses() records every definition
         final int withIndex = withModels.indexOf(wcm);
+        // Ahead of the try, so that the finally pops the frame this pushes and no other.
+        lexer.stash();
         final int readDigit = digit;
         digit = withDigits.getQuick(withIndex);
         try {
-            lexer.stash();
             lexer.goToPosition(wcm.getPosition());
             // The definition parsed once already, so its syntax holds, but the parse can still
             // throw: a declared sub-query in it can pass MAX_DECLARED_QUERY_COPIES, and a copy
             // of anything it reads the statement's parse budget.
             m = parseAsSubQueryAndExpectClosingBrace(lexer, wcm.getWithClauses(), false, sqlParserCallback, withDecls.getQuick(withIndex));
-            lexer.unstash();
         } finally {
             digit = readDigit;
+            // The statement's lexer outlives the statement, and neither GenericLexer.of() nor the
+            // compiler's clear() drops what stash() pushed. So a parse that throws pops its frame
+            // here, as one that returns does.
+            lexer.unstash();
         }
         return m;
     }
