@@ -789,6 +789,18 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowPartitionsSubQueryFreedWhenOptimiseFails() throws Exception {
+        // The optimiser builds the cursor of a SHOW statement before it resolves the rest of the
+        // query, so a failure after that must free it, like the cursor of a table function.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            final String sql = "SELECT * FROM (SHOW PARTITIONS FROM '" + tableName + "') WHERE no_such_col = 1";
+            assertQuery(sql).fails(sql.indexOf("no_such_col"), "Invalid column: no_such_col");
+        });
+    }
+
+    @Test
     public void testShowPartitionsTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("show partitions from banana")

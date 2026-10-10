@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -83,6 +84,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
@@ -219,6 +221,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final QwpEgressMetrics metrics;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
+    // builds the principal-qualified select cache key, see SelectCacheKey
+    private final StringSink scopedSelectCacheKeySink = new StringSink();
     /**
      * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
      * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP
@@ -1326,8 +1330,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // present so factories compiled under different bind signatures
             // occupy different cache slots. A SQL-only key can otherwise
             // return a factory whose bind signature does not match the
-            // current request. Mirrors pgwire's TypesAndSelect design.
-            final CharSequence cacheKey = decoder.buildSelectCacheKey(state.getBindVariableService());
+            // current request. Mirrors pgwire's TypesAndSelect design. The principal's
+            // select cache scope qualifies the key, see SecurityContext.getSelectCacheScope().
+            final CharSequence cacheKey = SelectCacheKey.of(
+                    sqlCtx.getSecurityContext().getSelectCacheScope(),
+                    decoder.buildSelectCacheKey(state.getBindVariableService()),
+                    scopedSelectCacheKeySink
+            );
             short compiledQueryType = CompiledQuery.SELECT;
             boolean queryCacheable = true;
             for (int retries = 0; ; retries++) {

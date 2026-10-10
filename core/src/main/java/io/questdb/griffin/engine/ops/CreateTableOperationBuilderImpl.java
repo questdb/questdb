@@ -124,7 +124,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
 
         if (likeTableNameExpr != null) {
-            TableToken likeTableNameToken = compiler.getEngine().getTableTokenIfExists(likeTableNameExpr.token);
+            // LIKE copies the schema of the table, so a table the principal may not see fails exactly
+            // like a missing one
+            final TableToken likeTableNameToken = sqlExecutionContext.getVisibleTableTokenIfExists(likeTableNameExpr.token);
             if (likeTableNameToken == null) {
                 throw SqlException.tableDoesNotExist(likeTableNameExpr.position, likeTableNameExpr.token);
             }

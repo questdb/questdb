@@ -22,32 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.table;
+package io.questdb.test.cairo.security;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionRequirements;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.table.WriterPoolRecordCursorFactory;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 
-public class WriterPoolFunctionFactory implements FunctionFactory {
+/**
+ * Allows everything but SYSTEM ADMIN, for tests of the functions that only SYSTEM ADMIN may run.
+ */
+public final class NoSystemAdminSecurityContext extends AllowAllSecurityContext {
     @Override
-    public int getExecutionRequirements() {
-        // authorizes the caller, see SqlExecutionRequirements
-        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    public void authorizeSystemAdmin() {
+        throw CairoException.authorization().put("system admin required");
     }
 
     @Override
-    public String getSignature() {
-        return "writer_pool()";
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine()));
+    protected SecurityContext newPrincipalContext(CharSequence principal) {
+        return this;
     }
 }

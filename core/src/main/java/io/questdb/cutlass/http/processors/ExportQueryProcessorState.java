@@ -26,11 +26,13 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
@@ -66,6 +68,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
     private final HttpConnectionContext httpConnectionContext;
+    private final StringSink selectCacheKeySink = new StringSink();
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     private final ParquetWriteCallback writeCallback = new ParquetWriteCallback();
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -98,6 +101,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
+    // the select cache scope of the principal the query runs for, see getSelectCacheKey()
+    private CharSequence selectCacheScope;
     private HTTPSerialParquetExporter serialParquetExporter;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CopyExportContext copyContext) {
@@ -174,7 +179,10 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         if (recordCursorFactory != null) {
             if (queryCacheable && !isClosing) {
                 try {
-                    httpConnectionContext.getSelectCache().put(sqlText, recordCursorFactory);
+                    httpConnectionContext.getSelectCache().put(
+                            SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink),
+                            recordCursorFactory
+                    );
                 } catch (Throwable th) {
                     cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
                 }
@@ -183,6 +191,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             }
         }
         queryCacheable = false;
+        selectCacheScope = null;
         sqlText.clear();
         queryState = JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
@@ -237,6 +246,16 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public CreateTableOperation getParquetTempTableCreate() {
         return createParquetOp;
+    }
+
+    /**
+     * Returns the select cache key of the query for the principal it runs for, and remembers the
+     * principal's scope, so that clearing the state returns the factory to the same scope it came
+     * from or was compiled in.
+     */
+    public CharSequence getSelectCacheKey(SecurityContext securityContext) {
+        selectCacheScope = securityContext.getSelectCacheScope();
+        return SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink);
     }
 
     public boolean isQueryCacheable() {

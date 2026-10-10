@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -38,6 +39,12 @@ import java.util.function.IntFunction;
 public class InformationSchemaQuestDBColumnsFunctionFactory implements FunctionFactory {
     public static final String SIGNATURE = "information_schema.questdb_columns()";
     public static IntFunction<String> TYPE_TO_NAME = ColumnType::nameOf;
+
+    @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
 
     @Override
     public String getSignature() {

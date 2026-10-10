@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -91,6 +92,13 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, HttpRequ
             utf16Sink.clear();
             if (Utf8s.utf8ToUtf16(tableName, utf16Sink)) {
                 check = cairoEngine.getTableStatus(path, utf16Sink);
+                if (check == TableUtils.TABLE_EXISTS) {
+                    // a table the principal may not see reads as missing
+                    final TableToken tableToken = cairoEngine.getTableTokenIfExists(utf16Sink);
+                    if (tableToken == null || !context.getSecurityContext().isTableVisible(tableToken)) {
+                        check = TableUtils.TABLE_DOES_NOT_EXIST;
+                    }
+                }
             }
             if (HttpKeywords.isJson(context.getRequestHeader().getUrlParam(URL_PARAM_STATUS_FORMAT))) {
                 HttpChunkedResponse response = context.getChunkedResponse();

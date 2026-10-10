@@ -68,6 +68,9 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        // Authorized before the table names resolve, not only when the function runs: otherwise whether
+        // compilation fails with "no valid table names" would disclose which tables exist.
+        sqlExecutionContext.getSecurityContext().authorizeSystemAdmin();
         // check if there are no args
         if (args == null || args.size() == 0) {
             throw SqlException.$(position, "no arguments provided");

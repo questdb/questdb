@@ -55,20 +55,28 @@ import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory
 public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
     private static final RecordMetadata METADATA;
+    // the view a SHOW written in a view reads the materialized view through, see
+    // SqlExecutionContext.isTableFunctionVisible()
+    protected final SqlExecutionContext.TableFunctionView tableFunctionView;
     protected final TableToken tableToken;
     protected final int tokenPosition;
     private ShowCreateMatViewCursor cursor = new ShowCreateMatViewCursor();
 
-    public ShowCreateMatViewRecordCursorFactory(TableToken tableToken, int tokenPosition) {
+    public ShowCreateMatViewRecordCursorFactory(
+            TableToken tableToken,
+            int tokenPosition,
+            SqlExecutionContext.TableFunctionView tableFunctionView
+    ) {
         super(METADATA);
         this.tableToken = tableToken;
         this.tokenPosition = tokenPosition;
+        this.tableFunctionView = tableFunctionView;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        return cursor.of(executionContext, tableToken, tokenPosition);
+        return cursor.of(executionContext, tableToken, tokenPosition, tableFunctionView);
     }
 
     @Override
@@ -139,8 +147,14 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         public ShowCreateMatViewCursor of(
                 SqlExecutionContext executionContext,
                 TableToken tableToken,
-                int tokenPosition
+                int tokenPosition,
+                SqlExecutionContext.TableFunctionView tableFunctionView
         ) throws SqlException {
+            // Compilation already hid the view from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated.
+            if (!executionContext.isTableFunctionVisible(tableToken, tableFunctionView)) {
+                throw SqlException.matViewDoesNotExist(tokenPosition, tableToken.getTableName());
+            }
             this.tableToken = tableToken;
             this.executionContext = executionContext;
 

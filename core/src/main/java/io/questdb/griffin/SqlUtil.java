@@ -240,12 +240,17 @@ public class SqlUtil {
                 }
             }
 
-            // Process tables directly referenced
+            // Process tables directly referenced, a SHOW statement's object included, and the tables that
+            // table-name functions in the FROM clause name
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
-            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                String tableName = unquote(tableNameExpr.token).toString();
-                if (!depMap.contains(tableName)) {
-                    depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+            if (tableNameExpr != null) {
+                if (tableNameExpr.type == ExpressionNode.LITERAL) {
+                    String tableName = unquote(tableNameExpr.token).toString();
+                    if (!depMap.contains(tableName)) {
+                        depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+                    }
+                } else {
+                    collectTableNameFunctionReference(engine, tableNameExpr, depMap);
                 }
             }
 
@@ -1974,6 +1979,9 @@ public class SqlUtil {
             collectTableAndColumnReferences(engine, expr.queryModel, depMap);
         }
 
+        // a table-name function in an expression, e.g. SELECT table_partitions('t')
+        collectTableNameFunctionReference(engine, expr, depMap);
+
         // Handle column literals (e.g., table.column or column)
         if (expr.type == ExpressionNode.LITERAL) {
             CharSequence token = expr.token;
@@ -2020,6 +2028,28 @@ public class SqlUtil {
             final ExpressionNode joinColumn = joinColumns.getQuick(i);
             if (joinColumn != null) {
                 collectColumnReferencesFromExpression(engine, joinColumn, model, depMap);
+            }
+        }
+    }
+
+    // A table-name function, such as table_columns('t'), reads the metadata of the object its constant
+    // argument names. The object is recorded as a dependency of the view with no columns: a reader of the
+    // view may read its metadata through the view, see SqlExecutionContext.TableFunctionView.isDependency(),
+    // but none of its data. The argument is recorded as the view's definition writes it, so a caller that
+    // later overrides an OVERRIDABLE variable of the view does not change it.
+    private static void collectTableNameFunctionReference(
+            @NotNull CairoEngine engine,
+            @NotNull ExpressionNode node,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        if (node.type == ExpressionNode.FUNCTION
+                && node.paramCount == 1
+                && node.rhs != null
+                && node.rhs.type == ExpressionNode.CONSTANT
+                && engine.getFunctionFactoryCache().isTableNameFunction(node.token)) {
+            final String tableName = unquote(node.rhs.token).toString();
+            if (!depMap.contains(tableName)) {
+                depMap.put(tableName, new LowerCaseCharSequenceHashSet());
             }
         }
     }

@@ -474,11 +474,19 @@ public final class TableUtils {
             @NotNull SqlExecutionContext executionContext
     ) throws SqlException {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
-        final Function function = functionParser.parseFunction(
-                tableNameExpr,
-                AnyRecordMetadata.INSTANCE,
-                executionContext
-        );
+        final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        if (viewNameExpr != null) {
+            executionContext.setTableFunctionView(getTableFunctionView(viewNameExpr, executionContext));
+        }
+        final Function function;
+        try {
+            function = functionParser.parseFunction(tableNameExpr, AnyRecordMetadata.INSTANCE, executionContext);
+        } finally {
+            if (viewNameExpr != null) {
+                executionContext.setTableFunctionView(previousView);
+            }
+        }
         if (!ColumnType.isCursor(function.getType())) {
             Misc.free(function);
             throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
@@ -1116,6 +1124,32 @@ public final class TableUtils {
             dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         }
         return dirName;
+    }
+
+    /**
+     * Returns the view that the table-name functions and tables of a model expanded from that view
+     * read through, see
+     * {@link SqlExecutionContext#isTableFunctionVisible(TableToken, SqlExecutionContext.TableFunctionView)}.
+     * That is the definition SqlParser expanded the model from, so that the objects the definition
+     * names are those of the model, even when another session changes the view during the compile.
+     * A view name that SqlParser did not stamp resolves to the current definition.
+     */
+    public static SqlExecutionContext.TableFunctionView getTableFunctionView(
+            @NotNull ExpressionNode viewNameExpr,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (viewNameExpr.tableFunctionView != null) {
+            return viewNameExpr.tableFunctionView;
+        }
+        final TableToken viewToken = executionContext.getTableTokenIfExists(viewNameExpr.token);
+        if (viewToken == null || !viewToken.isView()) {
+            throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
+        }
+        final ViewDefinition viewDefinition = executionContext.getCairoEngine().getViewGraph().getViewDefinition(viewToken);
+        if (viewDefinition == null) {
+            throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
+        }
+        return new SqlExecutionContext.TableFunctionView(viewDefinition);
     }
 
     public static int getTableIdFromTableDir(CharSequence dirName) throws NumericException {
