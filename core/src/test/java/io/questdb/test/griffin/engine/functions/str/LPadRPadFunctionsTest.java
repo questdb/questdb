@@ -285,4 +285,29 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
                     .returns(expected);
         });
     }
+
+    @Test
+    public void testVarcharStrIsConstInComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s VARCHAR, l VARCHAR, r VARCHAR)");
+            execute("INSERT INTO t VALUES ('*', '***ab', 'ab***'), ('-', '---ab', 'ab---')");
+            // '=' reads its right operand through getVarcharB(), so the padded value
+            // must be the same through both getVarcharA() and getVarcharB()
+            assertQuery("SELECT s, lpad('ab'::VARCHAR, 5, s) lp, rpad('ab'::VARCHAR, 5, s) rp, l = lpad('ab'::VARCHAR, 5, s) leq, r = rpad('ab'::VARCHAR, 5, s) req FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tlp\trp\tleq\treq
+                            *\t***ab\tab***\ttrue\ttrue
+                            -\t---ab\tab---\ttrue\ttrue
+                            """);
+            assertQuery("SELECT s FROM t WHERE l = lpad('ab'::VARCHAR, 5, s) AND r = rpad('ab'::VARCHAR, 5, s)")
+                    .noLeakCheck()
+                    .returns("""
+                            s
+                            *
+                            -
+                            """);
+        });
+    }
 }
