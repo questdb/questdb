@@ -115,6 +115,14 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
      */
     private static final int MAT_VIEW_CRASH_POINT_CAP = 256;
     /**
+     * Floor on the crash points of one part where the view came back valid, so the phantom check runs: five parts
+     * of 5 keep the whole sweep's floor of 25. A 30-point part spans one whole insert, apply and refresh step (30
+     * durability ops), whose run of valid-view points is 10 to 14 long, so a part sees about 14 wherever its bounds
+     * fall. The floor is absolute rather than a fraction, so ordinary op-count drift does not trip it, while it still
+     * fails if the view starts coming back invalid nearly everywhere.
+     */
+    private static final int MIN_VALID_VIEW_POINTS_PER_PART = 5;
+    /**
      * Pre-epoch base rows: a durable epoch is taken after these (interval 0), for base and mv.
      */
     private static final int LAZY_K = 4;
@@ -136,65 +144,32 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
     private static final int[] LAZY_TS_HOUR = {23, 9, 14, 4, 11, 2, 17, 7, 20};
 
     /**
-     * The mutual-consistency sweep. Crashes at every durability op of the M lazily applied base rows (each also
-     * drives a lazy mv refresh), running the recovery triple, restart rehydration and the base/view consistency
-     * oracle at each point.
+     * The full sweep (N=150 crash points) runs in five parts of 30 points; see
+     * {@link #assertSweepPartRecoversMutuallyConsistent}. If N grows well past 150, the last part needs a further split.
      */
     @Test
-    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtEveryCrashPoint() throws Exception {
-        withAdaptiveLazyGap(() -> runWithCrashFacade(() -> {
-            crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
+    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtCrashPoints121ToLast() throws Exception {
+        assertSweepPartRecoversMutuallyConsistent(121, Integer.MAX_VALUE);
+    }
 
-            final MatViewLazyGapWorkload workload = new MatViewLazyGapWorkload();
-            // Sweeping every crash point is the point of this test (the assertions below demand no truncation), and
-            // the base and view commit phase runs past the default cap of 200, so raise the cap for this workload.
-            final SweepResult r = forEachAdaptiveCrashPoint(workload, MAT_VIEW_CRASH_POINT_CAP);
+    @Test
+    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtCrashPoints1To30() throws Exception {
+        assertSweepPartRecoversMutuallyConsistent(1, 30);
+    }
 
-            LOG.info().$("[mat-view lazy-gap sweep] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
-                    .$(", validViewPoints=").$(workload.validViewPoints)
-                    .$(", invalidViewPoints=").$(workload.invalidViewPoints)
-                    .$(", recoveredBaseByK=").$(Arrays.toString(r.recoveredByK())).$();
+    @Test
+    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtCrashPoints31To60() throws Exception {
+        assertSweepPartRecoversMutuallyConsistent(31, 60);
+    }
 
-            // The "no phantom in a valid view" clause is the detector for the consistency bug, so it must run: a
-            // passing sweep where the view came back invalid at every point (phantom check always skipped) proves
-            // nothing. The floor is absolute rather than a fraction of sweptPoints, so ordinary op-count drift does
-            // not trip it, while it still fails if the view starts coming back invalid nearly everywhere.
-            Assert.assertTrue(
-                    "the phantom check must run on a meaningful number of VALID post-recovery views (else the "
-                            + "GREEN sweep is vacuous); validViewPoints=" + workload.validViewPoints
-                            + ", invalidViewPoints=" + workload.invalidViewPoints
-                            + ", sweptPoints=" + r.sweptPoints,
-                    workload.validViewPoints >= 25
-            );
+    @Test
+    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtCrashPoints61To90() throws Exception {
+        assertSweepPartRecoversMutuallyConsistent(61, 90);
+    }
 
-            Assert.assertTrue("N must be > 0", r.n > 0);
-            Assert.assertEquals("the cap must not truncate this small workload", r.n, r.sweptPoints);
-            Assert.assertFalse("small workload must not be truncated", r.truncated);
-
-            // Oracle clause 7 (durable-survival floor): recovered base counts non-decreasing in k.
-            for (int k = 2; k <= r.sweptPoints; k++) {
-                Assert.assertTrue(
-                        "recovered base counts must be non-decreasing at k=" + k + " ("
-                                + r.recoveredByK()[k - 1] + " -> " + r.recoveredByK()[k] + ")",
-                        r.recoveredByK()[k] >= r.recoveredByK()[k - 1]
-                );
-            }
-            // A real rise, not a degenerate all-full sweep.
-            Assert.assertTrue(
-                    "sweep must show a genuine rise (earliest crash point < full set)",
-                    r.recoveredByK()[1] < ROWS
-            );
-            // The durable epoch floor: even the earliest crash point keeps at least the K durable epoch rows.
-            Assert.assertTrue(
-                    "every crash point must recover at least the K durable epoch rows (floor)",
-                    r.recoveredByK()[1] >= LAZY_K
-            );
-            // k=N: recovery restores all committed base rows.
-            Assert.assertEquals(
-                    "k=N must recover ALL committed base rows (W=0 => every returned commit's WAL is durable)",
-                    ROWS, r.recoveredByK()[r.sweptPoints]
-            );
-        }));
+    @Test
+    public void testMatViewLazyGapSweepRecoversMutuallyConsistentAtCrashPoints91To120() throws Exception {
+        assertSweepPartRecoversMutuallyConsistent(91, 120);
     }
 
     /**
@@ -500,6 +475,83 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
             setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
+    }
+
+    /**
+     * The mutual-consistency sweep over crash points {@code firstK..min(lastK, N)}. Crashes at each durability op of
+     * the M lazily applied base rows (each also drives a lazy mv refresh) in that range, running the recovery triple,
+     * restart rehydration and the base/view consistency oracle at each point. The whole sweep needs more than the
+     * test timeout in one method (the crash facade's per-point cost grows with the points already run in it), so it
+     * is split into parts; every point starts from a fresh identical baseline, so a part sweeps exactly the points
+     * the whole sweep would in its range. The whole-sweep checks apply per part: the valid-view floor
+     * ({@link #MIN_VALID_VIEW_POINTS_PER_PART}), recovered base counts non-decreasing in k within the part and at
+     * least LAZY_K at its first point; the genuine rise only in the part holding k=1, the full set only in the part
+     * holding k=N.
+     */
+    private void assertSweepPartRecoversMutuallyConsistent(int firstK, int lastK) throws Exception {
+        withAdaptiveLazyGap(() -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
+
+            final MatViewLazyGapWorkload workload = new MatViewLazyGapWorkload();
+            // Sweeping every crash point is the point of this test (the assertions below demand no truncation), and
+            // the base and view commit phase runs past the default cap of 200, so raise the cap for this workload.
+            final SweepResult r = forEachAdaptiveCrashPoint(workload, MAT_VIEW_CRASH_POINT_CAP, firstK, lastK);
+            final int first = r.firstSweptK;
+            final int last = r.lastSweptK;
+
+            LOG.info().$("[mat-view lazy-gap sweep] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
+                    .$(", part=").$(first).$("..").$(last)
+                    .$(", validViewPoints=").$(workload.validViewPoints)
+                    .$(", invalidViewPoints=").$(workload.invalidViewPoints)
+                    .$(", recoveredBaseByK=").$(Arrays.toString(r.recoveredByK())).$();
+
+            Assert.assertTrue("N must be > 0", r.n > 0);
+            Assert.assertEquals("the cap must not truncate this small workload", r.n, r.sweptPoints);
+            Assert.assertFalse("small workload must not be truncated", r.truncated);
+            Assert.assertEquals(
+                    "every swept crash point must count as a valid or an invalid view",
+                    last - first + 1, workload.validViewPoints + workload.invalidViewPoints
+            );
+
+            // The "no phantom in a valid view" clause is the detector for the consistency bug, so it must run: a
+            // passing sweep where the view came back invalid at every point (phantom check always skipped) proves
+            // nothing.
+            Assert.assertTrue(
+                    "the phantom check must run on a meaningful number of VALID post-recovery views (else the "
+                            + "GREEN sweep is vacuous); validViewPoints=" + workload.validViewPoints
+                            + ", invalidViewPoints=" + workload.invalidViewPoints
+                            + ", part=" + first + ".." + last,
+                    workload.validViewPoints >= MIN_VALID_VIEW_POINTS_PER_PART
+            );
+
+            // Oracle clause 7 (durable-survival floor): recovered base counts non-decreasing in k.
+            for (int k = first + 1; k <= last; k++) {
+                Assert.assertTrue(
+                        "recovered base counts must be non-decreasing at k=" + k + " ("
+                                + r.recoveredByK()[k - 1] + " -> " + r.recoveredByK()[k] + ")",
+                        r.recoveredByK()[k] >= r.recoveredByK()[k - 1]
+                );
+            }
+            // The durable epoch floor: the part's first crash point keeps at least the K durable epoch rows.
+            Assert.assertTrue(
+                    "crash point k=" + first + " must recover at least the K durable epoch rows (floor)",
+                    r.recoveredByK()[first] >= LAZY_K
+            );
+            if (first == 1) {
+                // A real rise, not a degenerate all-full sweep.
+                Assert.assertTrue(
+                        "sweep must show a genuine rise (earliest crash point < full set)",
+                        r.recoveredByK()[1] < ROWS
+                );
+            }
+            if (last == r.sweptPoints) {
+                // k=N: recovery restores all committed base rows.
+                Assert.assertEquals(
+                        "k=N must recover ALL committed base rows (W=0 => every returned commit's WAL is durable)",
+                        ROWS, r.recoveredByK()[last]
+                );
+            }
+        }));
     }
 
     private void withAdaptiveLazyGap(RunnableEx body) throws Exception {
