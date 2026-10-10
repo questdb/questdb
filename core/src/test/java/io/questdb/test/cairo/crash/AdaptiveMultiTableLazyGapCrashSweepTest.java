@@ -81,104 +81,23 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
     private static final int ROWS = LAZY_K + LAZY_M; // 9
 
     /**
-     * Each table builds its own durable epoch at seqTxn=LAZY_K, both epochs are then disabled, and the
-     * driver sweeps a crash across every durability op of the interleaved LAZY_M-per-table commit phase,
-     * running the full recovery triple (one {@code recover()} call for both tables) and the per-table oracle
-     * at each. Asserts, at every crash point k:
-     * <ol>
-     *   <li>neither table is suspended after recovery;</li>
-     *   <li>no silent corruption in either table: surviving rows ordered by {@code v} form an identity
-     *       prefix {@code {0..m-1}} for {@code t1} and {@code t2} independently (a loud torn read is
-     *       tolerated; a wrong or absent value or a zero-fill fails);</li>
-     *   <li>a follow-up write and read succeed on both recovered tables;</li>
-     *   <li>each table's recovered count is non-decreasing in k on its own, not only in the sum, rises from
-     *       a short prefix to the full set, and equals {@code ROWS} at k=N for both tables.</li>
-     * </ol>
+     * The full sweep (N=100 crash points) needs more than the 20-minute test timeout, so it runs in three parts of
+     * about 35 points each; see {@link #assertSweepPartRecoversCleanly}. If N grows well past 100, the last part
+     * needs a further split.
      */
     @Test
-    public void testMultiTableLazyGapSweepRecoversCleanlyAtEveryCrashPoint() throws Exception {
-        withAdaptiveLazyGap(() -> runWithCrashFacade(() -> {
-            crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
+    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints1To35() throws Exception {
+        assertSweepPartRecoversCleanly(1, 35);
+    }
 
-            final LazyGapMultiTableWorkload workload = new LazyGapMultiTableWorkload();
-            final SweepResult r = forEachAdaptiveCrashPoint(workload);
+    @Test
+    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints36To70() throws Exception {
+        assertSweepPartRecoversCleanly(36, 70);
+    }
 
-            LOG.info().$("[multi-table lazy-gap sweep] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
-                    .$(", recoveredByK(sum)=").$(Arrays.toString(r.recoveredByK()))
-                    .$(", t1RecoveredByK=").$(workload.t1RecoveredByK)
-                    .$(", t2RecoveredByK=").$(workload.t2RecoveredByK).$();
-
-            Assert.assertTrue("N must be > 0", r.n > 0);
-            Assert.assertEquals("default cap must not truncate this small workload", r.n, r.sweptPoints);
-            Assert.assertFalse("small workload must not be truncated", r.truncated);
-            Assert.assertEquals(
-                    "per-table t1 series must have one entry per swept crash point",
-                    r.sweptPoints, workload.t1RecoveredByK.size()
-            );
-            Assert.assertEquals(
-                    "per-table t2 series must have one entry per swept crash point",
-                    r.sweptPoints, workload.t2RecoveredByK.size()
-            );
-
-            // Oracle clause 4 (durable survival floor), on the driver-level sum.
-            for (int k = 2; k <= r.sweptPoints; k++) {
-                Assert.assertTrue(
-                        "summed recovered counts must be non-decreasing at k=" + k + " ("
-                                + r.recoveredByK()[k - 1] + " -> " + r.recoveredByK()[k] + ")",
-                        r.recoveredByK()[k] >= r.recoveredByK()[k - 1]
-                );
-            }
-
-            // Per-table monotonicity. The sum check above is necessary but not sufficient: if recovering t1
-            // corrupts or skips t2 (or the reverse), one table's rise can mask the other's dip in the same
-            // crash-point transition. This check proves the per-table recovery loop leaves neither table
-            // behind.
-            for (int i = 1; i < workload.t1RecoveredByK.size(); i++) {
-                Assert.assertTrue(
-                        "t1 recovered count must be non-decreasing at sweep index " + (i + 1) + " ("
-                                + workload.t1RecoveredByK.get(i - 1) + " -> " + workload.t1RecoveredByK.get(i) + ")",
-                        workload.t1RecoveredByK.get(i) >= workload.t1RecoveredByK.get(i - 1)
-                );
-            }
-            for (int i = 1; i < workload.t2RecoveredByK.size(); i++) {
-                Assert.assertTrue(
-                        "t2 recovered count must be non-decreasing at sweep index " + (i + 1) + " ("
-                                + workload.t2RecoveredByK.get(i - 1) + " -> " + workload.t2RecoveredByK.get(i) + ")",
-                        workload.t2RecoveredByK.get(i) >= workload.t2RecoveredByK.get(i - 1)
-                );
-            }
-
-            // A genuine rise, not a degenerate all-full sweep (on the sum).
-            Assert.assertTrue(
-                    "sweep must show a genuine rise (earliest crash point < full combined set)",
-                    r.recoveredByK()[1] < ROWS * 2
-            );
-            // The durable epoch floor, per table, at the earliest crash point.
-            Assert.assertTrue(
-                    "t1 must recover at least the LAZY_K durable epoch rows at the earliest crash point (t1="
-                            + workload.t1RecoveredByK.get(0) + ")",
-                    workload.t1RecoveredByK.get(0) >= LAZY_K
-            );
-            Assert.assertTrue(
-                    "t2 must recover at least the LAZY_K durable epoch rows at the earliest crash point (t2="
-                            + workload.t2RecoveredByK.get(0) + ")",
-                    workload.t2RecoveredByK.get(0) >= LAZY_K
-            );
-
-            // Oracle clause 3: at the last crash point k=N, both tables restore all rows.
-            Assert.assertEquals(
-                    "k=N must recover ALL committed rows in t1",
-                    ROWS, (int) workload.t1RecoveredByK.get(workload.t1RecoveredByK.size() - 1)
-            );
-            Assert.assertEquals(
-                    "k=N must recover ALL committed rows in t2",
-                    ROWS, (int) workload.t2RecoveredByK.get(workload.t2RecoveredByK.size() - 1)
-            );
-            Assert.assertEquals(
-                    "k=N summed recovered count must equal both tables' full ROWS combined",
-                    ROWS * 2, r.recoveredByK()[r.sweptPoints]
-            );
-        }));
+    @Test
+    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints71ToLast() throws Exception {
+        assertSweepPartRecoversCleanly(71, Integer.MAX_VALUE);
     }
 
     /**
@@ -266,6 +185,116 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
         // The consequence: the run without recovery is correct in both tables too, held to the same bar.
         assertValidIdentityPrefix("t1 withoutRecovery", withoutRecovery.t1);
         assertValidIdentityPrefix("t2 withoutRecovery", withoutRecovery.t2);
+    }
+
+    /**
+     * Each table builds its own durable epoch at seqTxn=LAZY_K, both epochs are then disabled, and the
+     * driver sweeps a crash across durability ops {@code firstK..min(lastK, N)} of the interleaved
+     * LAZY_M-per-table commit phase, running the full recovery triple (one {@code recover()} call for both
+     * tables) and the per-table oracle at each. The three parts together sweep every point 1..N in order.
+     * Asserts, at every crash point k of the part:
+     * <ol>
+     *   <li>neither table is suspended after recovery;</li>
+     *   <li>no silent corruption in either table: surviving rows ordered by {@code v} form an identity
+     *       prefix {@code {0..m-1}} for {@code t1} and {@code t2} independently (a loud torn read is
+     *       tolerated; a wrong or absent value or a zero-fill fails);</li>
+     *   <li>a follow-up write and read succeed on both recovered tables;</li>
+     *   <li>each table's recovered count is non-decreasing in k within the part on its own, not only in the
+     *       sum, and is at least LAZY_K at the part's first point; at k=1 the sum is short of the full set,
+     *       and at k=N both tables recover all {@code ROWS}.</li>
+     * </ol>
+     */
+    private void assertSweepPartRecoversCleanly(int firstK, int lastK) throws Exception {
+        withAdaptiveLazyGap(() -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
+
+            final LazyGapMultiTableWorkload workload = new LazyGapMultiTableWorkload();
+            final SweepResult r = forEachAdaptiveCrashPoint(workload, DEFAULT_ADAPTIVE_CRASH_POINT_CAP, firstK, lastK);
+            final int first = r.firstSweptK;
+            final int last = r.lastSweptK;
+
+            LOG.info().$("[multi-table lazy-gap sweep] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
+                    .$(", part=").$(first).$("..").$(last)
+                    .$(", recoveredByK(sum)=").$(Arrays.toString(r.recoveredByK()))
+                    .$(", t1RecoveredByK=").$(workload.t1RecoveredByK)
+                    .$(", t2RecoveredByK=").$(workload.t2RecoveredByK).$();
+
+            Assert.assertTrue("N must be > 0", r.n > 0);
+            Assert.assertEquals("default cap must not truncate this small workload", r.n, r.sweptPoints);
+            Assert.assertFalse("small workload must not be truncated", r.truncated);
+            Assert.assertEquals(
+                    "per-table t1 series must have one entry per swept crash point",
+                    last - first + 1, workload.t1RecoveredByK.size()
+            );
+            Assert.assertEquals(
+                    "per-table t2 series must have one entry per swept crash point",
+                    last - first + 1, workload.t2RecoveredByK.size()
+            );
+
+            // Oracle clause 4 (durable survival floor), on the driver-level sum.
+            for (int k = first + 1; k <= last; k++) {
+                Assert.assertTrue(
+                        "summed recovered counts must be non-decreasing at k=" + k + " ("
+                                + r.recoveredByK()[k - 1] + " -> " + r.recoveredByK()[k] + ")",
+                        r.recoveredByK()[k] >= r.recoveredByK()[k - 1]
+                );
+            }
+
+            // Per-table monotonicity. The sum check above is necessary but not sufficient: if recovering t1
+            // corrupts or skips t2 (or the reverse), one table's rise can mask the other's dip in the same
+            // crash-point transition. This check proves the per-table recovery loop leaves neither table
+            // behind.
+            for (int i = 1; i < workload.t1RecoveredByK.size(); i++) {
+                Assert.assertTrue(
+                        "t1 recovered count must be non-decreasing at k=" + (first + i) + " ("
+                                + workload.t1RecoveredByK.get(i - 1) + " -> " + workload.t1RecoveredByK.get(i) + ")",
+                        workload.t1RecoveredByK.get(i) >= workload.t1RecoveredByK.get(i - 1)
+                );
+            }
+            for (int i = 1; i < workload.t2RecoveredByK.size(); i++) {
+                Assert.assertTrue(
+                        "t2 recovered count must be non-decreasing at k=" + (first + i) + " ("
+                                + workload.t2RecoveredByK.get(i - 1) + " -> " + workload.t2RecoveredByK.get(i) + ")",
+                        workload.t2RecoveredByK.get(i) >= workload.t2RecoveredByK.get(i - 1)
+                );
+            }
+
+            // The durable epoch floor, per table, at the part's first crash point.
+            Assert.assertTrue(
+                    "t1 must recover at least the LAZY_K durable epoch rows at k=" + first + " (t1="
+                            + workload.t1RecoveredByK.get(0) + ")",
+                    workload.t1RecoveredByK.get(0) >= LAZY_K
+            );
+            Assert.assertTrue(
+                    "t2 must recover at least the LAZY_K durable epoch rows at k=" + first + " (t2="
+                            + workload.t2RecoveredByK.get(0) + ")",
+                    workload.t2RecoveredByK.get(0) >= LAZY_K
+            );
+
+            if (first == 1) {
+                // A genuine rise, not a degenerate all-full sweep (on the sum).
+                Assert.assertTrue(
+                        "sweep must show a genuine rise (earliest crash point < full combined set)",
+                        r.recoveredByK()[1] < ROWS * 2
+                );
+            }
+
+            if (last == r.sweptPoints) {
+                // Oracle clause 3: at the last crash point k=N, both tables restore all rows.
+                Assert.assertEquals(
+                        "k=N must recover ALL committed rows in t1",
+                        ROWS, (int) workload.t1RecoveredByK.get(workload.t1RecoveredByK.size() - 1)
+                );
+                Assert.assertEquals(
+                        "k=N must recover ALL committed rows in t2",
+                        ROWS, (int) workload.t2RecoveredByK.get(workload.t2RecoveredByK.size() - 1)
+                );
+                Assert.assertEquals(
+                        "k=N summed recovered count must equal both tables' full ROWS combined",
+                        ROWS * 2, r.recoveredByK()[r.sweptPoints]
+                );
+            }
+        }));
     }
 
     private void assertValidIdentityPrefix(String label, List<Long> rows) {
