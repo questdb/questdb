@@ -37,9 +37,7 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
     public void testWideTableBatchedSyncSurvivesCrash() throws Exception {
         Assume.assumeTrue("batched SYNC flush is Linux-only", Os.isLinux());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        // Enable the batched flush regardless of this machine's filesystem: on an ext4 fast_commit mount the
-        // production config disables it. The test harness builds its config with detection off, so this
-        // property is the deterministic switch.
+        // Enable the batched flush explicitly, whatever the test configuration's default.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
         // Tiny append page so the (many, wide) column files extend repeatedly during the run, exercising the
         // extend path.

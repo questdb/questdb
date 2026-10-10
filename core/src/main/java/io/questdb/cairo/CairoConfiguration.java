@@ -1273,10 +1273,6 @@ public interface CairoConfiguration {
      * it, then one {@code syncfs}) instead of flushing each file with {@code msync(MS_SYNC)}, which is slower
      * but durable on every filesystem. Controlled by {@code cairo.adaptive.epoch.column.sync.batched}.
      *
-     * <p>The server configuration ANDs the property with {@link FastCommitCheck}: the batched path is off when
-     * the db root is on ext4 with {@code fast_commit}, where its within-page durability is not guaranteed. The
-     * property remains the control when detection returns {@link FastCommitCheck#UNKNOWN}.
-     *
      * @return {@code true} if the batched adaptive durable-epoch column flush should be used
      */
     default boolean isAdaptiveEpochColumnSyncBatched() {

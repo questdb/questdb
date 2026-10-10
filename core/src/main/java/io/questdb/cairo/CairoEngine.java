@@ -4628,37 +4628,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Plans a surgical repair for a materialized view left ahead of its base by a crash: which
-     * timestamp window the stranded view transactions touched, and which base txn to resume from.
-     * Returns false when the window cannot be bounded, in which case the caller must fall back to
-     * invalidation (a full rebuild). Never throws -- a repair is an optimisation over a behaviour
-     * that is already correct, so any failure degrades to that behaviour.
-     */
-    private boolean planMatViewRepair(TableToken viewToken, long baseTableLastTxn, WalUtils.MatViewRepairPlan plan) {
-        // This method owns the event reader, not findMatViewRepairPlan: the scan re-positions it with
-        // close()+of() per txn and leaves it open on the last one, so the try-with-resources closes the view's
-        // _event mapping.
-        try (
-                Path repairPath = new Path().of(configuration.getDbRoot());
-                WalEventReader walEventReader = new WalEventReader(configuration)
-        ) {
-            repairPath.concat(viewToken);
-            return WalUtils.findMatViewRepairPlan(
-                    repairPath,
-                    configuration,
-                    Vm.getCMRInstance(configuration.getBypassWalFdCache()),
-                    walEventReader,
-                    baseTableLastTxn,
-                    plan
-            ) && plan.hasRange();
-        } catch (Throwable th) {
-            LOG.info().$("mat view repair planning failed [view=").$(viewToken)
-                    .$(", err=").$safe(th.getMessage()).I$();
-            return false;
-        }
-    }
-
-    /**
      * Loads one mat-view's definition and persisted state into {@code target}.
      * Shared by {@link #buildViewGraphs()} (boot, {@code forceCreateState=false}) and
      * {@link #hydrateMatViewStateStore(MatViewStateStore)} (role promote, {@code forceCreateState=true}).
@@ -4745,28 +4714,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
                 state.initFromReader(matViewStateReader);
                 if (state.isInvalid()) {
-                    // A crash during a surgical repair leaves the view invalid with this reason and
-                    // the in-memory arming lost. Re-plan and re-arm so the repair still completes;
-                    // until it does the view stays invalid, which is the fail-safe direction.
-                    if (Chars.equalsNc(MatViewState.REPAIR_PENDING_REASON, matViewStateReader.getInvalidationReason())) {
-                        // Keep the original repair cut even if ingestion advanced after the deferral:
-                        // the stranded view transactions belong to the discarded tail.
-                        final long baseTxnForRepair = Math.min(
-                                getTableSequencerAPI().lastTxn(baseTableToken),
-                                matViewStateReader.getLastRefreshBaseTxn()
-                        );
-                        final WalUtils.MatViewRepairPlan rearm = new WalUtils.MatViewRepairPlan();
-                        if (planMatViewRepair(tableToken, baseTxnForRepair, rearm)) {
-                            state.markRepairPending(rearm.rangeLo, rearm.rangeHi);
-                            state.setLastRefreshBaseTableTxn(rearm.cutBaseTxn);
-                            target.enqueueRangeRefresh(tableToken, rearm.rangeLo, rearm.rangeHi);
-                            LOG.info().$("mat view repair RE-ARMED after restart [view=").$(tableToken)
-                                    .$(", rangeLo=").$ts(rearm.rangeLo).$(", rangeHi=").$ts(rearm.rangeHi).I$();
-                        } else {
-                            LOG.info().$("mat view repair cannot be re-armed, full refresh required [view=")
-                                    .$(tableToken).I$();
-                        }
-                    }
                     return;
                 }
                 long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
@@ -4777,27 +4724,6 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
                             .$(", baseTableTxn=").$(baseTableLastTxn)
                             .I$();
-                    // Surgical repair. A crash can leave the view holding aggregates for base txns the
-                    // crash discarded. Invalidation is correct but rebuilds the whole view; the repair
-                    // recomputes only the window the stranded txns touched. The view is invalidated first,
-                    // with the repair reason, and only the range refresh clears it, so a repair that never
-                    // runs or dies midway leaves the view invalid, never stale.
-                    final WalUtils.MatViewRepairPlan repairPlan = new WalUtils.MatViewRepairPlan();
-                    if (planMatViewRepair(tableToken, baseTableLastTxn, repairPlan)) {
-                        state.setLastRefreshBaseTableTxn(repairPlan.cutBaseTxn);
-                        state.markRepairPending(repairPlan.rangeLo, repairPlan.rangeHi);
-                        LOG.info().$("materialized view is ahead of base table, repairing surgically [view=").$(tableToken)
-                                .$(", undoTxns=").$(repairPlan.txnsAboveCut)
-                                .$(", resumeFromBaseTxn=").$(repairPlan.cutBaseTxn)
-                                .$(", rangeLo=").$ts(repairPlan.rangeLo)
-                                .$(", rangeHi=").$ts(repairPlan.rangeHi)
-                                .I$();
-                        target.enqueueInvalidate(tableToken, MatViewState.REPAIR_PENDING_REASON);
-                        target.enqueueRangeRefresh(tableToken, repairPlan.rangeLo, repairPlan.rangeHi);
-                        return;
-                    }
-                    LOG.info().$("materialized view is ahead of base table and cannot be repaired surgically, "
-                            + "full refresh required [view=").$(tableToken).$(", why=").$safe(repairPlan.abortReason).I$();
                     target.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
                 } else if (state.getLastRefreshBaseTxn() > -1 && hasBaseTableTruncateInWalGap(baseTableToken, state.getLastRefreshBaseTxn(), baseTableLastTxn)) {
                     // A truncate in the base WAL gap (lastRefreshBaseTxn, baseTableLastTxn] carries no

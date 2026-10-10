@@ -73,7 +73,7 @@ dimensions**, each verified to actually execute.
 | 12 | structural DDL under load | `RandomizedAdaptiveCrashFuzzTest` | `QDB_DDL_EVERY_ROWS=N` |
 | 13 | sustained lazy gap | `AdaptiveO3LazyGap`, W2/W3/W5 | `QDB_EPOCH_MS=-1` |
 | 14 | multi-table | `AdaptiveMultiTableLazyGap` (W3) | `QDB_SIBLING_TABLE=true` |
-| 15 | mat-view | `AdaptiveMatViewLazyGap` (W4; modeled apply/epoch gap) | `QDB_MAT_VIEW=true` -- real W>0 rollback and startup repair, see below |
+| 15 | mat-view | `AdaptiveMatViewLazyGap` (W4; modeled apply/epoch gap) | `QDB_MAT_VIEW=true` -- real W>0 rollback and the view check at startup, see below |
 | 16 | commit-mode flip | `AdaptiveCommitModeFlipCrashTest` | `QDB_RECOVER_AS=nosync` (restart under a different GLOBAL mode) |
 | 17 | REBASE WAL publish | `RebaseWalPublishDurabilityCrashTest` | `QDB_REBASE_AT_ROWS=N` -- hard-suspends, rebases, then IDLES so the swept boundaries land post-publish |
 
@@ -96,7 +96,7 @@ evidence and is not.
 A uniform failure across every boundary is the signature of a setup fault rather than a product
 defect; a real crash-state defect does not land identically every time.
 
-### Dimension 15 (mat-view): startup repair after an RPO rollback
+### Dimension 15 (mat-view): a view ahead of its base after an RPO rollback
 
 The original finding had this shape:
 
@@ -107,15 +107,15 @@ view_status=valid   invalidation_reason=null
 ```
 
 The base correctly discarded at-risk transactions permitted by the RPO window, but the view kept
-aggregates derived from them. Startup now detects `lastRefreshBaseTxn > baseTableLastTxn`, marks
-the view invalid, and either repairs the affected timestamp range or falls back to a full refresh.
-The view cannot report the stranded rows as valid while repair is pending.
+aggregates derived from them. Startup now detects `lastRefreshBaseTxn > baseTableLastTxn` and marks
+the view invalid; the user rebuilds it with a full refresh. The view cannot report the stranded rows
+as valid.
 
 The VM cell is the regression test for the exact W>0 state. It disables durable epochs so an apply
 checkpoint cannot close the base WAL gap and records the base frontier before the six view refreshes.
-A boundary counts only when it captures `Wm < C`, actually recovers with `F < C`, and hydration
-observes a persisted view ahead of the recovered base, arms a surgical repair, and drives every armed
-repair to completion. Any boundary that stops short reports `PRECONDITION_NOT_MET`; if every sampled
+A boundary counts only when it captures `Wm < C` and actually recovers with `F < C`; there no view
+may lead the recovered base while reporting valid. Any boundary that stops short reports
+`PRECONDITION_NOT_MET`; if every sampled
 boundary does, the sweep fails as `NOT_EVALUATED`. Its control uses the same WAL and mat-view workload
 at adaptive W=0, where every commit is durable before acknowledgement and the base cannot roll back
 behind the view.

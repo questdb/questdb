@@ -861,7 +861,7 @@ public class CrashIngestWriter {
                 CairoEngine.execute(compiler, ddl, ctx, null);
                 if (MAT_VIEW && walMode) {
                     // EVERY refresh type over the SAME base, so one crash exercises all of them.
-                    // The surgical repair runs from the load path and is type-agnostic by design;
+                    // Startup's handling of a view ahead of its base is type-agnostic by design;
                     // that claim is only worth anything if each type is actually crashed and checked.
                     // IMMEDIATE  -- refreshed by the base-commit notification (the original case)
                     // TIMER      -- driven by MatViewTimerJob on an interval
