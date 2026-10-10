@@ -1,0 +1,317 @@
+/*+****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import org.jetbrains.annotations.NotNull;
+
+/**
+ * Used only in the earliest by over sub-query case.
+ */
+public class EarliestByRecordCursorFactory extends AbstractRecordCursorFactory {
+
+    private static final int RECORD_INDEX_VALUE_IDX = 0;
+    private static final int TIMESTAMP_VALUE_IDX = 1;
+
+    private final RecordSink recordSink;
+    private final long rowIndexesInitialCapacity;
+    private RecordCursorFactory base;
+    private EarliestByRecordCursor cursor;
+    private DirectLongList rowIndexes;
+
+    public EarliestByRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordCursorFactory base,
+            @NotNull RecordSink recordSink,
+            @NotNull ColumnTypes columnTypes,
+            int timestampIndex
+    ) {
+        super(base.getMetadata());
+        assert !base.recordCursorSupportsRandomAccess();
+        this.base = base;
+        this.recordSink = recordSink;
+        Map earliestByMap = null;
+        try {
+            ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
+            mapValueTypes.add(RECORD_INDEX_VALUE_IDX, ColumnType.LONG);
+            mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
+            // openOnInit=false: the cursor binds the per-query tracker and reopens the map in of(),
+            // so the first allocation is charged to the per-query counter.
+            earliestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes, false);
+            this.cursor = new EarliestByRecordCursor(earliestByMap, timestampIndex);
+            earliestByMap = null; // cursor owns the map now
+            this.rowIndexesInitialCapacity = configuration.getSqlEarliestByRowCount();
+            // keepClosed=true: rowIndexes is allocated lazily on the first reopen() under the bound tracker.
+            this.rowIndexes = new DirectLongList(rowIndexesInitialCapacity, MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST, true);
+        } catch (Throwable th) {
+            Misc.free(earliestByMap);
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            cursor.of(baseCursor, recordSink, rowIndexes, rowIndexesInitialCapacity, executionContext.getCircuitBreaker(), executionContext.getMemoryTracker());
+            return cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("EarliestBy");
+        sink.child(base);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean usesIndex() {
+        return base.usesIndex();
+    }
+
+    @Override
+    protected void _close() {
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final EarliestByRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final DirectLongList rowIndexes = this.rowIndexes;
+        this.rowIndexes = null;
+        Throwable failure = Misc.freeBestEffort(null, rowIndexes);
+        failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, base);
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
+    private static class EarliestByRecordCursor implements NoRandomAccessRecordCursor {
+
+        // contains <[earliest_by columns...], [row index, timestamp column]> pairs
+        private final Map earliestByMap;
+        private final int timestampIndex;
+        private RecordCursor baseCursor;
+        private Record baseRecord;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private long index = 0;
+        private boolean isMapBuilt;
+        private boolean isOpen;
+        private RecordSink recordSink;
+        private DirectLongList rowIndexes;
+        private long rowIndexesCapacityThreshold;
+        private long rowIndexesPos = 0;
+
+        public EarliestByRecordCursor(Map earliestByMap, int timestampIndex) {
+            this.earliestByMap = earliestByMap;
+            this.timestampIndex = timestampIndex;
+            this.isOpen = true;
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                baseCursor = Misc.free(baseCursor);
+                // Free rowIndexes (and the map) here, under the per-query tracker bound in of(),
+                // so the next cursor reallocates from zero against its own tracker.
+                Misc.free(rowIndexes);
+                earliestByMap.close();
+            }
+        }
+
+        @Override
+        public Record getRecord() {
+            return baseRecord;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (!isMapBuilt) {
+                buildMap();
+                toTop();
+                isMapBuilt = true;
+            }
+
+            if (rowIndexesPos == rowIndexes.size()) {
+                return false;
+            }
+
+            final long nextIndex = rowIndexes.get(rowIndexesPos);
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                if (index++ == nextIndex) {
+                    rowIndexesPos++;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
+        }
+
+        public void of(
+                RecordCursor baseCursor,
+                RecordSink recordSink,
+                DirectLongList rowIndexes,
+                long rowIndexesCapacityThreshold,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                MemoryTracker memoryTracker
+        ) {
+            this.baseCursor = baseCursor;
+            baseRecord = baseCursor.getRecord();
+            isOpen = true;
+            // Bind the per-query tracker before (re)allocating either the map (dominant allocator,
+            // one entry per distinct key) or the rowIndexes list, so both are charged to the
+            // per-query counter and freed against it at close.
+            earliestByMap.setMemoryTracker(memoryTracker);
+            earliestByMap.reopen();
+            this.recordSink = recordSink;
+            this.rowIndexes = rowIndexes;
+            rowIndexes.setMemoryTracker(memoryTracker);
+            rowIndexes.reopen();
+            this.circuitBreaker = circuitBreaker;
+            this.rowIndexesCapacityThreshold = rowIndexesCapacityThreshold;
+            rowIndexesPos = 0;
+            index = 0;
+            isMapBuilt = false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return RecordCursor.fromBool(isMapBuilt) + baseCursor.preComputedStateSize();
+        }
+
+        @Override
+        public long size() {
+            return isMapBuilt ? rowIndexes.size() : -1;
+        }
+
+        @Override
+        public void toTop() {
+            baseCursor.toTop();
+            index = 0;
+            rowIndexesPos = 0;
+        }
+
+        private void buildMap() {
+            final Record baseRecord = baseCursor.getRecord();
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+
+                // Skip NULL-timestamp rows so the map's key set matches
+                // EarliestByLightRecordCursorFactory; otherwise two planner paths
+                // would disagree on whether a key with only NULL timestamps shows up.
+                final long newTimestamp = baseRecord.getTimestamp(timestampIndex);
+                if (newTimestamp == Numbers.LONG_NULL) {
+                    index++;
+                    continue;
+                }
+
+                final MapKey key = earliestByMap.withKey();
+                recordSink.copy(baseRecord, key);
+                final MapValue value = key.createValue();
+
+                if (value.isNew()) {
+                    value.putLong(RECORD_INDEX_VALUE_IDX, index);
+                    value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
+                } else {
+                    long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
+                    if (newTimestamp < prevTimestamp) {
+                        value.putLong(RECORD_INDEX_VALUE_IDX, index);
+                        value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
+                    }
+                }
+
+                index++;
+            }
+
+            // Copy row indexes into the long list.
+            try (final RecordCursor mapCursor = earliestByMap.getCursor()) {
+                final MapRecord mapRecord = (MapRecord) mapCursor.getRecord();
+                while (mapCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    final MapValue value = mapRecord.getValue();
+                    final long rowId = value.getLong(RECORD_INDEX_VALUE_IDX);
+                    rowIndexes.add(rowId);
+                }
+            }
+
+            // Sort the indexes, so that we can use them when iterating the base cursor.
+            rowIndexes.sortAsUnsigned();
+            // Map is no longer needed, deallocate native memory.
+            earliestByMap.close();
+        }
+    }
+}

@@ -484,7 +484,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int queryCacheEventQueueCapacity;
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
-    private final boolean queryWithinLatestByOptimisationEnabled;
+    private final boolean queryWithinByOptimisationEnabled;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
@@ -537,6 +537,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlCreateTableModelBatchSize;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
+    private final long sqlEarliestByRowCount;
     private final int sqlExplainModelPoolCapacity;
     private final int sqlExpressionPoolCapacity;
     private final double sqlFastMapLoadFactor;
@@ -1559,7 +1560,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // Make export timeout at least as long as query timeout by default
             this.httpExportTimeout = getMillis(properties, env, PropertyKey.HTTP_EXPORT_TIMEOUT, Math.max(queryTimeout, 300_000));
 
-            this.queryWithinLatestByOptimisationEnabled = getBoolean(properties, env, PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, false);
+            this.queryWithinByOptimisationEnabled = getBoolean(properties, env, PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, false);
             this.pgEnabled = getBoolean(properties, env, PropertyKey.PG_ENABLED, true);
             if (pgEnabled) {
                 this.pgForceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_PG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, forceSendFragmentationChunkSize);
@@ -1789,6 +1790,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize);
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlEarliestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_EARLIEST_BY_ROW_COUNT, 1000);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             validatePageSizeAtLeast(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, this.sqlHashJoinLightValuePageSize, MIN_VALUE_HEAP_PAGE_SIZE);
@@ -5184,6 +5186,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSqlEarliestByRowCount() {
+            return sqlEarliestByRowCount;
+        }
+
+        @Override
         public int getSqlExpressionPoolCapacity() {
             return sqlExpressionPoolCapacity;
         }
@@ -5992,8 +5999,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean useWithinLatestByOptimisation() {
-            return queryWithinLatestByOptimisationEnabled;
+        public boolean useWithinByOptimisation() {
+            return queryWithinByOptimisationEnabled;
         }
     }
 

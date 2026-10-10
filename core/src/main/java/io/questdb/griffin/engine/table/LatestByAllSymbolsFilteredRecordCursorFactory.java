@@ -41,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    private Function filter;
 
     public LatestByAllSymbolsFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -57,6 +58,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
+            this.filter = filter;
             // openOnInit=false: the cursor binds the per-query tracker and reopens the map in of(),
             // so the first allocation is charged to the per-query counter.
             Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes, null, false);
@@ -93,6 +95,8 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     protected void _close() {
         final PageFrameRecordCursor cursor = this.cursor;
         this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
         Throwable failure = null;
         try {
             super._close();
@@ -100,6 +104,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
             failure = th;
         }
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
     }
 }

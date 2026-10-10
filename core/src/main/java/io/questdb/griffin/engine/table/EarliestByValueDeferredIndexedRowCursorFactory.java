@@ -1,0 +1,111 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
+
+public class EarliestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
+    private final int columnIndex;
+    private final EarliestByValueIndexedRowCursor cursor = new EarliestByValueIndexedRowCursor();
+    private final Function symbolFunc;
+    private int symbolKey;
+
+    public EarliestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc) {
+        this.columnIndex = columnIndex;
+        this.symbolFunc = symbolFunc;
+        symbolKey = SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(symbolFunc);
+    }
+
+    @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            try (RowCursor indexReaderCursor = pageFrame
+                    .getIndexReader(columnIndex, IndexReader.DIR_FORWARD)
+                    .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1)) {
+                if (indexReaderCursor.hasNext()) {
+                    cursor.of(indexReaderCursor.next());
+                    return cursor;
+                }
+            }
+        }
+        return EmptyRowCursor.INSTANCE;
+    }
+
+    @Override
+    public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // Rebind symbolFunc to the executing statement's bind variable service. Without this
+        // a cached factory keeps the bind variable function of whichever execution compiled
+        // it, so prepareCursor() below resolves a stale value into symbolKey and the query
+        // returns the earliest row of some previously queried key.
+        symbolFunc.init(pageFrameCursor, sqlExecutionContext);
+    }
+
+    @Override
+    public boolean isEntity() {
+        return false;
+    }
+
+    @Override
+    public boolean isUsingIndex() {
+        return true;
+    }
+
+    @Override
+    public void prepareCursor(PageFrameCursor pageFrameCursor) {
+        final CharSequence symbol = symbolFunc.getStrA(null);
+        final int key = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
+        // Index keys are not symbol keys plus one: keyOf() answers VALUE_IS_NULL for a null
+        // value, which is Integer.MIN_VALUE, and the NULL key's index key is 0. toIndexKey()
+        // is what knows that, and every sibling factory resolves through it. Incrementing
+        // here instead sent a bound NULL key to an index key nothing matches, so
+        // "sym = $1 EARLIEST ON ts" with $1 bound to NULL silently returned no rows while the
+        // literal "sym = null" returned them.
+        symbolKey = key != SymbolTable.VALUE_NOT_FOUND ? TableUtils.toIndexKey(key) : SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(IndexReader.NAME_FORWARD).type(" scan").meta("on").putBaseColumnName(columnIndex).meta("deferred").val(true);
+        sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(symbolFunc);
+    }
+}
