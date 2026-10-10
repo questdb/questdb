@@ -374,7 +374,7 @@ stages:
               os: Linux
               jdk: "1.25"
               testset: "all"
-              includeTests: "**/cairo/crash/AdaptiveMultiWriterDurableAckCrashFuzzTest.java,**/cairo/crash/AdaptiveQwpDurableAckNoLossCrashTest.java,**/cairo/crash/VarcharPowerLossFuzzTest.java"
+              includeTests: "**/cairo/crash/AdaptiveMultiWriterDurableAckCrashFuzzTest.java,**/cairo/crash/AdaptiveQwpDurableAckNoLossCrashTest.java,**/cairo/crash/VarcharPowerLossFuzzTest.java,**/cairo/crash/AdaptiveParallelCopyPowerLossTest.java"
               excludeTests: ""
               javadoc_step: ""
               javadoc_profile: ""
