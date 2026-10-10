@@ -82,9 +82,11 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private long bookmarkedRowIndex = Long.MIN_VALUE;
     // Adaptive scan state (managed by findKeyedAsOfMatch, reset by toTop)
     private long bwdScanRowsAtPositionStart;
-    // Cached findAsOfRow result: valid while target timestamp < cachedNextRowTs
+    // findAsOfRow() returns cachedAsOfRowId for targets in [cachedTargetLo, cachedNextRowTs).
+    // Long.MIN_VALUE in cachedNextRowTs empties the cache; in cachedAsOfRowId it caches "no row".
     private long cachedAsOfRowId = Long.MIN_VALUE;
     private long cachedNextRowTs = Long.MIN_VALUE;
+    private long cachedTargetLo = Long.MAX_VALUE;
     private long filteredAsOfRowId = Long.MIN_VALUE;
     private long filteredMatchRowId = Long.MIN_VALUE;
     // No qualifying row at or below this position, valid for the whole cursor.
@@ -330,10 +332,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         if (isFilterAlwaysFalse) {
             return Long.MIN_VALUE;
         }
-        if (cachedAsOfRowId != Long.MIN_VALUE && targetTimestamp < cachedNextRowTs) {
+        if (targetTimestamp < cachedNextRowTs && targetTimestamp >= cachedTargetLo) {
             return cachedAsOfRowId;
         }
-        cachedAsOfRowId = Long.MIN_VALUE;
+        cachedNextRowTs = Long.MIN_VALUE;
 
         // Start from bookmarked position if available
         long rowLo = Long.MIN_VALUE;
@@ -367,8 +369,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                                 final long nextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
                                 if (nextRowTs > targetTimestamp) {
                                     final long result = Rows.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
-                                    cachedAsOfRowId = result;
-                                    cachedNextRowTs = nextRowTs;
+                                    cacheAsOfRow(result, Long.MIN_VALUE, nextRowTs);
                                     return result;
                                 }
                             }
@@ -437,6 +438,11 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             }
 
             if (rowLo == Long.MIN_VALUE) {
+                // Each return below caches its answer up to where the next frame can start, so a
+                // run of targets between two frames walks the frames once, not once per target.
+                // A "no row" answer qualifies only when the walk starts before the first frame: the
+                // walk then opens every frame below the one that ends it and finds them all empty.
+                final boolean isWalkFromFirstFrame = timeFrame.getFrameIndex() < 0;
                 // Navigate through remaining frames to find one containing or before the target
                 while (timeFrameCursor.next()) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
@@ -452,7 +458,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                     }
 
                     // Frame may contain or straddle the target
-                    if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), slaveTsScale) <= targetTimestamp) {
+                    final long frameEstimateLo = scaleTimestamp(timeFrame.getTimestampEstimateLo(), slaveTsScale);
+                    if (frameEstimateLo <= targetTimestamp) {
                         if (timeFrameCursor.open() == 0) {
                             continue;
                         }
@@ -475,34 +482,42 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                             break;
                         }
 
-                        // Frame is entirely after target, return best found so far
+                        // Frame is entirely after target, return best found so far. It also answers
+                        // every larger target below the first row of this frame.
                         if (bestRowIndex != Long.MIN_VALUE) {
-                            bookmarkedFrameIndex = bestFrameIndex;
-                            bookmarkedRowIndex = bestRowIndex;
-                            return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                            return bookmarkAndCacheBest(bestFrameIndex, bestRowIndex, targetTimestamp, frameTsLo);
                         }
                         // Bookmark current frame so subsequent searches with larger timestamps can find it
                         bookmarkCurrentFrame(0);
+                        if (isWalkFromFirstFrame) {
+                            cacheAsOfRow(Long.MIN_VALUE, targetTimestamp, frameTsLo);
+                        }
                         return Long.MIN_VALUE;
                     }
 
-                    // Frame is entirely after target
+                    // Frame is entirely after target. A walk for any larger target below this
+                    // frame's estimate ends here as well, so best holds up to the estimate. The
+                    // estimate bounds the rows of later frames only when this frame has rows, so a
+                    // "no row" answer opens the frame and caches up to its first row instead.
                     if (bestRowIndex != Long.MIN_VALUE) {
-                        bookmarkedFrameIndex = bestFrameIndex;
-                        bookmarkedRowIndex = bestRowIndex;
-                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                        return bookmarkAndCacheBest(bestFrameIndex, bestRowIndex, targetTimestamp, frameEstimateLo);
                     }
                     // Bookmark current frame so subsequent searches with larger timestamps can find it
                     bookmarkCurrentFrame(0);
+                    if (isWalkFromFirstFrame && timeFrameCursor.open() > 0) {
+                        cacheAsOfRow(Long.MIN_VALUE, targetTimestamp, scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale));
+                    }
                     return Long.MIN_VALUE;
                 }
 
                 if (rowLo == Long.MIN_VALUE) {
-                    // No more frames, return best found
+                    // No more frames, return best found. Every frame after best is empty, so best
+                    // also answers every larger target.
                     if (bestRowIndex != Long.MIN_VALUE) {
-                        bookmarkedFrameIndex = bestFrameIndex;
-                        bookmarkedRowIndex = bestRowIndex;
-                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                        return bookmarkAndCacheBest(bestFrameIndex, bestRowIndex, targetTimestamp, Long.MAX_VALUE);
+                    }
+                    if (isWalkFromFirstFrame) {
+                        cacheAsOfRow(Long.MIN_VALUE, targetTimestamp, Long.MAX_VALUE);
                     }
                     return Long.MIN_VALUE;
                 }
@@ -825,6 +840,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         backwardWatermark = Long.MAX_VALUE;
         cachedAsOfRowId = Long.MIN_VALUE;
         cachedNextRowTs = Long.MIN_VALUE;
+        cachedTargetLo = Long.MAX_VALUE;
         backwardScanRows = 0;
         isForwardScanMode = false;
         prevAsOfRowId = Long.MIN_VALUE;
@@ -917,15 +933,34 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         final long nextRow = resultRowIndex + 1;
         if (nextRow < timeFrame.getRowHi()) {
             timeFrameCursor.recordAtRowIndex(record, nextRow);
-            cachedAsOfRowId = result;
-            cachedNextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+            cacheAsOfRow(result, Long.MIN_VALUE, scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale));
         }
+        return result;
+    }
+
+    /**
+     * Bookmark the last row of the best frame and cache it for targets from targetTimestamp
+     * up to nextFrameTsLo, where the next frame with rows can start.
+     */
+    private long bookmarkAndCacheBest(int bestFrameIndex, long bestRowIndex, long targetTimestamp, long nextFrameTsLo) {
+        bookmarkedFrameIndex = bestFrameIndex;
+        bookmarkedRowIndex = bestRowIndex;
+        final long result = Rows.toRowID(bestFrameIndex, bestRowIndex);
+        cacheAsOfRow(result, targetTimestamp, nextFrameTsLo);
         return result;
     }
 
     private void bookmarkCurrentFrame(long rowIndex) {
         bookmarkedFrameIndex = timeFrame.getFrameIndex();
         bookmarkedRowIndex = rowIndex;
+    }
+
+    // An answer found inside a frame passes no lower bound, as before: targets do not decrease
+    // between toTop() calls. An answer at a frame boundary holds from the target that found it.
+    private void cacheAsOfRow(long rowId, long targetLo, long nextRowTs) {
+        cachedAsOfRowId = rowId;
+        cachedTargetLo = targetLo;
+        cachedNextRowTs = nextRowTs;
     }
 
     private long findFilteredAsOfMatch(long asOfRowId, SqlExecutionCircuitBreaker circuitBreaker) {

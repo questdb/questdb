@@ -488,6 +488,97 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
     }
 
     @Test
+    public void testLookupsAfterLastRowWalkFramesOnce() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            State state = new State();
+            Trace trace = new Trace();
+            // Frame 0 holds timestamps 0..255 and frame 1 holds 10_000..10_255.
+            Cursor cursor = new Cursor(trace, 256, 256);
+            try (PollingEngine engine = new PollingEngine(root, state);
+                 TracingBreaker breaker = new TracingBreaker(engine, state, trace, 2048)) {
+                breaker.resetTimer();
+                HorizonJoinTimeFrameHelper helper = helper(cursor, null, 64);
+                Assert.assertEquals(Rows.toRowID(1, 255), helper.findAsOfRow(20_000, breaker));
+                final int opens = trace.opens;
+                for (long ts = 20_001; ts < 30_000; ts += 97) {
+                    Assert.assertEquals(Rows.toRowID(1, 255), helper.findAsOfRow(ts, breaker));
+                }
+                Assert.assertEquals(opens, trace.opens);
+                // A lower target does not reuse the answer past the last row.
+                Assert.assertEquals(Rows.toRowID(1, 100), helper.findAsOfRow(10_100, breaker));
+            }
+        });
+    }
+
+    @Test
+    public void testLookupsBeforeFirstRowWalkFramesOnce() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            State state = new State();
+            try (PollingEngine engine = new PollingEngine(root, state)) {
+                // Without a shift, the first frame's estimate ends the walk. With a shift of 5_000,
+                // the first frame's estimate covers the targets and its first row ends the walk.
+                for (long shift : new long[]{0, 5_000}) {
+                    Trace trace = new Trace();
+                    // Frame 0 holds timestamps shift + 0..255 and frame 1 holds shift + 10_000..10_255.
+                    Cursor cursor = new Cursor(trace, 256, 256);
+                    cursor.rowTsShift = shift;
+                    // Like a table cursor, the seek for a target below every frame lands before frame 0.
+                    cursor.seekIndex = -1;
+                    try (TracingBreaker breaker = new TracingBreaker(engine, state, trace, 2048)) {
+                        breaker.resetTimer();
+                        HorizonJoinTimeFrameHelper helper = helper(cursor, null, 64);
+                        Assert.assertEquals(Long.MIN_VALUE, helper.findAsOfRow(shift - 1_000, breaker));
+                        final int opens = trace.opens;
+                        final int polls = trace.pollAtVisits.size();
+                        for (long ts = shift - 999; ts < shift; ts += 37) {
+                            Assert.assertEquals(Long.MIN_VALUE, helper.findAsOfRow(ts, breaker));
+                        }
+                        Assert.assertEquals(opens, trace.opens);
+                        Assert.assertEquals(polls, trace.pollAtVisits.size());
+                        Assert.assertEquals(0, helper.findAsOfRow(shift, breaker));
+                        Assert.assertEquals(Rows.toRowID(1, 0), helper.findAsOfRow(shift + 10_000, breaker));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLookupsBetweenFramesWalkFramesOnce() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            State state = new State();
+            try (PollingEngine engine = new PollingEngine(root, state)) {
+                // Without a shift, the next frame's estimate ends the walk. With a shift of 5_000,
+                // the gap starts inside the next frame's estimate and its first row ends the walk.
+                final long[] shifts = {0, 5_000};
+                final long[] gapStarts = {300, 10_300};
+                for (int i = 0; i < shifts.length; i++) {
+                    final long shift = shifts[i];
+                    Trace trace = new Trace();
+                    // Frame 0 holds timestamps shift + 0..255 and frame 1 holds shift + 10_000..10_255.
+                    Cursor cursor = new Cursor(trace, 256, 256);
+                    cursor.rowTsShift = shift;
+                    try (TracingBreaker breaker = new TracingBreaker(engine, state, trace, 2048)) {
+                        breaker.resetTimer();
+                        HorizonJoinTimeFrameHelper helper = helper(cursor, null, 64);
+                        Assert.assertEquals(255, helper.findAsOfRow(gapStarts[i], breaker));
+                        final int opens = trace.opens;
+                        final int polls = trace.pollAtVisits.size();
+                        for (long ts = gapStarts[i] + 1; ts < shift + 10_000; ts += 97) {
+                            Assert.assertEquals(255, helper.findAsOfRow(ts, breaker));
+                        }
+                        Assert.assertEquals(opens, trace.opens);
+                        Assert.assertEquals(polls, trace.pollAtVisits.size());
+                        // A lower target does not reuse the answer between the frames.
+                        Assert.assertEquals(100, helper.findAsOfRow(shift + 100, breaker));
+                        Assert.assertEquals(Rows.toRowID(1, 0), helper.findAsOfRow(shift + 10_000, breaker));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNotKeyedMatchOutOfOrderLookups() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Trace trace = new Trace();
@@ -718,6 +809,8 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
         private final Row record = new Row();
         private final long[] sizes;
         private final Trace trace;
+        // Shifts every row timestamp up from the start of its frame's estimate.
+        private long rowTsShift;
         private int seekIndex;
 
         Cursor(Trace trace, long... sizes) {
@@ -776,7 +869,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
             if (++trace.opens == trace.cancelOnOpen) {
                 trace.signal.set(true);
             }
-            frame.ofOpen(index * 10_000L, index * 10_000L + sizes[index], 0, sizes[index]);
+            frame.ofOpen(index * 10_000L + rowTsShift, index * 10_000L + rowTsShift + sizes[index], 0, sizes[index]);
             return sizes[index];
         }
 
@@ -836,7 +929,7 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
                 if (trace.isTimestampTrace) {
                     trace.visit();
                 }
-                return frameIndex * 10_000L + rowIndex;
+                return frameIndex * 10_000L + rowTsShift + rowIndex;
             }
         }
     }
