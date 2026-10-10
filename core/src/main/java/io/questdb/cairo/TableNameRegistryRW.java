@@ -63,6 +63,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             } else {
                 dirNameToTableTokenMap.remove(token.getDirName(), reverseMapItem);
             }
+            // evict while this method holds the name: once it releases the name below, a new
+            // table can take the same directory name
+            engine.getTableDiskSizeCache().evict(token);
             // remove the token from the map and release the name.
             boolean removed = tableNameToTableTokenMap.remove(token.getTableName(), LOCKED_DROP_TOKEN);
             assert removed;
@@ -102,6 +105,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     @Override
     public void purgeToken(TableToken token) {
         dirNameToTableTokenMap.remove(token.getDirName());
+        // WalPurgeJob also purges tables that only the sequencer reports dropped
+        engine.getTableDiskSizeCache().evict(token);
     }
 
     @Override
@@ -135,7 +140,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         if (!nameStore.isLocked()) {
             nameStore.lock();
         }
-        return nameStore.reload(tableNameToTableTokenMap, dirNameToTableTokenMap, convertedTables);
+        final boolean consistent = nameStore.reload(tableNameToTableTokenMap, dirNameToTableTokenMap, convertedTables);
+        engine.getTableDiskSizeCache().evictDroppedTables();
+        return consistent;
     }
 
     @Override

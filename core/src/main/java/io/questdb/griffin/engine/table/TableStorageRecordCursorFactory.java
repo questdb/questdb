@@ -183,7 +183,6 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                     tables.add(token);
                 }
             }
-            engine.getTableDiskSizeCache().evictDroppedTables(tableBucket.size());
             toTop();
             return this;
         }

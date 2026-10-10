@@ -25,18 +25,25 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableDiskSizeCache;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -45,6 +52,9 @@ import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TableDiskSizeCacheTest extends AbstractCairoTest {
@@ -71,6 +81,89 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
             // appends land in the last partition, so it is measured on every call
             Assert.assertEquals(1, ff.countWalks("2024-01-05"));
             Assert.assertEquals(PARTITIONS.length, engine.getTableDiskSizeCache().getPartitionCount(token("x")));
+        });
+    }
+
+    @Test
+    public void testConcurrentMeasurementsAndDdlLeaveNoDroppedTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createSystemTables();
+            createDailyTable("stable", false);
+            final TableDiskSizeCache cache = engine.getTableDiskSizeCache();
+            final int pollerCount = 3;
+            final AtomicBoolean isStopped = new AtomicBoolean();
+            final AtomicLong completedPolls = new AtomicLong();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final ObjList<Thread> pollers = new ObjList<>();
+            for (int t = 0; t < pollerCount; t++) {
+                // pollers measure every table, or one table by name, while tables come and go
+                final String sql = t == 0
+                        ? "SELECT diskSize FROM table_storage()"
+                        : "SELECT diskSize FROM table_storage() WHERE tableName = 'churn" + t + "'";
+                final Thread poller = new Thread(() -> {
+                    try (
+                            SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine);
+                            RecordCursorFactory factory = engine.select(sql, executionContext)
+                    ) {
+                        while (!isStopped.get()) {
+                            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                while (cursor.hasNext()) {
+                                    cursor.getRecord().getLong(0);
+                                }
+                                completedPolls.incrementAndGet();
+                            } catch (CairoException e) {
+                                // Non-WAL DDL locks the table, and a non-WAL rename moves the directory
+                                // before it retires the old name: table_storage() fails the poll in both
+                                // cases, with or without the cache. The test checks the cache state.
+                                final CharSequence message = e.getFlyweightMessage();
+                                if (!Chars.contains(message, "table busy") && !Chars.contains(message, "table does not exist")) {
+                                    throw e;
+                                }
+                            }
+                        }
+                    } catch (Throwable th) {
+                        error.compareAndSet(null, th);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                pollers.add(poller);
+                poller.start();
+            }
+
+            try {
+                for (int i = 0; i < 60; i++) {
+                    final String name = "churn" + (1 + i % (pollerCount - 1));
+                    final boolean isWal = i % 2 == 0;
+                    execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+                    execute("INSERT INTO " + name + " SELECT timestamp_sequence('2024-01-01', 8_640_000_000L), x FROM long_sequence(30)");
+                    if (isWal) {
+                        drainWalQueue();
+                    }
+                    if (i % 3 == 0) {
+                        executeRetryingBusy("RENAME TABLE " + name + " TO " + name + "_renamed");
+                        executeRetryingBusy("DROP TABLE " + name + "_renamed");
+                    } else {
+                        executeRetryingBusy("DROP TABLE " + name);
+                    }
+                }
+            } finally {
+                isStopped.set(true);
+                for (int i = 0, n = pollers.size(); i < n; i++) {
+                    pollers.getQuick(i).join();
+                }
+            }
+            if (error.get() != null) {
+                throw new AssertionError(error.get());
+            }
+            Assert.assertTrue(completedPolls.get() > 0);
+
+            drainWalQueue();
+            drainPurgeJob();
+            // no query runs anymore: stable is the only table the cache may still hold
+            Assert.assertEquals(cache.getPartitionCount(token("stable")) > 0 ? 1 : 0, cache.getTableCount());
+            execute("DROP TABLE stable");
+            Assert.assertEquals(0, cache.getTableCount());
         });
     }
 
@@ -291,6 +384,34 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoesNotCacheTableDroppedWhileMeasured() throws Exception {
+        final DropOnTxnOpenFilesFacade ff = new DropOnTxnOpenFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createDailyTable("unmeasured", false);
+            createDailyTable("w", true);
+            final TableDiskSizeCache cache = engine.getTableDiskSizeCache();
+
+            // the query lists w, then the files facade drops w while the query opens its _txn:
+            // the drop finds no entry to evict, and the query creates the entry after the drop
+            ff.arm(token("w").getDirName(), "DROP TABLE w");
+            try (
+                    RecordCursorFactory factory = select("SELECT diskSize FROM table_storage() WHERE tableName = 'w'");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                // the WAL table files stay until the purge, the query measures them
+                Assert.assertTrue(cursor.getRecord().getLong(0) > 0);
+            }
+            Assert.assertTrue(ff.hasFired);
+            if (ff.error != null) {
+                throw new AssertionError(ff.error);
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("w"));
+            Assert.assertEquals(0, cache.getTableCount());
+        });
+    }
+
+    @Test
     public void testDropAndRecreateUnderSameDirectoryName() throws Exception {
         configOverrideMangleTableDirNames(false);
         assertMemoryLeak(() -> {
@@ -308,27 +429,61 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEvictsDirectoryRetiredByRename() throws Exception {
+        assertMemoryLeak(() -> {
+            createDailyTable("x", false);
+            createDailyTable("w", true);
+            final TableDiskSizeCache cache = engine.getTableDiskSizeCache();
+            measureDiskSize("x");
+            measureDiskSize("w");
+            Assert.assertEquals(2, cache.getTableCount());
+
+            // a WAL table keeps its directory, and so its cached partitions, across a rename
+            final TableToken walToken = token("w");
+            execute("RENAME TABLE w TO w2");
+            Assert.assertEquals(walToken.getDirName(), token("w2").getDirName());
+            Assert.assertEquals(PARTITIONS.length, cache.getPartitionCount(token("w2")));
+
+            // a non-WAL table moves to a new directory, the old one must not stay cached
+            final TableToken oldToken = token("x");
+            execute("RENAME TABLE x TO x2");
+            Assert.assertNotEquals(oldToken.getDirName(), token("x2").getDirName());
+            Assert.assertEquals(1, cache.getTableCount());
+            Assert.assertEquals(0, cache.getPartitionCount(oldToken));
+            assertDiskSize("x2");
+            Assert.assertEquals(2, cache.getTableCount());
+        });
+    }
+
+    @Test
     public void testEvictsDroppedTables() throws Exception {
         assertMemoryLeak(() -> {
+            // system tables and tables no query measures leave the cache with fewer tables than
+            // the database, they must not keep dropped tables cached
+            createSystemTables();
+            createDailyTable("unmeasured", false);
             createDailyTable("x", false);
             createDailyTable("y", true);
             final TableDiskSizeCache cache = engine.getTableDiskSizeCache();
 
-            assertQuery("SELECT count() FROM table_storage() WHERE diskSize > 0")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("count\n2\n");
+            measureDiskSize("x");
+            measureDiskSize("y");
             Assert.assertEquals(2, cache.getTableCount());
 
+            // the drop evicts the table, no query has to run first
             execute("DROP TABLE x");
+            Assert.assertEquals(1, cache.getTableCount());
             execute("DROP TABLE y");
+            Assert.assertEquals(0, cache.getTableCount());
+            drainWalQueue();
+            drainPurgeJob();
+            // a full poll measures the one table left
             assertQuery("SELECT count() FROM table_storage() WHERE diskSize > 0")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n0\n");
-            Assert.assertEquals(0, cache.getTableCount());
+                    .returns("count\n1\n");
+            Assert.assertEquals(1, cache.getTableCount());
         });
     }
 
@@ -383,6 +538,46 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadOnlyInstanceEvictsTablesDroppedByPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            createDailyTable("unmeasured", true);
+            createDailyTable("x", true);
+            final CairoConfiguration roConfiguration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public boolean getAllowTableRegistrySharedWrite() {
+                    return false;
+                }
+
+                @Override
+                public boolean isReadOnlyInstance() {
+                    return true;
+                }
+            };
+            try (
+                    CairoEngine roEngine = new CairoEngine(roConfiguration);
+                    SqlExecutionContext roContext = TestUtils.createSqlExecutionCtx(roEngine)
+            ) {
+                roEngine.reloadTableNames();
+                try (
+                        RecordCursorFactory factory = roEngine.select("SELECT diskSize FROM table_storage() WHERE tableName = 'x'", roContext);
+                        RecordCursor cursor = factory.getCursor(roContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.getRecord().getLong(0) > 0);
+                }
+                final TableDiskSizeCache roCache = roEngine.getTableDiskSizeCache();
+                Assert.assertEquals(1, roCache.getTableCount());
+
+                // a read-only instance learns about the drop when it reloads the table registry
+                execute("DROP TABLE x");
+                Assert.assertEquals(1, roCache.getTableCount());
+                roEngine.reloadTableNames();
+                Assert.assertEquals(0, roCache.getTableCount());
+            }
+        });
+    }
+
+    @Test
     public void testZeroTtlDisablesCache() throws Exception {
         setProperty(PropertyKey.CAIRO_TABLE_STORAGE_CACHE_TTL, 0);
         final WalkRecordingFilesFacade ff = new WalkRecordingFilesFacade();
@@ -422,6 +617,33 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
         engine.releaseAllWriters();
     }
 
+    // Creates two system tables: the engine counts them as tables, but table_storage() never lists
+    // them, so the cache never holds them.
+    private static void createSystemTables() throws SqlException {
+        for (int i = 0; i < 2; i++) {
+            final String tableName = configuration.getSystemTableNamePrefix() + "t" + i;
+            execute("CREATE TABLE '" + tableName + "' (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            Assert.assertTrue(token(tableName).isSystem());
+        }
+    }
+
+    // Runs a statement until no concurrent query holds the metadata of the table: until then,
+    // non-WAL DDL fails to lock the table.
+    private static void executeRetryingBusy(String sql) throws SqlException {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                execute(sql);
+                return;
+            } catch (CairoException e) {
+                final CharSequence message = e.getFlyweightMessage();
+                if (attempt > 100_000 || !(Chars.contains(message, "could not lock") || Chars.contains(message, "busy"))) {
+                    throw e;
+                }
+                Os.pause();
+            }
+        }
+    }
+
     private static long measureDiskSize(String tableName) throws SqlException {
         try (
                 RecordCursorFactory factory = select("SELECT diskSize FROM table_storage() WHERE tableName = '" + tableName + "'");
@@ -445,6 +667,48 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
 
     private static TableToken token(String tableName) {
         return engine.verifyTableName(tableName);
+    }
+
+    // Drops a table from another thread the first time a query opens the table's _txn file.
+    private static class DropOnTxnOpenFilesFacade extends TestFilesFacadeImpl {
+        private volatile String dirName;
+        private volatile String dropSql;
+        private volatile Throwable error;
+        private volatile boolean hasFired;
+
+        @Override
+        public long openRO(LPSZ name) {
+            final String dirName = this.dirName;
+            if (dirName != null && Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)
+                    && Utf8s.containsAscii(name, Files.SEPARATOR + dirName + Files.SEPARATOR)) {
+                this.dirName = null;
+                final Thread dropper = new Thread(() -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute(dropSql, executionContext);
+                    } catch (Throwable th) {
+                        error = th;
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                dropper.start();
+                try {
+                    dropper.join(TimeUnit.MINUTES.toMillis(1));
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                if (dropper.isAlive()) {
+                    error = new AssertionError("the drop did not complete while the query waited for it");
+                }
+                hasFired = true;
+            }
+            return super.openRO(name);
+        }
+
+        private void arm(String dirName, String dropSql) {
+            this.dropSql = dropSql;
+            this.dirName = dirName;
+        }
     }
 
     private static class WalkRecordingFilesFacade extends TestFilesFacadeImpl {

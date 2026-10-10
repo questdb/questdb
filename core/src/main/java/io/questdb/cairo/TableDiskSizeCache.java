@@ -38,7 +38,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -72,7 +71,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * directories leave every partition uncached.
  * <p>
  * Callers measuring the same table serialize on a per-table lock; different tables proceed in
- * parallel. The cache evicts tables lazily, see {@link #evictDroppedTables(int)}.
+ * parallel.
+ * <p>
+ * The table name registry evicts a table when it retires the table's directory, see
+ * {@link #evict(TableToken)}, and re-validates the cache after it reloads, see
+ * {@link #evictDroppedTables()}, so queries never scan the cache for dropped tables.
  */
 public class TableDiskSizeCache {
     /**
@@ -92,18 +95,26 @@ public class TableDiskSizeCache {
     }
 
     /**
-     * Evicts the entries of tables that no longer exist. The scan runs only when the cache holds
-     * more tables than the database, which means it holds at least one dropped table.
+     * Forgets the sizes of a table whose directory the table name registry retires: a dropped
+     * table, or a non-WAL table that a rename moved to a new directory. The registry calls it
+     * once the directory stops resolving, and a drop calls it before releasing the table name,
+     * so no table created under the same directory name can own an entry yet.
      *
-     * @param tableCount number of tables in the database, including system tables
+     * @param tableToken table whose directory the registry retires
      */
-    public void evictDroppedTables(int tableCount) {
-        if (tables.size() <= tableCount) {
-            return;
-        }
-        for (Map.Entry<CharSequence, TableEntry> e : tables.entrySet()) {
-            if (engine.getTableTokenByDirName(e.getKey()) == null) {
-                tables.remove(e.getKey(), e.getValue());
+    public void evict(@NotNull TableToken tableToken) {
+        tables.remove(tableToken.getDirName());
+    }
+
+    /**
+     * Evicts the entry of every directory that the table name registry no longer resolves to a
+     * live table. The registry calls it after it reloads, which is how a read-only instance
+     * learns about dropped tables.
+     */
+    public void evictDroppedTables() {
+        for (CharSequence dirName : tables.keySet()) {
+            if (engine.getTableTokenByDirName(dirName) == null) {
+                tables.remove(dirName);
             }
         }
     }
@@ -188,6 +199,12 @@ public class TableDiskSizeCache {
             entry = tables.putIfAbsent(dirName, newEntry);
             if (entry == null) {
                 entry = newEntry;
+                // A query that listed the table before a drop can get here after the registry
+                // evicted it. The registry retires the directory before it evicts, so either this
+                // check sees the directory retired, or the eviction runs after the insert above.
+                if (engine.getTableTokenByDirName(dirName) == null) {
+                    tables.remove(dirName, newEntry);
+                }
             }
         }
         return entry;
