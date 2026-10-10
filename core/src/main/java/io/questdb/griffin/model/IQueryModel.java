@@ -284,6 +284,16 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     IntHashSet getDependencies();
 
+    /**
+     * The materialized view this model reads through its EXPIRE ROWS policy, as the caller wrote it: the
+     * view name at the position of its reference. The parser sets it on the model that held the reference
+     * when it rewrites that reference into the keep-filter sub-query, so code generation can name the view
+     * when the rewritten read cannot serve an operator that needs a plain table. Null for any other model.
+     */
+    ExpressionNode getExpiryViewNameExpr();
+
+    ObjList<ExpressionNode> getExpiryWindowPartitionBy();
+
     ObjList<ExpressionNode> getExpressionModels();
 
     ExpressionNode getFillFrom();
@@ -486,6 +496,15 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isExplicitTimestamp();
 
+    /**
+     * True for the query block the parser builds to hold a row-expiry keep-filter, i.e.
+     * {@code SELECT * FROM "t" WHERE NOT (<predicate>)}. {@code SqlOptimiser.optimiseBooleanNot} leaves
+     * such a block's WHERE alone; see {@code SqlParser.keepFilterWhereText} for why the NOT has to stay.
+     */
+    boolean isExpiryKeepFilter();
+
+    boolean isExpiryWindowBarrier();
+
     boolean isForceBackwardScan();
 
     boolean isLateralCountCoalesceRequired();
@@ -514,6 +533,12 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     boolean isPivot();
 
     boolean isPivotGroupByColumnHasNoAlias();
+
+    /**
+     * True only for the physical table read that the parser introduces for a scalar EXPIRE ROWS policy.
+     * Unlike isExpiryKeepFilter(), this also covers timestamp predicates eligible for interval pruning.
+     */
+    boolean isScalarExpiryRead();
 
     boolean isSelectTranslation();
 
@@ -584,6 +609,12 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setDistinct(boolean distinct);
 
     void setExplicitTimestamp(boolean explicitTimestamp);
+
+    void setExpiryKeepFilter(boolean isExpiryKeepFilter);
+
+    void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr);
+
+    void setExpiryWindowBarrier(boolean isExpiryWindowBarrier);
 
     void setFillFrom(ExpressionNode fillFrom);
 
@@ -661,6 +692,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName);
 
+    void setScalarExpiryRead(boolean isScalarExpiryRead);
+
     void setSelectModelType(int selectModelType);
 
     void setSelectTranslation(boolean isSelectTranslation);
@@ -704,6 +737,24 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setViewNameExpr(ExpressionNode viewNameExpr);
 
     void setWhereClause(ExpressionNode whereClause);
+
+    /**
+     * Detaches the table-name function this model owns and hands it to the caller. A non-null
+     * {@link #getTableNameFunction()} means the current compiler attempt still owns the factory,
+     * so code generation takes it here when ownership moves to a returned or enclosing
+     * {@link RecordCursorFactory}. The slot is empty afterwards, which keeps any later cleanup
+     * sweep from closing a factory the caller now owns.
+     * <p>
+     * The getter stays available for optimiser metadata inspection; only ownership transfer goes
+     * through this method.
+     *
+     * @return the factory this model owned, or null when it owns none
+     */
+    default RecordCursorFactory takeTableNameFunction() {
+        final RecordCursorFactory tableNameFunction = getTableNameFunction();
+        setTableNameFunction(null);
+        return tableNameFunction;
+    }
 
     void toSink0(CharSink<?> sink, boolean joinSlave, boolean showOrderBy);
 

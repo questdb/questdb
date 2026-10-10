@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.DenyAllSecurityContext;
@@ -89,12 +90,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjList<WindowContextImpl> windowContexts = new ObjList<>();
     protected BindVariableService bindVariableService;
     protected SecurityContext securityContext;
+    private boolean allowBareNoArgFunctionCalls = true;
     private boolean allowNonDeterministicFunction = true;
     private boolean cacheHit;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
+    private CharSequence expiryMaterializingViewName;
+    private TableToken expiryRawReadTable;
+    private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
@@ -156,6 +161,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
         windowContexts.add(windowContext);
+    }
+
+    @Override
+    public boolean allowBareNoArgFunctionCalls() {
+        return allowBareNoArgFunctionCalls;
     }
 
     @Override
@@ -440,6 +450,35 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isExpiryReadFilterEnabled() {
+        return expiryReadPolicy == ExpiryReadPolicy.FILTER;
+    }
+
+    @Override
+    public CharSequence getExpiryMaterializingViewName() {
+        return expiryMaterializingViewName;
+    }
+
+    @Override
+    public @Nullable TableToken getExpiryRawReadTable() {
+        return expiryRawReadTable;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy() {
+        return expiryReadPolicy;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        // The raw table overrides only a filtered read: a materializing compile in REJECT mode keeps
+        // rejecting every policied table.
+        return expiryReadPolicy == ExpiryReadPolicy.FILTER && tableToken.equals(expiryRawReadTable)
+                ? ExpiryReadPolicy.RAW
+                : expiryReadPolicy;
+    }
+
+    @Override
     public boolean isLiveViewCompile() {
         return liveViewCompile;
     }
@@ -586,6 +625,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setAllowBareNoArgFunctionCalls(boolean value) {
+        this.allowBareNoArgFunctionCalls = value;
+    }
+
+    @Override
     public void setAllowNonDeterministicFunction(boolean value) {
         this.allowNonDeterministicFunction = value;
     }
@@ -616,6 +660,23 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
+    public void setExpiryRawReadTable(@Nullable TableToken tableToken) {
+        this.expiryRawReadTable = tableToken;
+    }
+
+    @Override
+    public void setExpiryReadFilterEnabled(boolean enabled) {
+        this.expiryReadPolicy = enabled ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+        this.expiryMaterializingViewName = null;
+    }
+
+    @Override
+    public void setExpiryReadPolicy(ExpiryReadPolicy policy, @Nullable CharSequence materializingViewName) {
+        this.expiryReadPolicy = policy;
+        this.expiryMaterializingViewName = materializingViewName;
     }
 
     @Override
@@ -823,6 +884,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
+        this.allowBareNoArgFunctionCalls = true;
         this.allowNonDeterministicFunction = true;
         this.intervalPlanGeneration = 0;
         this.validationOnly = false;

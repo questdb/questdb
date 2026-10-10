@@ -35,6 +35,7 @@ import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -43,10 +44,12 @@ import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     private final boolean coveringIndexEnabled;
     private TableReader baseTableReader;
+    private boolean isPassthrough;
     private TableToken viewTableToken;
 
     public MatViewRefreshSqlExecutionContext(CairoEngine engine, int sharedQueryWorkerCount) {
@@ -77,14 +80,45 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
     }
 
+    // A passthrough view's stored query spells each function call with parentheses, so a bare name in it is
+    // always a column, and one that stops resolving fails the refresh. Every passthrough view comes from a
+    // binary that stores queries this way. An aggregating view's stored query can come from a binary that
+    // stored it as written, where a bare name such as count or pi calls the zero-argument function, so its
+    // refresh keeps reading a bare name that matches no column as that call.
+    @Override
+    public boolean allowBareNoArgFunctionCalls() {
+        return !isPassthrough;
+    }
+
     @Override
     public boolean allowNonDeterministicFunctions() {
         return false;
     }
 
+    @Override
+    public boolean isExpiryReadFilterEnabled() {
+        return false;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy() {
+        return ExpiryReadPolicy.REJECT;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        return ExpiryReadPolicy.REJECT;
+    }
+
+    @Override
+    public CharSequence getExpiryMaterializingViewName() {
+        return viewTableToken != null ? viewTableToken.getTableName() : null;
+    }
+
     public void clearReader() {
         this.viewTableToken = null;
         this.baseTableReader = null;
+        this.isPassthrough = false;
     }
 
     @Override
@@ -92,6 +126,8 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return getSimpleCircuitBreaker(); // mat view refresh should use cancellable circuit breaker instead of no-op
     }
 
+    // Only the declared base uses the fixed refresh snapshot. Other referenced
+    // tables use current readers and may change while the refresh runs.
     @Override
     public TableReader getReader(TableToken tableToken, long version) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
@@ -111,6 +147,7 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
     }
 
+    // As in the versioned overload, this does not fix snapshots across all sources.
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
@@ -130,9 +167,15 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return tableToken == baseTableReader.getTableToken();
     }
 
-    public void of(TableReader baseTableReader) {
-        this.viewTableToken = baseTableReader.getTableToken();
+    public void of(TableReader baseTableReader, TableToken viewTableToken, boolean isPassthrough) {
+        this.viewTableToken = viewTableToken;
         this.baseTableReader = baseTableReader;
+        this.isPassthrough = isPassthrough;
+    }
+
+    @TestOnly
+    public void of(TableReader baseTableReader) {
+        of(baseTableReader, baseTableReader.getTableToken(), false);
     }
 
     @Override
@@ -140,10 +183,19 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         if (tableToken != baseTableReader.getTableToken()) {
             return;
         }
+        // The refresh range always narrows the base table scan, so its boundaries go in as a
+        // positive BETWEEN. A NOT BETWEEN on the designated timestamp in the view query leaves
+        // the model's BETWEEN polarity negated, which would subtract the range instead.
+        intrinsicModel.setBetweenNegated(false);
         // Cannot re-use function instances, they will be cached in the query plan
         // and then can be re-used in another execution context.
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0), 0);
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0), 0);
+    }
+
+    @Override
+    public void setAllowBareNoArgFunctionCalls(boolean value) {
+        // no-op
     }
 
     @Override

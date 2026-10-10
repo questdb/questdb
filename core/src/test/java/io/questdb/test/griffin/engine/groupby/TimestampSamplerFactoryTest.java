@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
@@ -60,28 +61,28 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testFindIntervalEndIndex() throws SqlException {
         // Valid cases - positive values
-        Assert.assertEquals(1, TimestampSamplerFactory.findIntervalEndIndex("5s", 0));
-        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("10m", 0));
-        Assert.assertEquals(3, TimestampSamplerFactory.findIntervalEndIndex("100h", 0));
+        Assert.assertEquals(1, CommonUtils.findIntervalEndIndex("5s", 0));
+        Assert.assertEquals(2, CommonUtils.findIntervalEndIndex("10m", 0));
+        Assert.assertEquals(3, CommonUtils.findIntervalEndIndex("100h", 0));
 
         // Valid cases - zero values with unit
-        Assert.assertEquals(1, TimestampSamplerFactory.findIntervalEndIndex("0s", 0));
-        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("00m", 0));
+        Assert.assertEquals(1, CommonUtils.findIntervalEndIndex("0s", 0));
+        Assert.assertEquals(2, CommonUtils.findIntervalEndIndex("00m", 0));
 
         // Valid cases - unitless zero (returns -1 sentinel)
-        Assert.assertEquals(-1, TimestampSamplerFactory.findIntervalEndIndex("0", 0));
-        Assert.assertEquals(-1, TimestampSamplerFactory.findIntervalEndIndex("+0", 0));
-        Assert.assertEquals(-1, TimestampSamplerFactory.findIntervalEndIndex("-0", 0));
+        Assert.assertEquals(-1, CommonUtils.findIntervalEndIndex("0", 0));
+        Assert.assertEquals(-1, CommonUtils.findIntervalEndIndex("+0", 0));
+        Assert.assertEquals(-1, CommonUtils.findIntervalEndIndex("-0", 0));
 
         // Valid cases - negative values
-        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("-5s", 0));
-        Assert.assertEquals(3, TimestampSamplerFactory.findIntervalEndIndex("-10m", 0));
-        Assert.assertEquals(4, TimestampSamplerFactory.findIntervalEndIndex("-100h", 0));
-        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("-0s", 0));
+        Assert.assertEquals(2, CommonUtils.findIntervalEndIndex("-5s", 0));
+        Assert.assertEquals(3, CommonUtils.findIntervalEndIndex("-10m", 0));
+        Assert.assertEquals(4, CommonUtils.findIntervalEndIndex("-100h", 0));
+        Assert.assertEquals(2, CommonUtils.findIntervalEndIndex("-0s", 0));
 
         // Valid cases - explicit positive sign
-        Assert.assertEquals(2, TimestampSamplerFactory.findIntervalEndIndex("+5s", 0));
-        Assert.assertEquals(3, TimestampSamplerFactory.findIntervalEndIndex("+10m", 0));
+        Assert.assertEquals(2, CommonUtils.findIntervalEndIndex("+5s", 0));
+        Assert.assertEquals(3, CommonUtils.findIntervalEndIndex("+10m", 0));
 
         // Error cases - missing units on non-zero values
         assertFindIntervalEndIndexFailure(1, "missing interval", null, 1);
@@ -111,7 +112,7 @@ public class TimestampSamplerFactoryTest {
         assertFindPositiveIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
         assertFindPositiveIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
 
-        Assert.assertEquals(0, TimestampSamplerFactory.findPositiveIntervalEndIndex("m", 11, "sample"));
+        Assert.assertEquals(0, CommonUtils.findPositiveIntervalEndIndex("m", 11, "sample"));
     }
 
     @Test
@@ -211,27 +212,27 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testParseInterval() throws SqlException {
         // Positive values
-        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0));
-        Assert.assertEquals(10, TimestampSamplerFactory.parseInterval("10s", 2, 0));
-        Assert.assertEquals(100, TimestampSamplerFactory.parseInterval("100h", 3, 0));
+        Assert.assertEquals(1, CommonUtils.parseInterval("1m", 1, 0));
+        Assert.assertEquals(10, CommonUtils.parseInterval("10s", 2, 0));
+        Assert.assertEquals(100, CommonUtils.parseInterval("100h", 3, 0));
 
         // Zero values
-        Assert.assertEquals(0, TimestampSamplerFactory.parseInterval("0s", 1, 0));
-        Assert.assertEquals(0, TimestampSamplerFactory.parseInterval("00m", 2, 0));
+        Assert.assertEquals(0, CommonUtils.parseInterval("0s", 1, 0));
+        Assert.assertEquals(0, CommonUtils.parseInterval("00m", 2, 0));
 
         // Negative values
-        Assert.assertEquals(-5, TimestampSamplerFactory.parseInterval("-5s", 2, 0));
-        Assert.assertEquals(-10, TimestampSamplerFactory.parseInterval("-10m", 3, 0));
-        Assert.assertEquals(-100, TimestampSamplerFactory.parseInterval("-100h", 4, 0));
-        Assert.assertEquals(0, TimestampSamplerFactory.parseInterval("-0s", 2, 0));
+        Assert.assertEquals(-5, CommonUtils.parseInterval("-5s", 2, 0));
+        Assert.assertEquals(-10, CommonUtils.parseInterval("-10m", 3, 0));
+        Assert.assertEquals(-100, CommonUtils.parseInterval("-100h", 4, 0));
+        Assert.assertEquals(0, CommonUtils.parseInterval("-0s", 2, 0));
 
         // Explicit positive sign
-        Assert.assertEquals(5, TimestampSamplerFactory.parseInterval("+5s", 2, 0));
-        Assert.assertEquals(10, TimestampSamplerFactory.parseInterval("+10m", 3, 0));
+        Assert.assertEquals(5, CommonUtils.parseInterval("+5s", 2, 0));
+        Assert.assertEquals(10, CommonUtils.parseInterval("+10m", 3, 0));
 
         // Error case - invalid numeric
         try {
-            TimestampSamplerFactory.parseInterval("xm", 1, 0);
+            CommonUtils.parseInterval("xm", 1, 0);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
@@ -241,17 +242,17 @@ public class TimestampSamplerFactoryTest {
 
     @Test
     public void testParsePositiveInterval() throws SqlException {
-        Assert.assertEquals(1, TimestampSamplerFactory.parsePositiveInterval("1m", 1, 0, "sample", Numbers.INT_NULL, ' '));
+        Assert.assertEquals(1, CommonUtils.parsePositiveInterval("1m", 1, 0, "sample", Numbers.INT_NULL, ' '));
 
         try {
-            TimestampSamplerFactory.parsePositiveInterval("0m", 1, 0, "sample", Numbers.INT_NULL, ' ');
+            CommonUtils.parsePositiveInterval("0m", 1, 0, "sample", Numbers.INT_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "zero is not a valid sample value");
         }
 
         try {
-            TimestampSamplerFactory.parsePositiveInterval("fm", 1, 0, "sample", Numbers.INT_NULL, ' ');
+            CommonUtils.parsePositiveInterval("fm", 1, 0, "sample", Numbers.INT_NULL, ' ');
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "invalid sample value");
@@ -296,7 +297,7 @@ public class TimestampSamplerFactoryTest {
 
     private static void assertFindIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence interval, int position) {
         try {
-            TimestampSamplerFactory.findIntervalEndIndex(interval, position);
+            CommonUtils.findIntervalEndIndex(interval, position);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());
@@ -306,7 +307,7 @@ public class TimestampSamplerFactoryTest {
 
     private static void assertFindPositiveIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
         try {
-            TimestampSamplerFactory.findPositiveIntervalEndIndex(sampleBy, position, "sample");
+            CommonUtils.findPositiveIntervalEndIndex(sampleBy, position, "sample");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());

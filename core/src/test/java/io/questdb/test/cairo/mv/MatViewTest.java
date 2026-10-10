@@ -52,6 +52,7 @@ import io.questdb.cairo.security.AbstractPrincipalAwareSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.WalEventReader;
@@ -66,6 +67,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -1736,12 +1738,12 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h",
                     32,
-                    "'alter' or 'resume' or 'suspend' or 'set' expected"
+                    "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h foobar",
                     33,
-                    "'alter' or 'resume' or 'suspend' or 'set' expected"
+                    "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h alter",
@@ -1859,7 +1861,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set",
                     36,
-                    "'ttl' or 'refresh' expected"
+                    "'ttl', 'expire' or 'refresh' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set ttl",
@@ -1998,6 +2000,261 @@ public class MatViewTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expectedView));
+        });
+    }
+
+    @Test
+    public void testBareFunctionCallKeepsMeaningWhenBaseGainsColumn() throws Exception {
+        // The stored query calls pi() with its parentheses, so a column the base table gains later under the
+        // same name leaves the view computing the function.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, v double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            execute("create materialized view mv as (select ts, pi, avg(v) from base_price sample by 1d)");
+            drainQueues();
+
+            execute("alter table base_price add column pi double");
+            execute("insert into base_price values('gbpusd', 2.5, '2024-09-11T12:01', 7.0)");
+            drainQueues();
+            execute("refresh materialized view mv full");
+            drainQueues();
+            assertQuery("select view_sql, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_sql\tview_status\nselect ts, pi(), avg(v) from base_price sample by 1d\tvalid\n");
+            assertQuery("mv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            ts\tpi\tavg
+                            2024-09-10T00:00:00.000000Z\t3.141592653589793\t1.5
+                            2024-09-11T00:00:00.000000Z\t3.141592653589793\t2.5
+                            """));
+        });
+    }
+
+    @Test
+    public void testBareFunctionCallStoredWithParentheses() throws Exception {
+        // A bare name the query reads as a call to a zero-argument function is stored with its parentheses. A
+        // passthrough view's refresh reads every bare name in the stored query as a column, so the parentheses
+        // keep the call.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, v double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            final String[] queries = {
+                    "select ts, pi, avg(v) from base_price sample by 1d",
+                    "select ts, \"pi\", avg(v) from base_price sample by 1d",
+                    "select *, pi from base_price",
+                    "select ts, avg(v) from base_price where v < (select pi from long_sequence(1)) sample by 1d",
+                    "select ts, avg(v) from base_price where v < (select pi from long_sequence(1))" +
+                            " and v <> (select pi from long_sequence(1)) sample by 1d",
+                    "select ts, PI, avg(v) from base_price sample by 1d"
+            };
+            for (int i = 0; i < queries.length; i++) {
+                execute("create materialized view mv" + i + " as (" + queries[i] + ")");
+            }
+            drainQueues();
+            assertQuery("select view_name, view_sql, view_status from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_sql\tview_status
+                            mv0\tselect ts, pi(), avg(v) from base_price sample by 1d\tvalid
+                            mv1\tselect ts, pi(), avg(v) from base_price sample by 1d\tvalid
+                            mv2\tselect "sym", "v", "ts", pi() from base_price\tvalid
+                            mv3\tselect ts, avg(v) from base_price where v < (select pi() from long_sequence(1)) sample by 1d\tvalid
+                            mv4\tselect ts, avg(v) from base_price where v < (select pi() from long_sequence(1)) and v <> (select pi() from long_sequence(1)) sample by 1d\tvalid
+                            mv5\tselect ts, PI(), avg(v) from base_price sample by 1d\tvalid
+                            """);
+            assertQuery("mv0")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tpi\tavg\n2024-09-10T00:00:00.000000Z\t3.141592653589793\t1.5\n"));
+            assertQuery("mv2")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("sym\tv\tts\tpi\ngbpusd\t1.5\t2024-09-10T12:01:00.000000Z\t3.141592653589793\n"));
+            assertQuery("mv4")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tavg\n2024-09-10T00:00:00.000000Z\t1.5\n"));
+
+            // SHOW CREATE prints the stored call, and running that output again recreates the same view.
+            printSql("show create materialized view mv0");
+            final String ddl = sink.toString().substring(sink.toString().indexOf('\n') + 1).trim();
+            execute("drop materialized view mv0");
+            drainQueues();
+            execute(ddl);
+            drainQueues();
+            printSql("select view_sql from materialized_views where view_name = 'mv0'");
+            Assert.assertEquals(
+                    "select ts, pi(), avg(v) from base_price sample by 1d",
+                    sink.toString().substring("view_sql\n".length()).trim()
+            );
+            assertQuery("mv0")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tpi\tavg\n2024-09-10T00:00:00.000000Z\t3.141592653589793\t1.5\n"));
+        });
+    }
+
+    @Test
+    public void testBareFunctionCallsStayAllowedOnContextAfterCreate() throws Exception {
+        // CREATE compiles the stored query with bare names read as columns on the caller's own context, which
+        // the connection goes on using; the context reads bare function names as calls again afterwards.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, v double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view mv as (select ts, pi, avg(v) from base_price sample by 1d)");
+            assertQuery("select pi from long_sequence(1)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("pi\n3.141592653589793\n");
+
+            final String sql = "create materialized view price_copy as (select ts, * from base_price)";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf('*'),
+                    "could not expand the wildcard of the materialized view query, list the columns explicitly [error=Invalid column: ts1]"
+            );
+            assertQuery("select pi from long_sequence(1)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("pi\n3.141592653589793\n");
+        });
+    }
+
+    @Test
+    public void testBareFunctionNameColumnLossInvalidatesView() throws Exception {
+        // A base column named like a zero-argument function stays a column reference in the stored query. Once
+        // the base drops or renames it, a passthrough view's refresh fails to resolve the name instead of calling
+        // version().
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"select sym, version, ts from base_price", "alter table base_price drop column version", "[12]"},
+                    {"select sym, version, ts from base_price", "alter table base_price rename column version to version_x", "[12]"},
+                    {"select * from base_price", "alter table base_price drop column version", "[14]"},
+                    {"select sym, \"version\", ts from base_price", "alter table base_price drop column version", "[12]"}
+            };
+            for (String[] c : cases) {
+                executeWithRewriteTimestamp(
+                        "create table base_price (" +
+                                "sym varchar, version varchar, v double, ts #TIMESTAMP" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+                execute("insert into base_price values('gbpusd', 'v1', 1.5, '2024-09-10T12:01')");
+                execute("create materialized view mv as (" + c[0] + ")");
+                drainQueues();
+                assertQuery("select view_status from materialized_views")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("view_status\nvalid\n");
+
+                execute(c[1]);
+                drainQueues();
+                execute("refresh materialized view mv full");
+                drainQueues();
+                assertQuery("select view_status, invalidation_reason from materialized_views")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("view_status\tinvalidation_reason\ninvalid\t" + c[2] + ": Invalid column: version\n");
+
+                execute("drop materialized view mv");
+                execute("drop table base_price");
+                drainQueues();
+            }
+        });
+    }
+
+    @Test
+    public void testBareFunctionNameColumnLossOnAggregatingView() throws Exception {
+        // An aggregating view's refresh reads a bare name that matches no column as a call to the zero-argument
+        // function of that name, so the queries that older binaries stored as written keep refreshing. Once the
+        // base drops or renames the version column, the refresh calls version() and the view stays valid.
+        // questdb/questdb#7744 tracks making this refresh fail instead.
+        assertMemoryLeak(() -> {
+            final String[] alters = {
+                    "alter table base_price drop column version",
+                    "alter table base_price rename column version to version_x"
+            };
+            for (String alter : alters) {
+                executeWithRewriteTimestamp(
+                        "create table base_price (" +
+                                "sym varchar, version varchar, v double, ts #TIMESTAMP" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+                execute("insert into base_price values('gbpusd', 'v1', 1.5, '2024-09-10T12:01')");
+                execute("create materialized view mv as (select ts, version, avg(v) from base_price sample by 1d)");
+                drainQueues();
+
+                execute(alter);
+                drainQueues();
+                execute("refresh materialized view mv full");
+                drainQueues();
+                assertQuery("select view_status, invalidation_reason from materialized_views")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("view_status\tinvalidation_reason\nvalid\t\n");
+                assertQuery("select version = version() is_version from mv")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns("is_version\ntrue\n");
+
+                execute("drop materialized view mv");
+                execute("drop table base_price");
+                drainQueues();
+            }
+        });
+    }
+
+    @Test
+    public void testBareFunctionNameInRegularViewStaysFunctionCall() throws Exception {
+        // A regular view's own SQL keeps reading a bare function name as a call when a materialized view reads
+        // the view, both in its select list and in a sub-query, so the view means the same wherever it is read.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, v double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+            execute("create view v_price as select ts, sym, pi, v from base_price");
+            execute("create view v_price_sub as select ts, sym, v from base_price where v < (select pi from long_sequence(1))");
+            execute("create materialized view mv_pi as (select ts, pi, avg(v) from v_price sample by 1d)");
+            execute("create materialized view mv_sub as (select ts, avg(v) from v_price_sub sample by 1d)");
+            drainQueues();
+            assertQuery("select view_name, view_sql, view_status from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_sql\tview_status
+                            mv_pi\tselect ts, pi, avg(v) from v_price sample by 1d\tvalid
+                            mv_sub\tselect ts, avg(v) from v_price_sub sample by 1d\tvalid
+                            """);
+            assertQuery("mv_pi")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tpi\tavg\n2024-09-10T00:00:00.000000Z\t3.141592653589793\t1.5\n"));
+            assertQuery("mv_sub")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("ts\tavg\n2024-09-10T00:00:00.000000Z\t1.5\n"));
         });
     }
 
@@ -3238,13 +3495,13 @@ public class MatViewTest extends AbstractCairoTest {
         // bucketsForRows = 1000000 / 41,666 ≈ 24
         testEstimateBucketsForRows(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1000, 20, 30);
 
-        // Edge case: Zero partition count
+        // Edge case: Zero partition count. An empty table leaves the step to the caller's maximum refresh step.
         long result = MatViewRefreshJob.estimateBucketsForRows(targetRows, 1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 0);
-        Assert.assertEquals("expected 1 for zero partitions", 1, result);
+        Assert.assertEquals("expected Long.MAX_VALUE for zero partitions", Long.MAX_VALUE, result);
 
         // Edge case: Zero table rows
         result = MatViewRefreshJob.estimateBucketsForRows(targetRows, 0L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30);
-        Assert.assertEquals("expected 1 for zero tableRows", 1, result);
+        Assert.assertEquals("expected Long.MAX_VALUE for zero tableRows", Long.MAX_VALUE, result);
 
         // Overflow prevention test: Very large rows
         // totalBuckets = 24
@@ -3367,6 +3624,74 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshAfterNotBetweenQuery() throws Exception {
+        // FULL refresh recompiles the view query on a pooled compiler. The NOT BETWEEN queries
+        // leave every pooled compiler's where-clause model with a negated BETWEEN polarity, and
+        // the refresh must still read its refresh range rather than everything outside it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    """
+                            insert into base_price values
+                            ('gbpusd', 1.320, '2024-09-10T12:01'),
+                            ('gbpusd', 1.323, '2024-09-10T12:02'),
+                            ('jpyusd', 103.21, '2024-09-10T12:02'),
+                            ('gbpusd', 1.321, '2024-09-10T13:02')"""
+            );
+            drainQueues();
+
+            final String expected = """
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """;
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            // Enough runs for the compiler pool to hand the query to each of its compilers.
+            for (int i = 0; i < 30; i++) {
+                assertQuery("select count() from base_price where ts not between '2024-09-10T12:00' and '2024-09-10T12:59'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+            }
+
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            execute("insert into base_price values ('jpyusd', 103.27, '2024-09-10T14:05')");
+            drainQueues();
+
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                            gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                            jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                            jpyusd\t103.27\t2024-09-10T14:00:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
     public void testFullRefreshDroppedBaseColumn() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3428,13 +3753,12 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t-1\t2
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
                             """);
-            assertQuery("price_1h")
-                    .timestamp("ts")
+            assertQuery("price_1h order by sym")
                     .expectSize()
                     .noLeakCheck()
-                    .returns("sym\tprice\tts\n");
+                    .returns(replaceExpectedTimestamp(expected));
         });
     }
 
@@ -3523,7 +3847,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t-1\t2
+                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
                             """);
         });
     }
@@ -5628,6 +5952,68 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns(walTxnsBefore);
+        });
+    }
+
+    @Test
+    public void testNotBetweenInViewQueryKeepsRefreshRange() throws Exception {
+        // The view query's own NOT BETWEEN on the base designated timestamp excludes one hour,
+        // while every refresh still reads the rest of its refresh range.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView(
+                    "select sym, last(price) as price, ts from base_price " +
+                            "where ts not between '2024-09-10T12:00' and '2024-09-10T12:59' sample by 1h"
+            );
+
+            execute(
+                    """
+                            insert into base_price values
+                            ('gbpusd', 1.320, '2024-09-10T12:01'),
+                            ('gbpusd', 1.323, '2024-09-10T12:02'),
+                            ('jpyusd', 103.21, '2024-09-10T12:02'),
+                            ('gbpusd', 1.321, '2024-09-10T13:02')"""
+            );
+            drainQueues();
+
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                            """));
+
+            execute(
+                    """
+                            insert into base_price values
+                            ('gbpusd', 1.500, '2024-09-10T12:30'),
+                            ('jpyusd', 103.27, '2024-09-10T14:05')"""
+            );
+            drainQueues();
+
+            final String expected = """
+                    sym\tprice\tts
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.27\t2024-09-10T14:00:00.000000Z
+                    """;
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+
+            assertQuery("price_1h order by sym, ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
         });
     }
 
@@ -8682,6 +9068,605 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPassthroughInheritsPostingIndexInclude() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (" +
+                    "s SYMBOL INDEX TYPE POSTING INCLUDE (v), " +
+                    "v DOUBLE, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW copy AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("copy"))) {
+                final int symbolIndex = metadata.getColumnIndex("s");
+                final IntList coveringColumnIndices = metadata.getColumnMetadata(symbolIndex).getCoveringColumnIndices();
+                Assert.assertNotNull(coveringColumnIndices);
+                Assert.assertEquals(2, coveringColumnIndices.size());
+                Assert.assertEquals(metadata.getColumnIndex("v"), coveringColumnIndices.getQuick(0));
+                Assert.assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(1));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughInheritsPostingIndexIncludeAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (" +
+                    "s SYMBOL INDEX TYPE POSTING INCLUDE (v), " +
+                    "v DOUBLE, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW copy AS (SELECT s sym, v payload, ts FROM base)");
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("copy"))) {
+                final int symbolIndex = metadata.getColumnIndex("sym");
+                final IntList coveringColumnIndices = metadata.getColumnMetadata(symbolIndex).getCoveringColumnIndices();
+                Assert.assertNotNull(coveringColumnIndices);
+                Assert.assertEquals(2, coveringColumnIndices.size());
+                Assert.assertEquals(metadata.getColumnIndex("payload"), coveringColumnIndices.getQuick(0));
+                Assert.assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(1));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughPostingIndexIncludeSkipsOmittedAndDerivedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (" +
+                    "s SYMBOL INDEX TYPE POSTING INCLUDE (v), " +
+                    "v DOUBLE, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW omitted_copy AS (SELECT s, ts FROM base)");
+            execute("CREATE MATERIALIZED VIEW derived_copy AS (SELECT s, v + 1 payload, ts FROM base)");
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("omitted_copy"))) {
+                final int symbolIndex = metadata.getColumnIndex("s");
+                final IntList coveringColumnIndices = metadata.getColumnMetadata(symbolIndex).getCoveringColumnIndices();
+                Assert.assertNotNull(coveringColumnIndices);
+                Assert.assertEquals(1, coveringColumnIndices.size());
+                Assert.assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(0));
+            }
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("derived_copy"))) {
+                final int symbolIndex = metadata.getColumnIndex("s");
+                final IntList coveringColumnIndices = metadata.getColumnMetadata(symbolIndex).getCoveringColumnIndices();
+                Assert.assertNotNull(coveringColumnIndices);
+                Assert.assertEquals(1, coveringColumnIndices.size());
+                Assert.assertEquals(metadata.getColumnIndex("ts"), coveringColumnIndices.getQuick(0));
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughRefreshLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute("alter materialized view price_copy set refresh limit 3 days");
+
+            // now = 2024-09-15 => refresh frontier = now - 3 days = 2024-09-12. Refresh never reaches
+            // base data older than the frontier.
+            currentMicros = parseFloorPartialTimestamp("2024-09-15T00:00:00.000000Z");
+            execute(
+                    "insert into base_price values('old', 1.0, '2024-09-09T00:00')" +   // before frontier -> excluded
+                            ",('mid', 2.0, '2024-09-13T00:00')" +
+                            ",('new', 3.0, '2024-09-14T00:00')"
+            );
+            drainQueues();
+
+            sink.clear();
+            printSql("select * from base_price where ts >= '2024-09-12T00:00:00.000000Z' order by ts, sym, price", sink);
+            assertQuery("price_copy order by ts, sym, price").timestamp("ts").expectSize().noLeakCheck().returns(sink.toString());
+        });
+    }
+
+    @Test
+    public void testPassthroughTtlDropsOldPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Passthrough copy; TTL reclaims old partitions from the view's own storage.
+            execute("create materialized view price_copy as (select * from base_price) partition by DAY TTL 1 DAY");
+
+            // Wall clock after the data so TTL measures age from the data's max timestamp.
+            currentMicros = parseFloorPartialTimestamp("2024-09-14T12:00:00.000000Z");
+            execute(
+                    "insert into base_price values('a', 1.0, '2024-09-10T00:00')" +
+                            ",('b', 2.0, '2024-09-11T00:00')" +
+                            ",('c', 3.0, '2024-09-12T00:00')" +
+                            ",('d', 4.0, '2024-09-13T00:00')" +
+                            ",('e', 5.0, '2024-09-14T00:00')"
+            );
+            drainQueues();
+
+            // max ts = 2024-09-14; TTL 1 day keeps partition 09-13 (ceiling 09-14, age 0) and the
+            // active 09-14; 09-10..09-12 are evicted.
+            sink.clear();
+            printSql("select * from base_price where ts >= '2024-09-13T00:00:00.000000Z' order by ts, sym, price", sink);
+            assertQuery("price_copy order by ts, sym, price").timestamp("ts").expectSize().noLeakCheck().returns(sink.toString());
+        });
+    }
+
+    @Test
+    public void testPassthroughRejectsAggregateWithoutSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Aggregating query with neither SAMPLE BY nor timestamp_floor() is not a passthrough
+            // (and not a valid aggregating mat view either) -> rejected.
+            try {
+                execute("create materialized view bad as (select sym, last(price) price, ts from base_price) partition by DAY");
+                org.junit.Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is not present in select list");
+            }
+        });
+    }
+
+    @Test
+    public void testPassthroughAlterRefreshPeriodRejected() throws Exception {
+        // CREATE rejects PERIOD for a passthrough view, and ALTER does the same: a passthrough view has
+        // no SAMPLE BY bucket for a period to align to.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            drainQueues();
+
+            final String message = "PERIOD is not supported for non-aggregating (passthrough) materialized views";
+            final String immediate = "alter materialized view price_copy set refresh immediate ";
+            assertExceptionNoLeakCheck(immediate + "period (sample by interval)", immediate.length(), message);
+            assertExceptionNoLeakCheck(immediate + "period (length 1h)", immediate.length(), message);
+            final String bare = "alter materialized view price_copy set refresh ";
+            assertExceptionNoLeakCheck(bare + "period (length 1h)", bare.length(), message);
+        });
+    }
+
+    @Test
+    public void testPassthroughColumnSubsetAndFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // A projection of a column subset plus a WHERE filter is still a passthrough view.
+            execute("create materialized view sym_copy as (select ts, sym from base_price where sym = 'gbpusd')");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.1, '2024-09-10T12:01')" +
+                            ",('jpyusd', 2.2, '2024-09-10T12:02')" +
+                            ",('gbpusd', 3.3, '2024-09-11T13:02')"
+            );
+            drainQueues();
+
+            sink.clear();
+            printSql("select ts, sym from base_price where sym = 'gbpusd' order by ts", sink);
+            final String expected = sink.toString();
+            assertQuery("sym_copy order by ts").timestamp("ts").expectSize().noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testPassthroughFullRefreshRejectsNarrowedBaseSchema() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('jpyusd', 103.21, '2024-09-11T13:02')"
+            );
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // The view stores `select sym, price, ts from base_price`, the wildcard expanded at CREATE, so
+            // once the base loses price the refresh cannot compile the query and the view goes invalid,
+            // naming the missing column.
+            execute("alter table base_price drop column price");
+            drainQueues();
+            execute("refresh materialized view price_copy full");
+            drainQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_copy\tinvalid\t[14]: Invalid column: price
+                            """);
+
+            // Preflight refusal happens before truncate, so the last successfully materialized contents stay
+            // queryable while the view reports invalid.
+            assertQuery("price_copy")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:01:00.000000Z
+                            jpyusd\t103.21\t2024-09-11T13:02:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
+    public void testPassthroughFullRefreshRemapsReorderedBaseSchemaByName() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // Dropping a column and adding it back moves it to the end of the base table. The view stores
+            // `select sym, price, ts from base_price`, which reads the columns by name, so a full refresh
+            // rebuilds the view in its own column order, with the re-added sym NULL as in the base.
+            execute("alter table base_price drop column sym");
+            execute("alter table base_price add column sym varchar");
+            drainQueues();
+            execute("refresh materialized view price_copy full");
+            drainQueues();
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_copy\tvalid\t
+                            """);
+            assertQuery("price_copy")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            \t1.32\t2024-09-10T12:01:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
+    public void testPassthroughSelectStarKeepsColumnsWhenBaseGainsColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainQueues();
+
+            // The view stores its query with the wildcard expanded into the columns the base has at CREATE.
+            assertQuery("select view_sql from materialized_views where view_name = 'price_copy'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_sql\nselect \"sym\", \"price\", \"ts\" from base_price\n");
+
+            // A column the base gains later stays out of the view, which keeps refreshing.
+            execute("alter table base_price add column extra int");
+            execute("insert into base_price values('jpyusd', 103.21, '2024-09-11T13:02', 7)");
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    sym\tprice\tts
+                    gbpusd\t1.32\t2024-09-10T12:01:00.000000Z
+                    jpyusd\t103.21\t2024-09-11T13:02:00.000000Z
+                    """);
+            assertQuery("select view_status from materialized_views where view_name = 'price_copy'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_copy").timestamp("ts").expectSize().noLeakCheck().returns(expected);
+
+            execute("refresh materialized view price_copy full");
+            drainQueues();
+            assertQuery("select view_status from materialized_views where view_name = 'price_copy'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_copy").timestamp("ts").expectSize().noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testPassthroughSelectStarRepeatingColumnRejected() throws Exception {
+        // The expansion takes the view's column names, and the view renames the repeated ts to ts1, which the
+        // base table does not have. CREATE rejects the view rather than store a query that reads ts1.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            final String sql = "create materialized view price_copy as (select ts, * from base_price)";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf('*'),
+                    "could not expand the wildcard of the materialized view query, list the columns explicitly [error=Invalid column: ts1]"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("price_copy"));
+        });
+    }
+
+    @Test
+    public void testPassthroughSelectStarStoresExpandedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, \"my price\" double, \"from\" int, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Each wildcard shape keeps the rest of the query as written, and every expanded name comes out
+            // quoted.
+            execute("create materialized view v1 as (select * from base_price where \"my price\" > 1)");
+            execute("create materialized view v2 as (select b.* from base_price b)");
+            execute("create materialized view v3 as (select *, \"my price\" * 2 as doubled from base_price)");
+            execute("create materialized view v4 as (select * from (select sym, ts from base_price))");
+            execute("create materialized view v5 as (select sym, ts from base_price)");
+
+            assertQuery("select view_name, view_sql from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_sql
+                            v1\tselect "sym", "my price", "from", "ts" from base_price where "my price" > 1
+                            v2\tselect "sym", "my price", "from", "ts" from base_price b
+                            v3\tselect "sym", "my price", "from", "ts", "my price" * 2 as doubled from base_price
+                            v4\tselect "sym", "ts" from (select sym, ts from base_price)
+                            v5\tselect sym, ts from base_price
+                            """);
+
+            // The stored queries refresh to the same rows the originals would.
+            execute("insert into base_price values('gbpusd', 1.5, 3, '2024-09-10T12:01')");
+            drainQueues();
+            assertQuery("select \"my price\", \"from\", doubled from v3")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("my price\tfrom\tdoubled\n1.5\t3\t3.0\n");
+            assertQuery("select view_name from materialized_views where view_status <> 'valid'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_name\n");
+        });
+    }
+
+    @Test
+    public void testPassthroughSelectWithTwoWildcardsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // The parser gives a second wildcard the synthesized name *1 and rejects it, so a passthrough
+            // view reaches the wildcard expansion with at most one wildcard in its select list.
+            final String sql = "create materialized view price_copy as (select b.*, * from base_price b)";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf(", *") + 2,
+                    "column '*1' requires an explicit alias"
+            );
+        });
+    }
+
+    @Test
+    public void testPassthroughShowCreateRoundTrips() throws Exception {
+        // SHOW CREATE prints the stored, expanded query; running that output again recreates the same view.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, \"declare\" int, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 3, '2024-09-10T12:01')");
+            execute("create materialized view price_copy as (base_price where \"declare\" > 0)");
+            drainQueues();
+            final String viewSql = "select \"sym\", \"declare\", \"ts\" from base_price where \"declare\" > 0";
+            assertQuery("select view_sql from materialized_views where view_name = 'price_copy'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_sql\n" + viewSql + "\n");
+
+            printSql("show create materialized view price_copy");
+            final String ddl = sink.toString().substring(sink.toString().indexOf('\n') + 1).trim();
+            execute("drop materialized view price_copy");
+            drainQueues();
+            execute(ddl);
+            drainQueues();
+            // SHOW CREATE prints the query on lines of its own, and the re-created view stores those line breaks.
+            printSql("select view_sql from materialized_views where view_name = 'price_copy'");
+            Assert.assertEquals(viewSql, sink.toString().substring("view_sql\n".length()).trim());
+            assertQuery("select view_status from materialized_views where view_name = 'price_copy'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\nvalid\n");
+            assertQuery("select sym, \"declare\" from price_copy").expectSize().noLeakCheck().returns("sym\tdeclare\ngbpusd\t3\n");
+        });
+    }
+
+    @Test
+    public void testPassthroughRefreshMirrorsBase() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Non-aggregating "passthrough" view: no SAMPLE BY. PARTITION BY is omitted, so it is
+            // inherited from the base table (DAY).
+            execute("create materialized view price_copy as (select * from base_price)");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-11T13:02')"
+            );
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // Incremental forward append.
+            execute("insert into base_price values('gbpusd', 1.400, '2024-09-12T10:00')");
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // Out-of-order: a late row lands in an older partition. The passthrough refresh
+            // REPLACE_RANGEs the changed interval, so the view reflects it (a forward-only copy
+            // would have missed this).
+            execute("insert into base_price values('eurusd', 1.100, '2024-09-10T11:30')");
+            drainQueues();
+            assertPassthroughMatchesBase();
+        });
+    }
+
+    @Test
+    public void testPassthroughRefreshAfterBaseEmptiedRunsOneQuery() throws Exception {
+        // A REPLACE commit that leaves the base table empty gives the refresh step estimate no rows to size
+        // from. The refresh covers the replaced range in one query, which reads nothing, and its REPLACE_RANGE
+        // commit removes the view rows. The step counts buckets, and a passthrough view's refresh bucket is
+        // one microsecond, so the replaced range here spans about 10,000 buckets.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            execute("insert into base_price values ('gbpusd', 1.320, '2024-09-10T00:00:00.001'), ('gbpusd', 1.323, '2024-09-10T00:00:00.005')");
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            final TimestampDriver driver = timestampType.getDriver();
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base_price"))) {
+                walWriter.commitWithParams(
+                        driver.parseFloorLiteral("2024-09-10T00:00:00.000000Z"),
+                        driver.parseFloorLiteral("2024-09-10T00:00:00.010000Z"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            final LogCapture logCapture = new LogCapture();
+            try {
+                logCapture.start();
+                drainQueues();
+                logCapture.drain();
+                // QueryProgress logs refreshMinTs only for a refresh query.
+                logCapture.assertOnlyOnce("exe \\[id=[^\\n]*refreshMinTs=");
+            } finally {
+                logCapture.stop();
+            }
+
+            assertQuery("select count() from base_price").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            assertPassthroughMatchesBase();
+        });
+    }
+
+    @Test
+    public void testPassthroughRefreshReplacesOnlyChangedRange() throws Exception {
+        // wal_transactions() reports per-transaction row counts only from the chunked sequencer log
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 100);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_copy as (select * from base_price)");
+            // one row per minute from 00:00 to 16:39
+            execute("insert into base_price select 'gbpusd', x, timestamp_sequence('2024-09-10', 60_000_000L) from long_sequence(1_000)");
+            drainQueues();
+            assertPassthroughMatchesBase();
+
+            // An in-order row: the refresh replaces only the row's own timestamp, not the 1_000 rows
+            // already in the day.
+            long viewTxn = passthroughViewSeqTxn();
+            execute("insert into base_price values('gbpusd', 0.5, '2024-09-10T20:00')");
+            drainQueues();
+            assertPassthroughRefreshedRows(viewTxn, 1);
+            assertPassthroughMatchesBase();
+
+            // Two out-of-order rows at 01:00:30 and 01:05:30: the refresh replaces the range between them,
+            // which holds the 5 base rows 01:01 to 01:05 and the 2 new rows.
+            viewTxn = passthroughViewSeqTxn();
+            execute("insert into base_price values('eurusd', 0.1, '2024-09-10T01:00:30'), ('eurusd', 0.2, '2024-09-10T01:05:30')");
+            drainQueues();
+            assertPassthroughRefreshedRows(viewTxn, 7);
+            assertPassthroughMatchesBase();
+        });
+    }
+
+    @Test
+    public void testPassthroughWildcardSpellingsStoreExpandedColumns() throws Exception {
+        // Every spelling of a passthrough wildcard the parser accepts stores the expanded column list. A query
+        // written without SELECT gets one in front; a wildcard written against its neighbours gets a space.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("""
+                    insert into base_price values
+                    ('gbpusd', 1.5, '2024-09-10T12:01'),
+                    ('jpyusd', -2.0, '2024-09-10T12:02')""");
+            execute("create materialized view v1 as (select *from base_price)");
+            execute("create materialized view v2 as (SELECT*FROM base_price)");
+            execute("create materialized view v3 as (base_price)");
+            execute("create materialized view v4 as base_price");
+            execute("create materialized view v5 as (base_price where price > 0)");
+            execute("create materialized view v6 as (base_price where price * 2 > 0)");
+            execute("create materialized view v7 as (select b.* from base_price b)");
+            execute("create materialized view v8 as (select * from (base_price))");
+            execute("create materialized view v9 as (with t as (select * from base_price) select * from t)");
+            drainQueues();
+
+            assertQuery("select view_name, view_sql, view_status from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_sql\tview_status
+                            v1\tselect "sym", "price", "ts" from base_price\tvalid
+                            v2\tSELECT "sym", "price", "ts" FROM base_price\tvalid
+                            v3\tselect "sym", "price", "ts" from base_price\tvalid
+                            v4\tselect "sym", "price", "ts" from base_price\tvalid
+                            v5\tselect "sym", "price", "ts" from base_price where price > 0\tvalid
+                            v6\tselect "sym", "price", "ts" from base_price where price * 2 > 0\tvalid
+                            v7\tselect "sym", "price", "ts" from base_price b\tvalid
+                            v8\tselect "sym", "price", "ts" from (base_price)\tvalid
+                            v9\twith t as (select * from base_price) select "sym", "price", "ts" from t\tvalid
+                            """);
+            final String all = "sym\tprice\tts\ngbpusd\t1.5\t2024-09-10T12:01:00.000000Z\njpyusd\t-2.0\t2024-09-10T12:02:00.000000Z\n";
+            final String positive = "sym\tprice\tts\ngbpusd\t1.5\t2024-09-10T12:01:00.000000Z\n";
+            for (String view : new String[]{"v1", "v2", "v3", "v4", "v7", "v8", "v9"}) {
+                assertQuery(view).timestamp("ts").expectSize().noLeakCheck().returns(replaceExpectedTimestamp(all));
+            }
+            assertQuery("v5").timestamp("ts").expectSize().noLeakCheck().returns(replaceExpectedTimestamp(positive));
+            assertQuery("v6").timestamp("ts").expectSize().noLeakCheck().returns(replaceExpectedTimestamp(positive));
+        });
+    }
+
+    @Test
     public void testSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -10284,6 +11269,21 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertPassthroughMatchesBase() throws Exception {
+        sink.clear();
+        printSql("select * from base_price order by ts, sym, price", sink);
+        final String expected = sink.toString();
+        assertQuery("price_copy order by ts, sym, price").timestamp("ts").expectSize().noLeakCheck().returns(expected);
+    }
+
+    private void assertPassthroughRefreshedRows(long afterViewTxn, long expectedRows) throws Exception {
+        assertQuery("select sum(rowCount) rows from wal_transactions('price_copy') where sequencerTxn > " + afterViewTxn)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("rows\n" + expectedRows + "\n");
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -10334,6 +11334,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     private String outSelect(String out, String in) {
         return out + " from (" + in + ")";
+    }
+
+    private long passthroughViewSeqTxn() {
+        return engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("price_copy")).getSeqTxn();
     }
 
     private String replaceExpectedTimestamp(String expected) {

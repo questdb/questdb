@@ -59,6 +59,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public interface SqlExecutionContext extends Sinkable, Closeable {
 
+    // Returns true when a bare name in a top-level select list that matches no column reads as a call to the
+    // zero-argument function of that name, so `SELECT version FROM t` calls version(). A passthrough materialized
+    // view's refresh turns this off: its stored query spells each function call with parentheses, so a bare
+    // name that stops resolving means the base table lost that column.
+    default boolean allowBareNoArgFunctionCalls() {
+        return true;
+    }
+
     // Returns true when the context doesn't require all SQL functions to be deterministic.
     // Deterministic-only functions are enforced e.g. when compiling a mat view.
     boolean allowNonDeterministicFunctions();
@@ -273,6 +281,38 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return true;
     }
 
+    default CharSequence getExpiryMaterializingViewName() {
+        return null;
+    }
+
+    // The one table this compilation reads without its EXPIRE ROWS policy, while every other table follows
+    // getExpiryReadPolicy(). ALTER ... SET EXPIRE ROWS names the view while its compile probe runs, so the
+    // probe reads the view the way a read sees it once the new policy replaces the current one.
+    default @Nullable TableToken getExpiryRawReadTable() {
+        return null;
+    }
+
+    default ExpiryReadPolicy getExpiryReadPolicy() {
+        return isExpiryReadFilterEnabled() ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+    }
+
+    default ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        return isExpiryReadFilterEnabled(tableToken) ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+    }
+
+    // Compatibility accessors for contexts that only distinguish filtered and raw reads. Materializing
+    // compilation must use getExpiryReadPolicy(TableToken), where REJECT is distinct from RAW.
+    boolean isExpiryReadFilterEnabled();
+
+    // Per-table refinement of {@link #isExpiryReadFilterEnabled()}: whether the read-time row-expiry
+    // filter applies to reads of THIS table in the current compilation. Follows the global flag by
+    // default; the mat-view refresh context overrides it to keep the filter on every table except the
+    // base, so a policied view referenced as a JOIN table is read filtered during refresh, exactly as
+    // any query reads it.
+    default boolean isExpiryReadFilterEnabled(TableToken tableToken) {
+        return isExpiryReadFilterEnabled();
+    }
+
     // Returns true when the current compile is the CREATE-time or refresh-time
     // compile of a live view's SELECT. Compile-time switch that lets window
     // function factories opt into live-view-only machinery (e.g. the
@@ -378,6 +418,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void restoreToDefaultPageFrameSizes();
 
+    default void setAllowBareNoArgFunctionCalls(boolean value) {
+    }
+
     void setAllowNonDeterministicFunction(boolean value);
 
     void setCacheHit(boolean value);
@@ -395,6 +438,20 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    // A context without per-table read policies ignores this and reads every table under
+    // getExpiryReadPolicy().
+    default void setExpiryRawReadTable(@Nullable TableToken tableToken) {
+    }
+
+    void setExpiryReadFilterEnabled(boolean enabled);
+
+    default void setExpiryReadPolicy(ExpiryReadPolicy policy, @Nullable CharSequence materializingViewName) {
+        if (policy == ExpiryReadPolicy.REJECT) {
+            throw new UnsupportedOperationException("this SQL execution context cannot enter expiry REJECT mode");
+        }
+        setExpiryReadFilterEnabled(policy == ExpiryReadPolicy.FILTER);
+    }
 
     void setIntervalFunctionType(int intervalType);
 

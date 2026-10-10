@@ -38,12 +38,14 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistry;
@@ -79,6 +81,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -101,6 +104,7 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.CompileViewModel;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
@@ -140,7 +144,9 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -174,12 +180,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return true;
         }
     };
+    // Operators and functions whose result depends only on their arguments. A row-expiry predicate built
+    // only from these, the table's columns and constants gives each row the same result in every
+    // execution and every session, so the cleanup job may reclaim under it. Any other operator or
+    // function leaves the policy FILTER_ONLY: that costs disk, while the read filter keeps results correct.
+    private static final LowerCaseCharSequenceHashSet EXPIRY_ROW_ONLY_FUNCTIONS = new LowerCaseCharSequenceHashSet();
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
     // Raised from two places: once on the parsed model, where it has to win over the more general
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
     // introduces. Shared so the two cannot drift apart.
     private static final String UPDATE_WITH_JOIN_NOT_SUPPORTED = "UPDATE statements with join are not supported yet for WAL tables";
     private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
+    private static volatile Runnable insertSelectFactoryGenerationBarrier;
+    private static volatile Runnable viewFactoryGenerationBarrier;
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -201,6 +214,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
+    // Name and position of each bare name in the last materialized view query compiled by compileMatViewQuery()
+    // that the optimiser read as a call to a zero-argument function, such as `version`; see
+    // buildStoredMatViewSql().
+    private final ObjList<String> matViewBareNoArgCallNames = new ObjList<>();
+    private final IntList matViewBareNoArgCallPositions = new IntList();
+    // (projection index, start, end) of each top-level wildcard in the last materialized view query parsed
+    // by compileMatViewQuery(); see captureMatViewWildcards().
+    private final IntList matViewWildcards = new IntList();
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getCMARWInstance();
     private final MessageBus messageBus;
@@ -220,10 +241,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
+    // True when the wildcard of the last materialized view query parsed by compileMatViewQuery() is one the
+    // parser added to a query written without SELECT, such as `base WHERE v > 0`.
+    private boolean isMatViewWildcardArtificial;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    // Number of items in the top-level select list of the last materialized view query parsed by
+    // compileMatViewQuery(), wildcards counted as one item each.
+    private int matViewProjectionSize;
 
     public SqlCompilerImpl(CairoEngine engine) {
         try {
@@ -283,6 +310,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     queryModelPool,
                     postOrderTreeTraversalAlgo
             );
+            // Give the optimiser the same map the parser fills in, so enumerateColumns can reject a compile
+            // whose EXPIRE ROWS keep-filter was chosen from a metadata version the reader has moved past.
+            optimiser.setPendingExpiryReadVersions(parser.getPendingExpiryReadVersions());
 
             alterOperationBuilder = createAlterOperationBuilder();
             dropOperationBuilder = new GenericDropOperationBuilder();
@@ -295,6 +325,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             close();
             throw th;
         }
+    }
+
+    // Lets a test put a hook function of its own into a predicate that has to reclaim.
+    @TestOnly
+    public static void addExpiryRowOnlyFunctionForTesting(CharSequence name) {
+        EXPIRY_ROW_ONLY_FUNCTIONS.add(name);
     }
 
     public static long copyOrderedBatched(
@@ -383,6 +419,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    @TestOnly
+    public static @Nullable Throwable freePooledTableNameFunctionsForTesting(
+            ObjectPool<QueryModel> queryModelPool,
+            @Nullable Throwable failure
+    ) {
+        return freePooledTableNameFunctions(queryModelPool, failure);
+    }
+
+    @TestOnly
+    public static void removeExpiryRowOnlyFunctionForTesting(CharSequence name) {
+        EXPIRY_ROW_ONLY_FUNCTIONS.remove(name);
+    }
+
+    @TestOnly
+    public static void setInsertSelectFactoryGenerationBarrier(@Nullable Runnable barrier) {
+        insertSelectFactoryGenerationBarrier = barrier;
+    }
+
+    @TestOnly
+    public static void setViewFactoryGenerationBarrier(@Nullable Runnable barrier) {
+        viewFactoryGenerationBarrier = barrier;
+    }
+
     @Override
     public void clear() {
         clearExceptSqlText();
@@ -395,6 +454,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw new IllegalStateException("close was already called");
         }
         closed = true;
+        // A compiler can be closed with an abandoned model still holding a factory, e.g. after a caller
+        // discards a generateExecutionModel() result. Pooled compilers sweep on return to the pool;
+        // this covers the ones a caller owns outright.
+        freeUntransferredTableNameFunctions();
         Misc.free(vacuumColumnVersions);
         Misc.free(path);
         Misc.free(renamePath);
@@ -537,6 +600,104 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         };
     }
 
+    /**
+     * Fast-path support for the row-expiry cleanup job. If {@code predicate} is {@code <ts> < T},
+     * {@code <ts> <= T}, or one of the symmetric shapes {@code T > <ts>} and {@code T >= <ts>} on the
+     * designated timestamp, and {@code T} references no column, this method returns {@code T} in the unit of
+     * that column. The cleanup then classifies a whole partition from its {@code [floor, nextFloor)} bounds,
+     * with no survivor scan: a partition fully below T has only expired rows (DROP), and a partition fully
+     * above T has none (SKIP). Returns
+     * {@link Numbers#LONG_NULL} for any other shape (custom or compound predicate, a {@code T < ts} /
+     * {@code ts > T} "keep-old" shape, non-constant T) or on any parse/bind/eval issue, which makes the
+     * caller fall back to the scan — so this is purely an optimisation and never affects correctness.
+     * <p>
+     * Both designated timestamp types use the fast path. A partition floor uses the unit of the column, but
+     * a {@code now()}-based T is in micros, so {@link #toTimestampUnit} converts T into the unit of the
+     * column. That conversion rounds T DOWN. A smaller T can only make the set of fully expired partitions
+     * smaller, so the job never drops a partition that holds a live row. A conversion that overflows gives
+     * LONG_NULL, and the caller then scans.
+     */
+    @Override
+    public long expiryTimestampThreshold(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            CharSequence timestampColumn
+    ) {
+        if (timestampColumn == null) {
+            return Numbers.LONG_NULL;
+        }
+        final int tsIndex = metadata.getColumnIndexQuiet(timestampColumn);
+        if (tsIndex < 0) {
+            return Numbers.LONG_NULL;
+        }
+        final int tsType = metadata.getColumnType(tsIndex);
+        if (!ColumnType.isTimestamp(tsType)) {
+            return Numbers.LONG_NULL;
+        }
+        Function f = null;
+        try {
+            clear();
+            lexer.of(predicate);
+            final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
+            if (node == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
+                    || node.lhs == null || node.rhs == null) {
+                return Numbers.LONG_NULL;
+            }
+            // Accept both the canonical "<ts> < T | <ts> <= T" (timestamp on the left) and the equivalent
+            // symmetric "T > <ts> | T >= <ts>" (timestamp on the right). Both mean "expire everything below
+            // T"; the threshold node is the side that is NOT the timestamp column. A "T < <ts>" / "<ts> > T"
+            // ("expire recent, keep old") shape is deliberately NOT accepted here: its DROP direction is the
+            // opposite of the partition-bounds fast path.
+            // Resolve the operand by column index (unquote, strip qualifier, case-insensitive), the same way
+            // the monotonicity classifier does in expiryTimestampThresholdNode. A case- or quote-mismatched
+            // spelling of the timestamp column must take the same bounds fast path; otherwise the classifier
+            // proves the policy monotonic while this method returns LONG_NULL, and the cleanup job falls to
+            // the survivor scan with the SKIP generation cache on.
+            final boolean tsOnLeft = node.lhs.type == ExpressionNode.LITERAL
+                    && resolvePredicateColumnIndex(metadata, node.lhs.token) == tsIndex;
+            final boolean tsOnRight = node.rhs.type == ExpressionNode.LITERAL
+                    && resolvePredicateColumnIndex(metadata, node.rhs.token) == tsIndex;
+            final ExpressionNode thresholdNode;
+            if (tsOnLeft && (Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))) {
+                thresholdNode = node.rhs;
+            } else if (tsOnRight && (Chars.equals(node.token, ">") || Chars.equals(node.token, ">="))) {
+                thresholdNode = node.lhs;
+            } else {
+                return Numbers.LONG_NULL;
+            }
+            if (exprReferencesColumn(thresholdNode)) {
+                return Numbers.LONG_NULL;
+            }
+            f = functionParser.parseFunction(thresholdNode, metadata, executionContext);
+            if (f == null || !ColumnType.isTimestamp(f.getType()) || !(f.isConstant() || f.isRuntimeConstant())) {
+                return Numbers.LONG_NULL;
+            }
+            f.init(null, executionContext);
+            final long threshold = f.getTimestamp(null);
+            if (threshold == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL; // a NULL T expires no row, and the survivor scan gives the same result
+            }
+            // Math.multiplyExact throws on overflow, and the catch below turns that into "no fast path".
+            return toTimestampUnit(threshold, f.getType(), tsType);
+        } catch (Exception e) {
+            return Numbers.LONG_NULL; // any issue -> no fast path; the caller scans (still correct)
+        } finally {
+            Misc.free(f);
+        }
+    }
+
+    @Override
+    public void freeUntransferredTableNameFunctions() {
+        final Throwable cleanupFailure = freePooledTableNameFunctions(queryModelPool, null);
+        if (cleanupFailure != null) {
+            // Nothing is in flight at this boundary, and the caller is either about to compile the next
+            // statement or to hand the compiler back. Report the close failure and carry on rather than
+            // charge it to work that has not started yet.
+            LOG.error().$("could not close table name function [error=").$(cleanupFailure).I$();
+        }
+    }
+
     @Override
     public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
         clear();
@@ -561,6 +722,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
                 }
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(queryModel);
                 clearExceptSqlText();
                 lexer.restart();
                 if (insertModel != null) {
@@ -590,6 +752,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public int getWhereClauseParserPoolSizeForTesting() {
         return codeGenerator.getWhereClauseParserPoolSizeForTesting();
+    }
+
+    @Override
+    public boolean isExpiryCleanupReclaiming(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate
+    ) {
+        if (predicate == null) {
+            return false;
+        }
+        // A structural policy (KEEP LATEST, KEEP [N] HIGHEST/LOWEST, window) never reclaims, and its encoded
+        // text is not a scalar expression the classifier below could bind. Answer from the encoding alone.
+        if (RowExpiryUtil.isStructuralPolicy(predicate)) {
+            return false;
+        }
+        // Bind and classify the scalar expression once. Structural threshold recognition is unit-independent,
+        // so TIMESTAMP_NS designated columns and symmetric `T > ts` forms receive the same monotonicity proof
+        // as microsecond `ts < T`; the numeric micros threshold remains a separate partition-bounds fast path.
+        try {
+            final ExpiryValidationResult classification =
+                    validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, 0);
+            return RowExpiryUtil.isReclaimingPolicy(predicate, classification.isMonotonic());
+        } catch (SqlException e) {
+            return false;
+        }
     }
 
     @Override
@@ -644,12 +832,132 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         parser.expr(lexer, listener, this);
     }
 
+    /**
+     * Parses + binds {@code predicate} against {@code metadata} and asserts the result is a boolean
+     * expression consuming the ENTIRE text, with no root-level aggregate and no bind variables. The
+     * stored text is embedded verbatim into every read's generated SQL, so anything that read-path
+     * parse would choke on must be rejected here. Any parse/bind error is rewritten as a clear
+     * "invalid EXPIRE ROWS predicate" positioned at {@code position}. Runs on a freshly-borrowed
+     * compiler (its own lexer/parser/functionParser).
+     * <p>
+     * The last thing it does is bind the predicate a second time, wrapped exactly as a read wraps it,
+     * because binding the bare predicate does not answer the question the DDL is being asked. See
+     * {@link #validateExpiryKeepFilterBinds}.
+     */
+    @Override
+    public ExpiryValidationResult validateExpiryPredicateOnMetadata(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException {
+        Function f = null;
+        try {
+            final ExpressionNode node;
+            try {
+                clear();
+                lexer.of(predicate);
+                node = parser.expr(lexer, (QueryModel) null, this);
+                // The expression parser stops at the first token it cannot absorb (e.g. `x > 5 oops`
+                // parses as `x > 5`), but the FULL text is what gets stored and embedded into every
+                // read's generated SQL, where the leftover token fails the parse. Require the whole
+                // predicate to be one expression, so what validates is exactly what reads execute.
+                final CharSequence trailingTok = SqlUtil.fetchNext(lexer);
+                if (trailingTok != null) {
+                    throw SqlException.$(position, "unexpected token after expression: ").put(trailingTok);
+                }
+                f = functionParser.parseFunction(node, metadata, executionContext);
+            } catch (SqlException | CairoException | ImplicitCastException e) {
+                // ImplicitCastException extends RuntimeException, not CairoException. A constant the bind
+                // folds - `i = 'abc'` against an INT column - raises one here, and it has to read as an
+                // invalid policy rather than escaping the DDL as a bare cast error.
+                final String reason = reasonOf(e);
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
+            }
+            if (f == null || !ColumnType.isBoolean(f.getType())) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
+            }
+            // The read filter embeds the predicate as an argument of a CASE expression, where an
+            // aggregate is illegal ("Aggregate function cannot be passed as an argument"). The
+            // function parser rejects an aggregate only when it is an argument of another function,
+            // so a bare root-level aggregate (e.g. `bool_and(flag)`) passes the bind above; reject it
+            // here so the view does not get created with a policy that fails every read.
+            if (f instanceof GroupByFunction) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: aggregate functions are not supported");
+            }
+            // A stored predicate has no statement to supply bind values, so `v > $1` would fail on
+            // every read with "undefined bind variable"; reject it at definition time instead.
+            if (expiryExpressionHasBindVariable(node)) {
+                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: bind variables are not supported");
+            }
+            final IntList referencedColumnIndexes = new IntList();
+            collectExpiryReferencedColumns(node, metadata, referencedColumnIndexes);
+            // A date variable in a string constant (`ts IN '$now - 1h..$now'`) reads the clock too. The
+            // function that evaluates such a string reads it in init() but reports neither
+            // isNonDeterministic() nor isRuntimeConstant(), so only the AST shows the clock read.
+            final boolean hasClock = expiryExpressionHasClock(node) || expiryExpressionHasDateVariable(node);
+            // The predicate counts as depending only on the row (isDeterministic) only when its AST proves
+            // that every node gives each row the same value in every execution and session. The cleanup job
+            // evaluates the predicate once per sweep under the root context, so a clock read, a session
+            // value such as current_user(), or any other function whose value can change could make it
+            // delete a row that a later read, or a reader in another session, keeps. The proof works on the
+            // AST rather than on the bound functions: a function reports isNonDeterministic(),
+            // isRuntimeConstant() or isRandom() reliably only when the answer is true, and some functions
+            // keep an operand, such as the IN list of a SYMBOL column, where no walk of the bound tree
+            // reaches it.
+            // A subquery (e.g. `sym IN (SELECT s FROM blacklist)`) reads other tables whose contents can
+            // change between evaluations, so a row expired now can un-expire later - physical cleanup
+            // under such a predicate could delete rows the read filter must show again. The expression
+            // parse above already rejects subqueries ("query is not allowed here": parser.expr runs with
+            // no query model), so none can be stored via DDL. The QUERY-node check is a second layer of
+            // protection: if a subquery ever does reach classification, the predicate is classified
+            // non-monotonic and the cleanup job skips physical deletion for it.
+            final boolean isDeterministic = !hasClock
+                    && !expiryExpressionHasQuery(node)
+                    && isExpiryRowOnlyExpression(node, metadata);
+            final int timestampIndex = metadata.getTimestampIndex();
+            final CharSequence timestampColumn = timestampIndex >= 0 ? metadata.getColumnName(timestampIndex) : null;
+            final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
+            final boolean isMonotonic = isDeterministic
+                    || isProvenAdvancingClockExpression(thresholdNode);
+            final ExpiryValidationResult result =
+                    new ExpiryValidationResult(hasClock, isDeterministic, isMonotonic, referencedColumnIndexes);
+            // Last, because it reuses this compiler's lexer and parser and so invalidates `node`.
+            validateExpiryKeepFilterBinds(executionContext, metadata, predicate, position);
+            // Also re-lexes, so it has to follow everything that reads `node`.
+            rejectUnusableConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
+            return result;
+        } finally {
+            Misc.free(f);
+        }
+    }
+
+    private static void addExpiryRowOnlyFunctions(String... names) {
+        for (String name : names) {
+            EXPIRY_ROW_ONLY_FUNCTIONS.add(name);
+        }
+    }
+
     private static void addSupportedConversion(short fromType, short... toTypes) {
         for (short toType : toTypes) {
             columnConversionSupport[fromType][toType] = true;
             // Make it symmetrical
             columnConversionSupport[toType][fromType] = true;
         }
+    }
+
+    // Appends a column name the way an expanded materialized view query spells it: always double-quoted, so
+    // no name can read as a keyword or start another clause, whatever the grammar treats as a keyword.
+    private static void appendMatViewColumnName(CharSink<?> sink, CharSequence name) {
+        sink.putAscii('"');
+        for (int i = 0, n = name.length(); i < n; i++) {
+            final char c = name.charAt(i);
+            if (c == '"') {
+                sink.putAscii('"');
+            }
+            sink.put(c);
+        }
+        sink.putAscii('"');
     }
 
     // returns number of copied rows
@@ -877,10 +1185,71 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return null;
     }
 
+    // Returns where the name written at pos in text ends, or -1 when the text at pos does not spell the name.
+    // The name matches ignoring case, either plain and followed by the end of the text or by a character that
+    // is not a letter, digit or underscore, or double-quoted with pos on the opening quote.
+    private static int findBareNameEnd(String text, int pos, String name) {
+        final int len = name.length();
+        final int textLen = text.length();
+        if (pos < 0 || pos >= textLen) {
+            return -1;
+        }
+        if (text.charAt(pos) == '"') {
+            final int hi = pos + 1 + len;
+            return hi < textLen && text.regionMatches(true, pos + 1, name, 0, len) && text.charAt(hi) == '"' ? hi + 1 : -1;
+        }
+        final int hi = pos + len;
+        if (!text.regionMatches(true, pos, name, 0, len)) {
+            return -1;
+        }
+        if (hi < textLen && (Character.isLetterOrDigit(text.charAt(hi)) || text.charAt(hi) == '_')) {
+            return -1;
+        }
+        return hi;
+    }
+
+    // End (exclusive) of the wildcard item that starts at lo: the first '*' outside a quoted name, so `*`,
+    // `b.*` and `"my table".*` all end right after their asterisk. Returns -1 when the text has none.
+    private static int findWildcardEnd(CharSequence text, int lo) {
+        for (int i = lo, n = text.length(); i < n; i++) {
+            final char c = text.charAt(i);
+            if (c == '*') {
+                return i + 1;
+            }
+            if (c == '"' || c == '\'') {
+                // Skip to the closing quote; a doubled quote stays inside the name.
+                for (i++; i < n; i++) {
+                    if (text.charAt(i) == c) {
+                        if (i + 1 < n && text.charAt(i + 1) == c) {
+                            i++;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return -1;
+    }
+
     private static CharSequence formatPartitionName(TableReader reader, long partitionTimestamp) {
         final StringSink sink = Misc.getThreadLocalSink();
         PartitionBy.setSinkForPartition(sink, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp);
         return sink;
+    }
+
+    // True if both metadata have the same column names and types, in the same order, and the same
+    // designated timestamp.
+    private static boolean hasSameColumns(@Nullable RecordMetadata a, RecordMetadata b) {
+        if (a == null || a.getColumnCount() != b.getColumnCount() || a.getTimestampIndex() != b.getTimestampIndex()) {
+            return false;
+        }
+        for (int i = 0, n = a.getColumnCount(); i < n; i++) {
+            if (!Chars.equals(a.getColumnName(i), b.getColumnName(i)) || a.getColumnType(i) != b.getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isIPv4UpdateCast(int from, int to) {
@@ -888,6 +1257,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.STRING)
                 || (from == ColumnType.VARCHAR && to == ColumnType.IPv4)
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
+    }
+
+    // True for a character that already separates the expanded column list from its neighbour.
+    private static boolean isMatViewSpliceSeparator(char c) {
+        return Character.isWhitespace(c) || c == ',' || c == '(' || c == ')';
     }
 
     /**
@@ -916,6 +1290,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
+    }
+
+    /**
+     * Copies the reason out of {@code e} so it survives being wrapped in a new {@link SqlException}.
+     * <p>
+     * {@link SqlException#position(int)} hands back the thread's shared carrier and clears its message
+     * sink, and only under {@code -ea} does it allocate a fresh instance instead. So on a production
+     * build {@code SqlException.$(pos, "prefix: ").put(e.getFlyweightMessage())} appends the new
+     * message to itself and the reason is gone, while every test sees the reason. Reading the sink
+     * before the wrapping exception is built is what keeps the two builds saying the same thing.
+     * <p>
+     * Call it into a local, never inline as an argument: Java evaluates the receiver of
+     * {@code SqlException.$(...).put(...)} first, so an inline call would read the sink after the
+     * clear and reproduce the very doubling it exists to prevent.
+     */
+    private static String reasonOf(FlyweightMessageContainer e) {
+        return Chars.toString(e.getFlyweightMessage());
     }
 
     /**
@@ -2142,43 +2533,132 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
-            final IQueryModel queryModel = executionModel.getQueryModel();
-            SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
-            engine.getViewGraph().validateNoCycle(viewToken, queryModel);
+            int remainingRetries = maxRecompileAttempts;
+            for (; ; ) {
+                final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                ExecutionModel executionModel = null;
+                boolean isRetry = false;
+                // The in-flight exception, so the cleanup below can attach a close failure to it rather
+                // than replace it. Stays null on the retry path, where nothing is in flight.
+                Throwable failure = null;
+                try {
+                    executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+                    final IQueryModel queryModel = executionModel.getQueryModel();
+                    dependencies.clear();
+                    SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
+                    engine.getViewGraph().validateNoCycle(viewToken, queryModel);
 
-            try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    final CharSequence columnName = metadata.getColumnName(i);
-                    if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
-                        throw SqlException.position(0)
-                                .put("invalid column name [name=")
-                                .put(columnName)
-                                .put(", position=")
-                                .put(i)
-                                .put(']');
+                    final Runnable barrier = viewFactoryGenerationBarrier;
+                    if (barrier != null) {
+                        barrier.run();
+                    }
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(
+                            queryModel,
+                            null,
+                            executionContext,
+                            false
+                    )) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            final CharSequence columnName = metadata.getColumnName(i);
+                            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                                throw SqlException.position(0)
+                                        .put("invalid column name [name=")
+                                        .put(columnName)
+                                        .put(", position=")
+                                        .put(i)
+                                        .put(']');
+                            }
+                        }
+                        // test the cursor, if no exception thrown viewSql is working
+                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                            cursor.hasNext();
+                        }
+                    }
+
+                    if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        isRetry = true;
+                    } else {
+                        executionContext.getSecurityContext().authorizeAlterView(viewToken);
+                        if (!executionContext.isValidationOnly()) {
+                            engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+                        }
+                        if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                            compiledQuery.ofAlterView();
+                            return;
+                        }
+                        isRetry = true;
+                    }
+                } catch (TableReferenceOutOfDateException e) {
+                    isRetry = true;
+                    if (remainingRetries == 0) {
+                        final SqlException sqlException = SqlException.$(0, e.getFlyweightMessage());
+                        failure = sqlException;
+                        throw sqlException;
+                    }
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
+                } finally {
+                    if (isRetry) {
+                        freeTableNameFunctions(executionModel, failure);
                     }
                 }
-                // test the cursor, if no exception thrown viewSql is working
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    cursor.hasNext();
+
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during view compilation");
                 }
+                LOG.info().$("retrying view after metadata or row-expiry policy change [view=")
+                        .$(viewToken).$(", fd=").$(executionContext.getRequestFd()).I$();
             }
         } catch (SqlException e) {
             // position is reported from the view SQL, we have to adjust it
             e.setPosition(viewSqlPosition + e.getPosition());
             throw e;
         } catch (CairoException e) {
+            // An authorization failure (e.g. no ALTER VIEW permission) must keep its identity so the
+            // caller reports it as forbidden. Rewrapping it as a SqlException would downgrade it to a
+            // generic SQL error, so re-throw it unchanged. Only genuine compile errors get the view SQL
+            // position adjustment.
+            if (e.isAuthorizationError()) {
+                throw e;
+            }
             // position is reported from the view SQL, we have to adjust it
             throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
         }
+    }
 
-        executionContext.getSecurityContext().authorizeAlterView(viewToken);
-        if (!executionContext.isValidationOnly()) {
-            engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+    // Writes the columns a passthrough view's top-level wildcard expands to now, which are the view's columns,
+    // each double-quoted, in place of the wildcard at [wildcardLo, wildcardHi) of selectText. A query written
+    // without SELECT gets `select <columns> from ` in front of where it starts.
+    private void appendMatViewWildcardExpansion(
+            StringSink sink,
+            String selectText,
+            int wildcardLo,
+            int wildcardHi,
+            RecordMetadata metadata,
+            int wildcardIndex,
+            int expandedCount
+    ) {
+        if (isMatViewWildcardArtificial) {
+            // The query has no SELECT of its own: write one in front of where the query starts.
+            sink.putAscii("select ");
+        } else if (wildcardLo > 0 && !isMatViewSpliceSeparator(selectText.charAt(wildcardLo - 1))) {
+            // `SELECT*FROM t`: keep the column list from running into the token before it.
+            sink.putAscii(' ');
         }
-        compiledQuery.ofAlterView();
+        for (int i = 0; i < expandedCount; i++) {
+            if (i > 0) {
+                sink.putAscii(", ");
+            }
+            appendMatViewColumnName(sink, metadata.getColumnName(wildcardIndex + i));
+        }
+        if (isMatViewWildcardArtificial) {
+            sink.putAscii(" from ");
+        } else if (wildcardHi < selectText.length() && !isMatViewSpliceSeparator(selectText.charAt(wildcardHi))) {
+            // `SELECT *FROM t`: keep the column list from running into the token after it.
+            sink.putAscii(' ');
+        }
     }
 
     private TableToken authorizeCompileView(SqlExecutionContext executionContext, CompileViewModel model) {
@@ -2193,6 +2673,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         executionContext.getSecurityContext().authorizeViewCompile(tt);
         return tt;
+    }
+
+    /**
+     * Requires the caller to hold SELECT on every column a scalar EXPIRE ROWS predicate reads. The cleanup job
+     * evaluates the stored predicate under the root context and physically deletes the rows it matches, so
+     * without this check a caller could set a policy on a column they cannot read and learn its values from
+     * which rows survive. A predicate that references no column reads no column data; it still requires
+     * SELECT on some column, because an empty column list means "every column" to the security context.
+     */
+    private void authorizeExpiryPredicateSelect(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            RecordMetadata metadata,
+            ExpiryValidationResult validationResult
+    ) {
+        final IntList columnIndexes = validationResult.getReferencedColumnIndexes();
+        if (columnIndexes.size() == 0) {
+            executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
+            return;
+        }
+        columnNames.clear();
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            columnNames.add(metadata.getColumnName(columnIndexes.getQuick(i)));
+        }
+        executionContext.getSecurityContext().authorizeSelect(tableToken, columnNames);
     }
 
     private CharSequence authorizeInsertForCopy(SqlExecutionContext executionContext, ExportModel model) {
@@ -2214,6 +2719,171 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // Returns the query a materialized view stores, or null to store the query as written. A passthrough view's
+    // refresh compiles the stored query with every bare name read as a column (see
+    // SqlExecutionContext.allowBareNoArgFunctionCalls()), so once the base table drops or renames a column the
+    // query reads, refresh fails instead of calling a function of the same name. Two edits keep the stored query
+    // meaning what it means at CREATE:
+    // - Each bare name the optimiser read as a call to a zero-argument function gets its parentheses, so
+    //   `version` is stored as `version()`.
+    // - The top-level wildcard of a passthrough view is replaced by the columns it expands to now. The view's
+    //   schema is fixed at CREATE, so a column the base table gains later stays out of the view instead of
+    //   widening the query past that schema and invalidating the view on its next refresh. The names come from
+    //   the view's columns, so a wildcard that repeats a column the select list also names
+    //   (`SELECT ts, * FROM base`) expands to the deduplicated name ts1, which the base does not have, and
+    //   CREATE rejects it.
+    // The stored query, edited or not, is compiled with bare names read as columns and has to produce exactly the
+    // same column names, types and designated timestamp as the original, so the stored query stays equivalent to
+    // what the user wrote at CREATE. The check runs on every CREATE: a bare name read as a call that the edits
+    // missed fails it with an invalid column, rather than leaving a view whose refresh fails, or whose refresh
+    // reads a column the base table gains later under that name. An aggregating view's refresh reads a bare
+    // name that matches no column as a call, and the check covers it too: CREATE compiles the user's query with
+    // that same reading, so every bare name CREATE reads as a call is already stored with its parentheses.
+    private @Nullable String buildStoredMatViewSql(
+            SqlExecutionContext executionContext,
+            CreateMatViewOperation createMatViewOp,
+            RecordMetadata metadata
+    ) throws SqlException {
+        final boolean expandWildcard = createMatViewOp.isPassthrough() && matViewWildcards.size() > 0;
+        final int callCount = matViewBareNoArgCallPositions.size();
+        final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
+        final int selectTextPosition = createTableOp.getSelectTextPosition();
+        final String selectText = createTableOp.getSelectText();
+        final int selectTextLen = selectText.length();
+
+        // Each edit is a (start, end, call index) triple over the query text; the wildcard has call index -1.
+        final IntList edits = new IntList();
+        int wildcardIndex = -1;
+        int wildcardLo = -1;
+        int wildcardHi = -1;
+        int expandedCount = 0;
+        if (expandWildcard) {
+            if (matViewWildcards.size() > 3) {
+                // The parser already rejects a second wildcard: its synthesized name *1 is not a valid column
+                // name. Were one to get through, its columns would carry deduplicated names (k1, v1, ...) that
+                // the base table does not have, so they could not be written back as column references.
+                throw SqlException.$(selectTextPosition + matViewWildcards.getQuick(4),
+                        "passthrough materialized view query can have only one wildcard in the select list");
+            }
+            wildcardIndex = matViewWildcards.getQuick(0);
+            wildcardLo = matViewWildcards.getQuick(1);
+            wildcardHi = matViewWildcards.getQuick(2);
+            final int columnCount = metadata.getColumnCount();
+            expandedCount = columnCount - (matViewProjectionSize - 1);
+            if (wildcardLo < 0 || wildcardHi < wildcardLo || wildcardHi > selectTextLen
+                    || expandedCount < 1 || wildcardIndex + expandedCount > columnCount) {
+                throw SqlException.$(selectTextPosition + Math.max(wildcardLo, 0),
+                        "could not expand the wildcard of the materialized view query, list the columns explicitly");
+            }
+            edits.add(wildcardLo);
+            edits.add(wildcardHi);
+            edits.add(-1);
+        }
+        for (int i = 0; i < callCount; i++) {
+            final String name = matViewBareNoArgCallNames.getQuick(i);
+            final int pos = matViewBareNoArgCallPositions.getQuick(i);
+            final int end = findBareNameEnd(selectText, pos, name);
+            if (end < 0) {
+                throw SqlException.$(selectTextPosition + Math.max(pos, 0),
+                                "could not store the function call of the materialized view query, write it as ")
+                        .put(name).put("()");
+            }
+            edits.add(pos);
+            edits.add(end);
+            edits.add(i);
+        }
+        edits.sortGroups(3);
+
+        final StringSink sink = new StringSink();
+        int copied = 0;
+        int prevLo = -1;
+        for (int i = 0, n = edits.size(); i < n; i += 3) {
+            final int lo = edits.getQuick(i);
+            final int hi = edits.getQuick(i + 1);
+            final int call = edits.getQuick(i + 2);
+            if (lo < copied) {
+                if (call >= 0 && lo == prevLo && hi == copied) {
+                    // The optimiser read the same name twice.
+                    continue;
+                }
+                throw SqlException.$(selectTextPosition + lo,
+                        "could not store the function call of the materialized view query, write it with parentheses");
+            }
+            sink.put(selectText, copied, lo);
+            if (call < 0) {
+                appendMatViewWildcardExpansion(sink, selectText, wildcardLo, wildcardHi, metadata, wildcardIndex, expandedCount);
+            } else {
+                sink.put(matViewBareNoArgCallNames.getQuick(call)).putAscii("()");
+            }
+            prevLo = lo;
+            copied = hi;
+        }
+        sink.put(selectText, copied, selectTextLen);
+        final String storedSql = sink.toString();
+
+        RecordMetadata storedMetadata = null;
+        String compileError = null;
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        final boolean previousAllowBareNoArgFunctionCalls = executionContext.allowBareNoArgFunctionCalls();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, createMatViewOp.getTableName());
+        executionContext.setAllowBareNoArgFunctionCalls(false);
+        // A compiler of its own, whose optimiser has no sink armed, so the recorded calls stay as they are.
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(storedSql, executionContext).getRecordCursorFactory()
+        ) {
+            storedMetadata = GenericRecordMetadata.copyOf(factory.getMetadata());
+        } catch (SqlException e) {
+            compileError = e.getFlyweightMessage().toString();
+        } finally {
+            executionContext.setAllowBareNoArgFunctionCalls(previousAllowBareNoArgFunctionCalls);
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+        }
+        if (compileError != null || !hasSameColumns(storedMetadata, metadata)) {
+            final SqlException e;
+            if (expandWildcard) {
+                e = SqlException.$(selectTextPosition + wildcardLo,
+                        "could not expand the wildcard of the materialized view query, list the columns explicitly");
+            } else if (callCount > 0) {
+                e = SqlException.$(selectTextPosition + matViewBareNoArgCallPositions.getQuick(0),
+                        "could not store the function calls of the materialized view query, write them with parentheses");
+            } else {
+                e = SqlException.$(selectTextPosition, "could not store the materialized view query");
+            }
+            if (compileError != null) {
+                e.put(" [error=").put(compileError).put(']');
+            }
+            throw e;
+        }
+        return edits.size() > 0 ? storedSql : null;
+    }
+
+    // Records each wildcard in the top-level select list of a materialized view query as a
+    // (projection index, start, end) triple, with start and end positions in the query text. The
+    // optimizer expands wildcards in place, so this runs on the parsed model, before optimise().
+    // A query written without SELECT, such as `base WHERE v > 0`, gets a wildcard from the parser that
+    // has no text of its own; its start and end are both the position where the query starts.
+    private void captureMatViewWildcards(IQueryModel queryModel, CharSequence selectText) {
+        matViewWildcards.clear();
+        isMatViewWildcardArtificial = queryModel.isArtificialStar();
+        final ObjList<QueryColumn> columns = queryModel.getColumns();
+        matViewProjectionSize = columns.size();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast != null && ast.isWildcard()) {
+                matViewWildcards.add(i);
+                if (isMatViewWildcardArtificial) {
+                    matViewWildcards.add(queryModel.getModelPosition());
+                    matViewWildcards.add(queryModel.getModelPosition());
+                } else {
+                    matViewWildcards.add(ast.position);
+                    matViewWildcards.add(findWildcardEnd(selectText, ast.position));
+                }
+            }
+        }
+    }
+
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
@@ -2232,6 +2902,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void clearExceptSqlText() {
+        // Close what the discarded attempt still owns while its models are still enumerable.
+        // ObjectPool.clear() only rewinds the position, after which the attempt's models are gone from
+        // view and the next next() silently nulls the field. Running here covers every retry site,
+        // which all funnel through this method.
+        freeUntransferredTableNameFunctions();
         sqlNodePool.clear();
         characterStore.clear();
         queryColumnPool.clear();
@@ -2316,7 +2991,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
             tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isRebaseKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
+            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isRebaseKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok) && !isDropKeyword(tok))) {
                 compileAlterMatViewExt(executionContext, tok, matViewToken, matViewNamePosition);
                 return;
             }
@@ -2446,12 +3121,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isSetKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (!isTtlKeyword(tok) && !isRefreshKeyword(tok))) {
+                if (tok == null || (!isTtlKeyword(tok) && !isRefreshKeyword(tok) && !isExpireKeyword(tok))) {
                     compileAlterMatViewSetExt(executionContext, tok, matViewToken, matViewNamePosition);
                     return;
                 }
                 if (isTtlKeyword(tok)) {
                     alterTableOrMatViewSetTtl(matViewToken, matViewNamePosition, tableMetadata);
+                } else if (isExpireKeyword(tok)) {
+                    // ALTER MATERIALIZED VIEW <v> SET EXPIRE ROWS WHEN <pred> [CLEANUP EVERY <dur>].
+                    // Mat views are WAL tables; alterTableSetExpire is object-type-agnostic (it parses
+                    // the clause, validates the predicate against the view, and builds SET_EXPIRE ->
+                    // setMetaExpiry), so we route the mat-view token straight through it.
+                    executionContext.getSecurityContext().authorizeAlterTableSetParam(matViewToken);
+                    alterTableSetExpire(executionContext, matViewToken, matViewNamePosition, tableMetadata);
                 } else if (isRefreshKeyword(tok)) {
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
@@ -2494,6 +3176,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tok != null && isPeriodKeyword(tok)) {
+                            if (viewDefinition.isPassthrough()) {
+                                // Mirrors the CREATE-time rejection. A passthrough view has no SAMPLE BY
+                                // bucket to align a period to: its sampling interval only sets the
+                                // granularity of refresh ranges.
+                                throw SqlException.$(lexer.lastTokenPosition(), "PERIOD is not supported for non-aggregating (passthrough) materialized views");
+                            }
                             final TimestampSampler periodSamplerMicros;
                             expectKeyword(lexer, "(");
                             tok = expectToken(lexer, "'length' or 'sample'");
@@ -2627,8 +3315,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'immediate' or 'manual' or 'period' or 'every' or 'limit' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl', 'expire' or 'refresh' expected");
                 }
+            } else if (isDropKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isExpireKeyword(tok)) {
+                    compileAlterMatViewDropExt(executionContext, tok, matViewToken, matViewNamePosition);
+                    return;
+                }
+                // ALTER MATERIALIZED VIEW <v> DROP EXPIRE — object-type-agnostic, reuse the table path.
+                executionContext.getSecurityContext().authorizeAlterTableSetParam(matViewToken);
+                alterTableDropExpire(matViewToken, matViewNamePosition, tableMetadata);
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isRebaseKeyword(tok)) {
@@ -2688,7 +3385,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, action, executionContext);
             } else if (isDropKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (!isColumnKeyword(tok) && !isPartitionKeyword(tok))) {
+                if (tok == null || (!isColumnKeyword(tok) && !isPartitionKeyword(tok) && !isExpireKeyword(tok))) {
                     compileAlterTableDropExt(executionContext, tok, tableToken, tableNamePosition);
                     return;
                 }
@@ -2697,6 +3394,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (isPartitionKeyword(tok)) {
                     executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
+                } else if (isExpireKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
                 }
             } else if (isRenameKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
@@ -2926,7 +3625,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isSetKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok) && !isFormatKeyword(tok))) {
+                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok) && !isExpireKeyword(tok) && !isFormatKeyword(tok))) {
                     compileAlterTableSetExt(executionContext, tok, tableToken, tableNamePosition);
                     return;
                 }
@@ -2944,6 +3643,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 } else if (isTtlKeyword(tok)) {
                     alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
+                } else if (isExpireKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "EXPIRE ROWS is only supported on materialized views");
                 } else if (isFormatKeyword(tok)) {
                     alterTableSetFormat(tableToken, tableNamePosition, tableMetadata);
                 } else if (isTypeKeyword(tok)) {
@@ -3411,25 +4112,47 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
-        final ExecutionModel model = parser.parse(lexer, executionContext, this);
-        try {
-            if (model.getModelType() != ExecutionModel.EXPLAIN) {
-                return compileExecutionModel0(executionContext, model);
-            } else {
-                final ExplainModel explainModel = (ExplainModel) model;
-                final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
-                explainModel.setModel(innerModel);
-                return explainModel;
+        // Re-parse and re-optimise here when a racing EXPIRE ROWS change invalidates the parser's policy
+        // decision. Ordinary compilation owns this retry. Materializing compilation entered in REJECT mode
+        // propagates the signal to its outer CREATE or refresh guard so one event cannot consume two budgets.
+        // Bounded so a burst of policy changes cannot loop forever.
+        int remainingExpiryPolicyRetries = maxRecompileAttempts;
+        final boolean rejectExpiryOnEntry = executionContext.getExpiryReadPolicy() == ExpiryReadPolicy.REJECT;
+        for (; ; ) {
+            ExecutionModel model = null;
+            try {
+                model = parser.parse(lexer, executionContext, this);
+                if (model.getModelType() != ExecutionModel.EXPLAIN) {
+                    return compileExecutionModel0(executionContext, model);
+                } else {
+                    final ExplainModel explainModel = (ExplainModel) model;
+                    final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
+                    explainModel.setModel(innerModel);
+                    return explainModel;
+                }
+            } catch (ExpiryPolicyVersionChangedException e) {
+                if (rejectExpiryOnEntry) {
+                    throw e;
+                }
+                if (--remainingExpiryPolicyRetries < 0) {
+                    // Out of retries: enqueue view compiles the same way the general failure path below does
+                    // (a harmless re-check signal), then report a plain error. The earlier retries loop back
+                    // instead of returning, so they leave this out.
+                    if (model != null && generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                        enqueueCompileViews(model);
+                    }
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying model after row-expiry policy version change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                clearExceptSqlText();
+                lexer.restart();
+            } catch (Throwable e) {
+                if (model != null && generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                    enqueueCompileViews(model);
+                }
+                throw e;
             }
-        } catch (Throwable e) {
-            // Model compilation optimises but never generates, so a throw here - the INSERT column
-            // count check, UPDATE column validation, an authorization failure - can leave cursor
-            // functions the optimiser instantiated for FROM/JOIN table functions with no owner.
-            optimiser.freeTableFactoriesInFlight(e);
-            if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
-                enqueueCompileViews(model);
-            }
-            throw e;
         }
     }
 
@@ -3524,6 +4247,47 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return model;
         }
         return compileExecutionModel0(executionContext, model);
+    }
+
+    private RecordCursorFactory compileExplainWithExpiryPolicyRetries(
+            ExplainModel initialExplainModel,
+            SqlExecutionContext executionContext,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        ExplainModel explainModel = initialExplainModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        try {
+            for (; ; ) {
+                final RecordCursorFactory factory = generateExplain(explainModel, executionContext);
+                final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                    return factory;
+                }
+
+                Misc.free(factory);
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying explain after row-expiry policy change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(explainModel);
+                clearExceptSqlText();
+                lexer.restart();
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                final ExecutionModel executionModel = compileExecutionModel(executionContext);
+                if (executionModel.getModelType() != ExecutionModel.EXPLAIN) {
+                    throw SqlException.position(0).put("EXPLAIN query expected");
+                }
+                explainModel = (ExplainModel) executionModel;
+            }
+        } catch (Throwable th) {
+            // A retry re-parses into a fresh explainModel that compileUsingModel's catch cannot
+            // reach, so release the current model's table-name functions here. Idempotent when
+            // codegen already consumed them or when the model is the one compileUsingModel frees.
+            freeTableNameFunctionsOnError(explainModel, th);
+            throw th;
+        }
     }
 
     private void compileInner(
@@ -3715,7 +4479,53 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private InsertOperation compileInsertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+    private InsertOperation compileInsertAsSelect(
+            ExecutionModel initialExecutionModel,
+            SqlExecutionContext executionContext,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        ExecutionModel executionModel = initialExecutionModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        try {
+            for (; ; ) {
+                final Runnable barrier = insertSelectFactoryGenerationBarrier;
+                if (barrier != null) {
+                    barrier.run();
+                }
+                final InsertOperation insertOperation = compileInsertAsSelectOneShot(executionModel, executionContext);
+                final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                    return insertOperation;
+                }
+
+                Misc.free(insertOperation);
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying insert-select after row-expiry policy change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(executionModel.getQueryModel());
+                clearExceptSqlText();
+                lexer.restart();
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                executionModel = compileExecutionModel(executionContext);
+                if (executionModel.getModelType() != ExecutionModel.INSERT
+                        || executionModel.getQueryModel() == null) {
+                    throw SqlException.position(0).put("INSERT SELECT query expected");
+                }
+            }
+        } catch (Throwable th) {
+            // A retry re-parses into a fresh executionModel that compileUsingModel's catch
+            // cannot reach, so release the current model's table-name functions here. Idempotent
+            // when codegen already consumed them or when the model is the one compileUsingModel
+            // frees.
+            freeTableNameFunctionsOnError(executionModel, th);
+            throw th;
+        }
+    }
+
+    private InsertOperation compileInsertAsSelectOneShot(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         // A connection authorized while the node was PRIMARY keeps a read-write security
         // context across an in-place demote. Check the live engine state before touching the
         // table registry, so the caller sees "replica access is read-only" rather than
@@ -3891,43 +4701,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long beginNanos = configuration.getNanosecondClock().getTicks();
 
         final int selectTextPosition = createTableOp.getSelectTextPosition();
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, createMatViewOp.getTableName());
+        // Armed through generateSelectWithRetries() too: a retry optimises the query again, and the calls
+        // recorded have to come from the pass that builds the factory.
+        optimiser.setBareNoArgCallSink(matViewBareNoArgCallNames, matViewBareNoArgCallPositions);
         try {
             final IQueryModel queryModel;
-            final boolean cacheable;
             try {
-                try {
-                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                        throw SqlException.$(startPos, "SELECT query expected");
-                    }
-                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-                    final SqlExecutionRequirements executionRequirements = functionParser.getExecutionRequirements();
-                    final int securityContextPosition = executionRequirements.getPosition(
-                            SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                    );
-                    if (securityContextPosition > -1) {
-                        throw SqlException.position(securityContextPosition)
-                                .put("administrative function cannot be used in materialized view: ")
-                                .put(executionRequirements.getFunctionName(
-                                        SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                                ));
-                    }
-                } catch (SqlException e) {
-                    e.setPosition(e.getPosition() + selectTextPosition);
-                    throw e;
+                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                    throw SqlException.$(startPos, "SELECT query expected");
                 }
-                createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
-                // See compileUsingModel(): read before generation, so a throw here cannot orphan the generated
-                // factory tree, and the read cannot land on a model the retry path has already recycled. Inside
-                // this try on purpose -- a throw must still free the table factories optimise() left in flight.
-                cacheable = queryModel.isCacheable();
-            } catch (Throwable th) {
-                // Rejecting the query after optimise() returned leaves the cursor functions it
-                // instantiated for FROM/JOIN table functions unowned: generation, which takes them over,
-                // has not run yet. Freeing after generateSelectWithRetries below would be a double free.
-                optimiser.freeTableFactoriesInFlight(th);
-                throw th;
+                captureMatViewWildcards((IQueryModel) executionModel, createTableOp.getSelectText());
+                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                final SqlExecutionRequirements executionRequirements = functionParser.getExecutionRequirements();
+                final int securityContextPosition = executionRequirements.getPosition(
+                        SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                );
+                if (securityContextPosition > -1) {
+                    throw SqlException.position(securityContextPosition)
+                            .put("administrative function cannot be used in materialized view: ")
+                            .put(executionRequirements.getFunctionName(
+                                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                            ));
+                }
+            } catch (SqlException e) {
+                e.setPosition(e.getPosition() + selectTextPosition);
+                throw e;
             }
+            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+            // Read before generation: generateSelectWithRetries() recompiles the execution model on a
+            // retry, and clearExceptSqlText() recycles this one back into the model pool.
+            final boolean cacheable = queryModel.isCacheable();
 
             final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
             executionContext.setAllowNonDeterministicFunction(false);
@@ -3942,6 +4749,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;
+        } finally {
+            optimiser.setBareNoArgCallSink(null, null);
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
         }
     }
 
@@ -4146,6 +4956,60 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRollback();
     }
 
+    private void compileSelectWithExpiryPolicyRetries(
+            IQueryModel initialQueryModel,
+            SqlExecutionContext executionContext,
+            boolean generateProgressLogger,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        IQueryModel queryModel = initialQueryModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        try {
+            for (; ; ) {
+                // Read the flag before generating: generateSelectWithRetries() recompiles the execution
+                // model on a retry, and clearExceptSqlText() recycles this one back into the model pool.
+                // Only the optimiser sets the flag, and it has already run, so the value is final here.
+                final boolean cacheable = queryModel.isCacheable();
+                final RecordCursorFactory factory = generateSelectWithRetries(
+                        queryModel,
+                        null,
+                        executionContext,
+                        generateProgressLogger
+                );
+                final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                    compiledQuery.ofSelect(factory, cacheable);
+                    return;
+                }
+
+                Misc.free(factory);
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying plan after row-expiry policy change [q=`").$(queryModel)
+                        .$("`, fd=").$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(queryModel);
+                clearExceptSqlText();
+                lexer.restart();
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                final ExecutionModel executionModel = compileExecutionModel(executionContext);
+                if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                    throw SqlException.position(0).put("SELECT query expected");
+                }
+                queryModel = (IQueryModel) executionModel;
+            }
+        } catch (Throwable th) {
+            // A retry re-parses into a fresh queryModel that compileUsingModel's catch cannot
+            // reach (it frees only the model it parsed), so release the current model's
+            // table-name functions here. freeTableNameFunctions() nulls each field, so this is
+            // a no-op when codegen already consumed them or when the model is the one that
+            // compileUsingModel frees.
+            freeTableNameFunctionsOnError(queryModel, th);
+            throw th;
+        }
+    }
+
     private void compileSet(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         // SET [SESSION | LOCAL] name { = | TO } value [, value]*
         // PG compatibility no-op — validate syntax, then discard.
@@ -4334,6 +5198,52 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofTruncate();
     }
 
+    private UpdateOperation compileUpdateWithExpiryPolicyRetries(
+            IQueryModel initialUpdateQueryModel,
+            SqlExecutionContext executionContext,
+            long initialExpiryPolicyVersion
+    ) throws SqlException {
+        IQueryModel updateQueryModel = initialUpdateQueryModel;
+        long expiryPolicyVersion = initialExpiryPolicyVersion;
+        int remainingRetries = maxRecompileAttempts;
+        try {
+            for (; ; ) {
+                final TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
+                final UpdateOperation updateOperation;
+                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+                    updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
+                }
+                final long currentExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                if (expiryPolicyVersion == currentExpiryPolicyVersion) {
+                    return updateOperation;
+                }
+
+                Misc.free(updateOperation);
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying update after row-expiry policy change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(updateQueryModel);
+                clearExceptSqlText();
+                lexer.restart();
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                final ExecutionModel executionModel = compileExecutionModel(executionContext);
+                if (executionModel.getModelType() != ExecutionModel.UPDATE) {
+                    throw SqlException.position(0).put("UPDATE query expected");
+                }
+                updateQueryModel = (IQueryModel) executionModel;
+            }
+        } catch (Throwable th) {
+            // A retry re-parses into a fresh updateQueryModel that compileUsingModel's catch
+            // cannot reach, so release the current model's table-name functions here. Idempotent
+            // when codegen already consumed them or when the model is the one compileUsingModel
+            // frees.
+            freeTableNameFunctionsOnError(updateQueryModel, th);
+            throw th;
+        }
+    }
+
     private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos, boolean generateProgressLogger) throws SqlException {
         // This method will not populate sql cache directly; factories are assumed to be non-reentrant, and once
         // factory is out of this method, the caller assumes full ownership over it. However, the caller may
@@ -4346,28 +5256,57 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         ExecutionModel executionModel = null;
         try {
-            executionModel = compileExecutionModel(executionContext);
-            switch (executionModel.getModelType()) {
-                case ExecutionModel.QUERY: {
-                    // Read the flag BEFORE generating. Arguments evaluate left to right, so reading it in the
-                    // argument list would run it on a model that generation may already have discarded --
-                    // generateSelectWithRetries() recompiles the execution model on a retry, and
-                    // clearExceptSqlText() recycles this one back into the model pool -- and any throw there
-                    // would orphan the generated factory tree, which is nobody's to close once the reference
-                    // is lost. Nothing in generation sets the flag (only the optimiser does, which has
-                    // already run), so hoisting it does not change the value.
-                    final boolean cacheable = ((IQueryModel) executionModel).isCacheable();
-                    compiledQuery.ofSelect(
-                            generateSelectWithRetries(
-                                    (IQueryModel) executionModel,
-                                    null,
-                                    executionContext,
-                                    generateProgressLogger
-                            ),
-                            cacheable
-                    );
+            // Snapshot before parsing: the parser makes both policy and no-policy decisions while building the
+            // model. Reject that model if a SET/DROP transition changes the epoch during parsing. Every path
+            // that generates a factory from the model retains this snapshot through factory generation.
+            long expiryPolicyVersion;
+            int remainingExpiryPolicyRetries = maxRecompileAttempts;
+            final boolean rejectExpiryOnEntry = executionContext.getExpiryReadPolicy() == ExpiryReadPolicy.REJECT;
+            for (; ; ) {
+                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                try {
+                    executionModel = compileExecutionModel(executionContext);
+                } catch (SqlException e) {
+                    if (!e.isMaterializationExpiryConflict()) {
+                        throw e;
+                    }
+                    if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        throw e;
+                    }
+                    if (rejectExpiryOnEntry) {
+                        throw ExpiryPolicyVersionChangedException.INSTANCE;
+                    }
+                    if (--remainingExpiryPolicyRetries < 0) {
+                        throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                    }
+                    clearExceptSqlText();
+                    lexer.restart();
+                    continue;
+                }
+                if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
                     break;
                 }
+                if (rejectExpiryOnEntry) {
+                    throw ExpiryPolicyVersionChangedException.INSTANCE;
+                }
+                if (--remainingExpiryPolicyRetries < 0) {
+                    throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                }
+                LOG.info().$("retrying model after row-expiry policy change [fd=")
+                        .$(executionContext.getRequestFd()).I$();
+                freeTableNameFunctions(executionModel);
+                clearExceptSqlText();
+                lexer.restart();
+            }
+            switch (executionModel.getModelType()) {
+                case ExecutionModel.QUERY:
+                    compileSelectWithExpiryPolicyRetries(
+                            (IQueryModel) executionModel,
+                            executionContext,
+                            generateProgressLogger,
+                            expiryPolicyVersion
+                    );
+                    break;
                 case ExecutionModel.CREATE_TABLE:
                     compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
@@ -4417,17 +5356,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     checkViewModification(executionModel);
                     final IQueryModel updateQueryModel = (IQueryModel) executionModel;
-                    TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
-                    try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
-                        compiledQuery.ofUpdate(generateUpdate(updateQueryModel, executionContext, metadata));
-                    }
+                    compiledQuery.ofUpdate(compileUpdateWithExpiryPolicyRetries(
+                            updateQueryModel,
+                            executionContext,
+                            expiryPolicyVersion
+                    ));
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
                     break;
                 case ExecutionModel.EXPLAIN:
                     sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
+                    compiledQuery.ofExplain(compileExplainWithExpiryPolicyRetries(
+                            (ExplainModel) executionModel,
+                            executionContext,
+                            expiryPolicyVersion
+                    ));
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 case ExecutionModel.COMPILE_VIEW:
@@ -4441,7 +5385,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
                         // InsertSelect progress will be recorded during the execute phase, to accurately reflect its real select progress.
-                        compiledQuery.ofInsert(compileInsertAsSelect(insertModel, executionContext), true);
+                        compiledQuery.ofInsert(compileInsertAsSelect(insertModel, executionContext, expiryPolicyVersion), true);
                     } else {
                         QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                         compiledQuery.ofInsert(compileInsert(insertModel, executionContext), false);
@@ -4457,15 +5401,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryRegistry.unregister(sqlId, executionContext);
             }
         } catch (Throwable th) {
-            if (executionModel != null) {
-                try {
-                    SqlCodeGenerator.freeTableNameFunctions(executionModel.getQueryModel(), th);
-                } catch (Throwable cleanupFailure) {
-                    if (cleanupFailure != th) {
-                        th.addSuppressed(cleanupFailure);
-                    }
-                }
-            }
+            freeTableNameFunctionsOnError(executionModel, th);
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
@@ -4544,7 +5480,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofCompileView();
     }
 
-    private void compileViewQuery(
+    private long compileViewQuery(
             @Transient @NotNull SqlExecutionContext executionContext,
             @NotNull CreateViewOperation createViewOp
     ) throws SqlException {
@@ -4569,36 +5505,83 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long beginNanos = configuration.getNanosecondClock().getTicks();
 
         final int selectTextPosition = createTableOp.getSelectTextPosition();
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try {
-            final IQueryModel queryModel;
-            final boolean cacheable;
-            try {
+            int remainingRetries = maxRecompileAttempts;
+            for (; ; ) {
+                final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                IQueryModel queryModel = null;
+                RecordCursorFactory factory = null;
+                boolean isRetry = false;
+                // The in-flight exception, so the cleanup below can attach a close failure to it rather
+                // than replace it. Stays null on the retry path, where nothing is in flight.
+                Throwable failure = null;
                 try {
                     final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
                     if (executionModel.getModelType() != ExecutionModel.QUERY) {
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
+                    // Collect view dependencies from both the raw and the optimised model. The raw,
+                    // pre-optimisation model keeps a "SELECT *" over a base table as a "*" wildcard
+                    // dependency (optimise() expands it into a concrete column list), and that wildcard
+                    // is what lets the view keep covering columns added to the base table after the view
+                    // was created - the view-as-security-boundary contract in Enterprise. The optimised
+                    // model contributes the concrete columns the query actually references, including the
+                    // ones introduced by the row-expiry read filter, which the raw model hides behind its
+                    // synthetic sub-query. optimise() mutates the model in place, so collect the raw
+                    // references before it runs and accumulate the optimised references afterwards.
+                    dependencies.clear();
+                    SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) executionModel, dependencies);
                     queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                    createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                    SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
+
+                    final Runnable barrier = viewFactoryGenerationBarrier;
+                    if (barrier != null) {
+                        barrier.run();
+                    }
+                    factory = generateSelectOneShot(queryModel, executionContext, false);
+                    if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> operationDependencies =
+                                createViewOp.getViewDefinition().getDependencies();
+                        operationDependencies.clear();
+                        operationDependencies.putAll(dependencies);
+                        compiledQuery.ofSelect(factory, queryModel.isCacheable());
+                        return expiryPolicyVersion;
+                    }
+                    isRetry = true;
+                } catch (TableReferenceOutOfDateException e) {
+                    isRetry = true;
+                    if (remainingRetries == 0) {
+                        final SqlException sqlException = SqlException.$(selectTextPosition, e.getFlyweightMessage());
+                        failure = sqlException;
+                        throw sqlException;
+                    }
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
+                    failure = e;
                     throw e;
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
+                } finally {
+                    if (isRetry) {
+                        if (failure != null) {
+                            Misc.free(factory, failure);
+                        } else {
+                            Misc.free(factory);
+                        }
+                        freeTableNameFunctions(queryModel, failure);
+                    }
                 }
-                createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
-                // Same read-before-generation rule as compileMatViewQuery, and inside the same try for the
-                // same reason: a throw must free the table factories optimise() left in flight.
-                cacheable = queryModel.isCacheable();
-            } catch (Throwable th) {
-                // Same ownership window as compileMatViewQuery: optimise() has attached the FROM/JOIN
-                // cursor functions to the model and generation has not taken them over yet.
-                optimiser.freeTableFactoriesInFlight(th);
-                throw th;
-            }
 
-            try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(selectTextPosition).put("too many row-expiry policy changes during view compilation");
+                }
+                LOG.info().$("retrying view after metadata or row-expiry policy change [view=")
+                        .$(createViewOp.getTableName()).$(", fd=").$(executionContext.getRequestFd()).I$();
+                clearExceptSqlText();
+                lexer.restart();
             }
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
@@ -4828,54 +5811,79 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
 
-                final MatViewDefinition matViewDefinition;
-                final TableToken matViewToken;
+                MatViewDefinition matViewDefinition = null;
+                TableToken matViewToken = null;
 
                 final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
                 if (createTableOp.getSelectText() != null) {
-                    RecordCursorFactory newFactory = null;
-                    RecordCursor newCursor;
                     for (int retryCount = 0; ; retryCount++) {
+                        final long initialExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                        RecordCursorFactory newFactory = null;
+                        RecordCursor newCursor = null;
                         try {
                             compileMatViewQuery(executionContext, createMatViewOp);
-                            Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
                             newCursor = newFactory.getCursor(executionContext);
+                            final RecordMetadata metadata = newFactory.getMetadata();
+                            try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
+                                createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata(), newFactory.getScanDirection());
+                            }
+                            // Reject a bad EXPIRE ROWS policy before the view exists.
+                            validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
+                            // Each pass calls setMatViewSql(), even with null, so the view stores what the pass
+                            // that creates it built.
+                            createMatViewOp.setMatViewSql(buildStoredMatViewSql(executionContext, createMatViewOp, metadata));
+
+                            if (initialExpiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                                }
+                                continue;
+                            }
+
+                            matViewDefinition = engine.createMatView(
+                                    executionContext.getSecurityContext(),
+                                    mem,
+                                    blockFileWriter,
+                                    path,
+                                    createMatViewOp.ignoreIfExists(),
+                                    createMatViewOp,
+                                    !createMatViewOp.isWalEnabled(),
+                                    volumeAlias != null
+                            );
+                            matViewToken = matViewDefinition.getMatViewToken();
                             break;
                         } catch (TableReferenceOutOfDateException e) {
+                            if (e instanceof ExpiryPolicyVersionChangedException) {
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                                }
+                                LOG.info().$("retrying materialized view after row-expiry policy change [q=`")
+                                        .$(createTableOp.getSelectText()).$("`]").$();
+                                continue;
+                            }
                             if (retryCount == maxRecompileAttempts) {
-                                Misc.free(newFactory);
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
                             LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        } catch (SqlException e) {
+                            if (!e.isMaterializationExpiryConflict()) {
+                                throw e;
+                            }
+                            if (initialExpiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                                throw e;
+                            }
+                            if (retryCount == maxRecompileAttempts) {
+                                throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                            }
                         } catch (Throwable th) {
-                            Misc.free(newFactory);
                             throw th;
+                        } finally {
+                            Misc.free(newCursor);
+                            Misc.free(newFactory);
                         }
                     }
-
-                    try {
-                        final RecordMetadata metadata = newFactory.getMetadata();
-                        try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
-                            createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata(), newFactory.getScanDirection());
-                        }
-
-                        matViewDefinition = engine.createMatView(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                blockFileWriter,
-                                path,
-                                createMatViewOp.ignoreIfExists(),
-                                createMatViewOp,
-                                !createMatViewOp.isWalEnabled(),
-                                volumeAlias != null
-                        );
-                        matViewToken = matViewDefinition.getMatViewToken();
-                    } finally {
-                        Misc.free(newCursor);
-                        Misc.free(newFactory);
-                    }
-
+                    assert matViewDefinition != null && matViewToken != null;
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
@@ -5134,12 +6142,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (createTableOp.getSelectText() != null) {
                     RecordCursorFactory newFactory = null;
                     RecordCursor newCursor;
+                    long expiryPolicyVersion;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
-                            compileViewQuery(executionContext, createViewOp);
+                            expiryPolicyVersion = compileViewQuery(executionContext, createViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
                             newCursor = newFactory.getCursor(executionContext);
+                            if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                                Misc.free(newCursor);
+                                newFactory = Misc.free(newFactory);
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during view compilation");
+                                }
+                                LOG.info().$("retrying view after row-expiry policy change [view=")
+                                        .$(createViewOp.getTableName()).$(", fd=").$(executionContext.getRequestFd()).I$();
+                                continue;
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -5167,6 +6186,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 metadata
                         );
                         viewToken = viewDefinition.getViewToken();
+                        if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
+                            refreshViewDefinitionAfterExpiryPolicyChange(
+                                    createTableOp.getSelectText(),
+                                    createTableOp.getSelectTextPosition(),
+                                    executionContext,
+                                    viewToken
+                            );
+                        }
                     } finally {
                         Misc.free(newCursor);
                         Misc.free(newFactory);
@@ -5433,6 +6460,57 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         return affectedPartitions;
+    }
+
+    private void freeTableNameFunctions(ExecutionModel executionModel) {
+        freeTableNameFunctions(executionModel, null);
+    }
+
+    /**
+     * Releases the table-name functions a statement still owns. EXPLAIN keeps the real statement
+     * one level down and answers null to {@link ExecutionModel#getQueryModel()}, so unwrap it first
+     * or its query graph goes unvisited.
+     */
+    private void freeTableNameFunctions(ExecutionModel executionModel, @Nullable Throwable failure) {
+        if (executionModel instanceof ExplainModel explainModel) {
+            freeTableNameFunctions(explainModel.getInnerExecutionModel(), failure);
+        } else if (executionModel != null) {
+            SqlCodeGenerator.freeTableNameFunctions(executionModel.getQueryModel(), failure);
+        }
+    }
+
+    private void freeTableNameFunctions(IQueryModel queryModel) {
+        SqlCodeGenerator.freeTableNameFunctions(queryModel, null);
+    }
+
+    private void freeTableNameFunctions(IQueryModel queryModel, @Nullable Throwable failure) {
+        SqlCodeGenerator.freeTableNameFunctions(queryModel, failure);
+    }
+
+    /**
+     * Releases the table-name functions while an exception is in flight. The exception reaches
+     * {@code Misc.free}, so a close failure attaches to it as a suppressed exception; a failure raised
+     * anywhere else in the walk attaches here. Either way the original exception is the one that
+     * propagates.
+     */
+    private void freeTableNameFunctionsOnError(ExecutionModel executionModel, @NotNull Throwable failure) {
+        try {
+            freeTableNameFunctions(executionModel, failure);
+        } catch (Throwable cleanupFailure) {
+            if (cleanupFailure != failure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
+    private void freeTableNameFunctionsOnError(IQueryModel queryModel, @NotNull Throwable failure) {
+        try {
+            freeTableNameFunctions(queryModel, failure);
+        } catch (Throwable cleanupFailure) {
+            if (cleanupFailure != failure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -5878,6 +6956,70 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 
+    private void refreshViewDefinitionAfterExpiryPolicyChange(
+            String viewSql,
+            int viewSqlPosition,
+            SqlExecutionContext executionContext,
+            TableToken viewToken
+    ) throws SqlException {
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            int remainingRetries = maxRecompileAttempts;
+            for (; ; ) {
+                final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                ExecutionModel executionModel = null;
+                boolean isSuccess = false;
+                // The in-flight exception, so the cleanup below can attach a close failure to it rather
+                // than replace it. Stays null on the retry path, where nothing is in flight.
+                Throwable failure = null;
+                try {
+                    executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+                    final IQueryModel queryModel = executionModel.getQueryModel();
+                    dependencies.clear();
+                    SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
+                    engine.getViewGraph().validateNoCycle(viewToken, queryModel);
+                    try (RecordCursorFactory factory = compiler.generateSelectWithRetries(
+                            queryModel,
+                            null,
+                            executionContext,
+                            false
+                    ); RecordCursor cursor = factory.getCursor(executionContext)) {
+                        cursor.hasNext();
+                    }
+                    if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                        engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+                        if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                            isSuccess = true;
+                            return;
+                        }
+                    }
+                } catch (TableReferenceOutOfDateException e) {
+                    if (remainingRetries == 0) {
+                        final SqlException sqlException = SqlException.$(viewSqlPosition, e.getFlyweightMessage());
+                        failure = sqlException;
+                        throw sqlException;
+                    }
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
+                } finally {
+                    // Free the re-parsed model's table-name functions on every exit except a clean
+                    // success: on retry (the policy version moved) or on any thrown error the model still
+                    // owns them, and this nested pooled compiler has no outer catch to release them. On
+                    // success the probe cursor's try-with-resources has already closed the factory, which
+                    // took ownership of the functions and freed them. freeTableNameFunctions() nulls each
+                    // field, so it is a no-op wherever codegen already consumed them.
+                    if (!isSuccess) {
+                        freeTableNameFunctions(executionModel, failure);
+                    }
+                }
+                if (--remainingRetries < 0) {
+                    throw SqlException.position(viewSqlPosition).put("too many row-expiry policy changes during view compilation");
+                }
+            }
+        }
+    }
+
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
@@ -5907,6 +7049,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw notExistException;
         }
         return viewToken;
+    }
+
+    /**
+     * Closes every table-name function still attached to a query model the current attempt allocated,
+     * and empties each slot before closing it. The pool position bounds the sweep, so a model stays
+     * reachable here even when an optimiser rewrite disconnects it from the model graph the caller
+     * holds. Detaching first also makes a repeated sweep, or a graph walk that ran ahead of this one,
+     * a no-op rather than a double close.
+     * <p>
+     * The sweep visits every slot even when a close throws.
+     *
+     * @param queryModelPool the pool that allocated the attempt's models, or null when compiler
+     *                       construction failed before the pool was initialized
+     * @param failure        the caller's in-flight failure, or null when it has none
+     * @return the failure to propagate: the caller's own failure when it passed one, carrying any
+     * close failures as suppressed exceptions; otherwise the first close failure with the later ones
+     * suppressed, or null when every close succeeded
+     */
+    static @Nullable Throwable freePooledTableNameFunctions(@Nullable ObjectPool<QueryModel> queryModelPool, @Nullable Throwable failure) {
+        Throwable outcome = failure;
+        if (queryModelPool == null) {
+            return outcome;
+        }
+        for (int i = 0, n = queryModelPool.getPos(); i < n; i++) {
+            outcome = Misc.freeBestEffort(outcome, queryModelPool.peekQuick(i).takeTableNameFunction());
+        }
+        return outcome;
     }
 
     static void configureLexer(GenericLexer lexer) {
@@ -5961,6 +7130,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    protected void alterTableDropExpire(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        // Accept an optional ROWS keyword so DROP EXPIRE and DROP EXPIRE ROWS are both valid, symmetric with
+        // SET EXPIRE ROWS.
+        if (tok != null && isRowsKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+        }
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop row-expiry policy");
+        }
+        // null predicate + 0 interval encodes "no policy" — clears the EXPIRE ROWS policy.
+        final AlterOperationBuilder dropExpire = alterOperationBuilder.ofSetExpire(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                null,
+                0
+        );
+        compiledQuery.ofAlter(dropExpire.build());
+    }
+
     protected void alterTableOrMatViewSetTtl(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
         final int ttlValuePos = lexer.getPosition();
         final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
@@ -5976,6 +7166,1010 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(setTtl.build());
     }
 
+    protected void alterTableSetExpire(SqlExecutionContext executionContext, TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+        // EXPIRE has already been consumed; parse "ROWS WHEN <predicate> [CLEANUP EVERY <dur>]"
+        // using the shared CREATE-path parser (inCreateTable=false: ';'/EOF are the only boundaries).
+        final SqlParser.ExpireRowsClause clause = parser.parseExpireRowsClause(lexer, false);
+        if (clause.nextTok != null && !isSemicolon(clause.nextTok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(clause.nextTok).put("] while trying to set row-expiry policy");
+        }
+        // EXPIRE ROWS is a materialized-view feature (a plain table uses TTL; ALTER ... SET EXPIRE on a base
+        // table is rejected earlier in the grammar). On an AGGREGATING (non-passthrough) view it is ALLOWED but
+        // advisory: physical cleanup reclaims rows a later incremental/full refresh can regenerate from the
+        // base, so reclamation only "sticks" when base-table retention is aligned with the expiry horizon.
+        // Reads stay correct regardless (the read filter is authoritative); warn rather than reject.
+        final MatViewDefinition def = tableToken.isMatView() ? engine.getDependentViewGraph().getViewDefinition(tableToken) : null;
+        if (def == null) {
+            throw SqlException.$(tableNamePosition, "EXPIRE ROWS is only supported on materialized views");
+        }
+        if (!def.isPassthrough()) {
+            LOG.advisory().$("EXPIRE ROWS set on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
+                    .$safe(tableToken.getTableName()).I$();
+        }
+        final ExpiryValidationResult validationResult;
+        if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
+            validationResult = validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
+        } else {
+            validationResult = validateExpiryPredicate(executionContext, tableMetadata, clause.predicate, clause.predicatePos);
+            authorizeExpiryPredicateSelect(executionContext, tableToken, tableMetadata, validationResult);
+        }
+        warnIfExpiryKeepsDisk(validationResult, clause.predicate, tableToken.getTableName());
+        final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                clause.predicate,
+                clause.cleanupIntervalMicros
+        );
+        compiledQuery.ofAlter(setExpire.build());
+    }
+
+    /**
+     * Parses, binds, and classifies an EXPIRE ROWS predicate against existing table metadata. A successful
+     * bind returns the reusable determinism/clock/monotonicity result; any SQL/Cairo error surfaces as a clear
+     * SqlException positioned at the predicate.
+     */
+    private ExpiryValidationResult validateExpiryPredicate(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            String predicate,
+            int predicatePos
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return compiler.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, predicatePos);
+        }
+    }
+
+    /**
+     * Validates the EXPIRE ROWS predicate captured by a CREATE statement BEFORE the object is created,
+     * binding it against the columns the object will have. This is purely structural: it parses + binds
+     * the expression against {@code metadata} and checks the result is boolean. It touches no table, so
+     * it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #authorizeExpiryPredicateSelect})
+     * and, running before {@code createMatView}, cannot leave a half-created object behind on failure.
+     * Only a CREATE MATERIALIZED VIEW scalar WHEN policy reaches this (EXPIRE ROWS is rejected on plain
+     * CREATE TABLE / CTAS / LIKE at parse time), so {@code selectMetadata} is always the view's defining-
+     * SELECT output metadata.
+     */
+    private ExpiryValidationResult validateCreateExpiryPredicate(
+            SqlExecutionContext executionContext,
+            CreateTableOperation createTableOp,
+            RecordMetadata selectMetadata
+    ) throws SqlException {
+        final String predicate = createTableOp.getExpiryPredicate();
+        if (predicate == null) {
+            return ExpiryValidationResult.MONOTONIC;
+        }
+        // Only reachable for a CREATE MATERIALIZED VIEW scalar WHEN policy (EXPIRE ROWS is rejected on plain
+        // CREATE TABLE / CTAS / LIKE), so selectMetadata is always the view's defining-SELECT metadata.
+        // Borrow a separate compiler so we don't disturb this one's in-flight CREATE (lexer/parser state).
+        // The error caret points at the table name rather than the predicate: the predicate's source
+        // position is not threaded through CreateTableOperation, and the message already names the cause.
+        try (SqlCompiler validationCompiler = engine.getSqlCompiler()) {
+            return validationCompiler.validateExpiryPredicateOnMetadata(
+                    executionContext, selectMetadata, predicate, createTableOp.getTableNamePosition());
+        }
+    }
+
+    /**
+     * Validates a CREATE MATERIALIZED VIEW EXPIRE ROWS policy before the view exists. EXPIRE ROWS is allowed
+     * on an aggregating (non-passthrough) view too — advisory only, so it logs a warning rather than
+     * rejecting (a later refresh may regenerate reclaimed rows; reads stay correct via the authoritative
+     * read filter). The relative KEEP LATEST / window modes additionally require their key/value columns to
+     * resolve against the view's columns (with a designated timestamp present); a scalar WHEN predicate is
+     * then validated structurally. Only a plain CREATE TABLE / CTAS / LIKE EXPIRE ROWS is rejected outright.
+     */
+    private void validateCreateMatViewExpiryPolicy(
+            SqlExecutionContext executionContext,
+            CreateMatViewOperation createMatViewOp,
+            CreateTableOperation createTableOp,
+            RecordMetadata selectMetadata
+    ) throws SqlException {
+        final String predicate = createTableOp.getExpiryPredicate();
+        if (predicate == null) {
+            return;
+        }
+        final int pos = createTableOp.getTableNamePosition();
+        // EXPIRE ROWS on an AGGREGATING (non-passthrough) view is ALLOWED but advisory. The cleanup job
+        // physically reclaims rows; a passthrough view mirrors base rows 1:1 so reclamation is permanent, but
+        // an aggregating view's rows are DERIVED - a later incremental/full refresh can regenerate a reclaimed
+        // row from base rows that still exist. Reads stay correct (the read filter is authoritative); physical
+        // reclamation only "sticks" when base-table retention is aligned with the expiry horizon. Warn so the
+        // operator can tune retention rather than rejecting the policy outright.
+        if (!createMatViewOp.isPassthrough()) {
+            LOG.advisory().$("EXPIRE ROWS on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
+                    .$safe(createTableOp.getTableName()).I$();
+        }
+        final ExpiryValidationResult validationResult;
+        if (RowExpiryUtil.isStructuralPolicy(predicate)) {
+            // The view does not exist yet, so the probe reads its defining SELECT and selects every column.
+            validationResult = validateStructuralExpiryPolicy(
+                    executionContext,
+                    "(" + createTableOp.getSelectText() + ")",
+                    selectMetadata,
+                    predicate,
+                    false,
+                    pos
+            );
+        } else {
+            validationResult = validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
+        }
+        warnIfExpiryKeepsDisk(validationResult, predicate, createTableOp.getTableName());
+    }
+
+    /**
+     * Logs an advisory when the background cleanup job will not free disk space for this EXPIRE ROWS policy:
+     * a structural KEEP/window mode, or a non-monotonic scalar predicate. Such a policy is query-correct (the
+     * read filter is authoritative) but its expired rows keep occupying disk, because cleanup skips a policy
+     * whose rows a later read may have to show again ({@link RowExpiryUtil#isReclaimingPolicy}). The caller
+     * reuses the classification returned by validation, so this advisory does not compile the expression
+     * again. {@code materialized_views().expire_enforcement} reports the same verdict per view.
+     */
+    private void warnIfExpiryKeepsDisk(
+            ExpiryValidationResult validationResult,
+            CharSequence predicate,
+            CharSequence objectName
+    ) {
+        if (!RowExpiryUtil.isReclaimingPolicy(predicate, validationResult.isMonotonic())) {
+            LOG.advisory().$("EXPIRE ROWS policy hides rows without reclaiming disk; reads stay correct but physical cleanup is skipped [view=")
+                    .$safe(objectName).I$();
+        }
+    }
+
+    /**
+     * Validates the body of an ALTER ... SET EXPIRE ROWS relative/window policy (KEEP LATEST / KEEP
+     * HIGHEST|LOWEST / window WHEN): the target must be a materialized view (aggregating views are allowed
+     * with an advisory warning, emitted by the caller {@code alterTableSetExpire}), and the policy must
+     * resolve against its columns. (ALTER ... SET EXPIRE on a base table is rejected earlier in the grammar,
+     * so this only runs for materialized-view targets.)
+     */
+    private ExpiryValidationResult validateAlterRelativePolicy(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata,
+            String predicate,
+            int position
+    ) throws SqlException {
+        // The mat-view target check (and the aggregating-view advisory) is handled for ALL modes by the
+        // caller (alterTableSetExpire); this only resolves the relative policy against the view.
+        // The probe opens a reader on the view, so a schema change to the view that applies between the
+        // probe's code generation and its getCursor() (an index, SYMBOL CAPACITY, TTL, another SET EXPIRE)
+        // fails it with TableReferenceOutOfDateException. No such change alters the view's column names or
+        // types, so the probe runs again against the new metadata version. A view dropped and re-created
+        // under the same name has a new table id, and the WAL writer rejects the ALTER when it executes.
+        // The probe reads the view without its current policy, the way a read sees the view once the new
+        // policy replaces it, so it asks for SELECT on the new policy's columns and not on the columns of
+        // the policy it replaces. Every other table the probe reads keeps its own policy, as it does in that
+        // read.
+        final TableToken previousExpiryRawReadTable = executionContext.getExpiryRawReadTable();
+        executionContext.setExpiryRawReadTable(tableToken);
+        try {
+            for (int remainingRetries = maxRecompileAttempts; ; remainingRetries--) {
+                try {
+                    return validateStructuralExpiryPolicy(
+                            executionContext,
+                            RowExpiryUtil.quoteIdentifier(tableToken.getTableName()),
+                            tableMetadata,
+                            predicate,
+                            true,
+                            position
+                    );
+                } catch (TableReferenceOutOfDateException e) {
+                    if (remainingRetries == 0) {
+                        throw SqlException.$(position, "too many ").put(e.getFlyweightMessage());
+                    }
+                    LOG.info().$("retrying EXPIRE ROWS probe [view=").$safe(tableToken.getTableName())
+                            .$(", reason=").$(e.getFlyweightMessage()).I$();
+                }
+            }
+        } finally {
+            executionContext.setExpiryRawReadTable(previousExpiryRawReadTable);
+        }
+    }
+
+    /**
+     * Binds {@link RowExpiryUtil#buildStrictBindKeepFilter} and refuses the policy when that fails. The
+     * strict form's type rules refuse a cross-type equality such as {@code s = 12345} on a {@code STRING}
+     * column, which binds on its own but casts every value to {@code INT} once rows are evaluated: every
+     * read and every sweep of the view would fail on the first non-numeric value, with an error that names
+     * neither the view's policy nor EXPIRE ROWS. They also refuse cross-type equalities that only match
+     * nothing, such as {@code k = 12345} on a {@code SYMBOL} column, because telling the two apart would
+     * mean evaluating rows.
+     * <p>
+     * The sweep compiles {@link RowExpiryUtil#buildRowExpiryKeepFilter}, which binds whenever the strict
+     * form does, so every policy this method accepts also sweeps.
+     * <p>
+     * A predicate whose implicit cast only fails once a row is evaluated and that is not a bare
+     * {@code <column> = <constant>} - {@code v < 'abc'} on a {@code DOUBLE} column - still gets through,
+     * here and in the bare bind above. Catching it would mean evaluating a row at DDL time, which makes
+     * acceptance depend on whether the view happens to hold data. Such a predicate fails as a plain
+     * {@code WHERE} clause too, so it is wrong in a way the author sees immediately.
+     */
+    private void validateExpiryKeepFilterBinds(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException {
+        Function f = null;
+        try {
+            clear();
+            lexer.of(RowExpiryUtil.buildStrictBindKeepFilter(Chars.toString(predicate)));
+            f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            final String reason = reasonOf(e);
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
+        } finally {
+            Misc.free(f);
+        }
+    }
+
+    /**
+     * Rejects a policy whose threshold is a compile-time constant NULL, such as
+     * {@code ts < cast(null as timestamp)}, or an arithmetic expression that overflows onto the NULL
+     * sentinel, {@code ts < 4611686018427387904 * 2}. Such a policy expires nothing, which is always a
+     * mistake, and it is one the author cannot see: the source text reads as an ordinary timestamp.
+     * <p>
+     * The threshold comes from {@link #expiryOrderingThresholdNode}, which spans all four ordering
+     * operators with the timestamp on either side. That is what makes this check the whole answer for
+     * {@code SqlParser.isOperandProvablyNonNull}: the parser flips {@code NOT(ts <op> T)} to the bare
+     * comparison on the strength of DDL having evaluated {@code T}, and it flips every one of those
+     * orientations. A check that saw only {@code ts < T} would leave {@code ts > T} storing a NULL
+     * threshold that reads as an empty view while every row stays on disk.
+     * <p>
+     * Binding the threshold answers this with the engine's own arithmetic. QuestDB types integer literals
+     * and promotes products by rules that are not evident from the source text - {@code 86400*1000000}
+     * comes out LONG and correct, {@code 1073741824*2} comes out INT and NULL - so a check that folded the
+     * expression itself would have to reproduce those rules to stay in step with what reads compute.
+     * <p>
+     * Only {@link Function#isConstant()} counts. A runtime constant such as {@code now() - c} evaluates
+     * against whatever clock this DDL happens to see, so a non-NULL answer now says nothing about a read
+     * a month later; {@code SqlParser.isOperandProvablyNonNull} covers that case by refusing to flip it.
+     * <p>
+     * {@link #expiryTimestampThreshold} evaluates a threshold too but cannot stand in for this: it
+     * returns {@code LONG_NULL} for a dozen unrelated reasons - no designated timestamp, the opposite
+     * comparison direction, a non-timestamp threshold type - so it cannot tell a NULL threshold from a
+     * shape it simply does not handle.
+     * <p>
+     * It also rejects a CHAR threshold that does not convert to a number ({@link #isInconvertibleCharConstant}),
+     * such as {@code ts < 'a'}. The bind accepts it, but every read of the view fails on the first row.
+     */
+    private void rejectUnusableConstantExpiryThreshold(
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            CharSequence timestampColumn,
+            int position
+    ) throws SqlException {
+        final boolean isNullThreshold;
+        final boolean isInconvertibleCharThreshold;
+        Function t = null;
+        try {
+            clear();
+            lexer.of(predicate);
+            final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
+            final ExpressionNode thresholdNode = expiryOrderingThresholdNode(node, metadata, timestampColumn);
+            if (thresholdNode == null) {
+                return;
+            }
+            t = functionParser.parseFunction(thresholdNode, metadata, executionContext);
+            if (t == null || !t.isConstant()) {
+                return;
+            }
+            t.init(null, executionContext);
+            isNullThreshold = isNullConstant(t);
+            isInconvertibleCharThreshold = isInconvertibleCharConstant(t);
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            // The whole-predicate bind above already reported anything that matters; a failure here only
+            // means the threshold could not be evaluated, which is not itself a reason to reject.
+            return;
+        } finally {
+            Misc.free(t);
+        }
+        // The caret carries the caller's position, as every other error here does: this lexes the predicate
+        // on its own, so a node position from it would be an offset into the predicate text rather than into
+        // the statement the user wrote.
+        if (isNullThreshold) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: the threshold is NULL, so no row can ever expire");
+        }
+        if (isInconvertibleCharThreshold) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: a CHAR threshold must be a digit, or every read of the view fails");
+        }
+    }
+
+    /**
+     * The window/keep-by read filter projects a synthetic boolean column named {@link RowExpiryUtil#KEEP_COLUMN}.
+     * If the view already has a column with that name, {@code SELECT *, CASE ... <KEEP_COLUMN>} would be
+     * ambiguous and every read of the view would fail, so reject the policy at definition time instead.
+     */
+    private void rejectKeepColumnCollision(RecordMetadata metadata, int position) throws SqlException {
+        if (metadata.getColumnIndexQuiet(RowExpiryUtil.KEEP_COLUMN) >= 0) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP / window retention cannot be used on a view with a column named '")
+                    .put(RowExpiryUtil.KEEP_COLUMN).put('\'');
+        }
+    }
+
+    /**
+     * Validates a structural EXPIRE ROWS policy - KEEP LATEST, KEEP [N] HIGHEST/LOWEST, or a window WHEN -
+     * against {@code metadata}, then compiles the query a read of the policied object runs.
+     * <p>
+     * Every mode ends at the same compile probe, which runs when the user submits the statement but not
+     * when WAL apply replays it. Resolving the policy's column names answers half the
+     * question: {@link SqlParser} splices the stored policy text into a generated query, and that query is
+     * stricter than name resolution. It refuses a KEEP LATEST key of a type LATEST ON has no support for, a
+     * key whose unquoted name is a SQL keyword, a keep column with no usable {@code max()}. A policy that
+     * passes DDL and then fails to compile leaves the view unreadable for every query, {@code count()}
+     * included, until {@code DROP EXPIRE}, and reports an error naming a clause its author never wrote.
+     *
+     * @param source             what the probe selects from: the view's defining SELECT, parenthesised, at
+     *                           CREATE (the view does not exist yet); the quoted view name at ALTER
+     * @param isNarrowProjection true when the probe selects only the policy's own output instead of every
+     *                           column, which ALTER needs; see {@link #probeExpiryPolicyRead}
+     */
+    private ExpiryValidationResult validateStructuralExpiryPolicy(
+            SqlExecutionContext executionContext,
+            String source,
+            RecordMetadata metadata,
+            String predicate,
+            boolean isNarrowProjection,
+            int position
+    ) throws SqlException {
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            validateKeepLatestColumns(metadata, predicate, position);
+        } else {
+            rejectKeepColumnCollision(metadata, position);
+            if (RowExpiryUtil.isKeepBy(predicate)) {
+                validateKeepByColumn(metadata, predicate, position);
+            }
+        }
+        // The probe runs when the user submits the statement, and not when WAL apply replays the stored
+        // SET EXPIRE. By then the probe has already accepted the policy for this view, and a view's column
+        // names and types cannot change in between, so running it again checks nothing new. A second run
+        // can fail only for reasons unrelated to the policy: the probe borrows a compiler and a view reader
+        // and opens the view's files, and any of these can fail when the server is under load.
+        if (!executionContext.isWalApplication()) {
+            probeExpiryPolicyRead(executionContext, source, tsName(metadata), predicate, isNarrowProjection, position);
+        }
+        return RowExpiryUtil.isWindow(predicate)
+                ? ExpiryValidationResult.NON_MONOTONIC
+                : ExpiryValidationResult.MONOTONIC;
+    }
+
+    /**
+     * Compiles (and opens) the query a read of a policied object runs for a structural policy, spelled the
+     * way {@link SqlParser} rewrites a reference to the view: a {@code LATEST ON} sub-query for KEEP LATEST,
+     * a projection-CASE keep query for KEEP HIGHEST/LOWEST and window WHEN. Any compile or bind error - an
+     * unknown column, a key type or spelling the rewrite cannot use, window syntax - surfaces as a clear
+     * "invalid EXPIRE ROWS policy".
+     * <p>
+     * The probe compiles and opens, and stops there. {@code LIMIT 0} bounds it, but the bound alone does not
+     * make it free: {@code LimitRecordCursor.toTop()} passes the zero row count down as
+     * {@code skipRows(0, 0)}, and the latest-by cursors that back a multi-key or non-SYMBOL
+     * {@code KEEP LATEST} build their whole result there rather than treating a zero count as nothing to do.
+     * A DDL statement therefore reads no rows only while nothing advances the cursor.
+     * <p>
+     * No row is evaluated, so a per-row implicit cast cannot surface here - the keep column's type is
+     * checked up front instead, by {@link #validateKeepByColumn}.
+     * <p>
+     * The probe compiles under the caller's context, so it also asks for the caller's SELECT on every column
+     * it uses: {@code SqlOptimiser.authorizeColumnAccess} runs after the optimiser drops the columns a query
+     * does not use. A narrow projection selects only the policy's own output - the PARTITION BY keys for
+     * KEEP LATEST, the keep column for the other modes - so the optimiser keeps only the columns the policy
+     * reads, and the probe asks for SELECT on exactly those. A read through the policy asks for the same
+     * columns, so a caller who can read the view through a policy can also set it. At ALTER the probe reads
+     * the view without its current policy (see {@link #validateAlterRelativePolicy}), so replacing a policy
+     * asks for SELECT on the new policy's columns and not on the replaced policy's. ALTER needs the narrow
+     * projection, because it probes the existing view under the caller's column grants. CREATE selects every
+     * column: it probes the view's defining SELECT, whose columns CREATE requires anyway, and a narrow
+     * projection would let the optimiser drop columns inside that query too.
+     * <p>
+     * A narrow probe does not carry the view's other columns through {@code LATEST ON} or the keep
+     * projection. {@code RowExpiryPolicyAcceptanceTest} covers that: it sets each policy of its matrix
+     * through ALTER on a view with a column of each type, and reads the view back with {@code SELECT *}.
+     */
+    private void probeExpiryPolicyRead(
+            SqlExecutionContext executionContext,
+            String source,
+            CharSequence designatedTs,
+            String predicate,
+            boolean isNarrowProjection,
+            int position
+    ) throws SqlException {
+        final String sql;
+        if (RowExpiryUtil.isKeepLatest(predicate)) {
+            final CharSequence keys = RowExpiryUtil.keepLatestKeys(predicate);
+            sql = "SELECT " + (isNarrowProjection ? keys : "*") + " FROM (SELECT * FROM " + source + " LATEST ON "
+                    + RowExpiryUtil.quoteIdentifier(designatedTs) + " PARTITION BY " + keys + ") LIMIT 0";
+        } else {
+            final String windowPred = RowExpiryUtil.windowPredicate(predicate, designatedTs);
+            sql = "SELECT " + (isNarrowProjection ? RowExpiryUtil.KEEP_COLUMN : "*") + " FROM (SELECT *, CASE WHEN ("
+                    + windowPred + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM " + source
+                    + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
+        }
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
+                // Opening the cursor resolves column references and types that compilation leaves until a
+                // reader is held. Nothing advances it: a latest-by cursor computes its result in the first
+                // hasNext(), and asking for one row of a policy probe is a full backward scan of the view.
+                //noinspection EmptyTryBlock
+                try (RecordCursor ignored = factory.getCursor(executionContext)) {
+                    // empty
+                }
+            }
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            // A missing SELECT on a column the probe reads keeps its identity, so the caller reports it as
+            // forbidden, the same way the scalar policy's authorizeExpiryPredicateSelect does.
+            if (e instanceof CairoException ce && ce.isAuthorizationError()) {
+                throw ce;
+            }
+            // ImplicitCastException extends RuntimeException, not CairoException: a raw WHEN window
+            // predicate can still cast per row, and it must read as an invalid policy, not as an ICE.
+            final String reason = reasonOf(e);
+            throw SqlException.$(position, "invalid EXPIRE ROWS policy: ").put(reason);
+        }
+    }
+
+    private static CharSequence tsName(RecordMetadata metadata) {
+        final int i = metadata.getTimestampIndex();
+        return i >= 0 ? metadata.getColumnName(i) : null;
+    }
+
+    /**
+     * Validates a KEEP [N] HIGHEST/LOWEST policy against {@code metadata}. The keep column must resolve, and
+     * its type must support the comparison the policy desugars to. The bare form takes the group extreme
+     * ({@code <col> < max(<col>) OVER (...)}), which only the types of {@link RowExpiryUtil#isKeepExtremeType}
+     * support; the top-N form orders by the column instead, so it accepts any comparable type. Checking the
+     * type here is what keeps a text-ish keep column from defining a view whose every read throws an implicit
+     * cast error - the {@code LIMIT 0} probe in {@link #probeExpiryPolicyRead} evaluates no row and so cannot
+     * see it. It also catches LONG256, which the probe accepts because its cast to LONG succeeds, silently
+     * ranking rows by the low 64 bits. Every PARTITION BY key must resolve too: the parser captures that list
+     * as raw text and {@link RowExpiryUtil#buildKeepByPredicate} drops it into {@code OVER (PARTITION BY ...)}
+     * verbatim, so anything the key check lets through becomes part of the predicate. The optional list is
+     * what separates this from {@link #validateKeepLatestColumns}, which requires one. {@code stored} is the
+     * encoded policy.
+     */
+    private void validateKeepByColumn(RecordMetadata metadata, CharSequence stored, int position) throws SqlException {
+        final RowExpiryUtil.KeepBy keepBy = new RowExpiryUtil.KeepBy(stored);
+        final CharSequence col = keepBy.col;
+        final int index = metadata.getColumnIndexQuiet(col);
+        if (index < 0) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS KEEP column: ").put(col);
+        }
+        final String mode = keepBy.isHighest ? "KEEP HIGHEST" : "KEEP LOWEST";
+        validateKeepPartitionByColumns(metadata, keepBy.keys, mode, position);
+        final int type = metadata.getColumnType(index);
+        if (keepBy.n > 0) {
+            if (!ColumnType.isComparable(type)) {
+                throw SqlException.$(position, "EXPIRE ROWS KEEP <N> HIGHEST/LOWEST requires an orderable column, but '")
+                        .put(col).put("' is ").put(ColumnType.nameOf(type));
+            }
+            return;
+        }
+        if (!RowExpiryUtil.isKeepExtremeType(type)) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP HIGHEST/LOWEST requires a BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP or DECIMAL column, but '")
+                    .put(col).put("' is ").put(ColumnType.nameOf(type))
+                    .put("; use KEEP <N> HIGHEST/LOWEST ON <column> to rank an orderable column of any type");
+        }
+    }
+
+    /**
+     * Resolves every column of a KEEP policy's PARTITION BY list against {@code metadata}. {@code keysCsv} is
+     * the raw list text the parser captured, so this is where a name that is not a column - a window frame
+     * clause, an injected {@code ) AND (1=0} that closes the generated {@code OVER (} early - is caught. A
+     * comma always separates two keys, since {@link TableUtils#isValidColumnName} rejects one inside a name.
+     * {@code mode} names the policy in the error message ("KEEP LATEST", "KEEP HIGHEST", "KEEP LOWEST").
+     *
+     * @return true when the list held at least one column; the caller decides whether an empty list is legal
+     */
+    private boolean validateKeepPartitionByColumns(
+            RecordMetadata metadata,
+            CharSequence keysCsv,
+            String mode,
+            int position
+    ) throws SqlException {
+        final int n = keysCsv.length();
+        if (n == 0) {
+            return false;
+        }
+        int start = 0;
+        for (int i = 0; i <= n; i++) {
+            if (i == n || keysCsv.charAt(i) == ',') {
+                final CharSequence key = unquoteTrim(keysCsv, start, i);
+                if (key.length() == 0) {
+                    throw SqlException.$(position, "EXPIRE ROWS ").put(mode).put(" has an empty PARTITION BY column");
+                }
+                if (metadata.getColumnIndexQuiet(key) < 0) {
+                    throw SqlException.$(position, "invalid EXPIRE ROWS ").put(mode).put(" PARTITION BY column: ").put(key);
+                }
+                start = i + 1;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Validates a KEEP LATEST policy against {@code metadata}: a designated timestamp must exist (LATEST ON
+     * requires it); an explicit {@code ON <ts>} must name exactly that designated timestamp; and every
+     * PARTITION BY key column must resolve. {@code stored} is the encoded policy.
+     */
+    private void validateKeepLatestColumns(RecordMetadata metadata, CharSequence stored, int position) throws SqlException {
+        final int tsIndex = metadata.getTimestampIndex();
+        if (tsIndex < 0) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST requires a designated timestamp");
+        }
+        final CharSequence onTs = RowExpiryUtil.keepLatestTs(stored);
+        if (onTs.length() > 0 && !Chars.equalsIgnoreCase(onTs, metadata.getColumnName(tsIndex))) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST ON must name the designated timestamp '")
+                    .put(metadata.getColumnName(tsIndex)).put("', not '").put(onTs).put('\'');
+        }
+        if (!validateKeepPartitionByColumns(metadata, RowExpiryUtil.keepLatestKeys(stored), "KEEP LATEST", position)) {
+            throw SqlException.$(position, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
+        }
+    }
+
+    /**
+     * Trims surrounding whitespace and one optional layer of double quotes from {@code s[lo, hi)}.
+     */
+    private static CharSequence unquoteTrim(CharSequence s, int lo, int hi) {
+        while (lo < hi && s.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (hi > lo && s.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        if (hi - lo >= 2 && s.charAt(lo) == '"' && s.charAt(hi - 1) == '"') {
+            lo++;
+            hi--;
+        }
+        return s.subSequence(lo, hi);
+    }
+
+    private static void collectExpiryReferencedColumns(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            IntList referencedColumnIndexes
+    ) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            final int columnIndex = resolvePredicateColumnIndex(metadata, node.token);
+            if (columnIndex >= 0 && referencedColumnIndexes.indexOf(columnIndex, 0, referencedColumnIndexes.size()) < 0) {
+                referencedColumnIndexes.add(columnIndex);
+            }
+        }
+        collectExpiryReferencedColumns(node.lhs, metadata, referencedColumnIndexes);
+        collectExpiryReferencedColumns(node.rhs, metadata, referencedColumnIndexes);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            collectExpiryReferencedColumns(node.args.getQuick(i), metadata, referencedColumnIndexes);
+        }
+    }
+
+    // True if the sub-tree contains a bind variable ($1 / :name). A stored predicate has no statement
+    // to supply bind values, so one would fail on every read.
+    private static boolean expiryExpressionHasBindVariable(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            return true;
+        }
+        if (expiryExpressionHasBindVariable(node.lhs) || expiryExpressionHasBindVariable(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasBindVariable(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean expiryExpressionHasClock(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isClockFunctionKeyword(node.token)) {
+            return true;
+        }
+        if (expiryExpressionHasClock(node.lhs) || expiryExpressionHasClock(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasClock(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True if a string constant in the sub-tree contains a date variable. The function that
+    // evaluates such a string reads the clock in init() but reports neither isNonDeterministic()
+    // nor isRuntimeConstant(), so only the AST shows the clock read.
+    private static boolean expiryExpressionHasDateVariable(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT && DateExpressionEvaluator.hasDateVariable(node.token)) {
+            return true;
+        }
+        if (expiryExpressionHasDateVariable(node.lhs) || expiryExpressionHasDateVariable(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasDateVariable(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True if the sub-tree contains a subquery (QUERY node). A subquery's result depends on another
+    // table's current contents, so a predicate containing one is not stable across evaluations.
+    private static boolean expiryExpressionHasQuery(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            return true;
+        }
+        if (expiryExpressionHasQuery(node.lhs) || expiryExpressionHasQuery(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasQuery(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True if the sub-tree references any column (LITERAL) or bind variable, i.e. it cannot be evaluated to
+    // a single constant threshold independent of the row.
+    private static boolean exprReferencesColumn(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            return true;
+        }
+        if (exprReferencesColumn(node.lhs) || exprReferencesColumn(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (exprReferencesColumn(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The threshold operand of a designated-timestamp ordering comparison, in either direction and with the
+     * timestamp on either side, or null when the predicate is not that shape or the other operand references
+     * a column.
+     * <p>
+     * {@link #expiryTimestampThresholdNode} recognises only the expire-old direction, because that is the one
+     * whose threshold drives the partition-bounds fast path. A NULL check has to span every shape
+     * {@code SqlParser.isNullSafeOrderingFlip} will flip, which is all four ordering operators with the
+     * timestamp on either side: a NULL threshold makes the comparison false for every row whichever way it
+     * points, and the flip then turns the keep-filter into a predicate that hides every row.
+     */
+    private static ExpressionNode expiryOrderingThresholdNode(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            CharSequence timestampColumn
+    ) {
+        if (node == null || timestampColumn == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
+                || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        if (!Chars.equals(node.token, "<") && !Chars.equals(node.token, "<=")
+                && !Chars.equals(node.token, ">") && !Chars.equals(node.token, ">=")) {
+            return null;
+        }
+        final int timestampIndex = metadata.getColumnIndexQuiet(timestampColumn);
+        if (node.lhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.lhs.token) == timestampIndex) {
+            return exprReferencesColumn(node.rhs) ? null : node.rhs;
+        }
+        if (node.rhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.rhs.token) == timestampIndex) {
+            return exprReferencesColumn(node.lhs) ? null : node.lhs;
+        }
+        return null;
+    }
+
+    private static ExpressionNode expiryTimestampThresholdNode(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            CharSequence timestampColumn
+    ) {
+        if (node == null || timestampColumn == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
+                || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        final int timestampIndex = metadata.getColumnIndexQuiet(timestampColumn);
+        final boolean isTimestampOnLeft = node.lhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.lhs.token) == timestampIndex;
+        final boolean isTimestampOnRight = node.rhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.rhs.token) == timestampIndex;
+        if (isTimestampOnLeft && (Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))) {
+            return exprReferencesColumn(node.rhs) ? null : node.rhs;
+        }
+        if (isTimestampOnRight && (Chars.equals(node.token, ">") || Chars.equals(node.token, ">="))) {
+            return exprReferencesColumn(node.lhs) ? null : node.lhs;
+        }
+        return null;
+    }
+
+    // True when the sub-tree proves that it gives each row the same value in every execution and session:
+    // every node is a column of the table, a constant, or an operator or function on the
+    // EXPIRY_ROW_ONLY_FUNCTIONS list. An unknown column name counts as not proven too, because the
+    // function parser could resolve it to something other than a column. Date variables inside string
+    // constants are the caller's separate check.
+    private static boolean isExpiryRowOnlyExpression(ExpressionNode node, RecordMetadata metadata) {
+        if (node == null) {
+            return true;
+        }
+        final boolean isNodeRowOnly = switch (node.type) {
+            case ExpressionNode.CONSTANT -> true;
+            case ExpressionNode.LITERAL -> resolvePredicateColumnIndex(metadata, node.token) >= 0;
+            case ExpressionNode.OPERATION, ExpressionNode.SET_OPERATION, ExpressionNode.FUNCTION ->
+                    EXPIRY_ROW_ONLY_FUNCTIONS.contains(node.token);
+            default -> false;
+        };
+        if (isNodeRowOnly
+                && (node.type == ExpressionNode.FUNCTION || node.type == ExpressionNode.SET_OPERATION)
+                && SqlKeywords.isInKeyword(node.token)) {
+            return isExpiryRowOnlyInExpression(node, metadata);
+        }
+        if (!isNodeRowOnly
+                || !isExpiryRowOnlyExpression(node.lhs, metadata)
+                || !isExpiryRowOnlyExpression(node.rhs, metadata)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isExpiryRowOnlyExpression(node.args.getQuick(i), metadata)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // An IN over the designated timestamp parses a string value as an interval at runtime, and that parse
+    // expands date variables such as $today. A date variable can reach it through concat() or from a column,
+    // where the scan of string constants does not see it, so an IN counts as proven only when each of its
+    // values is a constant. Its left operand follows the general rule.
+    private static boolean isExpiryRowOnlyInExpression(ExpressionNode node, RecordMetadata metadata) {
+        final ObjList<ExpressionNode> args = node.args;
+        final int argCount = args.size();
+        if (argCount == 0) {
+            return node.rhs != null
+                    && node.rhs.type == ExpressionNode.CONSTANT
+                    && isExpiryRowOnlyExpression(node.lhs, metadata);
+        }
+        // Function args are stored reversed: the left operand comes last.
+        for (int i = 0; i < argCount - 1; i++) {
+            if (args.getQuick(i).type != ExpressionNode.CONSTANT) {
+                return false;
+            }
+        }
+        return isExpiryRowOnlyExpression(args.getQuick(argCount - 1), metadata);
+    }
+
+    /**
+     * Whether this constant is a CHAR that a comparison with the timestamp cannot read as a number. The
+     * comparison reads a CHAR threshold with {@code getLong()} on every row, and that converts only the
+     * digits {@code '0'} to {@code '9'}; any other character throws
+     * <p>
+     * {@code inconvertible value: a [CHAR -> LONG]}
+     * <p>
+     * on the first row every read evaluates. Calling the same getter here gives the same answer without a
+     * row. A STRING threshold needs no such check: the bind converts it to a timestamp once, and reports a
+     * value that is not a date there.
+     */
+    private static boolean isInconvertibleCharConstant(Function t) {
+        if (ColumnType.tagOf(t.getType()) != ColumnType.CHAR) {
+            return false;
+        }
+        try {
+            t.getLong(null);
+            return false;
+        } catch (ImplicitCastException e) {
+            return true;
+        }
+    }
+
+    /**
+     * Whether this constant evaluates to NULL, across every type a {@code ts < T} threshold can bind to.
+     * The timestamp family, DATE, LONG and INT each carry an in-band sentinel; DOUBLE and FLOAT spell
+     * NULL as NaN (the way {@code 0.0/0.0} folds); a bare NULL literal binds to {@link ColumnType#NULL};
+     * a string threshold is NULL by reference.
+     * <p>
+     * NaN is the whole of the DOUBLE/FLOAT case. {@code TIMESTAMP < DOUBLE} resolves to the {@code <(DD)}
+     * overload, which widens the timestamp instead of casting the threshold, so a double outside long
+     * range compares as the extreme bound it is and never lands on the sentinel: {@code ts < -9.3e18} is
+     * an always-false bound in double space, the same kind of legal-but-inert policy as a threshold set
+     * before the epoch, not a NULL. A double literal that would need converting does not get this far -
+     * the constant fold reports "Invalid date" during the whole-predicate bind.
+     * <p>
+     * SHORT, BYTE, CHAR and BOOLEAN have no arm because none of them has a null sentinel to test:
+     * {@code cast(null as short)} is the value 0, which is an ordinary threshold.
+     */
+    private static boolean isNullConstant(Function t) {
+        final int type = t.getType();
+        if (ColumnType.isTimestamp(type)) {
+            return t.getTimestamp(null) == Numbers.LONG_NULL;
+        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.NULL -> true;
+            case ColumnType.DATE -> t.getDate(null) == Numbers.LONG_NULL;
+            case ColumnType.LONG -> t.getLong(null) == Numbers.LONG_NULL;
+            case ColumnType.INT -> t.getInt(null) == Numbers.INT_NULL;
+            case ColumnType.DOUBLE -> Numbers.isNull(t.getDouble(null));
+            case ColumnType.FLOAT -> Numbers.isNull(t.getFloat(null));
+            case ColumnType.STRING -> t.getStrA(null) == null;
+            case ColumnType.VARCHAR -> t.getVarcharA(null) == null;
+            default -> false;
+        };
+    }
+
+    // True for a bare zero-arg wall-time clock: now(), now_ns(), sysdate(), systimestamp(), systimestamp_ns().
+    private static boolean isBareClockFunction(ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && node.paramCount == 0
+                && SqlKeywords.isClockFunctionKeyword(node.token);
+    }
+
+    /**
+     * True when {@code node} is structurally proven to be a non-decreasing function of wall-clock
+     * time, so a {@code ts < node} threshold only ever moves forward and physical cleanup under it is
+     * safe. Three shapes carry a proof:
+     * <ul>
+     *     <li>a bare clock ({@code now()} / {@code now_ns()} / {@code sysdate()} / {@code systimestamp()} /
+     *         {@code systimestamp_ns()});</li>
+     *     <li>{@code <clock> - c} for a constant {@code c >= 0}: with {@code t >= 0} and
+     *         {@code c in [0, Long.MAX_VALUE]}, {@code t - c} can neither overflow nor underflow and
+     *         advances exactly as {@code t} does;</li>
+     *     <li>{@code dateadd('<fixed unit>', k, <clock>)} for a constant {@code k <= 0} and a
+     *         fixed-duration unit (n/u/T/s/m/h/d/w), which is {@code <clock> - c} with
+     *         {@code c = -k * unit}; the amount is bounded so the scaled offset cannot overflow even
+     *         on a nanosecond timeline.</li>
+     * </ul>
+     * Everything else stays a conservative false — calendar units (M/y) shift by a variable amount,
+     * a look-forward offset expires rows the passage of time un-expires, and arbitrary clock
+     * arithmetic (e.g. {@code now() - now()::long * 2}) can decrease. Skipping reclamation is safe;
+     * accepting one decreasing transform is not.
+     */
+    private static boolean isProvenAdvancingClockExpression(ExpressionNode node) {
+        if (isBareClockFunction(node)) {
+            return true;
+        }
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION
+                && node.paramCount == 2
+                && Chars.equals(node.token, "-")
+                && isBareClockFunction(node.lhs)) {
+            try {
+                return parseExpiryConstantLong(node.rhs) >= 0;
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        if (node.type == ExpressionNode.FUNCTION
+                && node.paramCount == 3
+                && SqlKeywords.isDateaddKeyword(node.token)) {
+            // function args are stored reversed: [timestamp, amount, unit]
+            final ExpressionNode clockArg = node.args.getQuick(0);
+            final ExpressionNode amountArg = node.args.getQuick(1);
+            final ExpressionNode unitArg = node.args.getQuick(2);
+            if (!isBareClockFunction(clockArg)) {
+                return false;
+            }
+            final long unitNanos = fixedDateaddUnitNanos(unitArg.token);
+            if (unitNanos <= 0) {
+                return false;
+            }
+            try {
+                final long amount = parseExpiryConstantLong(amountArg);
+                // look-back only, with the offset provably in range on a nanosecond timeline
+                return amount <= 0 && amount != Long.MIN_VALUE && -amount <= Long.MAX_VALUE / unitNanos;
+            } catch (NumericException e) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The duration of a {@code dateadd} unit in nanoseconds (the finest timestamp resolution, so the
+     * overflow bound derived from it holds for micro timelines too), or 0 for a calendar unit (M/y)
+     * or an unrecognized token. Accepts the quoted ({@code 'd'}) and bare ({@code d}) forms.
+     */
+    private static long fixedDateaddUnitNanos(CharSequence unitToken) {
+        if (unitToken == null) {
+            return 0;
+        }
+        final int len = unitToken.length();
+        final char unit;
+        if (len == 3 && unitToken.charAt(0) == '\'' && unitToken.charAt(2) == '\'') {
+            unit = unitToken.charAt(1);
+        } else if (len == 1) {
+            unit = unitToken.charAt(0);
+        } else {
+            return 0;
+        }
+        return switch (unit) {
+            case 'n' -> 1L;
+            case 'u' -> 1_000L;
+            case 'T' -> 1_000_000L;
+            case 's' -> 1_000_000_000L;
+            case 'm' -> 60_000_000_000L;
+            case 'h' -> 3_600_000_000_000L;
+            case 'd' -> 86_400_000_000_000L;
+            case 'w' -> 604_800_000_000_000L;
+            default -> 0;
+        };
+    }
+
+    // Long value of a constant expression node: a plain CONSTANT (with an optional L suffix) or a
+    // unary-minus over one. Throws NumericException for any other shape.
+    private static long parseExpiryConstantLong(ExpressionNode node) throws NumericException {
+        if (node == null) {
+            throw NumericException.INSTANCE;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            final CharSequence token = node.token;
+            final int len = token.length();
+            final int hi = len > 1 && (token.charAt(len - 1) == 'L' || token.charAt(len - 1) == 'l') ? len - 1 : len;
+            return Numbers.parseLong(token, 0, hi);
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
+            final long value = parseExpiryConstantLong(node.rhs);
+            if (value == Long.MIN_VALUE) {
+                throw NumericException.INSTANCE;
+            }
+            return -value;
+        }
+        throw NumericException.INSTANCE;
+    }
+
+    // Resolves a predicate LITERAL token to a column index in metadata. Handles a plain (possibly quoted)
+    // column name AND a table/alias-qualified reference such as t.v or "t"."v": EXPIRE predicates are
+    // single-table, so a qualifier is the table name — the column is the segment after the last unquoted
+    // dot. Returns -1 when the token names no column. Without the qualified-name handling a predicate like
+    // `t.v < 2` would be seen as referencing no column, and dropping v would silently brick every read.
+    private static int resolvePredicateColumnIndex(RecordMetadata metadata, CharSequence token) {
+        int idx = metadata.getColumnIndexQuiet(unquote(token));
+        if (idx >= 0) {
+            return idx;
+        }
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot >= 0 && dot + 1 < token.length()) {
+            return metadata.getColumnIndexQuiet(unquote(token.subSequence(dot + 1, token.length())));
+        }
+        return -1;
+    }
+
+    // Converts an expiry threshold from the unit of the expression that produced it into the unit of the
+    // designated timestamp column, so the caller can compare it against a partition floor. Rounds DOWN, so
+    // the result is never above the exact threshold. A smaller threshold can only make the set of fully
+    // expired partitions smaller, so the job never drops a partition that holds a live row. The remainder
+    // that the rounding discards is smaller than one unit of the column, so at most one partition takes the
+    // survivor scan, or waits for a later sweep. Math.multiplyExact throws on overflow, and the caller reads
+    // that as "no fast path".
+    private static long toTimestampUnit(long timestamp, int fromType, int toType) {
+        if (fromType == toType) {
+            return timestamp;
+        }
+        return ColumnType.isTimestampNano(toType)
+                ? Math.multiplyExact(timestamp, Micros.MICRO_NANOS)
+                : Math.floorDiv(timestamp, Micros.MICRO_NANOS);
+    }
+
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
@@ -5983,24 +8177,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
     }
 
-    protected void compileAlterMatViewExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
-        LOG.debug().$("'alter' or 'resume' or 'suspend' or 'set' expected [matViewToken=").$(matViewToken)
+    protected void compileAlterMatViewDropExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'expire' expected [matViewToken=").$(matViewToken)
                 .$(", matViewNamePosition=").$(matViewNamePosition)
                 .$(']').$();
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'alter' or 'resume' or 'suspend' or 'set' expected");
+            throw SqlException.$(lexer.getPosition(), "'expire' expected");
         }
-        throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' or 'set' expected");
+        throw SqlException.$(lexer.lastTokenPosition(), "'expire' expected");
+    }
+
+    protected void compileAlterMatViewExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected");
     }
 
     protected void compileAlterMatViewSetExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
-        LOG.debug().$("'ttl' or 'refresh' expected [matViewToken=").$(matViewToken)
+        LOG.debug().$("'ttl', 'expire' or 'refresh' expected [matViewToken=").$(matViewToken)
                 .$(", matViewNamePosition=").$(matViewNamePosition)
                 .$(']').$();
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'ttl' or 'refresh' expected");
+            throw SqlException.$(lexer.getPosition(), "'ttl', 'expire' or 'refresh' expected");
         }
-        throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
+        throw SqlException.$(lexer.lastTokenPosition(), "'ttl', 'expire' or 'refresh' expected");
     }
 
     protected void compileAlterTableDisableExt(SqlExecutionContext executionContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
@@ -6228,6 +8432,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         sqlControlSymbols.add("--");
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
+
+        // operators
+        addExpiryRowOnlyFunctions(
+                "=", "!=", "<>", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "&", "|", "^", "::",
+                "and", "or", "not", "in", "between", "like", "ilike", "~", "!~"
+        );
+        // functions
+        addExpiryRowOnlyFunctions(
+                "abs", "case", "cast", "ceil", "ceiling", "coalesce", "concat", "dateadd", "datediff", "day",
+                "day_of_week", "floor", "hour", "left", "length", "lower", "minute", "month", "right", "round",
+                "second", "starts_with", "substring", "timestamp_ceil", "timestamp_floor", "to_lowercase",
+                "to_uppercase", "trim", "upper", "year"
+        );
 
         short[] numericTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.DATE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL};
         addSupportedConversion(ColumnType.BYTE, numericTypes);

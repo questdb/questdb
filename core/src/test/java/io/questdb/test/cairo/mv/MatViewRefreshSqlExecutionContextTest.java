@@ -42,9 +42,38 @@ import org.junit.Test;
  * link to bind variables 1 (lo, inclusive) and 2 (hi, exclusive, stored as hi-1). The override
  * must adopt both endpoints into the interval model - which takes ownership and closes them -
  * forward the refresh range set by setRange(), and remain a strict no-op for any table other
- * than the base table.
+ * than the base table. Also covers which views' refresh reads a bare name as a call to a
+ * zero-argument function.
  */
 public class MatViewRefreshSqlExecutionContextTest extends AbstractCairoTest {
+
+    @Test
+    public void testBareNoArgFunctionCallsFollowPassthroughFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp) timestamp(ts) partition by day");
+            final MatViewRefreshSqlExecutionContext refreshCtx = new MatViewRefreshSqlExecutionContext(engine, 0);
+            try (TableReader baseReader = getReader("base")) {
+                refreshCtx.of(baseReader, baseReader.getTableToken(), true);
+                Assert.assertFalse(
+                        "a passthrough view's refresh reads a bare name as a column",
+                        refreshCtx.allowBareNoArgFunctionCalls()
+                );
+
+                refreshCtx.of(baseReader, baseReader.getTableToken(), false);
+                Assert.assertTrue(
+                        "an aggregating view's refresh reads a bare name that matches no column as a call",
+                        refreshCtx.allowBareNoArgFunctionCalls()
+                );
+
+                refreshCtx.of(baseReader, baseReader.getTableToken(), true);
+                refreshCtx.clearReader();
+                Assert.assertTrue(
+                        "clearReader() drops the passthrough flag of the previous view",
+                        refreshCtx.allowBareNoArgFunctionCalls()
+                );
+            }
+        });
+    }
 
     @Test
     public void testOverrideWhereIntrinsicsForwardsBetweenEndpoints() throws Exception {
