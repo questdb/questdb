@@ -65,6 +65,10 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Tune the workload via system properties:
  * <ul>
+ *   <li>{@code -Dhost=<host>} (default localhost)</li>
+ *   <li>{@code -DhttpPort=<port>} (default 9000)</li>
+ *   <li>{@code -Dparquet=true} to convert all partitions before measuring</li>
+ *   <li>{@code -DpgPort=<port>} (default 8812)</li>
  *   <li>{@code -DrowCount=<n>} (default 10_000_000)</li>
  *   <li>{@code -Dskip.populate=true} to re-use an existing table</li>
  * </ul>
@@ -72,15 +76,17 @@ import java.util.concurrent.TimeUnit;
 public class QwpEgressReadBenchmark {
 
     private static final long DEFAULT_ROW_COUNT = 10_000_000L;
-    private static final String HOST = "localhost";
-    private static final int HTTP_PORT = 9000;
-    private static final int PG_PORT = 8812;
+    private static final String HOST = System.getProperty("host", "localhost");
+    private static final int HTTP_PORT = Integer.getInteger("httpPort", 9000);
+    private static final boolean PARQUET;
+    private static final int PG_PORT = Integer.getInteger("pgPort", 8812);
     private static final long PROGRESS_INTERVAL = 1_000_000;
     private static final long ROW_COUNT;
     private static final boolean SKIP_POPULATE;
     private static final String TABLE_NAME = "egress_bench";
 
     static {
+        PARQUET = Boolean.parseBoolean(System.getProperty("parquet", "false"));
         ROW_COUNT = Long.getLong("rowCount", DEFAULT_ROW_COUNT);
         SKIP_POPULATE = Boolean.parseBoolean(System.getProperty("skip.populate", "false"));
     }
@@ -91,6 +97,9 @@ public class QwpEgressReadBenchmark {
             ingestRows();
         } else {
             System.out.println("skip.populate=true, re-using existing " + TABLE_NAME);
+        }
+        if (PARQUET) {
+            convertToParquet();
         }
 
         System.out.println();
@@ -136,6 +145,14 @@ public class QwpEgressReadBenchmark {
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
         return DriverManager.getConnection(
                 String.format("jdbc:postgresql://%s:%d/qdb", HOST, PG_PORT), p);
+    }
+
+    private static void convertToParquet() throws Exception {
+        System.out.println("Converting all partitions to parquet...");
+        try (Connection c = createPgConnection(); Statement st = c.createStatement()) {
+            st.execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+        }
+        System.out.println("  conversion complete");
     }
 
     private static void recreateTable() throws Exception {
