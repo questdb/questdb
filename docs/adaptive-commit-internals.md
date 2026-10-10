@@ -31,7 +31,7 @@ Adaptive covers WAL tables only. A non-WAL table has nothing to replay and behav
 | Frontier | Moves when | Read by |
 |---|---|---|
 | `localDurableSeqTxn` (the durable frontier) | a WAL flush that covers the transaction completes | the QWP `local` acknowledgement, the Enterprise uploader gate, `wal_tables()` |
-| `durableEpochSeqTxn` (the save point) | a save point is published | the WAL purge floor (with the older generation's header on disk), the close-time save point, `wal_tables()` |
+| `durableEpochSeqTxn` (the save point) | a save point is published | the WAL purge floor (with the older generation's header on disk), the close-time save point, the idle save point request, `wal_tables()` |
 
 Both live in the table's `SeqTxnTracker`. Readers see applied data as soon as it is applied, durable or not: the
 frontiers bound what a crash can take, not what a query sees.
@@ -178,8 +178,12 @@ overwrites it (section 9).
   of a parallel COPY into an existing table, a forced change outside the WAL, and `RESUME WAL`. Each is best effort: a failure logs a
   critical message and marks the save point owed, and the next apply pass, clean close or `RESUME WAL` takes it.
   `RESUME WAL` is the exception: if the owed save point fails there, the table stays suspended.
-- **At a clean close**, when the table has transactions after its save point (or one is owed) and
-  `cairo.adaptive.epoch.flush.on.close` is true. That is what makes a clean restart restore nothing.
+- **At a clean close** (`TableWriter.doClose`), when `cairo.adaptive.epoch.flush.on.close` is true and one is owed,
+  or, with an interval that is not negative, when the table has transactions after its save point or its txn moved
+  since the save point without a WAL transaction (`getTxn() != pinnedEpochTxn`: an Enterprise storage policy step
+  applied inline, a partition removed by the writer). That is what makes a clean restart restore nothing.
+- **When the table goes idle** (section 9): one more save point about one interval after the table's last one, so
+  that both generations stand on the current state.
 - **At enrolment** (section 7).
 
 The posting index reseal takes no save point of its own: the next periodic one covers the superseded files, which
@@ -193,7 +197,7 @@ the save point's partition pin keeps until then.
    when the durable frontier is fenced after a failed flush.
 2. Take the target generation: the one that is not current.
 3. Flush what the save point will name (`fsyncMaterializedState`): commit and sync every indexer; then
-   - Linux with `cairo.adaptive.epoch.column.sync.batched` (and no ext4 `fast_commit`): start the write-back of
+   - Linux with `cairo.adaptive.epoch.column.sync.batched`: start the write-back of
      every dirty column file, wait for it, then one `syncfs`, which also makes the sequencer log, the symbol maps
      and every directory entry durable;
    - Linux otherwise: a flush per column file and symbol map, then one `syncfs`;
@@ -233,7 +237,7 @@ and two `fsync` of the generation file (sections, then header).
   it enrols at the end of its constructor (`enrollTableInAdaptiveMode`), before it applies anything, so a table is
   never applied lazily without a save point behind it. A failed enrolment fails the writer open (`could not publish
   adaptive enrollment baseline [...]`). A writer on a private root (the COPY staging writers) or holding a non-WAL
-  token for a WAL table (COPY into a new table, until the next restart) does not enrol.
+  token for a WAL table (the import's writer of a WAL table COPY creates) does not enrol.
 - **The exit.** A start in `nosync`, `async` or `sync` mode, after recovery (`RecoveryCoordinator.recover`), makes
   every enrolled table durable and removes its save point: one flush (`syncfs` of the database root and of each
   volume on Linux, `fsyncTableFiles` per table elsewhere), then per table the two-step removal and the release of
@@ -313,15 +317,15 @@ non-WAL pending is left to the conversion (section 10).
 
 **The WAL floor.** `WalPurgeJob.getSafeToPurgeUpToTxn` keeps the WAL after the lowest of the applied seqTxn and the
 view consumers' floors. On an `adaptive` primary it also keeps the WAL after the save point
-(`SeqTxnTracker.getDurableEpochSeqTxn`) and after the lowest valid save point header on disk
-(`readAnchorFloorSeqTxn`, two small reads per table and purge run): recovery falls back to the older generation
-when the newer one is damaged, so the WAL kept reaches one save point interval further back than the newest save
-point (with a negative interval, possibly days). The floor is raised only after a new generation is durable and
-cleared only after a removal is durable, so it never passes a save point a crash could still bring back. A table
-whose tracker holds a save point pin keeps its floor in any mode, so a save point that outlives a start outside
-`adaptive` (a conversion to non-WAL that could not finish and could not remove it) keeps its WAL. On a replica of an
-`adaptive` instance, where the writer keeps no save points, the purge reads the lowest valid header seqTxn from the
-files. In `nosync`, `async` and `sync` a table without a save point has no extra floor: the purge
+(`SeqTxnTracker.getDurableEpochSeqTxn`) and after the lowest valid save point header on disk (`readAnchorFloorSeqTxn`,
+two small reads per table and purge run): recovery falls back to the older generation when the newer one is damaged,
+so the WAL kept reaches one save point interval further back than the newest save point (with a negative interval,
+possibly days; on a table that stops changing, until its idle save point). The floor is raised only after a new
+generation is durable and cleared only after a removal is durable, so it never passes a save point a crash could still
+bring back. A table whose tracker holds a save point pin keeps its floor in any mode, so a save point that outlives a
+start outside `adaptive` (a conversion to non-WAL that could not finish and could not remove it) keeps its WAL. On a
+replica of an `adaptive` instance, where the writer keeps no save points, the purge reads the lowest valid header
+seqTxn from the files. In `nosync`, `async` and `sync` a table without a save point has no extra floor: the purge
 behaves as before.
 
 **The partition pin.** The save point names partition versions that later out-of-order writes, conversions and
@@ -340,8 +344,35 @@ copy in each save point file with a valid header (`DurableEpochManifest.namesPar
 .imageListsPartition`) and keeps the version while either copy lists it. A read or checksum problem counts as
 listed. Nothing else queues a purge once a version is free, so a writer that leaves versions to the purge job
 records the txn (`partitionPurgeOwedTxn`), and after each save point it queues a partition purge until the older pin
-has reached that txn. A table that gets no further write takes no further save point, so its dropped partitions stay
-until its next write; `VACUUM TABLE` cannot remove them earlier.
+has reached that txn. On a table that gets no further write, the idle save point below moves the older pin; `VACUUM
+TABLE` cannot remove the versions earlier.
+
+**The idle save point.** On a table that stops changing, nothing else would replace the older save point, so its WAL,
+superseded and dropped partition versions, superseded column files and posting files would stay for ever. At the
+end of each table's sweep, `WalPurgeJob.requestIdleSavePoint` asks for one more save point at the current state, on
+an `adaptive` primary only (`LocalDurabilityPolicy.resolveCommitMode` is ADAPTIVE, so a replica never asks), with
+an interval that is not negative, outside plain views, suspended tables and a fenced durable frontier, when:
+
+- the two pins differ, or the newest save point's seqTxn is below the applied seqTxn, or the txn the writer last
+  committed is past the newest pin (`SeqTxnTracker.committedTxn`, which a database-root WAL table writer publishes
+  each time it is released, so a commit without a WAL transaction counts too; a COPY staging writer publishes
+  nothing). Equal pins mean equal save points, since every `_txn` write moves the txn, so the check reads no file;
+- and the table has taken no save point for one interval (`getLastEpochTs`), and the job has not asked for one in
+  the last interval (`getIdleEpochRequestTs`, so a request that cannot be taken is asked again one interval later).
+
+It then sets `SeqTxnTracker.requestIdleEpoch` and notifies the apply job, which consumes the request in a run that
+applies nothing and calls `maybeAdvanceDurableEpoch` with the usual gates (the writer is taken without waiting: a
+busy writer means the table is not idle). Such a run skips a suspended table (no retry of its failed transaction;
+`RESUME WAL` notifies it again) and does not log `unsolicited table lock` for a writer held under another reason.
+For a live view the job only sets the request, since the apply job drops a live view's notifications:
+`LiveViewRefreshJob.scanForLaggingViews` takes the save point under the view's refresh latch, and the job asks only
+when the view's refresh worker can take it (`isLiveViewRefreshable`: refresh workers on, a real, live, valid view).
+A pass asks at most `WalPurgeJob.IDLE_SAVE_POINT_REQUESTS_PER_PASS` (16) tables; a pass that reaches the cap makes
+the next one start after the last table it asked, so every eligible table is asked within about two rounds of
+tables / 16 passes. Both generations then stand on the current state, the WAL floor rises to it, and the purge
+queued after the save point (`partitionPurgeOwedTxn`) frees the versions; the column purge and the posting purge
+retry until the pins move. The writer's close (section 5) covers only what changed since the newest save point,
+which leaves the two generations apart; the idle save point is the purge job's, not the writer pool's.
 
 **The partition purge after a restart.** After a failed flush and a restart, the page cache can hold a `_txn` (in
 `sync`) or a save point header (in `adaptive`) that the device never got, and a purge that trusts it can remove the
@@ -362,8 +393,9 @@ message=...]`, fences writers, acknowledgements and the WAL purge, and `ServerMa
 stop the engine include the WAL commit barriers and the batched flush, the save point, the schema-file swap, ADD
 COLUMN, ATTACH of a Parquet partition, ALTER COLUMN TYPE (also when a conversion task on a worker thread fails its
 flush), CONVERT PARTITION TO PARQUET and TO NATIVE (and the squash that runs before TO PARQUET), the native-to-
-Parquet partition switch, the recovery header flush (section 8), the flush at the end of a parallel COPY into a
-new table (after the import's clean-up has dropped the table), and the Enterprise uploader's start flush. `nosync`
+Parquet partition switch, the recovery header flush (section 8), a parallel COPY's two flushes and a failed `_txn`
+flush in its attach (after the import's clean-up has dropped a table it created or truncated an existing one;
+section 10), and the Enterprise uploader's start flush. `nosync`
 and `async` keep their previous behaviour on these paths. The flush after the WAL replay before a conversion to
 non-WAL runs in every mode, and so does its stop.
 
@@ -403,13 +435,16 @@ write nothing, and the purge could remove the version the `_txn` on the device s
 - **Checkpoint restore** (`TableSnapshotRestore`). The table's save point is removed before the checkpoint's `_txn`,
   `_cv` and `_meta` are copied in. The restored table is then not enrolled, and its first `adaptive` writer enrols
   it.
-- **REBASE WAL.** The staging clone excludes the source's save point files and takes its own first save point,
-  pinned where it is published, before the rename that publishes it. That save point comes before REBASE's two empty seed
-  transactions (`WalWriter.commitRebaseSeed`). A kill or power loss before the table's next
-  save point makes recovery restore it, and the replay applies the seeds in one block with the first insert, which
-  sets the table's minimum timestamp to 1970 ([questdb#7842](https://github.com/questdb/questdb/issues/7842); with
-  assertions on, as in the tests, the apply fails and suspends the table instead). Base can reach the same block by
-  timing; this sequence makes it certain. No row is lost.
+- **REBASE WAL.** The staging clone excludes the source's save point files and takes its own first save point, pinned
+  where it is published, before the rename that publishes it. That save point comes before REBASE's two empty seed
+  transactions (`WalWriter.commitRebaseSeed`, whose `_event` records carry min and max timestamp 0, as before). A kill
+  or power loss before the table's next save point makes recovery restore it, and the replay applies the seeds in one
+  block with the first insert after them; base reaches the same block when the apply job loses a race. Such a block
+  used to set the table's minimum timestamp to 1970 ([questdb#7842](https://github.com/questdb/questdb/issues/7842)).
+  Now, in every mode, `WalTxnDetails.prepareCopySegments` lets a transaction with no rows add nothing to an apply
+  block's min, max or in-order flag, and `WalTxnRangeLoader` keeps the seeds (zero-row data transactions that are not
+  a replace-range commit) out of a materialized view's refresh intervals. A table that already reads 1970 is not
+  repaired.
 - **ATTACH PARTITION** on an enrolled table of a primary. The partition is attached by hard link, not by rename
   (`TableWriter.linkAttachable`): the files of `.attachable` are linked into the new partition directory (copied
   when a link is not possible, for example across devices; a soft-linked `.attachable` gets a second soft link to
@@ -439,14 +474,22 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   and a replayed or repeated DETACH would be refused.
 - **Parallel COPY.** Into an existing enrolled table, the attach phase that moves the imported partitions into place
   takes one save point for all of them (`ParallelCsvFileImporter.attachPartitions`). COPY into a new table holds a
-  non-WAL token for it until the next restart, so its writer does not enrol and takes no save point. On an
-  `adaptive` instance the importer flushes such a table once, after the last partition is attached and before COPY
-  reports it finished (`ParallelCsvFileImporter.flushCreatedTable`): one `syncRestoredState` of the database root
-  where `syncfs` is filesystem-wide (the importer never places a table in a volume), `fsyncTableFiles` elsewhere. A
-  failed flush fails the import; its clean-up drops the table, and a data-sync failure then stops the engine. If
-  the drop itself fails, its error propagates and the engine is not stopped (a double failure, one line). The
-  table's first writer after a restart enrols it with a whole-table flush. In `sync` the importer flushes nothing
-  of its own (guide section 7.6).
+  non-WAL token for it, so its writer does not enrol and takes no save point. The import writes its partitions and
+  merged symbol files outside a commit, so in `sync` (any target) and in `adaptive` for a WAL table the import
+  created (`isImportFlushed`), the importer flushes twice. Before the first attach, `flushPartitionsToAttach`
+  flushes the moved `<partition>.attachable` directories and the table root (the symbol files), because each attach
+  names its partition in `_txn`, which in `sync` the writer flushes at once. After the last attach,
+  `flushImportedTable` flushes `_txn` and the renames, before COPY reports the import finished. Where `syncfs` is
+  filesystem-wide each is one `syncRestoredState` of the table's directory (a created table is never in a volume,
+  so the same sync covers its entry in the database root); elsewhere the first walks the `.attachable` directories
+  (`DurableEpochManifest.fsyncDirectoryFiles`, since `_txn` does not name them yet) and the table root
+  (`fsyncTableRoot`), and the second is `fsyncTableFiles`. A data sync failure anywhere in the import, a failed
+  `_txn` flush in the writer's attach included, reaches the import's catch unwrapped in `sync` and `adaptive`: the
+  clean-up drops a created table or truncates an existing one (best effort), then the engine stops. In `nosync`,
+  `async` and for a non-WAL table in `adaptive` nothing is flushed. What a power loss can still leave (an attach
+  whose rename did not reach the disk, partitions attached before it) and the manual steps are in guide section
+  11.6. A WAL table COPY creates gets no sequencer, in every mode, a base issue (guide section 7.6), so after a
+  restart it cannot be written, altered or dropped.
 - **`RESUME WAL`** takes the save point the table owes before the table resumes.
 - **The old UDP receiver** writes outside the WAL. In `adaptive` mode it refuses WAL tables
   (`LineUdpParserImpl.refuseWalTable`), because recovery would roll its rows back.
@@ -476,7 +519,8 @@ bytes.
 
 - **Replicas keep no save points.** A replica installs `LocalDurabilityPolicy.REPLICA_SKIP`: its writers take no
   save points and its truth is the object store. Its WAL floor comes from any save point files still on disk. It
-  never rewinds, so ATTACH and DETACH PARTITION finish at once there (section 10).
+  never rewinds, so ATTACH and DETACH PARTITION finish at once there (section 10), and it never asks for an idle save
+  point (section 9).
 - **Demote** (`ReplicaRoleState.clearAdaptiveEpochArtifacts`). For each WAL table with a save point file, the role
   switch takes the table's writer without waiting (`getWriterUnsafe`). If it gets it, the writer's reconcile makes
   the table durable and removes the save point in two steps (section 7), and outside `adaptive` a leftover save
@@ -503,19 +547,25 @@ bytes.
   record only once the local durable frontier covers it, for V1 and V2 logs alike, so a power loss can never make
   the primary reuse a transaction number the object store already holds. While it waits it logs `holding uploads
   past the local durable frontier [...]` once.
-- **The uploader start flush.** At boot and at promotion, in `adaptive` and `sync` mode, the uploader makes every
-  table's sequencer log durable before its first upload: one `syncfs` of the database root and of each linked volume
-  on Linux, an `fdatasync` per table elsewhere. A failure stops the engine.
+- **The uploader start flush** (`WalUploader.coverEarlierRecords`). At boot and at promotion, in `adaptive` and
+  `sync` mode, the uploader makes every table's sequencer log durable before its first upload, then moves each
+  table's durable frontier over the records the flush covered: one `syncfs` of the database root and of each linked
+  volume on Linux, which reaches every part file; elsewhere each table's own flush,
+  `TableSequencerAPI.fdatasyncTxnLog(token, 0)`, which in a V2 log first flushes every part file it still keeps
+  (walking down from the part below the open one and stopping at the first part that is gone), then the open part
+  and the header. A commit before this step moves the frontier after flushing only the open part, so the walk starts
+  at part 0. The step runs in `PrimaryRoleState.openLoops` before the uploader is installed as the WAL listener: a
+  commit notified during the flush could ship the older records of a table the flush has not reached; a commit made
+  meanwhile is shipped by the startup scan (`triggerUploadMissed`) right after the install. A dropped table's log is
+  flushed the same way, from part 0 where `syncfs` is not filesystem-wide. A data sync failure stops the engine.
 - **The V1 log on a replica.** The downloader is the only writer of a replica's V1 sequencer log. A Java open leaves
   records past the published tail alone (the downloader wrote them and has not published them yet); a torn tail is
   still cut.
 - **Backup restore** (`BackupRestoreAgent`). The restored table's save point is removed before its files are written,
-  and the first `adaptive` writer enrols it. In every mode, each restored table is flushed before its
-  commit marker
+  and the first `adaptive` writer enrols it. In every mode, each restored table is flushed before its commit marker
   (one `syncfs` on Linux; every file and directory of the table elsewhere, files only on Windows), because a resumed
   restore skips a table whose marker matches and nothing else flushes a table without a save point; the root is
-  synced once more before the trigger file goes. A backup skips a `_chk` file (a partition checksum file of
-  development builds) instead of stopping on it.
+  synced once more before the trigger file goes.
 - **Default mode.** Without an explicit `cairo.commit.mode`, Enterprise runs `nosync` when replication is configured.
 - **Durable acknowledgements.** The `local` tier is served only on an `adaptive` primary; the `replicated` tier
   follows the upload frontier.
@@ -583,8 +633,7 @@ field and body checksum. The save point removal deletes the first four when it f
 
 1. The mode is fixed for the life of the process; there is no per-table mode.
 2. `syncfs` flushes the whole file system, so a save point's cost depends on unrelated dirty data on the same file
-   system. On ext4 with `fast_commit` the batched column flush is turned off, because the per-inode journal does
-   not journal the columns' within-page writes when `_cv` is synced.
+   system.
 3. On macOS and Windows a save point flushes every file written since the last one, then the table directory, then
    the device: slower than `syncfs`, and the enrolment flushes every partition.
 4. A renamed directory is durable only once its parent is synced. REBASE WAL syncs the database root between the

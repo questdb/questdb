@@ -37,7 +37,7 @@ Adaptive makes the WAL durable and leaves the table files lazy:
 - **A save point bounds the rebuild.** Once a minute, or after 5 million applied rows, whichever comes first, each
   table takes a save point: it flushes the table data it names, then writes a durable copy of `_txn`, `_cv` and
   `_meta` into one of two save point files, `_epoch.manifest.0` or `_epoch.manifest.1`. A clean shutdown takes a
-  last one.
+  last one, and a table that stops changing takes one more about one interval after its last change (section 9).
 - **Start-up recovery puts the table back at its save point.** After a crash, the start writes the save point's
   copy back over the live `_txn`, `_cv` and `_meta`, and the ordinary WAL apply replays every transaction after
   it. The table keeps its last two save points, so a start can fall back to the older one if the newer one is
@@ -72,11 +72,6 @@ Existing tables need no migration. After the restart, each WAL table enrols when
 its first save point, which flushes every partition of the table once (one `syncfs` on Linux, a flush per file
 elsewhere). The writer takes it before it applies anything, so no table is ever applied lazily without a save point
 behind it.
-
-At start, QuestDB warns when the storage under the database root cannot keep the promise of `sync` or `adaptive`:
-a file system mounted without write barriers, ext4 with `fast_commit` (which changes how the save point flushes),
-and some virtual machine and macOS set-ups where a flush does not reach stable storage. Section 11 lists the
-messages.
 
 ## 4. The group-commit window
 
@@ -204,8 +199,7 @@ one case and removes an endless apply loop and stray rows in another, but it doe
 
 - **Storage that ignores flushes.** The promises need `fsync` and `fdatasync` to reach stable storage. A file
   system mounted without write barriers, a network file system, a virtual disk set to write-through on the guest, or
-  a Linux guest on a macOS host can break them. QuestDB warns at start where it can tell (section 11); no warning is
-  not proof.
+  a Linux guest on a macOS host can break them. QuestDB does not check the storage: make sure it honours flushes.
 - **The last window.** With a window above 0, commits acknowledged in the last window before a power loss can be
   lost (section 4). Use a window of 0, or the QWP durable acknowledgement, where that matters.
 - **Enterprise replicas.** A replica keeps no save points; its source of truth is the object store. A power loss on
@@ -221,11 +215,13 @@ one case and removes an endless apply loop and stray rows in another, but it doe
   an apply batch that began on the replica is still running, and that batch then fails, the rows it applied after
   the promotion are neither flushed nor covered by a save point until the table is resumed or the server restarts.
   A power loss in that window can lose them. It needs a promotion, a failing batch and a power loss together.
-- **A crash right after `REBASE WAL`.** A kill or a power loss after `ALTER TABLE ... REBASE WAL`, before the table's
-  next save point, makes the restart apply REBASE's two empty seed transactions in one block with the first insert
-  after them. The table's minimum timestamp then reads 1970, the base issue
-  [#7842](https://github.com/questdb/questdb/issues/7842), which this sequence makes certain where it is otherwise a
-  matter of timing. No row is lost.
+- **A crash soon after a storage policy step** (QuestDB Enterprise). The storage policy job applies some steps to a
+  table directly, without a WAL transaction: a local drop of an uploaded partition, a Parquet commit, rewrite or
+  squash, and its bookkeeping steps. A crash within one save point interval of such a step puts the table back at
+  the save point before it. The files the step replaced are still there (the save point keeps them), and the policy
+  job does the step again at its next pass. No row is lost. A clean shutdown keeps the step.
+- **A power loss during a parallel COPY** that has not reported it finished can leave the table in a state that
+  needs a manual step (section 11.6). Nothing COPY reported done is lost.
 
 ### 7.6 Known issues in the other modes, outside this change
 
@@ -240,19 +236,16 @@ Found while this mode was built, reproduced on the current release line, and fil
   ([#7840](https://github.com/questdb/questdb/issues/7840)).
 - POSTING index files left behind by a process killed in the middle of out-of-order apply
   ([#7841](https://github.com/questdb/questdb/issues/7841)); in `adaptive` mode the start-up recovery cleans them.
-- REBASE WAL's seed transactions can set a wrong minimum timestamp
-  ([#7842](https://github.com/questdb/questdb/issues/7842)); in `adaptive` a crash right after REBASE makes it
-  certain (section 7.5).
 - The old UDP receiver: a commit list that loses rows ([#7847](https://github.com/questdb/questdb/issues/7847)), a
   column added to a WAL table ([#7848](https://github.com/questdb/questdb/issues/7848)), and a writer cache that
   sends rows to the wrong table ([#5151](https://github.com/questdb/questdb/issues/5151)).
 
-Found while this mode was built, not yet checked on the release line or filed:
+Found while this mode was built, not yet filed:
 
-- A parallel COPY in `sync` mode is not flushed before COPY returns. A power loss soon after it loses a table the
-  COPY created, and can leave an existing table whose `_txn` names symbol values that never reached the disk. In
-  `adaptive` the same COPY is durable before it returns: a new table is flushed, an existing one takes a save point
-  (section 9).
+- A parallel COPY into a new table on an instance that creates WAL tables by default (`cairo.wal.enabled.default`,
+  `true` by default) creates the table without its sequencer, in every mode. After any restart the table can be
+  read but not written, altered or dropped. Create the table first (`CREATE TABLE ... WAL`) and COPY into it;
+  section 11.6 says how to get out of the state.
 
 ## 8. Changing the commit mode
 
@@ -288,16 +281,24 @@ Found while this mode was built, not yet checked on the release line or filed:
 - **DETACH PARTITION** first links the partition into a temporary directory, `<partition>.<txn>.detaching`, and
   gives it its `.detached` name only once the commit is final, in every mode. Before, a process killed between the
   link and the commit left the partition attached next to a `.detached` copy, and a second DETACH was refused.
-- **The partition purge job waits for a writer** in `sync`, and for WAL tables in `adaptive`: after a restart,
-  `VACUUM TABLE` and the background purge leave a table's old partition versions alone until a writer has opened
-  the table (`partition purge deferred to the next writer open`). `VACUUM TABLE` still reports success. The writer
-  open removes them itself: in `sync` it first makes `_txn` durable again; in `adaptive` the start has already made
-  the save point durable. On a table nobody writes after the restart, the old versions stay on the disk until its
-  next write. Before, a purge after a failed flush and a restart could remove the version the table on the disk
-  still named.
+- **The partition purge job waits for a writer** in `sync`, and for WAL tables in `adaptive`: after a restart, `VACUUM
+  TABLE` and the background purge leave a table's old partition versions alone until a writer has opened the table
+  (`partition purge deferred to the next writer open`). `VACUUM TABLE` still reports success. The writer open removes
+  them itself: in `sync` it first makes `_txn` durable again; in `adaptive` the start has already made the save point
+  durable. On a table nobody writes after the restart, the old versions stay on the disk until a writer opens it: its
+  next write, or in `adaptive` its idle save point (section 9) if its two save points differ. Before, a purge after a
+  failed flush and a restart could remove the version the table on the disk still named.
 - **A QuestDB Enterprise backup restore** flushes each restored table before it marks the table as restored, in
   every mode. Before, a restore resumed after a power loss could skip a table whose files never reached the disk.
- 
+- **A parallel COPY in `sync`** flushes the imported partitions and symbol files before it attaches them, and the
+  table again after the attach, before it reports the import finished; a failed flush stops the server (section
+  11.2). Before, a power loss soon after COPY returned could lose a table the COPY created, or leave an existing
+  table whose `_txn` named partitions or symbol values that never reached the disk.
+- **REBASE WAL's seed transactions** no longer set the table's minimum timestamp to 1970 when the apply takes them
+  in one block with the first insert after them, in every mode
+  ([#7842](https://github.com/questdb/questdb/issues/7842)). Before, that happened when the apply job lost a race,
+  and in `adaptive` a kill or power loss after the REBASE made it certain. A table that already reads 1970 from
+  this keeps that minimum.
 - **`sync` stops the server on a failed flush**, as `adaptive` does (section 11.2), and makes a few more files
   durable: the schema file swap, and the directories of ALTER COLUMN TYPE, CONVERT PARTITION and the Parquet
   partition switch. A version 2 sequencer log writes the record before the header that names it.
@@ -342,20 +343,40 @@ More detail:
 - **An `adaptive` start** rewrites the header of each table's current save point and makes it durable before
   anything relies on it. On Linux that is one write per table and one `syncfs` per start: 1,000 tables took 151 ms
   against 137 ms with no flush at all. Elsewhere it is one `fsync` per table (5-8 ms each, measured on Linux with that path forced).
-- **A parallel COPY into a new table** on an `adaptive` instance flushes the table once before COPY returns: one
-  `syncfs` on Linux, a flush per file elsewhere. COPY into an existing table already pays for one save point.
+- **A parallel COPY** in `sync`, and into a WAL table it creates in `adaptive`, flushes twice before COPY returns:
+  the imported partitions and symbol files before the attach, then `_txn` and the renamed directories after it. On
+  Linux that is two `syncfs` per COPY. Elsewhere it is every file of the imported partitions, the table's root files
+  and directories, before and after the attach (45-50 flushes for three partitions of four columns). COPY into
+  an existing WAL table in `adaptive` pays for one save point instead. `nosync`, `async` and a non-WAL table in
+  `adaptive`: no flush.
 - **Disk.** Because a start can fall back to the older of the two save points, the WAL, the superseded partition
-  versions and the superseded index files wait one save point longer before they are removed: one minute at the
-  defaults, but with a negative `cairo.adaptive.epoch.interval` that can be days. The WAL purge job reads the two
-  save point headers of each `adaptive` table on every run.
+  versions and the superseded column and index files wait one save point longer before they are removed: one minute
+  at the defaults, but with a negative `cairo.adaptive.epoch.interval` that can be days. The WAL purge job reads the
+  two save point headers of each `adaptive` table on every run.
+- **An idle table.** A table whose two save points differ takes one more save point at its current state about one
+  save point interval after its last change (at the defaults 60-90 s: the interval plus up to one 30 s WAL purge
+  pass), once. Both save points then stand on the same state, and the purges free what the older one kept: its WAL,
+  superseded and dropped partition versions, superseded column and index files. A change made without a WAL
+  transaction (on QuestDB Enterprise, a storage policy step) counts as a change. Live views take theirs from their
+  refresh worker. The cost is one save point per table each time it goes idle (two when its last write had no save
+  point of its own; the first is the one its writer's close would take anyway), none while it stays idle and none
+  extra on a busy table; the save point finds nothing of the table left to flush. The WAL purge job asks at most 16
+  tables per pass, so after a restart with many tables written shortly before it, the extra save points spread over
+  passes (about 30 minutes for 1,000 tables at the defaults); every idle table is asked within about two rounds of
+  tables / 16 passes, however many tables keep going idle. A table whose idle save point cannot be taken is asked
+  again one interval later. With a negative interval there is no idle save point.
 - **Space freed by DROP PARTITION and TTL** comes back once neither save point names the dropped partition: at the
-  table's next save point after the drop's own one. A table that gets no write after the drop takes no save point,
-  so its dropped partitions stay on the disk until its next write; any write (one row) frees them a save point later.
-  `VACUUM TABLE` alone does not, because a start could still fall back to the save point that names them.
- 
+  table's next save point after the drop's own one, which on a table that gets no further write is its idle save
+  point. `VACUUM TABLE` alone does not free it earlier, because a start could still fall back to the save point
+  that names it.
 - **Enterprise.** The uploader flushes every table's sequencer log once when it starts (boot and promotion, in
-  `adaptive` and `sync`). On Linux that is one `syncfs`: 1,000 tables in 0.1-0.2 s, against 5-6 s with a flush
-  per table. The role switch and the restore add flushes that are not measured yet:
+  `adaptive` and `sync`), before it listens for commits; a commit made meanwhile is uploaded once the flush is done.
+  On Linux that is one `syncfs`: 1,000 tables in 0.1-0.2 s, against 5-6 s with a flush per table. Elsewhere each table
+  flushes its log with every version 2 log part it still keeps: one more flush per kept closed part (5,000
+  transactions each by default), about +50% on the start flush in the typical case (1,000 busy tables: 10-12 s against
+  about 7 s, measured on Linux with that path forced). A table that kept a long backlog it could not upload pays one
+  flush per 5,000 kept transactions at that start. The role switch and the restore add flushes that are not measured
+  yet:
   - a demotion opens the writer of each enrolled table (when none is pooled) and flushes the table before it removes
     its save point: one `syncfs` per table on Linux;
   - a promotion of an `adaptive` instance flushes once what the replica applied (one `syncfs` of the database root
@@ -401,7 +422,7 @@ The commit mode is not a column: it is one setting for the whole instance.
 | Metric (scraped name) | Type | Meaning |
 |---|---|---|
 | `questdb_wal_apply_local_durable_seq_txn` | gauge | the durable frontier summed over tables |
-| `questdb_wal_adaptive_epoch_advances_total` | counter | save points taken |
+| `questdb_wal_adaptive_epoch_advances_total` | counter | save points taken, idle ones included |
 | `questdb_wal_adaptive_recovery_events_total` | counter | tables restored from a save point at a start |
 
 `questdb_wal_apply_seq_txn - questdb_wal_apply_local_durable_seq_txn` is the global durable lag. It reads high after
@@ -411,19 +432,19 @@ a switch to `adaptive` until every table has been written once; use `wal_tables(
 
 - `not_yet_durable` should stay near 0 with a window of 0 and swing within one window otherwise. A lag that keeps
   growing means the flushes do not keep up: look at the device.
-- `lastEpochTs` should move at least once a minute on a table that is being written. If it does not, look for
-  `could not advance adaptive durable epoch` in the log. Without new save points the WAL is never purged and the
-  replay after a crash grows.
+- `lastEpochTs` should move at least once a minute on a table that is being written, and once more about one interval
+  after its last write. If it does not, look for `could not advance adaptive durable epoch` in the log. Without new
+  save points the WAL is never purged and the replay after a crash grows.
 - `recoveryIncarnation` and the recovery counter move only after a crash. After a clean shutdown they stay at 0.
   With `cairo.adaptive.epoch.flush.on.close=false` or a negative `cairo.adaptive.epoch.interval`, a clean restart
   also restores and counts.
 
 ## 11. Operations: when a start refuses or a table is stuck
 
-Every state below either repairs itself or names the manual step that clears it, and following the step keeps every
-acknowledged row. Two steps say where they cannot: skipping a transaction that can never be applied (section 11.4),
-and a damaged save point after a power loss, which needs damage on the disk or a defect and is cleared by a restore
-from a backup (section 11.1).
+Every state below either repairs itself or has a manual step, named in its message or in this section, that clears
+it, and following the step keeps every acknowledged row. Two steps say where they cannot: skipping a transaction
+that can never be applied (section 11.4), and a damaged save point after a power loss, which needs damage on the
+disk or a defect and is cleared by a restore from a backup (section 11.1).
 
 ### 11.1 The start refuses
 
@@ -496,8 +517,9 @@ and report it.
 
 In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs` or synchronous `msync` stops the server at
 once, because the data it was flushing may not be on the disk. So does a failed flush of a conversion to non-WAL,
-in every mode, and a failed flush at the end of a parallel COPY into a new table, which first drops the table, so
-COPY never reports an import done that is not on the disk:
+in every mode. A parallel COPY whose flush fails first drops the table it created, or empties the existing table it
+imported into, so COPY never reports an import done that is not on the disk (section 11.6 says what it can leave
+behind):
 
 ```
 fatal durability barrier failure [operation=..., errno=..., message=...]
@@ -566,17 +588,39 @@ stays a WAL table with the rows of its save point. The rows after the save point
 | `adaptive epoch roll-forward restored durable cut [table=..., epochSeqTxn=...]` | Information: the start restored the table after a crash. No action. |
 | `adaptive epoch belongs to a superseded WAL lineage, discarding anchor [table=..., epochSeqTxn=..., seqLastTxn=...]` | Information: the save point named transactions the sequencer no longer has (the table's WAL was replaced). The start removes it, and in `adaptive` the table takes a new one at its first writer. No action. |
 
-### 11.6 Start-up warnings about the storage
+### 11.6 A parallel COPY did not finish
 
-These appear in `sync` and `adaptive` mode. They do not stop the start.
+A parallel COPY that has not reported its import finished has promised nothing about the rows it was importing, and
+an existing table it imports into must be empty. The steps below therefore never touch rows a table held before.
 
-| Warning starts with | What to do |
-|---|---|
-| `db root filesystem is mounted WITHOUT write barriers` | Remount with write barriers (the default). Until then a power loss can lose acknowledged data. |
-| `db root filesystem has ext4 fast_commit enabled` | Nothing: the save point switches to a slower flush that is durable there. |
-| `a virtio block device reports write_cache=write through` | Undo the setting: `echo 'write back' > /sys/block/<dev>/queue/write_cache`. Until then nothing is durable. |
-| `running under Apple Virtualization` | No guest setting fixes it: the host flushes with `fsync()`, so data survives a process crash but not a host power loss. |
-| `db root filesystem does not implement F_FULLFSYNC` | Move the database root to an APFS volume. |
+**After a failed flush stopped the server** (section 11.2), start it again:
+
+- A table the COPY created is gone. Run COPY again.
+- An existing table is empty. If some imported partitions were not attached yet, their `<partition>.attachable`
+  directories are left in the table's directory, and COPY again fails with `could not copy partition file
+  [to=.../<partition>.attachable]`. Delete the `.attachable` directories the failed COPY left, then run COPY again.
+- If the failed flush was the table writer's own (during the attach), the existing table can keep some rows of the
+  failed COPY: `TRUNCATE TABLE`, delete the leftover `.attachable` directories, run COPY again.
+
+**After a power loss during the COPY** (in `sync`, or into a WAL table it created in `adaptive`):
+
+- **A non-WAL table the COPY created, or any existing table.** The table can hold some imported partitions, each
+  whole, and a retry is refused with `target table must be empty [table=...]`; or reading the table fails with
+  `Partition '...' does not exist in table '...' directory. Run [ALTER TABLE ... FORCE DROP PARTITION LIST '...'] to
+  repair the table or the database from the backup.` (a partition whose move into place did not reach the disk).
+  Run `DROP TABLE`, then `CREATE TABLE` again if the table existed before the COPY (it was empty), then run COPY
+  again.
+- **A WAL table the COPY created.** No SQL step works on it, because of the missing sequencer (section 7.6), and the
+  last imported partition can read as one row of zero and empty values. Do not run `DROP TABLE` on it: that fails,
+  hides the table from then on and keeps its name taken. Stop the server, delete the table's directory
+  (`<table>~<id>` under the database root), start, create the table with `CREATE TABLE ... WAL`, and run COPY into
+  it.
+
+**A WAL table the COPY created, after any restart** (no crash needed, section 7.6). The table can be read, but
+INSERT and ALTER TABLE fail with `could not open read-write [file=.../txn_seq/_wal_index.d]`, and `DROP TABLE` fails
+and hides the table as above. To keep its rows: copy them into a new table while it is still visible (for example
+`CREATE TABLE t2 AS (SELECT * FROM t) TIMESTAMP(ts) PARTITION BY DAY WAL`), stop the server, delete the old table's
+directory (`<table>~<id>` under the database root), and start. The copy takes writes.
 
 ## Appendix A. Configuration
 
@@ -584,10 +628,10 @@ These appear in `sync` and `adaptive` mode. They do not stop the start.
 |---|---|---|
 | `cairo.commit.mode` | `nosync` | `nosync`, `async`, `sync` or `adaptive`, for the whole instance. QuestDB Enterprise defaults to `nosync` when replication is configured; an explicit value wins. |
 | `cairo.adaptive.commit.group.window` | `50ms` | The group-commit window (section 4). `0`: every acknowledged commit is on stable storage. Negative counts as 0. |
-| `cairo.adaptive.epoch.interval` | `60s` | The time between periodic save points of a table. `0`: a save point after every apply pass. Negative: no periodic save points and no row cap; save points are then taken only at a clean close and after ALTER COLUMN TYPE, partition conversions, ATTACH and DETACH; the WAL is kept from the older of the last two, which can be days old, and a crash replays all of it. Not for production. |
+| `cairo.adaptive.epoch.interval` | `60s` | The time between periodic save points of a table. `0`: a save point after every apply pass. Negative: no periodic save points, no row cap and no idle save point; save points are then taken only after ALTER COLUMN TYPE, partition conversions, ATTACH and DETACH, and at a clean close only when one of those failed or was skipped; the WAL is kept from the older of the last two, which can be days old, and a crash replays all of it. Not for production. |
 | `cairo.adaptive.epoch.max.rows` | `5000000` | A save point once this many rows were applied since the last one, whatever the interval. `0` or negative: off. |
 | `cairo.adaptive.epoch.flush.on.close` | `true` | A clean writer close takes a save point over any transactions after the last one, so a clean restart restores nothing. |
-| `cairo.adaptive.epoch.column.sync.batched` | `true` | On Linux, flush a save point's column files in one batch ending in one `syncfs`. Off by itself on ext4 with `fast_commit`. |
+| `cairo.adaptive.epoch.column.sync.batched` | `true` | On Linux, flush a save point's column files in one batch ending in one `syncfs`. `false`: a flush per column file, then the same `syncfs`. |
 | `cairo.wal.commit.writeback.drain` | `true` | Start the write-back of a WAL segment's files before the commit's flushes. Speed only. |
 | `cairo.adaptive.recovery.roll.forward.enabled` | `true` | For tests. `false` stops the start when an adaptive table needs recovery. |
 
