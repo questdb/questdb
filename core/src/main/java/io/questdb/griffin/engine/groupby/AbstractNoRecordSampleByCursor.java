@@ -167,7 +167,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     private void kludge(long newTzOffset) {
         // time moved forward, we need to make sure we move our sample boundary
         sampleLocalEpoch += (newTzOffset - tzOffset);
-        nextSampleLocalEpoch = sampleLocalEpoch;
+        // `nextSampleLocalEpoch` drives the fill grid, so it has to stay on the sampler's
+        // calendar boundaries. Shifting it by the offset delta as well takes it off the grid,
+        // and `filling` implementations then compute `nextTimestamp(nextSampleLocalEpoch)` one
+        // offset delta short of the next real boundary and report a gap that does not exist.
         tzOffset = newTzOffset;
     }
 
