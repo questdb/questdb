@@ -100,6 +100,14 @@ public class UnionSymbolCastRecordCursorFactory extends AbstractRecordCursorFact
         return base.followedOrderByAdvice();
     }
 
+    // This projection re-types columns in place and keeps every position, so idx needs no translation.
+    // Recurse into base rather than read its metadata name: a wrapper below may carry the implicit,
+    // blank-named timestamp column.
+    @Override
+    public String getBaseColumnName(int idx) {
+        return base.getBaseColumnName(idx);
+    }
+
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;

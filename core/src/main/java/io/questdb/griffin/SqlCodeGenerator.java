@@ -223,6 +223,7 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.AbstractJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ArrayUnnestSource;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
@@ -333,6 +334,7 @@ import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.union.AbstractSetRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
@@ -383,7 +385,9 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.IntStack;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -497,6 +501,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> nsumConstructors = new IntObjHashMap<>();
+    // Explicit ALLOW-LIST (not a block-list) of group-by aggregate names whose result does not depend on
+    // the order rows arrive in - beyond floating-point summation order, which the tests already tolerate.
+    // Anything not on this list (first, last, twap, string_agg, a future addition, ...) keeps the demand.
+    // See generateSelectGroupBy/hasNonAllowlistedGroupByFunction.
+    private static final LowerCaseAsciiCharSequenceHashSet orderInsensitiveGroupByFunctions = new LowerCaseAsciiCharSequenceHashSet();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
@@ -541,6 +550,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
+    // Tracks whether the cursor currently being generated is an operand of a time-series join
+    // (ASOF / LT / SPLICE / WINDOW / HORIZON). Those joins walk their operands as monotonically
+    // ascending designated-timestamp streams, so that ordering is a correctness precondition,
+    // not an optimisation.
+    //
+    // This is deliberately separate from the execution context's timestamp-required flag. That
+    // flag asks whether a designated timestamp *column* must exist, and generateSelectChoose()
+    // clears it as soon as a model re-designates one with an explicit TIMESTAMP(ts) — which is
+    // exactly the shape that needs the ordering signal to survive:
+    //   ... LT JOIN (SELECT * FROM (a UNION ALL b ORDER BY ts) TIMESTAMP(ts)) ON (key)
+    private final IntStack timestampOrderRequiredStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
@@ -733,6 +753,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
         }
         whereClauseParserDepth = 0;
+        timestampOrderRequiredStack.clear();
         symbolEstimator.clear();
         intListPool.clear();
         pushdownFilterExtractor.clear();
@@ -1486,6 +1507,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    // Walks down through wrappers that preserve order to the source whose order under an explicit
+    // TIMESTAMP(col) cannot be proven: a concatenating UNION ALL or a UNION (neither merged) with a
+    // branch that has a designated timestamp, or a RIGHT/FULL join (it appends unmatched slave rows)
+    // whose master has a designated timestamp. Under TIMESTAMP(col) a UNION ALL was asked to merge (see
+    // canMergeUnionAll); if it is still a concatenation, the merge was impossible (mixed branches, a branch
+    // not scanned ascending, or a timestamp position/type mismatch). Only order-preserving wrappers and the
+    // master side of order-preserving joins are looked through; anything else ends the walk and the
+    // declaration is trusted, as it is for sources whose inputs have no designated timestamp at all.
+    private static RecordCursorFactory findUnprovableOrderSource(RecordCursorFactory factory) {
+        while (true) {
+            if (factory instanceof LimitRecordCursorFactory
+                    || factory instanceof SelectedRecordCursorFactory
+                    || factory instanceof VirtualRecordCursorFactory
+                    || factory instanceof FilteredRecordCursorFactory
+                    || factory instanceof UnionSymbolCastRecordCursorFactory) {
+                factory = factory.getBaseFactory();
+            } else if (isMasterOrderPreservingJoin(factory)) {
+                factory = ((AbstractJoinRecordCursorFactory) factory).getMasterFactory();
+            } else if (isRightOrFullJoin(factory)) {
+                final RecordCursorFactory master = ((AbstractJoinRecordCursorFactory) factory).getMasterFactory();
+                return hasDesignatedTimestamp(master) ? factory : null;
+            } else if (factory instanceof UnionAllRecordCursorFactory || factory instanceof UnionRecordCursorFactory) {
+                final AbstractSetRecordCursorFactory set = (AbstractSetRecordCursorFactory) factory;
+                return hasDesignatedTimestamp(set.getFactoryA()) || hasDesignatedTimestamp(set.getFactoryB()) ? factory : null;
+            } else {
+                return null;
+            }
+        }
+    }
+
+    private static boolean hasDesignatedTimestamp(RecordCursorFactory factory) {
+        // a nested concatenating union or a RIGHT/FULL join drops its designated timestamp, and so do the
+        // order-preserving wrappers above it; look through them with the same walk as the top level
+        return factory.getMetadata().getTimestampIndex() != -1 || findUnprovableOrderSource(factory) != null;
+    }
+
+    private static String orderSourceLabel(RecordCursorFactory source) {
+        if (source instanceof UnionAllRecordCursorFactory) {
+            return "UNION ALL";
+        }
+        if (source instanceof UnionRecordCursorFactory) {
+            return "UNION";
+        }
+        return "RIGHT/FULL JOIN";
+    }
+
     private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
         if (factory instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
             mergeFactory.prepareCursor();
@@ -1497,7 +1564,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryA,
             RecordCursorFactory factoryB,
             RecordMetadata metadataA,
-            RecordMetadata metadataB
+            RecordMetadata metadataB,
+            SqlExecutionContext executionContext
     ) {
         final int timestampIndex = metadataA.getTimestampIndex();
         final int scanDirection = factoryA.getScanDirection();
@@ -1505,6 +1573,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // timestamp order is requested directly via order-by advice on this union model or transitively
         final boolean isTsOrderRequested =
                 isTimestampOrderRequested(model, metadataA, timestampIndex, scanDirection)
+                        // A consumer that reads this cursor as an ascending designated-timestamp stream
+                        // pushes a demand onto the order stack: a time-series join operand (ASOF, LT,
+                        // SPLICE, WINDOW, HORIZON) on either side, or an explicit TIMESTAMP(col) that declares
+                        // the rows ascending. Concatenating the branches would hand it a cursor that steps
+                        // backwards at the seam: a join would silently fail to match every row past the
+                        // seam, and TIMESTAMP(col) would label misordered rows as ordered. Order-by advice
+                        // does not reach here for these consumers: the join slave subtree is never visited
+                        // by pushDownOrderByAdviceToJoinModels(), which only ever descends into the master.
+                        || (isTimestampOrderRequiredByConsumer() && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
+                        // SAMPLE BY (and time-series join operands, already covered above) require an ascending
+                        // designated timestamp; concatenation cannot provide it, the merge can. Explicit TIMESTAMP(col)
+                        // demands order through the order stack (isTimestampOrderRequiredByConsumer), not through this flag.
+                        || (executionContext.isTimestampRequired() && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
                         || factoryA instanceof MergeUnionAllRecordCursorFactory
                         || (factoryA instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
                         && symbolCastFactory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory);
@@ -1753,6 +1834,59 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && model.getHorizonJoinContext().getAlias() != null;
     }
 
+    // The join factories that emit rows in their master's order; keep in step with preservesMasterOrder().
+    // INNER / LEFT OUTER equi-joins are the hash factories below (LEFT OUTER only for the outer ones); JOIN_CROSS
+    // is CrossJoinRecordCursorFactory and JOIN_CROSS_LEFT is NestedLoopLeftJoinRecordCursorFactory, which loop over
+    // the master on the outside and emit each master row's output in place. A markout_horizon CROSS join reorders
+    // rows and is not walked. RIGHT / FULL joins are not looked through; isRightOrFullJoin() reports them.
+    // HashJoinLight may swap build and probe sides, but only over a master with random access, which no walked
+    // factory above an unprovable union reports; CrossJoin and NestedLoopLeft never swap.
+    private static boolean isMasterOrderPreservingJoin(RecordCursorFactory factory) {
+        if (factory instanceof HashJoinLightRecordCursorFactory
+                || factory instanceof HashJoinRecordCursorFactory
+                || factory instanceof CrossJoinRecordCursorFactory
+                || factory instanceof NestedLoopLeftJoinRecordCursorFactory) {
+            return true;
+        }
+        final int joinType;
+        if (factory instanceof HashOuterJoinLightRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinFilteredLightRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinFilteredRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else {
+            return false;
+        }
+        return joinType == IQueryModel.JOIN_LEFT_OUTER;
+    }
+
+    // The join factories that append unmatched slave rows after the master-ordered output: the hash outer joins
+    // built by createHashJoin() for JOIN_RIGHT_OUTER / JOIN_FULL_OUTER, and the nested-loop joins built for the
+    // non-equi JOIN_CROSS_RIGHT / JOIN_CROSS_FULL. Their master factory is the left operand. A hash FULL join may
+    // swap build and probe sides at cursor time; the walk still reads the original master's designated timestamp,
+    // and reports the join as unprovable either way, which is the safe outcome.
+    private static boolean isRightOrFullJoin(RecordCursorFactory factory) {
+        if (factory instanceof NestedLoopRightJoinRecordCursorFactory || factory instanceof NestedLoopFullJoinRecordCursorFactory) {
+            return true;
+        }
+        final int joinType;
+        if (factory instanceof HashOuterJoinLightRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinFilteredLightRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else if (factory instanceof HashOuterJoinFilteredRecordCursorFactory f) {
+            joinType = f.getJoinType();
+        } else {
+            return false;
+        }
+        return joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER;
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -1761,6 +1895,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return joinColumns.getColumnCount() == 1 &&
                 symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+    }
+
+    // True when this model's own ORDER BY leads with the TIMESTAMP(col) column ascending, so that
+    // generateQuery0Inner() sorts the rows right above the select before anything consumes their order.
+    // The ORDER BY key names an output column; it must resolve to the same nested column that
+    // TIMESTAMP(col) names. A LATEST BY on the model would read the rows before the sort, so it disqualifies.
+    private static boolean isSortedByExplicitTimestampAsc(IQueryModel model, RecordMetadata nestedMetadata) {
+        final ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        if (orderBy.size() == 0
+                || model.getOrderByDirection().getQuick(0) != IQueryModel.ORDER_DIRECTION_ASCENDING
+                || model.getLatestBy().size() > 0) {
+            return false;
+        }
+        final ExpressionNode orderKey = orderBy.getQuick(0);
+        if (orderKey.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        final QueryColumn column = model.getAliasToColumnMap().get(orderKey.token);
+        if (column == null || column.getAst().type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        final int timestampIndex = SqlUtil.getColumnIndexQuiet(nestedMetadata, model.getTimestamp().token);
+        return timestampIndex != -1 && SqlUtil.getColumnIndexQuiet(nestedMetadata, column.getAst().token) == timestampIndex;
     }
 
     private static boolean isTimestampOrderRequested(
@@ -1773,6 +1930,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    /**
+     * True when an enclosing consumer (a time-series join operand, or an explicit TIMESTAMP(col)
+     * declaration) walks this cursor as an ascending designated-timestamp stream.
+     */
+    private boolean isTimestampOrderRequiredByConsumer() {
+        return timestampOrderRequiredStack.notEmpty() && timestampOrderRequiredStack.peek() == 1;
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -6254,6 +6419,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (i > 0) {
                     executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[slaveModel.getJoinType()]);
+                    timestampOrderRequiredStack.push(joinsRequiringTimestamp[slaveModel.getJoinType()] ? 1 : 0);
                     executionContext.popHasInterval();
                     executionContext.pushHasInterval(1);
                 } else { // i == 0
@@ -6268,6 +6434,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                     executionContext.pushTimestampRequiredFlag(isTimestampRequired);
+                    // Time-series join: both operands are walked in ascending designated-timestamp
+                    // order, so the master carries the same ordering precondition as the slaves.
+
+                    // Otherwise, a join chain whose joins are all INNER, LEFT OUTER, CROSS or CROSS_LEFT emits
+                    // rows in its master's order, so an order demand from the enclosing consumer (e.g. an
+                    // explicit TIMESTAMP(col)) can be honoured by the master alone.
+                    final boolean inheritDemand = !isTimestampRequired
+                            && isTimestampOrderRequiredByConsumer()
+                            && preservesMasterOrder(joinModels, ordered);
+                    timestampOrderRequiredStack.push(isTimestampRequired || inheritDemand ? 1 : 0);
                     // For successive JOIN operations, if the left table requires timestamp,
                     // it must be the timestamp from the first table in the JOIN chain
                     executionContext.pushHasInterval(0);
@@ -7254,6 +7430,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw th;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
+                    timestampOrderRequiredStack.pop();
                 }
 
                 // check if there are post-filters
@@ -7988,6 +8165,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata mergeMetadata,
             @Nullable IntList symbolUnionColumns
     ) throws SqlException {
+        // The merge follows the order-by advice only when that advice is exactly its own order: the
+        // designated timestamp, in the merge's direction. A merge built for another reason (an enclosing
+        // time-series join's or explicit TIMESTAMP(col)'s timestamp demand, SAMPLE BY) must not claim to
+        // follow unrelated advice such as ORDER BY px: joins pass their master's claim up, and
+        // generateOrderBy would skip that sort. The claim is never inherited from a nested merge operand:
+        // that merge's claim was relative to its own query level's advice. Within one UNION chain the
+        // optimiser copies the advice to every union model, so this check already holds at each step.
+        final RecordMetadata metadataA = factoryA.getMetadata();
+        final boolean followsOrderByAdvice = isTimestampOrderRequested(model, metadataA, metadataA.getTimestampIndex(), factoryA.getScanDirection());
         final MergeUnionAllRecordCursorFactory mergeFactory = MergeUnionAllRecordCursorFactoryBuilder.build(
                 mergeMetadata,
                 factoryA,
@@ -8005,6 +8191,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         modelPosition
                 )
         );
+        mergeFactory.setFollowedOrderByAdvice(followsOrderByAdvice);
 
         if (model.getUnionModel().getUnionModel() != null) {
             return generateSetFactory(model.getUnionModel(), mergeFactory, executionContext, symbolUnionColumns);
@@ -8592,12 +8779,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateSubQuery(model, executionContext);
     }
 
+    // true when the model's ORDER BY is a single column that is the factory's designated timestamp
+    private static boolean ordersBySingleDesignatedTimestamp(RecordCursorFactory factory, IQueryModel model) {
+        final RecordMetadata metadata = factory.getMetadata();
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return false;
+        }
+        final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+        if (orderHash.size() != 1) {
+            return false;
+        }
+        return SqlUtil.getColumnIndexQuiet(metadata, orderHash.keys().getQuick(0)) == timestampIndex;
+    }
+
     private RecordCursorFactory generateOrderBy(
             RecordCursorFactory recordCursorFactory,
             IQueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (recordCursorFactory.followedOrderByAdvice()) {
+        // followedOrderByAdvice() means the factory satisfied the advice pushed into its branch, which may
+        // be a DIFFERENT ordering than this model asks for -- e.g. an inner ORDER BY symbol re-designated
+        // with timestamp(ts) and wrapped in an outer ORDER BY ts. When this model orders by the designated
+        // timestamp we must not blind-trust that flag; fall through to the scan-direction check, which
+        // returns the factory unsorted only when it genuinely scans the timestamp in the requested order.
+        if (recordCursorFactory.followedOrderByAdvice() && !ordersBySingleDesignatedTimestamp(recordCursorFactory, model)) {
             return recordCursorFactory;
         }
         try {
@@ -8963,6 +9169,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // when order-by specific here it would be pointless to require timestamp from the
                 // nested models
                 executionContext.pushTimestampRequiredFlag(false);
+                // This model's own ORDER BY defines the row order below it, so an enclosing demand for
+                // ascending timestamp order (a time-series join, or an explicit TIMESTAMP(col) over this
+                // sub-query) must not reach through it. Otherwise a UNION ALL below would merge by
+                // timestamp and, trusting the merge, this ORDER BY (and any LIMIT after it) would run
+                // over the wrong order.
+                timestampOrderRequiredStack.push(0);
                 pushed = true;
             }
             RecordCursorFactory factory;
@@ -8981,6 +9193,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             lastSeenOrderByModel = savedOrderByModel;
             if (pushed) {
+                timestampOrderRequiredStack.pop();
                 executionContext.popTimestampRequiredFlag();
             }
         }
@@ -9715,6 +9928,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         };
     }
 
+    // INNER, LEFT OUTER, CROSS and CROSS_LEFT (non-equi LEFT) joins emit rows in their master's order. Keep in
+    // step with isMasterOrderPreservingJoin(), which walks the masters of the factories these joins build.
+    private static boolean preservesMasterOrder(ObjList<IQueryModel> joinModels, IntList ordered) {
+        for (int k = 1, n = ordered.size(); k < n; k++) {
+            switch (joinModels.getQuick(ordered.getQuick(k)).getJoinType()) {
+                case IQueryModel.JOIN_INNER:
+                case IQueryModel.JOIN_LEFT_OUTER:
+                case IQueryModel.JOIN_CROSS:
+                case IQueryModel.JOIN_CROSS_LEFT:
+                    break;
+                default:
+                    return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * Returns true when every projected token names a column of {@code metadata}. Column order is
      * deliberately not considered, so this preserves the historical timestamp-first reordering of
@@ -9743,12 +9973,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectChoose(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         boolean overrideTimestampRequired = model.hasExplicitTimestamp() && executionContext.isTimestampRequired();
+        // An explicit TIMESTAMP(col) declares the nested rows ascending. A UNION ALL below cannot honour
+        // that by concatenation, so it is a demand for the merge (see canMergeUnionAll), which orders the
+        // rows by the branches' designated timestamp. SUBSAMPLE's synthetic timestamp reference inherits
+        // its input's order and declares none, so it is not a demand.
+        final ExpressionNode explicitTimestamp = model.getTimestamp();
+        final boolean demandTimestampOrder = model.hasExplicitTimestamp()
+                && explicitTimestamp != null
+                && !explicitTimestamp.isTimestampOrderInherited;
         final RecordCursorFactory factory;
         try {
             // if model uses explicit timestamp (e.g. select * from X timestamp(ts))
             // then we shouldn't expect the inner models to produce one
             if (overrideTimestampRequired) {
                 executionContext.pushTimestampRequiredFlag(false);
+            }
+            if (demandTimestampOrder) {
+                timestampOrderRequiredStack.push(1);
             }
             if (model instanceof QueryModel qm && qm.getSharedRefCount() > 0) {
                 IQueryModel nested = qm.getNestedModel();
@@ -9758,9 +9999,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             factory = generateSubQuery(model, executionContext);
         } finally {
+            if (demandTimestampOrder) {
+                timestampOrderRequiredStack.pop();
+            }
             if (overrideTimestampRequired) {
                 executionContext.popTimestampRequiredFlag();
             }
+        }
+
+        // The source of the rows cannot be proven to be in timestamp order: a UNION ALL whose demanded merge
+        // could not be built (so its branches are concatenated), a UNION, or a RIGHT/FULL join that appends
+        // unmatched slave rows, over inputs that have a designated timestamp. Labelling that output with an
+        // ascending designated timestamp could return misordered rows; ORDER BY makes the order explicit.
+        // Inputs without a designated timestamp prove nothing either way; TIMESTAMP(col) over them remains
+        // the user's assertion of order. An ORDER BY on this same model that leads with col ascending is
+        // applied by generateOrderBy() right above this factory, and it cannot elide that sort: every
+        // unprovable source reports SCAN_DIRECTION_OTHER and does not claim to follow order-by advice.
+        final RecordCursorFactory unprovable = demandTimestampOrder
+                && !isSortedByExplicitTimestampAsc(model, factory.getMetadata())
+                ? findUnprovableOrderSource(factory) : null;
+        if (unprovable != null) {
+            final CharSequence col = explicitTimestamp.token;
+            final String source = orderSourceLabel(unprovable);
+            Misc.free(factory);
+            throw SqlException.$(model.getModelPosition(), "cannot prove timestamp order of ").put(source)
+                    .put(" for TIMESTAMP(").put(col).put("); add ORDER BY ").put(col);
         }
 
         final RecordMetadata metadata = factory.getMetadata();
@@ -9982,6 +10245,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode sampleByNode = model.getSampleBy();
+        if (sampleByNode != null) {
+            return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
+        }
+        // A GROUP BY's result is not in timestamp order, so an order demand from above does not need its
+        // input merged - UNLESS the SELECT list calls a group-by aggregate that is not on the explicit
+        // orderInsensitiveGroupByFunctions allow-list. This is deliberately an allow-list, not a
+        // block-list of "known order-dependent" functions such as first()/last(): any aggregate this
+        // code does not recognise (twap(), string_agg(), a future addition, ...) must keep the demand,
+        // because dropping it for an unrecognised order-dependent aggregate would silently change its
+        // result, or make it throw when it requires ascending timestamp order.
+        final boolean resetOrderDemand = !hasNonAllowlistedGroupByFunction(model.getColumns());
+        if (resetOrderDemand) {
+            timestampOrderRequiredStack.push(0);
+        }
+        try {
+            return generateSelectGroupBy0(model, executionContext);
+        } finally {
+            if (resetOrderDemand) {
+                timestampOrderRequiredStack.pop();
+            }
+        }
+    }
+
+    private boolean hasNonAllowlistedGroupByFunction(ObjList<QueryColumn> columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (hasNonAllowlistedGroupByFunction(columns.getQuick(i).getAst())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasNonAllowlistedGroupByFunction(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == FUNCTION
+                && functionParser.getFunctionFactoryCache().isGroupBy(node.token)
+                && !orderInsensitiveGroupByFunctions.contains(node.token)) {
+            return true;
+        }
+        if (hasNonAllowlistedGroupByFunction(node.lhs) || hasNonAllowlistedGroupByFunction(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasNonAllowlistedGroupByFunction(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private RecordCursorFactory generateSelectGroupBy0(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         // Catch-visible owners of the assembled group-by/projection functions and the per-worker
         // clones compiled for the parallel path. The transfer blocks before the adopting factory
         // constructors null them out; until then the catch frees them. groupByFunctions and the
@@ -9994,10 +10311,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
         ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
         ObjList<Function> perWorkerFilters = null;
-        final ExpressionNode sampleByNode = model.getSampleBy();
-        if (sampleByNode != null) {
-            return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
-        }
 
         RecordCursorFactory factory = null;
         try {
@@ -11849,7 +12162,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             isSeedRequired,
                             pendingSymbolColumnsB
                     );
-                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    // copy: removeTimestamp() would mutate metadataA in place and strip branch A's own designated timestamp
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.copyOfSansTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
                         castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
@@ -11878,7 +12192,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             isSeedRequired,
                             pendingSymbolColumnsB
                     );
-                    if (canMergeUnionAll(model, factoryA, factoryB, metadataA, metadataB)) {
+                    if (canMergeUnionAll(model, factoryA, factoryB, metadataA, metadataB, executionContext)) {
                         final RecordMetadata mergeMetadata;
                         if (castIsRequired) {
                             final GenericRecordMetadata widened = (GenericRecordMetadata) widenSetMetadata(metadataA, metadataB);
@@ -11903,7 +12217,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     prepareMergeUnionAllFactory(factoryA);
                     prepareMergeUnionAllFactory(factoryB);
-                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                    // copy: removeTimestamp() would mutate metadataA in place and strip branch A's own designated timestamp
+                    final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.copyOfSansTimestamp(metadataA);
                     if (castIsRequired) {
                         castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
                         castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
@@ -12109,7 +12424,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new EmptyTableRecordCursorFactory(queryMeta, metadata.getTableToken());
         }
 
-        // Note: DISTINCT optimization is handled in generateSelectGroupBy, not here.
+        // Note: DISTINCT optimization is handled in generateSelectGroupBy0, not here.
         // The optimizer rewrites DISTINCT to GROUP BY + count(*) before reaching this point.
 
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.copyOfNew(metadata);
@@ -14599,6 +14914,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         limitTypes.add(SHORT);
         limitTypes.add(INT);
         limitTypes.add(UNDEFINED);
+    }
+
+    static {
+        // Verified individually: associative/commutative accumulators (sums, counts, bitwise/boolean
+        // reductions, min/max, HyperLogLog cardinality, HdrHistogram percentile buckets, Welford-style
+        // variance/covariance/correlation). Floating-point rounding may still differ by input order -
+        // the existing tests already tolerate that. mode() is deliberately excluded: its tie-break on
+        // equally-frequent values depends on hash-map slot layout, which is not provably order-free.
+        orderInsensitiveGroupByFunctions.add("count");
+        orderInsensitiveGroupByFunctions.add("count_distinct");
+        orderInsensitiveGroupByFunctions.add("approx_count_distinct");
+        orderInsensitiveGroupByFunctions.add("sum");
+        orderInsensitiveGroupByFunctions.add("ksum");
+        orderInsensitiveGroupByFunctions.add("nsum");
+        orderInsensitiveGroupByFunctions.add("avg");
+        orderInsensitiveGroupByFunctions.add("min");
+        orderInsensitiveGroupByFunctions.add("max");
+        orderInsensitiveGroupByFunctions.add("stddev");
+        orderInsensitiveGroupByFunctions.add("stddev_samp");
+        orderInsensitiveGroupByFunctions.add("stddev_pop");
+        orderInsensitiveGroupByFunctions.add("variance");
+        orderInsensitiveGroupByFunctions.add("var_samp");
+        orderInsensitiveGroupByFunctions.add("var_pop");
+        orderInsensitiveGroupByFunctions.add("corr");
+        orderInsensitiveGroupByFunctions.add("covar_samp");
+        orderInsensitiveGroupByFunctions.add("covar_pop");
+        orderInsensitiveGroupByFunctions.add("bool_and");
+        orderInsensitiveGroupByFunctions.add("bool_or");
+        orderInsensitiveGroupByFunctions.add("bit_and");
+        orderInsensitiveGroupByFunctions.add("bit_or");
+        orderInsensitiveGroupByFunctions.add("bit_xor");
+        orderInsensitiveGroupByFunctions.add("approx_percentile");
     }
 
     static {
