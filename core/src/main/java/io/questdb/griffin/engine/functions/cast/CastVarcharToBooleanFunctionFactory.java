@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -57,8 +57,9 @@ public class CastVarcharToBooleanFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
+    // quiet cast: text that is not a PostgreSQL boolean spelling is false, like NULL
     private static boolean resolveBoolean(Utf8Sequence str) {
-        return str != null && SqlKeywords.isTrueKeyword(str);
+        return SqlUtil.parseBooleanQuiet(str);
     }
 
     private static class Func extends AbstractCastToBooleanFunction {

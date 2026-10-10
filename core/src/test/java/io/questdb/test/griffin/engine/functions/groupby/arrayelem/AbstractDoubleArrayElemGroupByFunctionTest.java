@@ -24,6 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.groupby.arrayelem;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -32,6 +35,46 @@ public abstract class AbstractDoubleArrayElemGroupByFunctionTest extends Abstrac
     protected abstract String funcName();
 
     // --- shared tests: identical expected output for all 4 functions ---
+
+    @Test
+    public void testBindCastToStrongDims() throws Exception {
+        assertMemoryLeak(() -> {
+            defineWeakDimsBind();
+            try (RecordCursorFactory factory = select("SELECT " + funcName() + "($1::DOUBLE[]) x FROM long_sequence(1)")) {
+                bindVariableService.setStr(0, "{1.0,2.0}");
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("x\n[1.0,2.0]\n");
+            }
+        });
+    }
+
+    @Test
+    public void testBindWeakDimsArgFails() throws Exception {
+        assertMemoryLeak(() -> {
+            defineWeakDimsBind();
+            assertExceptionNoLeakCheck(
+                    "SELECT " + funcName() + "($1) x FROM long_sequence(2)",
+                    22,
+                    "array bind variable argument is not supported"
+            );
+        });
+    }
+
+    @Test
+    public void testBindWeakDimsExpressionArgFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            defineWeakDimsBind();
+            assertExceptionNoLeakCheck(
+                    "SELECT " + funcName() + "(arr * $1) x FROM t",
+                    26,
+                    "array bind variable argument is not supported"
+            );
+        });
+    }
 
     @Test
     public void testFirstRowAllNanSubsequentFinite() throws Exception {
@@ -96,5 +139,11 @@ public abstract class AbstractDoubleArrayElemGroupByFunctionTest extends Abstrac
                     .expectSize()
                     .returns("grp\tarr\n1\t[2.0,4.0]\n2\t[null,4.0]\n");
         });
+    }
+
+    // defines bind 0 the way PG wire does for a float8[] parameter: an array type whose dims are unknown until Bind
+    private static void defineWeakDimsBind() throws SqlException {
+        bindVariableService.clear();
+        bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
     }
 }

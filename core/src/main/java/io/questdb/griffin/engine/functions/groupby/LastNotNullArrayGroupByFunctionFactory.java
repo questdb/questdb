@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -49,7 +50,8 @@ public class LastNotNullArrayGroupByFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
-        return new LastNotNullArrayGroupByFunction(args.getQuick(0));
+    ) throws SqlException {
+        final Function arg = AbstractDoubleArrayElemAggGroupByFunction.rejectWeakDimsArg(args.getQuick(0), argPositions.getQuick(0));
+        return new LastNotNullArrayGroupByFunction(arg);
     }
 }

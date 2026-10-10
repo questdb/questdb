@@ -1129,6 +1129,28 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharToBooleanPostgresSpellings() throws Exception {
+        // a one-character quoted literal is a CHAR constant, so 'y' and 'N' reach the CHAR cast
+        assertQuery("SELECT 'y'::BOOLEAN a, 'N'::BOOLEAN b, 'Y'::BOOLEAN c, 'n'::BOOLEAN d")
+                .expectSize()
+                .returns("""
+                        a\tb\tc\td
+                        true\tfalse\ttrue\tfalse
+                        """);
+        assertQuery("SELECT CAST(a AS BOOLEAN) b FROM tab")
+                .ddl("CREATE TABLE tab (a CHAR)")
+                .mutateWith("INSERT INTO tab VALUES ('y'), ('Y'), ('n'), ('N')")
+                .expectSize()
+                .returns("b\n", """
+                        b
+                        true
+                        true
+                        false
+                        false
+                        """);
+    }
+
+    @Test
     public void testCharToBooleanTrue() throws Exception {
         assertQuery("select a from tab")
                 .ddl("create table tab (a boolean)")
@@ -5202,6 +5224,16 @@ public class CastTest extends AbstractCairoTest {
                         true
                         false
                         false
+                        """);
+    }
+
+    @Test
+    public void testStrToBooleanPostgresSpellings() throws Exception {
+        assertQuery("SELECT 'yes'::BOOLEAN a, 'on'::BOOLEAN b, ' true '::BOOLEAN c, 'y'::VARCHAR::BOOLEAN d, 'xyz'::BOOLEAN e")
+                .expectSize()
+                .returns("""
+                        a\tb\tc\td\te
+                        true\ttrue\ttrue\ttrue\tfalse
                         """);
     }
 

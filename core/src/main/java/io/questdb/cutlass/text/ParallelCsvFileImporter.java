@@ -45,11 +45,13 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.types.BadDateAdapter;
-import io.questdb.cutlass.text.types.BadTimestampAdapter;
+import io.questdb.cutlass.text.types.DateCastAdapter;
+import io.questdb.cutlass.text.types.MissingColumnAdapter;
 import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
 import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampCastAdapter;
 import io.questdb.cutlass.text.types.TimestampCompatibleAdapter;
+import io.questdb.cutlass.text.types.TimestampToDateAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
@@ -121,6 +123,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final CharSequence inputRoot;
     private final CharSequence inputWorkRoot;
     private final CopyImportJob localImportJob;
+    private final ObjectPool<MissingColumnAdapter> missingColumnAdapterPool;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool;
     private final LongList partitionKeysAndSizes;
     private final StringSink partitionNameSink;
@@ -133,6 +136,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final IntList taskDistribution;
     private final TextDelimiterScanner textDelimiterScanner;
     private final TextMetadataDetector textMetadataDetector;
+    private final ObjectPool<TimestampToDateAdapter> timestampToDateAdapterPool;
     private final Path tmpPath;
     private final TypeManager typeManager;
     private final DirectUtf16Sink utf16Sink;
@@ -144,6 +148,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private boolean createdWorkDir;
     private CharSequence errorMessage;
     private long errors;
+    private int fileColumnCount;
     private boolean forceHeader;
     private long importId;
     // path to import directory under, usually $inputWorkRoot/$tableName
@@ -222,7 +227,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             this.atomicity = Atomicity.SKIP_COL;
             this.createdWorkDir = false;
+            this.missingColumnAdapterPool = new ObjectPool<>(MissingColumnAdapter::new, 4);
             this.otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
+            this.timestampToDateAdapterPool = new ObjectPool<>(TimestampToDateAdapter::new, 4);
             this.inputFilePath = new Path();
             this.tmpPath = new Path();
 
@@ -342,7 +349,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         Misc.clear(typeManager);
         Misc.clear(symbolCapacities);
         Misc.clear(textMetadataDetector);
+        Misc.clear(missingColumnAdapterPool);
         Misc.clear(otherToTimestampAdapterPool);
+        Misc.clear(timestampToDateAdapterPool);
         Misc.clear(partitions);
         linesIndexed = 0;
         rowsHandled = 0;
@@ -502,7 +511,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                 textMetadataDetector.of(tableName, names, types, forceHeader);
                 lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
-                textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
+                textMetadataDetector.evaluateResults();
                 forceHeader = textMetadataDetector.isHeader();
 
                 prepareTable(
@@ -867,19 +876,37 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         for (int i = 0, n = types.size(); i < n; i++) {
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = columnIndex > -1 ? columnIndex : i; // check for strict match ?
+            // a header missing from the table falls back to its position, which another header may name
+            for (int j = 0; j < i; j++) {
+                if (remapIndex.getQuick(j) == idx) {
+                    writer.close();
+                    throw TextException.$("file columns map to the same table column [table column=").put(metadata.getColumnName(idx))
+                            .put(", file columns=").put(names.getQuick(j))
+                            .put(", ").put(names.getQuick(i))
+                            .put(']');
+                }
+            }
             remapIndex.set(i, idx);
+
+            if (timestampAdapter != null && timestampColumn == null && idx == metadata.getTimestampIndex()) {
+                // COPY ... FORMAT without TIMESTAMP: the format applies to the designated timestamp
+                types.setQuick(i, timestampAdapter);
+            }
 
             final int columnType = metadata.getColumnType(idx);
             final TypeAdapter detectedAdapter = types.getQuick(i);
             final int detectedType = detectedAdapter.getType();
             if (detectedType != columnType) {
-                // when DATE type is mis-detected as STRING we
-                // would not have either date format nor locale to
-                // use when populating this field
+                // a DATE/TIMESTAMP column keeps the detected or user-supplied date format when
+                // it has one, otherwise parses the text like INSERT's implicit cast
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
-                        logTypeError(i, detectedType);
-                        types.setQuick(i, BadDateAdapter.INSTANCE);
+                        if (detectedAdapter instanceof TimestampAdapter detectedTimestampAdapter) {
+                            types.setQuick(i, timestampToDateAdapterPool.next().of(detectedTimestampAdapter));
+                        } else {
+                            logTypeError(i, detectedType);
+                            types.setQuick(i, DateCastAdapter.INSTANCE);
+                        }
                         break;
                     case ColumnType.TIMESTAMP:
                         // different timestamp type
@@ -889,7 +916,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter, columnType));
                         } else {
                             logTypeError(i, detectedType);
-                            types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                            types.setQuick(i, TimestampCastAdapter.forTimestampType(columnType));
                         }
                         break;
                     case ColumnType.BINARY:
@@ -899,6 +926,23 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         types.setQuick(i, typeManager.getTypeAdapter(columnType));
                         break;
                 }
+            }
+        }
+
+        final int tableTimestampIndex = metadata.getTimestampIndex();
+        if (tableTimestampIndex > -1) {
+            boolean isTimestampMapped = false;
+            for (int r = 0, rn = remapIndex.size(); r < rn; r++) {
+                if (remapIndex.get(r) == tableTimestampIndex) {
+                    isTimestampMapped = true;
+                    break;
+                }
+            }
+            if (!isTimestampMapped) {
+                writer.close();
+                throw TextException.$("designated timestamp column is not in the file [column=")
+                        .put(metadata.getColumnName(tableTimestampIndex))
+                        .put(']');
             }
         }
 
@@ -927,7 +971,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                 if (unused) {
                     names.add(metadata.getColumnName(i));
-                    types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
+                    // TypeManager has no parser for some column types (DATE, TIMESTAMP, arrays, BINARY);
+                    // the temp tables only need the type, as the file has no values for the column
+                    types.add(missingColumnAdapterPool.next().of(metadata.getColumnType(i)));
                     remapIndex.add(i);
                 }
             }
@@ -1139,6 +1185,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             cairoEngine,
                             targetTableStructure,
                             textMetadataDetector.getColumnTypes(),
+                            fileColumnCount,
                             atomicity,
                             columnDelimiter,
                             importRoot,
@@ -1423,6 +1470,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         if (types.size() == 0) {
             throw CairoException.nonCritical().put("cannot determine text structure");
         }
+        // initWriterAndOverrideImportMetadata() appends adapters for table columns the file lacks
+        fileColumnCount = types.size();
         if (partitionBy == PartitionBy.NONE) {
             throw CairoException.nonCritical().put("partition strategy for parallel import cannot be NONE");
         }
@@ -1431,14 +1480,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             partitionBy = PartitionBy.NONE;
         }
 
-        if (timestampIndex == -1 && timestampColumn != null) {
-            for (int i = 0, n = names.size(); i < n; i++) {
-                if (Chars.equalsIgnoreCase(names.get(i), timestampColumn)) {
-                    timestampIndex = i;
-                    break;
-                }
-            }
-        }
+        // resolve TIMESTAMP against the file header before initWriterAndOverrideImportMetadata()
+        // replaces the header names with table column names
+        final int timestampColumnFileIndex = timestampColumn != null ? TextMetadataDetector.indexOfColumnName(names, timestampColumn) : NO_INDEX;
 
         try {
             targetTableStatus = cairoEngine.getTableStatus(path, tableToken);
@@ -1450,11 +1494,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     if (timestampColumn == null) {
                         throw TextException.$("timestamp column must be set when importing to new table");
                     }
-                    if (timestampIndex == -1) {
+                    if (timestampColumnFileIndex == NO_INDEX) {
                         throw TextException.$("timestamp column '").put(timestampColumn).put("' not found in file header");
                     }
 
-                    validate(names, types, null, NO_INDEX);
+                    validate(names, types, null, timestampColumnFileIndex);
                     symbolCapacities.setAll(types.size(), -1);
                     targetTableStructure.of(tableName, names, types, symbolCapacities, timestampIndex, partitionBy);
 
@@ -1488,7 +1532,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
 
                     CharSequence designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
-                    int designatedTimestampIndex = metadata.getTimestampIndex();
                     if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
                         throw TextException.$("declared partition by unit doesn't match table's");
                     }
@@ -1496,7 +1539,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     if (!PartitionBy.isPartitioned(partitionBy)) {
                         throw TextException.$("target table is not partitioned");
                     }
-                    validate(names, types, designatedTimestampColumnName, designatedTimestampIndex);
+                    validate(names, types, designatedTimestampColumnName, timestampColumnFileIndex);
                     targetTableStructure.of(tableName, names, types, symbolCapacities, timestampIndex, partitionBy);
                     break;
                 default:
@@ -1506,9 +1549,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             inputFilePath.of(inputRoot).concat(inputFileName).$(); // getStatus might override it
             targetTableStructure.setIgnoreColumnIndexedFlag(true);
 
-            if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
-                timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
-            }
+            // the FORMAT adapter already sits in the slot of the column it parses, and the
+            // partition import phase reads the same slot
+            timestampAdapter = types.getQuick(timestampIndex) instanceof TimestampAdapter rowTimestampAdapter ? rowTimestampAdapter : null;
         } catch (Throwable t) {
             closeWriter();
             throw t;
@@ -1519,27 +1562,32 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
             CharSequence designatedTimestampColumnName,
-            int designatedTimestampIndex
+            int timestampColumnFileIndex
     ) throws TextException {
-        if (timestampColumn == null && designatedTimestampColumnName == null) {
-            timestampIndex = NO_INDEX;
-        } else if (timestampColumn != null) {
-            timestampIndex = names.indexOf(timestampColumn);
-            if (timestampIndex == NO_INDEX) {
-                throw TextException.$("invalid timestamp column [name='").put(timestampColumn).put("']");
-            }
-        } else {
+        // for an existing table, TIMESTAMP may also name a table column that one of the file's
+        // columns maps to, e.g. by position in a file without a header; names past fileColumnCount
+        // are the table columns the file lacks, which TIMESTAMP must not name
+        if (timestampColumn != null
+                && timestampColumnFileIndex == NO_INDEX
+                && (designatedTimestampColumnName == null || TextMetadataDetector.indexOfColumnName(names, fileColumnCount, timestampColumn) == NO_INDEX)) {
+            throw TextException.$("invalid timestamp column [name='").put(timestampColumn).put("']");
+        }
+        if (designatedTimestampColumnName != null) {
+            // an existing table keeps its designated timestamp, and names hold the table column
+            // names the file columns map to; when TIMESTAMP names another column, that column
+            // imports as a regular one
             timestampIndex = names.indexOf(designatedTimestampColumnName);
-            if (timestampIndex == NO_INDEX) {
-                // columns in the imported file may not have headers, then use writer timestamp index
-                timestampIndex = designatedTimestampIndex;
-            }
+        } else if (timestampColumn != null) {
+            timestampIndex = timestampColumnFileIndex;
+        } else {
+            timestampIndex = NO_INDEX;
         }
 
         if (timestampIndex != NO_INDEX) {
             final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
             final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
-            if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
+            if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP)
+                    || (timestampAdapter instanceof TimestampAdapter parsingAdapter && !parsingAdapter.isDesignatedTimestampSupported())) {
                 throw TextException.$("column is not a timestamp [no=").put(timestampIndex)
                         .put(", name='").put(timestampColumn).put("']");
             }

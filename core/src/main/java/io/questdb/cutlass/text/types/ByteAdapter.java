@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class ByteAdapter extends AbstractTypeAdapter {
@@ -49,6 +50,14 @@ public final class ByteAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        row.putByte(column, SqlKeywords.isNullKeyword(value) ? (byte) 0 : (byte) Numbers.parseInt(value));
+        if (SqlKeywords.isNullKeyword(value)) {
+            row.putByte(column, (byte) 0);
+            return;
+        }
+        final int parsed = Numbers.parseInt(value);
+        if (parsed < Byte.MIN_VALUE || parsed > Byte.MAX_VALUE) {
+            throw NumericException.INSTANCE;
+        }
+        row.putByte(column, (byte) parsed);
     }
 }

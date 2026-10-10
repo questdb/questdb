@@ -24,17 +24,29 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.client.Sender;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.TestServerMain;
+import io.questdb.test.cutlass.http.HttpUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
+import java.io.OutputStream;
+import java.net.Socket;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.temporal.ChronoUnit;
 import java.util.Properties;
 
 
@@ -45,6 +57,45 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testCachedInsertParameterMetaDataAfterIlpAddsColumn() throws Exception {
+        // ILP over HTTP adds a column to a WAL table without SQL. pgjdbc with prepareThreshold=0
+        // sends an unnamed Parse for every statement, which looks up the connection's insert
+        // cache, and the cached INSERT compiled before the new column must not describe its
+        // parameters.
+        TestUtils.assertMemoryLeak(() -> {
+            try (ServerMain serverMain = startWithEnvVariables()) {
+                final int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
+                final Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("prepareThreshold", "0");
+                properties.setProperty("stringtype", "unspecified");
+                try (Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:" + port + "/qdb", properties)) {
+                    final String insertSql = "INSERT INTO tw VALUES (?, ?)";
+                    try (Statement statement = connection.createStatement()) {
+                        statement.execute("CREATE TABLE tw (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    }
+                    try (PreparedStatement insert = connection.prepareStatement(insertSql)) {
+                        insert.setString(1, "1");
+                        insert.setString(2, "2024-01-01");
+                        Assert.assertEquals(1, insert.executeUpdate());
+                    }
+                    try (Sender sender = Sender.fromConfig("http::addr=localhost:" + HTTP_PORT + ";")) {
+                        sender.table("tw").longColumn("b", 2).at(1_704_153_600_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                    try (PreparedStatement insert = connection.prepareStatement(insertSql)) {
+                        insert.getParameterMetaData();
+                        Assert.fail("the INSERT no longer matches the columns");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "row value count does not match column count");
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -205,6 +256,66 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testStartupMessageWithoutUserKeepsServerHealthy() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.HTTP_PESSIMISTIC_HEALTH_CHECK.getEnvVarName(), "true"
+            )) {
+                int pgPort = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
+                // Malformed-input injection: no real client sends a StartupMessage without a user
+                // property. The StartupMessage (database=qdb) and a password message go out in one
+                // write; the server must reply FATAL 28000 and close.
+                final byte[] request = hexToBytes(
+                        "00000016000300006461746162617365007164620000" + "700000000a717565737400"
+                );
+                final byte[] reply;
+                try (Socket socket = new Socket("127.0.0.1", pgPort)) {
+                    socket.setSoTimeout(30_000);
+                    OutputStream out = socket.getOutputStream();
+                    out.write(request);
+                    out.flush();
+                    reply = socket.getInputStream().readAllBytes();
+                }
+
+                Assert.assertTrue(
+                        "metrics must be on, or the counter below reads zero unconditionally",
+                        serverMain.getEngine().getMetrics().isEnabled()
+                );
+                Assert.assertEquals(
+                        "a startup packet without a user name must not count as an unhandled error",
+                        0,
+                        serverMain.getEngine().getMetrics().healthMetrics().unhandledErrorsCount()
+                );
+
+                int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getBindPort();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request httpRequest = httpClient.newRequest("localhost", httpMinPort);
+                    httpRequest.GET().url("/status");
+                    try (HttpClient.ResponseHeaders responseHeaders = httpRequest.send()) {
+                        responseHeaders.await();
+                        TestUtils.assertEquals("200", responseHeaders.getStatusCode());
+                        HttpUtils.assertChunkedBodyContains(responseHeaders, "Status: Healthy");
+                    }
+                }
+
+                Assert.assertEquals(
+                        "450000003d433238303030004d6e6f2075736572206e616d652073706563696669656420696e2073746172747570207061636b65740053464154414c0000",
+                        bytesToHex(reply)
+                );
+            }
+        });
+    }
+
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b & 0xff));
+        }
+        return sb.toString();
+    }
+
     private static Connection getTlsConnection(int port) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
@@ -212,5 +323,13 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         properties.setProperty("sslmode", "require");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
+    }
+
+    private static byte[] hexToBytes(String hex) {
+        byte[] bytes = new byte[hex.length() / 2];
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] = (byte) Integer.parseInt(hex.substring(2 * i, 2 * i + 2), 16);
+        }
+        return bytes;
     }
 }

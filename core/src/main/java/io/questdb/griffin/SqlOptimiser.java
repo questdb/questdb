@@ -226,6 +226,7 @@ public class SqlOptimiser implements Mutable {
     private final Path path;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap pivotAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
+    private final PlanDependencies planDependencies = new PlanDependencies();
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -418,6 +419,7 @@ public class SqlOptimiser implements Mutable {
         expressionNodePool.clear();
         characterStore.clear();
         tablesSoFar.clear();
+        planDependencies.clear();
         clausesToSteal.clear();
         tempCursorAliases.clear();
         tempCursorAliasSequenceMap.clear();
@@ -455,6 +457,10 @@ public class SqlOptimiser implements Mutable {
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
+    }
+
+    public PlanDependencies getPlanDependencies() {
+        return planDependencies;
     }
 
     public boolean hasOrderedGroupByFunc(ExpressionNode node) {
@@ -7221,10 +7227,12 @@ public class SqlOptimiser implements Mutable {
             try (TableReaderMetadata metadata = new TableReaderMetadata(executionContext.getCairoEngine().getConfiguration(), tableToken)) {
                 metadata.loadMetadata();
                 enumerateColumns(model, metadata);
+                planDependencies.addTable(tableToken, metadata.getMetadataVersion());
             }
         } else {
             try (TableReader reader = executionContext.getReader(tableToken)) {
                 enumerateColumns(model, reader.getMetadata());
+                planDependencies.addTable(tableToken, reader.getMetadata().getMetadataVersion());
             } catch (EntryLockedException e) {
                 throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableToken.getTableName());
             } catch (CairoException e) {
@@ -7797,7 +7805,9 @@ public class SqlOptimiser implements Mutable {
                     ExpressionNode subQueryNode = pivotForColumn.getSelectSubqueryExpr();
                     assert subQueryNode != null;
                     assert compiler != null;
-                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithRetries(subQueryNode.queryModel, null, sqlExecutionContext, true)) {
+                    // The subquery model belongs to the caller's statement, so a stale table reference
+                    // propagates to the compiler that owns the statement text, which re-parses it.
+                    try (RecordCursorFactory inListFactory = compiler.generateSelect(subQueryNode.queryModel, sqlExecutionContext, true)) {
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
                         if (columnCount != 1) {
@@ -11234,7 +11244,14 @@ public class SqlOptimiser implements Mutable {
                             }
                         } else {
                             try {
-                                if (Numbers.parseInt(node.token, 1, node.token.length()) < 1) {
+                                final int index = Numbers.parseInt(node.token, 1, node.token.length());
+                                if (index < 1) {
+                                    return true;
+                                }
+                                // FunctionParser rejects a $n above the limit that the caller did not define
+                                if (bindVariableService != null
+                                        && index > sqlExecutionContext.getCairoEngine().getConfiguration().getSqlMaxBindVariables()
+                                        && bindVariableService.getFunction(index - 1) == null) {
                                     return true;
                                 }
                             } catch (NumericException e) {
@@ -15279,6 +15296,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             rewrittenModel.recordViews(model.getReferencedViews());
+            planDependencies.addViews(rewrittenModel.getReferencedViews());
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             if (ALLOW_FUNCTION_MEMOIZATION) {
                 collectColumnRefCount(null, rewrittenModel);

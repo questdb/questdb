@@ -251,6 +251,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getSqlUnorderedMapMaxEntrySize());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlModelPoolCapacity());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlMaxNegativeLimit());
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlMaxBindVariables());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortKeyPageSize());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortKeyMaxBytes());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortLightValuePageSize());
@@ -1608,6 +1609,32 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
         newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testInvalidMaxBindVariablesTooLarge() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.max.bind.variables", "32767");
+        Assert.assertEquals(32_767, newPropServerConfiguration(properties).getCairoConfiguration().getSqlMaxBindVariables());
+        properties.setProperty("cairo.sql.max.bind.variables", "32768");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.max.bind.variables must be between 1 and 32767");
+        }
+    }
+
+    @Test
+    public void testInvalidMaxBindVariablesZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.max.bind.variables", "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.max.bind.variables must be between 1 and 32767");
+        }
     }
 
     @Test
@@ -3335,6 +3362,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getSqlUnorderedMapMaxEntrySize());
         Assert.assertEquals(256, configuration.getSqlModelPoolCapacity());
         Assert.assertEquals(42, configuration.getSqlMaxNegativeLimit());
+        Assert.assertEquals(256, configuration.getSqlMaxBindVariables());
         Assert.assertEquals(10 * 1024 * 1024, configuration.getSqlSortKeyPageSize());
         // New max.bytes key wins over the deprecated max.pages alias.
         Assert.assertEquals(123L * 1024 * 1024, configuration.getSqlSortKeyMaxBytes());

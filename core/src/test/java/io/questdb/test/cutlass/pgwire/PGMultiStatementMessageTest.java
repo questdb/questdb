@@ -339,6 +339,20 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    public void testCachedSelectSeesInsertsOfSameScript() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE e (v INT)");
+                // from the second run on, the SELECT text hits the select cache
+                for (long expectedCount = 1; expectedCount <= 3; expectedCount++) {
+                    boolean hasResult = statement.execute("INSERT INTO e VALUES (1); SELECT count() FROM e");
+                    assertResults(statement, hasResult, count(1), data(row(expectedCount)));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCachedTextFormatPgStatementReturnsDataUsingBinaryFormatWhenClientRequestsIt() throws Exception {
         // Exclude quirks, because they send P(arse) message for all SQL statements in the script
         // and only then (E)xecute them. This means at the time when it's parsing 'insert into mytable ...'
@@ -463,8 +477,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 115 : 9;
                 assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
             }
+            // the failed DELETE rolls back the implicit transaction holding INSERT 2;
+            // COMMIT already made INSERT 1 durable
             boolean hasResult = statement.execute("select * from mytable;");
-            assertResults(statement, hasResult, data(row(1L), row(2L)));
+            assertResults(statement, hasResult, data(row(1L)));
         });
     }
 
@@ -706,6 +722,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 86 : 9;
                 assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
             }
+            // the error failed the transaction, as in PostgreSQL: it takes a ROLLBACK to query again
+            connection.rollback();
 
             boolean hasResult = statement.execute("select * from test; ");
             assertResults(statement, hasResult, Result.EMPTY);
@@ -730,6 +748,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 158 : 9;
                 assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
             }
+            // the error failed the transaction, as in PostgreSQL: it takes a ROLLBACK to query again
+            connection.rollback();
 
             boolean hasResult = statement.execute("select * from testA; select * from testB;");
             assertResults(statement, hasResult, Result.EMPTY, Result.EMPTY);
@@ -1280,6 +1300,28 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("select 'hello'");
             assertResults(statement, hasResult, data(row("hello")));
+        });
+    }
+
+    @Test
+    public void testStaleCachedSelectRollsBackInsertsOfSameScript() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE e (v INT)");
+                statement.execute("CREATE TABLE s (a INT)");
+                // run twice so that the select cache holds the plan
+                statement.execute("SELECT a FROM s");
+                statement.execute("SELECT a FROM s");
+                statement.execute("ALTER TABLE s RENAME COLUMN a TO b");
+                try {
+                    statement.execute("INSERT INTO e VALUES (1); SELECT a FROM s");
+                    Assert.fail("stale SELECT must fail");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Invalid column: a");
+                }
+                boolean hasResult = statement.execute("SELECT count() FROM e");
+                assertResults(statement, hasResult, data(row(0L)));
+            }
         });
     }
 

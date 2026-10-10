@@ -334,6 +334,42 @@ public class GeoHashQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashColonCastFollowedByAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT 'u33d'::GEOHASH(4c) x, 2 z FROM long_sequence(2)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tz
+                            u33d\t2
+                            u33d\t2
+                            """);
+            assertQuery("SELECT 'u33d'::GEOHASH(4c) AS \"x y\" FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x y
+                            u33d
+                            """);
+        });
+    }
+
+    @Test
+    public void testGeoHashColonCastFollowedByClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g GEOHASH(4c), x LONG)");
+            execute("INSERT INTO t VALUES (#u33d, 1), (#u33e, 2), (#u33d, 3)");
+            assertQuery("SELECT x FROM t WHERE g = 'u33d'::GEOHASH(4c) ORDER BY x DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            3
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testGeoHashDowncast() throws Exception {
         assertMemoryLeak(() -> assertQuery("""
                 select cast(cast('questdb' as geohash(7c)) as geohash(6c)) from long_sequence(1)

@@ -30,7 +30,10 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.cutlass.text.types.DateUtf8Adapter;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.cutlass.text.types.TimestampUtf8Adapter;
+import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Misc;
@@ -272,6 +275,53 @@ public class TypeManagerTest extends AbstractTest {
     @Test
     public void testUnknownTopLevelProp() {
         assertFailure("/textloader/types/unknown_top_level_prop.json", 309, "'date' and/or 'timestamp' expected");
+    }
+
+    @Test
+    public void testUtf8FormatProbeNonAscii() throws JsonException, IOException {
+        // "utf8": true formats must probe the decoded value, so localized non-ASCII month names match
+        TestUtils.writeStringToFile(
+                new File(root, "text_loader_utf8_fr.json"),
+                """
+                        {
+                          "date": [{"format": "d MMM y", "locale": "fr-FR", "utf8": true}],
+                          "timestamp": [{"format": "d MMM y HH:mm", "locale": "fr-FR", "utf8": true}]
+                        }"""
+        );
+        TypeManager typeManager = createTypeManager("/text_loader_utf8_fr.json");
+        DateUtf8Adapter dateProbe = null;
+        TimestampUtf8Adapter timestampProbe = null;
+        for (int i = 0, n = typeManager.getProbeCount(); i < n; i++) {
+            TypeAdapter probe = typeManager.getProbe(i);
+            if (probe instanceof DateUtf8Adapter adapter) {
+                dateProbe = adapter;
+            } else if (probe instanceof TimestampUtf8Adapter adapter) {
+                timestampProbe = adapter;
+            }
+        }
+        Assert.assertNotNull(dateProbe);
+        Assert.assertNotNull(timestampProbe);
+
+        try (DirectUtf8Sink value = new DirectUtf8Sink(64)) {
+            value.put("10 déc. 2018");
+            Assert.assertTrue(dateProbe.probe(value));
+            value.clear();
+            value.put("10 déc. 2018 11:30");
+            Assert.assertTrue(timestampProbe.probe(value));
+
+            value.clear();
+            value.put("10 xyz 2018");
+            Assert.assertFalse(dateProbe.probe(value));
+            value.clear();
+            value.put("10 xyz 2018 11:30");
+            Assert.assertFalse(timestampProbe.probe(value));
+
+            // a lone lead byte is invalid UTF-8: the probes reject it without throwing
+            value.clear();
+            value.putAny((byte) 0xC3);
+            Assert.assertFalse(dateProbe.probe(value));
+            Assert.assertFalse(timestampProbe.probe(value));
+        }
     }
 
     private void assertFailure(String resourceName, int position, CharSequence text) {

@@ -63,6 +63,8 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -71,6 +73,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class TextLoaderTest extends AbstractCairoTest {
+
+    private static final String CHAR_CHAR_METADATA = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"CHAR\"},{\"index\":1,\"name\":\"b\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
+    // localized fr-FR month abbreviations with non-ASCII letters, parsed by frenchUtf8FormatsConfiguration()
+    private static final String FRENCH_DATES_CSV = """
+            v,d,t
+            1,3 f\u00e9vr. 2017,3 f\u00e9vr. 2017 10:00
+            2,10 d\u00e9c. 2018,10 d\u00e9c. 2018 11:30
+            """;
+    private static final String FRENCH_DATES_EXPECTED = """
+            v\td\tt
+            1\t2017-02-03T00:00:00.000Z\t2017-02-03T10:00:00.000000Z
+            2\t2018-12-10T00:00:00.000Z\t2018-12-10T11:30:00.000000Z
+            """;
 
     // the middle timestamp is 2262-01-01T00:00:00.000000000Z, one nanosecond above CommonUtils.MAX_TIMESTAMP
     private static final String NANO_TS_BEYOND_CEILING_CSV = """
@@ -938,6 +953,65 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDetectUtf8FormatsNonAscii() throws Exception {
+        // "utf8": true formats detect localized non-ASCII month names in a new table
+        try (CairoEngine engine = new CairoEngine(frenchUtf8FormatsConfiguration())) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_COL);
+                        textLoader.setForceHeaders(true);
+                        playText0(textLoader, FRENCH_DATES_CSV, 1024, NOOP_TRANSFORMER);
+                        sink.clear();
+                        textLoader.getMetadata().toJson(sink);
+                        TestUtils.assertEquals(
+                                "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"v\",\"type\":\"INT\"},{\"index\":1,\"name\":\"d\",\"type\":\"DATE\"},{\"index\":2,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
+                                sink
+                        );
+                        Assert.assertEquals(2L, textLoader.getParsedLineCount());
+                        Assert.assertEquals(2L, textLoader.getWrittenLineCount());
+                        Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+                        textLoader.clear();
+                        refreshTablesInBaseEngine();
+                        assertQuery("test")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(FRENCH_DATES_EXPECTED);
+                    }
+            );
+        }
+    }
+
+    @Test
+    public void testDetectUtf8FormatsNonAsciiIntoExistingColumns() throws Exception {
+        // "utf8": true formats parse localized non-ASCII month names into existing DATE/TIMESTAMP columns
+        try (
+                CairoEngine engine = new CairoEngine(frenchUtf8FormatsConfiguration());
+                SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+        ) {
+            engine.execute("CREATE TABLE test (v INT, d DATE, t TIMESTAMP)", sqlExecutionContext);
+            engine.releaseAllWriters();
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_COL);
+                        textLoader.setForceHeaders(true);
+                        playText0(textLoader, FRENCH_DATES_CSV, 1024, NOOP_TRANSFORMER);
+                        Assert.assertEquals(2L, textLoader.getParsedLineCount());
+                        Assert.assertEquals(2L, textLoader.getWrittenLineCount());
+                        Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+                        textLoader.clear();
+                        refreshTablesInBaseEngine();
+                        assertQuery("test")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(FRENCH_DATES_EXPECTED);
+                    }
+            );
+        }
+    }
+
+    @Test
     public void testDuplicateValueDifferentCaseInFileWithForcedHeader() throws Exception {
         assertDuplicateColumnErrorDifferentCase(true);
     }
@@ -1133,7 +1207,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                         240,
                         expected,
                         "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"" + stringTypeName + "\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
-                        12,
+                        11,
                         11,
                         true
                 );
@@ -1295,6 +1369,575 @@ public class TextLoaderTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .expectSize()
                     .returns("v\tts\n");
+        });
+    }
+
+    @Test
+    public void testImportBooleanBadValueSkipAll() throws Exception {
+        // a value that is not a PostgreSQL boolean spelling must abort the import
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    b,ts
+                    t,1970-01-01T00:00:00.000000Z
+                    garbage,1970-01-01T00:00:01.000000Z
+                    f,1970-01-01T00:00:02.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ALL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.fail("import must abort on a bad boolean");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bad syntax [line=1, col=0]");
+            }
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("b\tts\n");
+        });
+    }
+
+    @Test
+    public void testImportBooleanPgSpellingsSkipRow() throws Exception {
+        // BOOLEAN accepts the PostgreSQL spellings, keeps 'null' as false and counts garbage as an error
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    b,ts
+                    t,1970-01-01T00:00:00.000000Z
+                    1,1970-01-01T00:00:01.000000Z
+                    yes,1970-01-01T00:00:02.000000Z
+                    on,1970-01-01T00:00:03.000000Z
+                    TRUE,1970-01-01T00:00:04.000000Z
+                    f,1970-01-01T00:00:05.000000Z
+                    0,1970-01-01T00:00:06.000000Z
+                    no,1970-01-01T00:00:07.000000Z
+                    off,1970-01-01T00:00:08.000000Z
+                    false,1970-01-01T00:00:09.000000Z
+                    null,1970-01-01T00:00:10.000000Z
+                    garbage,1970-01-01T00:00:11.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(12, textLoader.getParsedLineCount());
+            Assert.assertEquals(11, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[1,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            b\tts
+                            true\t1970-01-01T00:00:00.000000Z
+                            true\t1970-01-01T00:00:01.000000Z
+                            true\t1970-01-01T00:00:02.000000Z
+                            true\t1970-01-01T00:00:03.000000Z
+                            true\t1970-01-01T00:00:04.000000Z
+                            false\t1970-01-01T00:00:05.000000Z
+                            false\t1970-01-01T00:00:06.000000Z
+                            false\t1970-01-01T00:00:07.000000Z
+                            false\t1970-01-01T00:00:08.000000Z
+                            false\t1970-01-01T00:00:09.000000Z
+                            false\t1970-01-01T00:00:10.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingDateColumnParsesMisdetectedText() throws Exception {
+        // text the detector types as LONG, TIMESTAMP or VARCHAR parses into existing DATE/TIMESTAMP columns like
+        // INSERT's implicit cast; 'null' stays NULL and an unparseable value counts as a column error
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (d DATE, d2 DATE, t TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    d,d2,t,tn,ts
+                    1700000000000,2023-11-14T22:13:20.123456Z,2023-11-14,2023-11-14T22:13:20+01:00,2023-11-14T00:00:00.000000Z
+                    1700000000001,2023-11-14T22:13:21.000000Z,abc,null,2023-11-14T00:00:01.000000Z
+                    1700000000002,2023-11-14T22:13:22.000000Z,2023-11-15,null,2023-11-14T00:00:02.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(3, textLoader.getParsedLineCount());
+            Assert.assertEquals(3, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,1,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            d\td2\tt\ttn\tts
+                            2023-11-14T22:13:20.000Z\t2023-11-14T22:13:20.123Z\t2023-11-14T00:00:00.000000Z\t2023-11-14T21:13:20.000000000Z\t2023-11-14T00:00:00.000000Z
+                            2023-11-14T22:13:20.001Z\t2023-11-14T22:13:21.000Z\t\t\t2023-11-14T00:00:01.000000Z
+                            2023-11-14T22:13:20.002Z\t2023-11-14T22:13:22.000Z\t2023-11-15T00:00:00.000000Z\t\t2023-11-14T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingDateColumnSchemaTimestampUtf8NonAscii() throws Exception {
+        // a UTF-8 TIMESTAMP schema pattern parses non-ASCII text into the existing DATE column
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,d,ts
+                    1,3 févr. 2017,2023-11-14T00:00:00.000000Z
+                    2,10 déc. 2018,2023-11-14T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "d",
+                        "type": "TIMESTAMP",
+                        "pattern": "d MMM y",
+                        "locale": "fr-FR",
+                        "utf8": true
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getParsedLineCount());
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\td\tts
+                            1\t2017-02-03T00:00:00.000Z\t2023-11-14T00:00:00.000000Z
+                            2\t2018-12-10T00:00:00.000Z\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingDateTimestampColumnsSchemaPattern() throws Exception {
+        // a schema pattern of the other date type parses into the existing DATE/TIMESTAMP column
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (d DATE, t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    d,t,ts
+                    14.11.2023 22:13:20,14.11.2023,2023-11-14T00:00:00.000000Z
+                    bad,bad,2023-11-14T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "d",
+                        "type": "TIMESTAMP",
+                        "pattern": "dd.MM.yyyy HH:mm:ss"
+                      },
+                      {
+                        "name": "t",
+                        "type": "DATE",
+                        "pattern": "dd.MM.yyyy"
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getParsedLineCount());
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[1,1,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            d\tt\tts
+                            2023-11-14T22:13:20.000Z\t2023-11-14T00:00:00.000000Z\t2023-11-14T00:00:00.000000Z
+                            \t\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingDateTimestampColumnsSkipRow() throws Exception {
+        // unparseable DATE/TIMESTAMP text skips the row instead of loading NULL
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (d DATE, t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    d,t,ts
+                    abc,2023-11-14,1970-01-01T00:00:00.000000Z
+                    2023-11-14,1.5,1970-01-01T00:00:01.000000Z
+                    1700000000000,2023-11-14T22:13:20Z,1970-01-01T00:00:02.000000Z
+                    1.5,abc,1970-01-01T00:00:03.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(4, textLoader.getParsedLineCount());
+            Assert.assertEquals(1, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[2,1,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            d\tt\tts
+                            2023-11-14T22:13:20.000Z\t2023-11-14T22:13:20.000000Z\t1970-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingDesignatedTimestampNsWithTimestampColumn() throws Exception {
+        // the TIMESTAMP_NS designated timestamp must not switch the TIMESTAMP column, or later imports, to nanos
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (t TIMESTAMP, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    t,ts
+                    2023-11-14T22:13:20.000001Z,2023-11-14T22:13:20.000000Z
+                    2023-11-14T22:13:20.123456Z,2023-11-14T22:13:21.000001Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            t\tts
+                            2023-11-14T22:13:20.000001Z\t2023-11-14T22:13:20.000000000Z
+                            2023-11-14T22:13:20.123456Z\t2023-11-14T22:13:21.000001000Z
+                            """);
+            textLoader.clear();
+
+            // the same loader creates a TIMESTAMP column, not TIMESTAMP_NS, for microsecond text.
+            // The header is longer than one character, so that the detector does not take the column for CHAR.
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            textLoader.configureDestination(new Utf8String("fresh"), false, Atomicity.SKIP_COL, PartitionBy.NONE, null, null);
+            textLoader.configureColumnDelimiter((byte) ',');
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, """
+                    micros
+                    2023-11-14T22:13:20.000001Z
+                    """, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(1, textLoader.getWrittenLineCount());
+            assertQuery("SELECT micros, typeOf(micros) type FROM fresh")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            micros\ttype
+                            2023-11-14T22:13:20.000001Z\tTIMESTAMP
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingDesignatedTimestampSchemaDateFails() throws Exception {
+        // a schema DATE pattern cannot feed the designated timestamp: the import fails upfront
+        // instead of rejecting every row
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,ts
+                    1,3 июля 2017 г.
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "ts",
+                        "type": "DATE",
+                        "pattern": "d MMMM y г.",
+                        "locale": "ru-RU"
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            try {
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.fail("schema DATE into designated timestamp must fail");
+            } catch (TextException e) {
+                Assert.assertEquals("not a timestamp 'ts'", e.getMessage());
+            }
+            Assert.assertEquals(0, textLoader.getWrittenLineCount());
+        });
+    }
+
+    @Test
+    public void testImportExistingDesignatedTimestampSchemaTimestampUtf8NonAscii() throws Exception {
+        // a UTF-8 TIMESTAMP schema pattern parses non-ASCII text into the designated timestamp
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,ts
+                    1,3 févr. 2017
+                    2,10 déc. 2018
+                    3,28 août 2019
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "ts",
+                        "type": "TIMESTAMP",
+                        "pattern": "d MMM y",
+                        "locale": "fr-FR",
+                        "utf8": true
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(3, textLoader.getParsedLineCount());
+            Assert.assertEquals(3, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\tts
+                            1\t2017-02-03T00:00:00.000000Z
+                            2\t2018-12-10T00:00:00.000000Z
+                            3\t2019-08-28T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingDesignatedTimestampWithTimestampNsColumn() throws Exception {
+        // the TIMESTAMP_NS column must not switch the designated TIMESTAMP to nanos and reject every row
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, tn TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    ts,tn
+                    2023-11-14T22:13:20.000000Z,2023-11-14T22:13:20.000001Z
+                    2023-11-14T22:13:21.000000Z,2023-11-14T22:13:20.123456Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ttn
+                            2023-11-14T22:13:20.000000Z\t2023-11-14T22:13:20.000001000Z
+                            2023-11-14T22:13:21.000000Z\t2023-11-14T22:13:20.123456000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampAndTimestampNsColumns() throws Exception {
+        // columns detected with the same timestamp format each keep their own precision
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (d DATE, t TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    d,t,tn,ts
+                    2023-11-14T22:13:20.000000Z,2023-11-14T22:13:20.000001Z,2023-11-14T22:13:20.000000Z,2023-11-14T00:00:00.000000Z
+                    2023-11-14T22:13:20.123456Z,2023-11-14T22:13:20.123456Z,2023-11-14T22:13:20.123456Z,2023-11-14T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            d\tt\ttn\tts
+                            2023-11-14T22:13:20.000Z\t2023-11-14T22:13:20.000001Z\t2023-11-14T22:13:20.000000000Z\t2023-11-14T00:00:00.000000Z
+                            2023-11-14T22:13:20.123Z\t2023-11-14T22:13:20.123456Z\t2023-11-14T22:13:20.123456000Z\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampColumnSchemaDateNonAscii() throws Exception {
+        // a schema DATE pattern parses non-ASCII text into the existing TIMESTAMP column
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, d TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,d,ts
+                    1,3 июля 2017 г.,2023-11-14T00:00:00.000000Z
+                    2,10 марта 2018 г.,2023-11-14T00:00:01.000000Z
+                    3,28 февраля 2016 г.,2023-11-14T00:00:02.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "d",
+                        "type": "DATE",
+                        "pattern": "d MMMM y г.",
+                        "locale": "ru-RU"
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(3, textLoader.getParsedLineCount());
+            Assert.assertEquals(3, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\td\tts
+                            1\t2017-07-03T00:00:00.000000Z\t2023-11-14T00:00:00.000000Z
+                            2\t2018-03-10T00:00:00.000000Z\t2023-11-14T00:00:01.000000Z
+                            3\t2016-02-28T00:00:00.000000Z\t2023-11-14T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampNsColumnSchemaDateNonAscii() throws Exception {
+        // a schema DATE pattern parses non-ASCII text into the existing TIMESTAMP_NS column
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (v INT, d TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    v,d,ts
+                    1,3 июля 2017 г.,2023-11-14T00:00:00.000000Z
+                    2,10 марта 2018 г.,2023-11-14T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "d",
+                        "type": "DATE",
+                        "pattern": "d MMMM y г.",
+                        "locale": "ru-RU"
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getParsedLineCount());
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\td\tts
+                            1\t2017-07-03T00:00:00.000000000Z\t2023-11-14T00:00:00.000000Z
+                            2\t2018-03-10T00:00:00.000000000Z\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampNsSchemaPatternAndDetectedColumns() throws Exception {
+        // a schema TIMESTAMP pattern and detected formats each keep the precision of their own column
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (t TIMESTAMP_NS, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    t,tn,ts
+                    14.11.2023 22:13:20,2023-11-14T22:13:20.000001Z,2023-11-14T00:00:00.000000Z
+                    15.11.2023 22:13:20,2023-11-14T22:13:20.123456Z,2023-11-14T00:00:01.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            playJson(textLoader, """
+                    [
+                      {
+                        "name": "t",
+                        "type": "TIMESTAMP",
+                        "pattern": "dd.MM.yyyy HH:mm:ss"
+                      }
+                    ]""");
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            t\ttn\tts
+                            2023-11-14T22:13:20.000000000Z\t2023-11-14T22:13:20.000001000Z\t2023-11-14T00:00:00.000000Z
+                            2023-11-15T22:13:20.000000000Z\t2023-11-14T22:13:20.123456000Z\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportNarrowTypesOutOfRangeSkipCol() throws Exception {
+        // out-of-range BYTE/SHORT, multi-char or non-BMP CHAR and non-hex LONG256 are column errors,
+        // not wrapped or truncated values; a LONG256 without the 0x prefix is valid, like in INSERT
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (by BYTE, sh SHORT, ch CHAR, l256 LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    by,sh,ch,l256,ts
+                    300,70000,abc,1234,1970-01-01T00:00:00.000000Z
+                    -129,-32769,\uD83D\uDE00,zz,1970-01-01T00:00:01.000000Z
+                    127,32767,\u00E9,0x1234,1970-01-01T00:00:02.000000Z
+                    -128,-32768,\"\"\"\",0x12,1970-01-01T00:00:03.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_COL, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(4, textLoader.getParsedLineCount());
+            Assert.assertEquals(4, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[2,2,2,1,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            by\tsh\tch\tl256\tts
+                            0\t0\t\t0x1234\t1970-01-01T00:00:00.000000Z
+                            0\t0\t\t\t1970-01-01T00:00:01.000000Z
+                            127\t32767\t\u00E9\t0x1234\t1970-01-01T00:00:02.000000Z
+                            -128\t-32768\t"\t0x12\t1970-01-01T00:00:03.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportNarrowTypesSkipRow() throws Exception {
+        // a row with one bad BYTE, SHORT, CHAR or LONG256 value is skipped; valid values keep the
+        // accepted syntax: sign, underscore separators, a 3-byte UTF-8 CHAR and an optional 0x prefix
+        assertNoLeak(textLoader -> {
+            execute("CREATE TABLE test (by BYTE, sh SHORT, ch CHAR, l256 LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            String csv = """
+                    by,sh,ch,l256,ts
+                    128,1,a,0x01,1970-01-01T00:00:00.000000Z
+                    1,32_768,a,0x01,1970-01-01T00:00:01.000000Z
+                    1,1,ab,0x01,1970-01-01T00:00:02.000000Z
+                    1,1,a,0x,1970-01-01T00:00:03.000000Z
+                    +12,-1_000,\u20AC,0Xab,1970-01-01T00:00:04.000000Z
+                    null,null,null,null,1970-01-01T00:00:05.000000Z
+                    """;
+            configureLoaderDefaults(textLoader, Atomicity.SKIP_ROW, false, PartitionBy.DAY);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            Assert.assertEquals(6, textLoader.getParsedLineCount());
+            Assert.assertEquals(2, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[1,1,1,1,0]", textLoader.getColumnErrorCounts().toString());
+            assertQuery("test")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            by\tsh\tch\tl256\tts
+                            12\t-1000\t\u20AC\t0xab\t1970-01-01T00:00:04.000000Z
+                            0\t0\t\t\t1970-01-01T00:00:05.000000Z
+                            """);
         });
     }
 
@@ -1985,6 +2628,134 @@ public class TextLoaderTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testLineTooLongAfterRejectedLine() throws Exception {
+        // the too-long line is also rejected for its extra values, the lines after it are imported
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,2\n3,4,5,6," + "x".repeat(2048) + "\n6,7\n8,9\n",
+                8,
+                true,
+                """
+                        a\tb
+                        1\t2
+                        6\t7
+                        8\t9
+                        """,
+                1,
+                3
+        );
+    }
+
+    @Test
+    public void testLineTooLongAtFileEnd() throws Exception {
+        // the roll buffer does not keep the bytes of the too-long last line, so it must not be imported
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,2\n3," + "x".repeat(2048),
+                Integer.MAX_VALUE,
+                false,
+                """
+                        a\tb
+                        1\t2
+                        """,
+                1,
+                1
+        );
+    }
+
+    @Test
+    public void testLineTooLongCountedOnce() throws Exception {
+        // the too-long line counts as an error line only, so the rejected row count is 1, not 2
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,2\n3," + "x".repeat(2048) + "\n6,7\n8,9\n",
+                8,
+                false,
+                """
+                        a\tb
+                        1\t2
+                        6\t7
+                        8\t9
+                        """,
+                1,
+                3
+        );
+    }
+
+    @Test
+    public void testLineTooLongInFirstBuffer() throws Exception {
+        // the first buffer ends inside the too-long quoted field, so the overflow happens when the lexer rolls the line
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,2\n3,\"" + "x".repeat(2048) + "\"\n6,7\n8,9\n",
+                1500,
+                false,
+                """
+                        a\tb
+                        1\t2
+                        6\t7
+                        8\t9
+                        """,
+                1,
+                3
+        );
+    }
+
+    @Test
+    public void testLineTooLongQuotedField() throws Exception {
+        // the closing quote of the too-long field must end the quoted section, the lines after it are imported
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,\"" + "x".repeat(2048) + "\"\n2,3\n4,5\n",
+                8,
+                false,
+                """
+                        a\tb
+                        2\t3
+                        4\t5
+                        """,
+                1,
+                2
+        );
+    }
+
+    @Test
+    public void testLineTooLongQuotedFieldWithLineBreak() throws Exception {
+        // the line break inside the too-long quoted field does not end the line, so its tail is not a row
+        assertImportWithSmallRollBuffer(
+                "a,b\n1,\"" + "x".repeat(2048) + "\n7\"\n2,3\n4,5\n",
+                8,
+                false,
+                """
+                        a\tb
+                        2\t3
+                        4\t5
+                        """,
+                1,
+                2
+        );
+    }
+
+    @Test
+    public void testLoadExtraValuesAtBufferEnd() throws Exception {
+        // the first buffer ends after the third delimiter of a line of a two-column file
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                """
+                        a,b
+                        1,2,3,4
+                        5,6,7,8
+                        9,0
+                        """,
+                18,
+                false,
+                CHAR_CHAR_METADATA,
+                """
+                        a\tb
+                        1\t2
+                        5\t6
+                        9\t0
+                        """,
+                0
+        ));
     }
 
     @Test
@@ -2965,6 +3736,198 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSkipLevFirstBufferEndsInRejectedLine() throws Exception {
+        // the analysis pass ends inside the rejected line, the load pass must not inherit its state
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                "a,b\n1,2\n3,4,5,6\n7,8\n",
+                14,
+                true,
+                CHAR_CHAR_METADATA,
+                """
+                        a\tb
+                        1\t2
+                        7\t8
+                        """,
+                1
+        ));
+    }
+
+    @Test
+    public void testSkipLevImportsLinesWithEmptyExtraFields() throws Exception {
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                """
+                        a,b
+                        1,2023-01-01,,
+                        2,2023-01-02,,
+                        """,
+                Integer.MAX_VALUE,
+                true,
+                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
+                """
+                        a\tb
+                        1\t2023-01-01T00:00:00.000Z
+                        2\t2023-01-02T00:00:00.000Z
+                        """,
+                0
+        ));
+    }
+
+    @Test
+    public void testSkipLevRejectedLastLineThenNextImport() throws Exception {
+        assertNoLeak(textLoader -> {
+            assertImportTwice(
+                    textLoader,
+                    "a,b\n1,2\n3,4\n5,6,7,8",
+                    8,
+                    true,
+                    CHAR_CHAR_METADATA,
+                    """
+                            a\tb
+                            1\t2
+                            3\t4
+                            """,
+                    1
+            );
+            assertImportTwice(
+                    textLoader,
+                    """
+                            a,b
+                            10,20
+                            30,40
+                            """,
+                    Integer.MAX_VALUE,
+                    true,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    """
+                            a\tb
+                            10\t20
+                            30\t40
+                            """,
+                    0
+            );
+        });
+    }
+
+    @Test
+    public void testSkipLevRejectedLinesAcrossBuffers() throws Exception {
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                """
+                        a,b
+                        x,y
+                        p,q,r,s
+                        u,v
+                        k,l,m,n
+                        o,p
+                        """,
+                6,
+                true,
+                CHAR_CHAR_METADATA,
+                """
+                        a\tb
+                        x\ty
+                        u\tv
+                        o\tp
+                        """,
+                2
+        ));
+    }
+
+    @Test
+    public void testSkipLevRejectedLinesKeepColumnTypes() throws Exception {
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                """
+                        a,b
+                        1,2
+                        3,4,5,6,7
+                        8,9,10,11,12
+                        13,14
+                        15,16
+                        """,
+                Integer.MAX_VALUE,
+                true,
+                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                """
+                        a\tb
+                        1\t2
+                        13\t14
+                        15\t16
+                        """,
+                2
+        ));
+    }
+
+    @Test
+    public void testSkipLevRejectsLastLineWithoutLineEnd() throws Exception {
+        assertNoLeak(textLoader -> {
+            assertImportTwice(
+                    textLoader,
+                    "a,b\n1,2\n3,4,5",
+                    Integer.MAX_VALUE,
+                    true,
+                    CHAR_CHAR_METADATA,
+                    """
+                            a\tb
+                            1\t2
+                            """,
+                    1
+            );
+            // without skipLev the extra value is dropped and the line is imported
+            assertImportTwice(
+                    textLoader,
+                    "a,b\n1,2\n3,4,5",
+                    Integer.MAX_VALUE,
+                    false,
+                    CHAR_CHAR_METADATA,
+                    """
+                            a\tb
+                            1\t2
+                            3\t4
+                            """,
+                    0
+            );
+        });
+    }
+
+    @Test
+    public void testSkipLevRejectsLineWithExtraValues() throws Exception {
+        final String expected = """
+                a\tb
+                x\ty
+                u\tv
+                """;
+        assertNoLeak(textLoader -> {
+            // one extra value
+            assertImportTwice(textLoader, "a,b\nx,y\np,q,r\nu,v\n", Integer.MAX_VALUE, true, CHAR_CHAR_METADATA, expected, 1);
+            // two extra values, the last one ends the line
+            assertImportTwice(textLoader, "a,b\nx,y\np,q,r,s\nu,v\n", Integer.MAX_VALUE, true, CHAR_CHAR_METADATA, expected, 1);
+            // a quoted extra value ends the line
+            assertImportTwice(textLoader, "a,b\nx,y\np,q,r,\"s\"\nu,v\n", Integer.MAX_VALUE, true, CHAR_CHAR_METADATA, expected, 1);
+        });
+    }
+
+    @Test
+    public void testSkipLevRejectsLineWithQuotedLineEnd() throws Exception {
+        // the line end inside the quoted extra value does not end the rejected line
+        assertNoLeak(textLoader -> assertImportTwice(
+                textLoader,
+                "a,b\nx,y\np,q,r,s,\"t\nu\"\nv,w\n",
+                Integer.MAX_VALUE,
+                true,
+                CHAR_CHAR_METADATA,
+                """
+                        a\tb
+                        x\ty
+                        v\tw
+                        """,
+                1
+        ));
+    }
+
+    @Test
     public void testSmallInitialBuffer() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = """
@@ -3025,6 +3988,45 @@ public class TextLoaderTest extends AbstractCairoTest {
             TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"" + stringTypeName + "\"},{\"index\":1,\"name\":\"date\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}", sink);
             Assert.assertEquals(3L, textLoader.getParsedLineCount());
             Assert.assertEquals(3L, textLoader.getWrittenLineCount());
+            assertTable(expected);
+            textLoader.clear();
+        });
+    }
+
+    @Test
+    public void testTimestampFormatKoreanDelimiters() throws Exception {
+        // Korean one-char delimiters (U+B144, U+C6D4, U+C77C) do not fit a sipush operand
+        assertNoLeak(textLoader -> {
+            String csv = """
+                    "name","date"
+                    "first","2024년01월02일"
+                    "second","2023년12월31일"
+                    """;
+            String expected = """
+                    name\tdate
+                    first\t2024-01-02T00:00:00.000000Z
+                    second\t2023-12-31T00:00:00.000000Z
+                    """;
+            configureLoaderDefaults(textLoader);
+
+            playJson(textLoader, ("""
+                    [
+                      {
+                        "name": "date",
+                        "type": "TIMESTAMP",
+                        "pattern": "yyyy년MM월dd일",
+                        "utf8": "true"
+                      }
+                    ]"""));
+
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            sink.clear();
+            textLoader.getMetadata().toJson(sink);
+            TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"" + stringTypeName + "\"},{\"index\":1,\"name\":\"date\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}", sink);
+            Assert.assertEquals(2L, textLoader.getParsedLineCount());
+            Assert.assertEquals(2L, textLoader.getWrittenLineCount());
             assertTable(expected);
             textLoader.clear();
         });
@@ -3518,6 +4520,34 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriteIntToDate() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = """
+                    abcd,10
+                    efg,45
+                    werop,90
+                    """;
+
+            // text detected as INT parses into the DATE column as epoch millis, like INSERT
+            String expected = """
+                    a\tb
+                    abcd\t1970-01-01T00:00:00.010Z
+                    efg\t1970-01-01T00:00:00.045Z
+                    werop\t1970-01-01T00:00:00.090Z
+                    """;
+
+            execute("create table test(a string, b date)");
+            configureLoaderDefaults(textLoader);
+            playText(textLoader, csv, 1024,
+                    expected,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + sqlStringTypeName + "\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3
+            );
+        });
+    }
+
+    @Test
     public void testWriteIntToTimestamp() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = """
@@ -3546,41 +4576,11 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWriteToExistingCannotConvertDate() throws Exception {
-        assertNoLeak(textLoader -> {
-            String csv = """
-                    abcd,10
-                    efg,45
-                    werop,90
-                    """;
-
-            // we would mis-detect type and have no date parser to try loading data with
-            String expected = """
-                    a\tb
-                    abcd\t
-                    efg\t
-                    werop\t
-                    """;
-
-            execute("create table test(a string, b date)");
-            configureLoaderDefaults(textLoader);
-            playText(textLoader, csv, 1024,
-                    expected,
-                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + sqlStringTypeName + "\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
-                    3,
-                    3
-            );
-        });
-    }
-
-    @Test
     public void testWriteToExistingTableBadDateColumn() throws Exception {
         assertNoLeak(textLoader -> {
+            // unparseable text is a column error: SKIP_ROW skips every row
             String expected = """
                     t\ts\tv
-                    \tGOOG\t10.0
-                    \tGOOG\t15.0
-                    \tGOOG\t20.0
                     """;
 
             String csv = """
@@ -3604,7 +4604,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"DATE\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                     3,
-                    3
+                    0
             );
         });
     }
@@ -3612,11 +4612,9 @@ public class TextLoaderTest extends AbstractCairoTest {
     @Test
     public void testWriteToExistingTableBadTimestampColumn() throws Exception {
         assertNoLeak(textLoader -> {
+            // unparseable text is a column error: SKIP_ROW skips every row
             String expected = """
                     t\ts\tv
-                    \tGOOG\t10.0
-                    \tGOOG\t15.0
-                    \tGOOG\t20.0
                     """;
 
             String csv = """
@@ -3635,7 +4633,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                     3,
-                    3
+                    0
             );
         });
     }
@@ -3807,6 +4805,37 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriteToExistingTableUnknownHeaderPositionTakenByNamedColumn() throws Exception {
+        assertNoLeak(textLoader -> {
+            // x is not in the table and falls back to the table column at its position, which v names
+            String csv = """
+                    x,v
+                    1,2
+                    3,4
+                    """;
+
+            execute("CREATE TABLE test (v INT, w INT)");
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(true);
+            try {
+                playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "file columns map to the same table column [table column=v, file columns=x, v]");
+            }
+
+            execute("INSERT INTO test VALUES (9, 9)");
+            assertQuery("SELECT * FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tw
+                            9\t9
+                            """);
+        });
+    }
+
+    @Test
     public void testWriteToExistingVarcharColumn() throws Exception {
         assertNoLeak(textLoader -> {
             execute("create table test(a int, b varchar, ts timestamp)");
@@ -3863,6 +4892,25 @@ public class TextLoaderTest extends AbstractCairoTest {
         String nameStr = path.toString();
         String[] pathElements = nameStr.split(PATH_SEP_REGEX);
         return pathElements[pathElements.length - 1];
+    }
+
+    private static CairoConfiguration frenchUtf8FormatsConfiguration() throws IOException {
+        final File dir = temp.newFolder("utf8-formats-" + System.nanoTime());
+        TestUtils.writeStringToFile(
+                new File(dir, "text_loader.json"),
+                """
+                        {
+                          "date": [{"format": "d MMM y", "locale": "fr-FR", "utf8": true}],
+                          "timestamp": [{"format": "d MMM y HH:mm", "locale": "fr-FR", "utf8": true}]
+                        }"""
+        );
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration(dir.getAbsolutePath());
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
     }
 
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteArrayTransformer transformer) throws TextException {
@@ -3953,6 +5001,74 @@ public class TextLoaderTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "duplicate column name found");
             }
         });
+    }
+
+    private void assertImport(
+            TextLoader textLoader,
+            String text,
+            int firstBufSize,
+            boolean skipLinesWithExtraValues,
+            String expectedMetadata,
+            String expected,
+            long expectedErrorLineCount
+    ) throws Exception {
+        playImport(textLoader, text, firstBufSize, skipLinesWithExtraValues, expectedMetadata, expectedErrorLineCount);
+        assertTable(expected);
+        textLoader.clear();
+    }
+
+    // the second import on the same loader shows that the first one leaves no lexer state behind
+    private void assertImportTwice(
+            TextLoader textLoader,
+            String text,
+            int firstBufSize,
+            boolean skipLinesWithExtraValues,
+            String expectedMetadata,
+            String expected,
+            long expectedErrorLineCount
+    ) throws Exception {
+        for (int i = 0; i < 2; i++) {
+            assertImport(textLoader, text, firstBufSize, skipLinesWithExtraValues, expectedMetadata, expected, expectedErrorLineCount);
+        }
+    }
+
+    private void assertImportWithSmallRollBuffer(
+            String text,
+            int firstBufSize,
+            boolean skipLinesWithExtraValues,
+            String expected,
+            long expectedErrorLineCount,
+            long expectedParsedLineCount
+    ) throws Exception {
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getRollBufferLimit() {
+                return 1024;
+            }
+
+            @Override
+            public int getRollBufferSize() {
+                return 64;
+            }
+        };
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        playImport(textLoader, text, firstBufSize, skipLinesWithExtraValues, CHAR_CHAR_METADATA, expectedErrorLineCount);
+                        // a line too long for the roll buffer counts once, as an error line, and not as a parsed line
+                        Assert.assertEquals("parsed line count", expectedParsedLineCount, textLoader.getParsedLineCount());
+                        assertTable(expected);
+                        textLoader.clear();
+                    }
+            );
+        }
     }
 
     private void assertImportTimestampNSBeyondCeilingSkipsRow(int atomicity) throws Exception {
@@ -4244,6 +5360,24 @@ public class TextLoaderTest extends AbstractCairoTest {
                 TestUtils.assertCursor("2021-01-01T00:01:00.000000Z	1\n2021-01-01T00:01:30.000000Z	2\n2021-01-01T00:04:00.000000Z	3\n2021-01-01T00:05:00.000000Z	4\n2021-01-02T00:00:30.000000Z	5\n2021-01-02T00:05:31.000000Z	6\n", cursor, reader.getMetadata(), false, sink);
             }
         }
+    }
+
+    private void playImport(
+            TextLoader textLoader,
+            String text,
+            int firstBufSize,
+            boolean skipLinesWithExtraValues,
+            String expectedMetadata,
+            long expectedErrorLineCount
+    ) throws Exception {
+        configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, true);
+        textLoader.setForceHeaders(true);
+        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+        playText0(textLoader, text, firstBufSize, NOOP_TRANSFORMER);
+        sink.clear();
+        textLoader.getMetadata().toJson(sink);
+        TestUtils.assertEquals(expectedMetadata, sink);
+        Assert.assertEquals("error line count", expectedErrorLineCount, textLoader.getErrorLineCount());
     }
 
     private void playJson(TextLoader textLoader, String jsonStr) throws TextException {

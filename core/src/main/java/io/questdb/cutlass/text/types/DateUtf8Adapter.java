@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
@@ -37,7 +38,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8s;
 
-public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
+public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable, TimestampCompatibleAdapter {
     private final DirectUtf16Sink utf16Sink;
     private DateFormat format;
     private DateLocale locale;
@@ -53,6 +54,16 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
+    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception {
+        return getTimestamp(value, driver, utf16Sink);
+    }
+
+    @Override
+    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver, DirectUtf16Sink utf16Sink) throws Exception {
+        return driver.fromDate(parse(value, utf16Sink));
+    }
+
+    @Override
     public int getType() {
         return ColumnType.DATE;
     }
@@ -65,8 +76,12 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
+        utf16Sink.clear();
+        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(text.lo(), text.hi(), utf16Sink)) {
+            return false;
+        }
         try {
-            format.parse(text.asAsciiCharSequence(), locale);
+            format.parse(utf16Sink, locale);
             return true;
         } catch (NumericException e) {
             return false;
@@ -75,15 +90,19 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
-        utf16Sink.clear();
-        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
-            throw Utf8Exception.INSTANCE;
-        }
-        row.putDate(column, format.parse(utf16Sink, locale));
+        row.putDate(column, parse(value, utf16Sink));
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
         write(row, column, value, utf16Sink, null, null);
+    }
+
+    private long parse(DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
+        utf16Sink.clear();
+        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
+            throw Utf8Exception.INSTANCE;
+        }
+        return format.parse(utf16Sink, locale);
     }
 }

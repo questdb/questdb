@@ -46,6 +46,9 @@ public abstract class WeakDimsArrayFunction extends ArrayFunction {
      */
     @Override
     public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        if (!ColumnType.isArray(type)) {
+            throw SqlException.inconvertibleTypes(position, ColumnType.ARRAY, type);
+        }
         this.assignedType = type;
     }
 

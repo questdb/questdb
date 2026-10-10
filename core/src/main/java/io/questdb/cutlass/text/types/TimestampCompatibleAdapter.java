@@ -25,8 +25,17 @@
 package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public interface TimestampCompatibleAdapter extends TypeAdapter {
     long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception;
+
+    /**
+     * Parallel COPY workers pass their own UTF-16 sink, as they do to the 6-arg
+     * {@link TypeAdapter#write}, because the adapter's own sink belongs to a shared TypeManager.
+     */
+    default long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver, DirectUtf16Sink utf16Sink) throws Exception {
+        return getTimestamp(value, driver);
+    }
 }

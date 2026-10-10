@@ -288,6 +288,9 @@ public class SubsampleSdtDiagnosticTest extends AbstractCairoTest {
             assertError("sdt(v, ^abs($abc))", SHAPE);
             assertError("sdt(v, (^SELECT 1))", SHAPE);
             assertError("sdt(v, ^abs($2147483648))", SHAPE);
+            // above cairo.sql.max.bind.variables, as invalid as $0 to the parser
+            assertError("sdt(v, ^abs($129))", SHAPE);
+            assertError("sdt(v, ^abs($2147483647))", SHAPE);
             assertError("sdt(v, nosuchfn(1) ^+ v)", SHAPE);
             assertError("sdt(v, nosuchfn(1) ^+ :missing)", SHAPE);
             bindVariableService.setDouble(0, 0.5);

@@ -48,6 +48,8 @@ public class BorrowedArray extends MutableArray implements Mutable {
         borrowedFlatView().reset();
         shape.clear();
         strides.clear();
+        flatViewLength = 0;
+        flatViewOffset = 0;
     }
 
     public BorrowedArray of(int columnType, long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum) {

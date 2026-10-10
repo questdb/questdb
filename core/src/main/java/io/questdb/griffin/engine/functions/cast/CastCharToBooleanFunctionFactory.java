@@ -52,10 +52,11 @@ public class CastCharToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            // PostgreSQL's single-character boolean spellings
             char c = arg.getChar(rec);
-            if (c == '0' || (c | 32) == 'f') {
+            if (c == '0' || (c | 32) == 'f' || (c | 32) == 'n') {
                 return false;
-            } else if (c == '1' || (c | 32) == 't') {
+            } else if (c == '1' || (c | 32) == 't' || (c | 32) == 'y') {
                 return true;
             }
 
