@@ -66,8 +66,9 @@ public class SeqTxnTracker {
     // Set by WalPurgeJob when the table's older save point is behind its current state and no save point has
     // been taken for one interval; the next apply run that applies nothing takes one more save point.
     private volatile boolean idleEpochRequested;
-    // Wall-clock ms of WalPurgeJob's last idle save point request, 0 if none. It asks again only one interval
-    // later, so a save point that keeps failing is tried once per interval, not at every purge pass.
+    // Wall-clock ms of WalPurgeJob's last idle save point request that no save point has followed yet, 0 if none.
+    // It asks again only one interval later, so a request that keeps failing, or finds the writer held, is tried
+    // once per interval, not at every purge pass. A published save point clears it.
     private volatile long idleEpochRequestTs;
     // Wall-clock ms of the table's last save point, for the adaptive cadence gate; 0 means none yet, so the
     // first apply batch under adaptive is eligible. Only the apply worker that holds the table writer writes it,
@@ -737,10 +738,12 @@ public class SeqTxnTracker {
     }
 
     /**
-     * Record the wall-clock ms of the last durable epoch (adaptive cadence gate).
+     * Record the wall-clock ms of the last durable epoch (adaptive cadence gate). A save point ends the idle
+     * request back-off.
      */
     public void setLastEpochTs(long lastEpochTs) {
         this.lastEpochTs = lastEpochTs;
+        this.idleEpochRequestTs = 0;
     }
 
     /**
