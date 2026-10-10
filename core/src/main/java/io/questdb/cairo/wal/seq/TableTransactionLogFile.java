@@ -132,6 +132,15 @@ public interface TableTransactionLogFile extends Closeable {
     void fdatasyncTxnLog();
 
     /**
+     * Flushes like {@link #fdatasyncTxnLog()}, and first, in a log kept in parts, the older part files that hold
+     * txns from {@code fromTxn} on: a run in a mode that does not flush the log may have left any of them in the
+     * page cache only. A single-file log has nothing more to flush.
+     */
+    default void fdatasyncTxnLog(long fromTxn) {
+        fdatasyncTxnLog();
+    }
+
+    /**
      * Syncs the log to the disk with {@code MS_SYNC}, in every commit mode. Under SYNC and ADAPTIVE that covers
      * every log file; under NOSYNC and ASYNC a V2 log syncs its header alone.
      */

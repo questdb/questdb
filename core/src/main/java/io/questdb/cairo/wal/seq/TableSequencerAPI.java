@@ -398,9 +398,18 @@ public class TableSequencerAPI implements QuietCloseable {
      * @return the highest seqTxn the flush covered; see {@link TableSequencerImpl#fdatasyncTxnLog()}.
      */
     public long fdatasyncTxnLog(final TableToken tableToken) {
+        return fdatasyncTxnLog(tableToken, Long.MAX_VALUE);
+    }
+
+    /**
+     * Flushes like {@link #fdatasyncTxnLog(TableToken)}, and also the older part files of a V2 log that hold txns
+     * from {@code fromTxn} on, for a flush that must cover records a run in a mode that does not flush the log
+     * left; see {@link TableTransactionLogFile#fdatasyncTxnLog(long)}.
+     */
+    public long fdatasyncTxnLog(final TableToken tableToken, long fromTxn) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
-                return tableSequencer.fdatasyncTxnLog();
+                return tableSequencer.fdatasyncTxnLog(fromTxn);
             } finally {
                 tableSequencer.unlockWrite();
             }
