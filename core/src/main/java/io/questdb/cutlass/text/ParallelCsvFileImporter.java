@@ -670,7 +670,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     // A failed device flush may report a write-back error of another table's files: stop the
                     // engine, as every other flush in SYNC and ADAPTIVE does. The cleanup before the stop is a best
                     // effort.
-                    if (CommitMode.isPowerLossDurable(configuration.getCommitMode()) && CairoException.isDataSyncFailure(t)) {
+                    if (cairoEngine.isDataSyncFailureFatal(t)) {
                         try {
                             cleanUp();
                         } catch (Throwable cleanupFailure) {

@@ -232,7 +232,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             configureSymbolTable();
         } catch (Throwable e) {
             CairoError fatal = null;
-            if (CairoException.isDataSyncFailure(e)) {
+            if (sequencer.isDataSyncFailureFatal(e)) {
                 distressed = true;
                 dropPendingDurable();
                 // Poison now, throw after doClose(): fail-stop must not strand the WAL lock, fds and memory.
@@ -317,7 +317,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             return seqTxn;
         } catch (Throwable th) {
             distressed = true;
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
             }
@@ -644,7 +644,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
@@ -659,7 +659,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             openNewSegment();
         } catch (Throwable e) {
             distressed = true;
-            if (CairoException.isDataSyncFailure(e)) {
+            if (sequencer.isDataSyncFailureFatal(e)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(e);
             }
@@ -846,7 +846,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
@@ -872,7 +872,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
@@ -1056,7 +1056,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
             distressed = true;
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
             }
@@ -1098,7 +1098,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             } catch (CairoException e) {
                 distressed = true;
-                if (e.isDataSyncFailure()) {
+                if (sequencer.isDataSyncFailureFatal(e)) {
                     dropPendingDurable();
                     sequencer.handleDataSyncFailure(e);
                 }
@@ -1116,7 +1116,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } catch (Throwable th) {
             LOG.critical().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
             }
@@ -1322,7 +1322,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
         } catch (CairoException | TableReferenceOutOfDateException ex) {
             distressed = true;
-            if (CairoException.isDataSyncFailure(ex)) {
+            if (sequencer.isDataSyncFailureFatal(ex)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(ex);
             }
@@ -1748,7 +1748,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             } while (seqTxn == NO_TXN);
             return lastSeqTxn = seqTxn;
         } catch (Throwable failure) {
-            if (CairoException.isDataSyncFailure(failure)) {
+            if (sequencer.isDataSyncFailureFatal(failure)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(failure);
@@ -2496,7 +2496,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             syncIfRequired0(commitMode);
         } catch (Throwable failure) {
-            if (CairoException.isDataSyncFailure(failure)) {
+            if (sequencer.isDataSyncFailureFatal(failure)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(failure);
@@ -2624,7 +2624,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     .$(", walId=").$(walId)
                     .$(", error=").$(th)
                     .I$();
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 sequencer.poisonOnDataSyncFailure(th);
             }
         }
@@ -2663,7 +2663,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             pendingLoSeqTxn = -1L;
             sequencer.getWalGroupCommitFlushQueue().unregister(this);
         } catch (CairoException e) {
-            if (e.isDataSyncFailure()) {
+            if (sequencer.isDataSyncFailureFatal(e)) {
                 distressed = true;
                 // The flush failed, so the batch is not proven durable and its floor must stand. Orphan the pin
                 // rather than remove it: this writer is distressed and never flushes again, so only a later

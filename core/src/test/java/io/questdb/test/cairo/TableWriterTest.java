@@ -520,6 +520,8 @@ public class TableWriterTest extends AbstractCairoTest {
         // fsync), so the fault this facade arms is never reached there and addColumn succeeds.
         // The test is POSIX-only by the shape of the product code.
         org.junit.Assume.assumeFalse("table directory fsync seam is POSIX-only", Os.isWindows());
+        // The engine decides the stop from the instance's mode, so pin it too, not only the writer's.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         try {
             assertMemoryLeak(() -> {
                 populateTable();

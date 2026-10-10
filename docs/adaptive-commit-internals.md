@@ -404,7 +404,10 @@ Parquet partition switch, the recovery header flush (section 8), a parallel COPY
 flush in its attach (after the import's clean-up has dropped a table it created or truncated an existing one;
 section 10), and the Enterprise uploader's start flush. `nosync`
 and `async` keep their previous behaviour on these paths. The flush after the WAL replay before a conversion to
-non-WAL runs in every mode, and so does its stop.
+non-WAL runs in every mode, and so does its stop. The rule is the engine's, not each caller's:
+`CairoEngine.handleDataSyncFailure` stops only when `isDataSyncFailureFatal` holds (a data-sync failure in `sync` or
+`adaptive`) and otherwise returns, so the caller fails the operation as before; the conversion's stop, the only one
+decided for every mode, calls `handleDataSyncFailureInEveryMode`.
 
 When the stop follows a failed `_txn` flush inside a partition conversion or the partition switch, the error handler
 no longer removes the new partition directory once the `_txn` write has started, so the restart finds the partition

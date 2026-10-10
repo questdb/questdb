@@ -3861,50 +3861,51 @@ public class CairoEngine implements Closeable, WriterSource {
         walPurgeJobLock.unlock();
     }
 
+    /**
+     * True when a failed flush must stop this engine: the failure carries the data-sync flag and the instance's
+     * commit mode promises power-loss durability (SYNC, ADAPTIVE). NOSYNC and ASYNC promise nothing on a power
+     * loss: there a failed flush fails only the operation that ran it, as before adaptive commit. A caller that
+     * does more than stop the engine on a failed flush, such as distressing its writer, keys it on this.
+     */
+    public boolean isDataSyncFailureFatal(Throwable failure) {
+        return CommitMode.isPowerLossDurable(configuration.getCommitMode()) && CairoException.isDataSyncFailure(failure);
+    }
+
     public boolean isDurabilityFailed() {
         return durabilityFailure.get() != null;
     }
 
     /**
-     * Permanently poison this engine after a synchronous durability barrier failed. The first failure wins.
-     * The callback is invoked only by the first failing thread. It must hard-stop production; standalone and
-     * test callbacks may return, in which case this method throws a CairoError and every later write acquire
-     * is rejected by {@link #throwIfDurabilityFailed()}.
+     * Permanently poisons this engine after a failed flush when {@link #isDataSyncFailureFatal(Throwable)} says the
+     * commit mode requires it; otherwise returns, and the caller fails the operation as before adaptive commit.
+     * The commit-mode rule lives here, not at the call sites. The first failure wins. The callback is invoked only
+     * by the first failing thread. It must hard-stop production; standalone and test callbacks may return, in which
+     * case this method throws a CairoError and every later write acquire is rejected by
+     * {@link #throwIfDurabilityFailed()}.
      */
     public void handleDataSyncFailure(Throwable failure) {
-        throw poisonOnDataSyncFailure(failure);
+        if (isDataSyncFailureFatal(failure)) {
+            throw poisonEngine(failure);
+        }
     }
 
     /**
-     * {@link #handleDataSyncFailure(Throwable)} for a cleanup path. It poisons the engine and invokes the callback
-     * exactly as that method does, but returns the CairoError instead of throwing it, so the caller can finish
-     * releasing resources and throw it last. Fail-stop is in force from this call on: every later write acquire is
-     * rejected whether or not the caller has thrown yet.
+     * {@link #handleDataSyncFailure(Throwable)} in every commit mode. Only for a stop decided for every mode: the
+     * flush after the WAL replay before a conversion to non-WAL.
      */
-    public CairoError poisonOnDataSyncFailure(Throwable failure) {
-        CairoException syncFailure = null;
-        Throwable cursor = failure;
-        while (cursor != null) {
-            if (cursor instanceof CairoException cairoException && cairoException.isDataSyncFailure()) {
-                syncFailure = cairoException;
-                break;
-            }
-            cursor = cursor.getCause();
-        }
-        if (syncFailure == null) {
-            return new CairoError(failure);
-        }
+    public void handleDataSyncFailureInEveryMode(Throwable failure) {
+        throw poisonEngine(failure);
+    }
 
-        final DurabilityFailure detail = new DurabilityFailure(
-                syncFailure.getErrno(),
-                syncFailure.getDataSyncOperation(),
-                syncFailure.getFlyweightMessage().toString()
-        );
-        if (durabilityFailure.compareAndSet(null, detail)) {
-            LOG.critical().$("fatal durability barrier failure [").$(detail.toString()).$(']').$();
-            durabilityFailureHandler.onFailure(detail);
-        }
-        return new CairoError(syncFailure);
+    /**
+     * {@link #handleDataSyncFailure(Throwable)} for a cleanup path. When the failure is fatal it poisons the engine
+     * and invokes the callback exactly as that method does, but returns the CairoError instead of throwing it, so
+     * the caller can finish releasing resources and throw it last. Fail-stop is in force from this call on: every
+     * later write acquire is rejected whether or not the caller has thrown yet. Returns null when the failure is
+     * not fatal under the commit mode.
+     */
+    public @Nullable CairoError poisonOnDataSyncFailure(Throwable failure) {
+        return isDataSyncFailureFatal(failure) ? poisonEngine(failure) : null;
     }
 
     public void throwIfDurabilityFailed() {
@@ -4810,6 +4811,32 @@ public class CairoEngine implements Closeable, WriterSource {
             writer.of(p.$());
             LiveViewState.append(state, writer);
         }
+    }
+
+    private CairoError poisonEngine(Throwable failure) {
+        CairoException syncFailure = null;
+        Throwable cursor = failure;
+        while (cursor != null) {
+            if (cursor instanceof CairoException cairoException && cairoException.isDataSyncFailure()) {
+                syncFailure = cairoException;
+                break;
+            }
+            cursor = cursor.getCause();
+        }
+        if (syncFailure == null) {
+            return new CairoError(failure);
+        }
+
+        final DurabilityFailure detail = new DurabilityFailure(
+                syncFailure.getErrno(),
+                syncFailure.getDataSyncOperation(),
+                syncFailure.getFlyweightMessage().toString()
+        );
+        if (durabilityFailure.compareAndSet(null, detail)) {
+            LOG.critical().$("fatal durability barrier failure [").$(detail.toString()).$(']').$();
+            durabilityFailureHandler.onFailure(detail);
+        }
+        return new CairoError(syncFailure);
     }
 
     private TableToken rebaseWalTable0(TableToken oldToken, String suppliedDir, boolean replicaVariant) {

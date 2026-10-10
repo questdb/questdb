@@ -89,6 +89,8 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     @Test
     public void testDataSyncFailurePoisonsEngineAndFirstFailureWins() throws Exception {
+        // The engine stops on a failed flush only in a mode that promises durability.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         assertMemoryLeak(() -> {
             final AtomicReference<CairoEngine.DurabilityFailure> observed = new AtomicReference<>();
             try (CairoEngine testEngine = new CairoEngine(configuration)) {

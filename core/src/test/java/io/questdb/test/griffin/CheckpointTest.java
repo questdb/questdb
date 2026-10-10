@@ -1200,9 +1200,13 @@ public class CheckpointTest extends AbstractCairoTest {
                 try {
                     engine.checkpointRecover();
                     Assert.fail("a failed flush of the restored files must fail recovery");
-                } catch (CairoError e) {
+                } catch (CairoException | CairoError e) {
                     Assert.assertTrue(CairoException.isDataSyncFailure(e));
                     TestUtils.assertContains(e.getMessage(), "could not syncfs");
+                    // The engine stops only in a mode that promises durability; elsewhere the restore fails alone.
+                    final boolean durable = CommitMode.isPowerLossDurable(engine.getConfiguration().getCommitMode());
+                    Assert.assertEquals(durable, e instanceof CairoError);
+                    Assert.assertEquals(durable, engine.isDurabilityFailed());
                 } finally {
                     testFilesFacade.errorOnSyncfs = false;
                     engine.resetDurabilityFailure();

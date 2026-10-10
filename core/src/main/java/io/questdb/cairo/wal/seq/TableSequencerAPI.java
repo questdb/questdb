@@ -311,6 +311,10 @@ public class TableSequencerAPI implements QuietCloseable {
         engine.handleDataSyncFailure(failure);
     }
 
+    public boolean isDataSyncFailureFatal(Throwable failure) {
+        return engine.isDataSyncFailureFatal(failure);
+    }
+
     public boolean isDurabilityFailed() {
         return engine.isDurabilityFailed();
     }
@@ -437,7 +441,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public CairoError poisonOnDataSyncFailure(Throwable failure) {
+    public @Nullable CairoError poisonOnDataSyncFailure(Throwable failure) {
         return engine.poisonOnDataSyncFailure(failure);
     }
 

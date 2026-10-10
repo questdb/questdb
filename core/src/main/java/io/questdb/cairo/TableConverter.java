@@ -378,8 +378,9 @@ public class TableConverter {
                     throw refusal;
                 }
             } catch (Throwable th) {
+                // In every mode: the conversion removes the WAL, so a replay that may not be on the disk must not go on
                 if (CairoException.isDataSyncFailure(th)) {
-                    engine.handleDataSyncFailure(th);
+                    engine.handleDataSyncFailureInEveryMode(th);
                 }
                 throw th;
             }

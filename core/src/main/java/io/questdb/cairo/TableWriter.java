@@ -2119,7 +2119,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (newPartitionDirLen > 0 && !isTxnWriteStarted && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
             }
-            if (CairoException.isDataSyncFailure(th)) {
+            if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 engine.handleDataSyncFailure(th);
             }
@@ -2315,7 +2315,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             } catch (CairoException e) {
                                 attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
                                 LOG.critical().$("could not sync detached partition [path=").$(detachedPath).$(", e=").$((Throwable) e).I$();
-                                if (CairoException.isDataSyncFailure(e)) {
+                                if (engine.isDataSyncFailureFatal(e)) {
                                     distressed = true;
                                     engine.handleDataSyncFailure(e);
                                 }
@@ -3187,7 +3187,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             return newRow0(timestamp);
         } catch (Throwable failure) {
-            if (CairoException.isDataSyncFailure(failure)) {
+            if (engine.isDataSyncFailureFatal(failure)) {
                 distressed = true;
                 engine.handleDataSyncFailure(failure);
             }
@@ -3956,7 +3956,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return true;
         } catch (CairoException e) {
-            if (e.isDataSyncFailure()) {
+            if (engine.isDataSyncFailureFatal(e)) {
                 distressed = true;
                 engine.handleDataSyncFailure(e);
                 throw e;
@@ -3973,7 +3973,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             publishAdaptiveBaselineOrFail0();
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 engine.handleDataSyncFailure(th);
             }
@@ -6054,11 +6054,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.jumpTo(40);
             todoMem.sync(false);
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 engine.handleDataSyncFailure(th);
             }
-            // A non-sync failure leaves an out-of-date _todo_ that can be ignored safely.
+            // Otherwise the out-of-date _todo_ is ignored, as it always was: its txn no longer matches.
             handleHousekeepingException(th);
         } finally {
             path.trimTo(pathSize);
@@ -6118,7 +6118,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             commit0(o3MaxLag);
         } catch (Throwable failure) {
-            if (CairoException.isDataSyncFailure(failure)) {
+            if (engine.isDataSyncFailureFatal(failure)) {
                 distressed = true;
                 engine.handleDataSyncFailure(failure);
             }
@@ -7688,7 +7688,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             closeDeferredPostingSealPurges();
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 // Poison at once, throw after the frees below, as the epoch block above does.
                 final CairoError fatal = engine.poisonOnDataSyncFailure(th);
@@ -8307,7 +8307,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 fsyncPartitionDirEntries(other, other.size());
             } catch (CairoException e) {
-                if (e.isDataSyncFailure()) {
+                if (engine.isDataSyncFailureFatal(e)) {
                     distressed = true;
                     engine.handleDataSyncFailure(e);
                 }
@@ -12973,7 +12973,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ff.fsyncAndClose(partDirFd);
                     }
                 } catch (CairoException ex) {
-                    if (ex.isDataSyncFailure()) {
+                    if (engine.isDataSyncFailureFatal(ex)) {
                         distressed = true;
                         // Poison at once, throw after the decoder close and munmap below. The fatal error takes
                         // precedence over an earlier cleanup error, which it carries as suppressed.
@@ -14831,7 +14831,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.fsyncAndClose(dirFd);
                 }
             } catch (CairoException e) {
-                if (e.isDataSyncFailure()) {
+                if (engine.isDataSyncFailureFatal(e)) {
                     distressed = true;
                     engine.handleDataSyncFailure(e);
                 }
@@ -14850,7 +14850,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.fsyncAndClose(dirFd);
                 }
             } catch (CairoException e) {
-                if (e.isDataSyncFailure()) {
+                if (engine.isDataSyncFailureFatal(e)) {
                     distressed = true;
                     engine.handleDataSyncFailure(e);
                 }
@@ -14946,7 +14946,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return index;
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 engine.handleDataSyncFailure(th);
             }
@@ -15584,7 +15584,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", count=").$(readyCount).I$();
             return true;
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 engine.handleDataSyncFailure(th);
             }
@@ -16463,7 +16463,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tracker.setDurableEpochOwed(true);
             LOG.critical().$("could not advance durable epoch after ").$(operation)
                     .$(", a crash before the next one undoes it [table=").$(tableToken).$(", e=").$((Throwable) e).I$();
-            if (CairoException.isDataSyncFailure(e)) {
+            if (engine.isDataSyncFailureFatal(e)) {
                 distressed = true;
                 engine.handleDataSyncFailure(e);
             }
@@ -16572,7 +16572,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean epochWriteSetIncomplete = true;
 
     private void handleBestEffortDurableEpochFailure(Throwable failure, CharSequence operation) {
-        if (CairoException.isDataSyncFailure(failure)) {
+        if (engine.isDataSyncFailureFatal(failure)) {
             distressed = true;
             engine.handleDataSyncFailure(failure);
         }
@@ -17151,7 +17151,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         } catch (CairoException e) {
-            if (e.isDataSyncFailure()) {
+            if (engine.isDataSyncFailureFatal(e)) {
                 distressed = true;
                 engine.handleDataSyncFailure(e);
             }
