@@ -42,6 +42,7 @@ public final class SqlHints {
     public static final String MARKOUT_HORIZON_HINT = "markout_horizon";
     public static final String NO_COVERING_HINT = "no_covering";
     public static final String NO_INDEX_HINT = "no_index";
+    public static final String NO_PARALLEL_HINT = "no_parallel";
     public static final String NO_SYMBOL_PATTERN_INDEX_HINT = "no_symbol_pattern_index";
 
     public static boolean hasAsOfDenseHint(
@@ -132,6 +133,10 @@ public final class SqlHints {
 
     public static boolean hasNoIndexHint(@NotNull IQueryModel queryModel) {
         return queryModel.getHints().keyIndex(NO_INDEX_HINT) < 0;
+    }
+
+    public static boolean hasNoParallelHint(@NotNull IQueryModel queryModel) {
+        return queryModel.getHints().keyIndex(NO_PARALLEL_HINT) < 0;
     }
 
     public static boolean hasNoSymbolPatternIndexHint(@NotNull IQueryModel queryModel) {
