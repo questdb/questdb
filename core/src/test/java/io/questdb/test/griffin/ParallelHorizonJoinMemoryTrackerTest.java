@@ -29,10 +29,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -635,6 +637,221 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    @Test
+    public void testProjectionCompileWithoutOpenDoesNotLeak() throws Exception {
+        // A row-preserving HORIZON JOIN compiled but never opened must not hold native memory: its
+        // cursor, time frame states and output lists allocate only once a cursor opens.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createMultiHorizonTables(engine, sqlExecutionContext, 100);
+                        try (RecordCursorFactory f = compiler.compile(
+                                "SELECT t.sym, p0.px0, p1.px1 FROM trades t "
+                                        + "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) "
+                                        + "HORIZON JOIN prices1 p1 RANGE FROM -2s TO 2s STEP 1s AS h",
+                                sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(f, AsyncHorizonJoinProjectionRecordCursorFactory.class);
+                            // intentionally never call getCursor()
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionHighCardinalityKeyMapsBreachLimit() throws Exception {
+        // The owner and every worker slot keep a keyed ASOF map that caches the row id of every key
+        // a backward scan passes, so the maps grow with the key cardinality of the slave. Every
+        // trade follows the last price and carries the key of one of the first 1,000 prices, so
+        // the first lookup of each page frame scans backward past nearly all 200,000 distinct
+        // keys. Holding them takes one map 8 MiB; under the 1 MiB limit no frame gets that far.
+        // The memory tag names the maps as the allocation that breached, and with a LONG key they
+        // are the only structures this query charges: a task matches a whole frame here, so the
+        // owner's tail list stays closed. Without the binding the maps escape the limit and the
+        // query completes, tripping the Assert.fail.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createHighCardinalityTables(engine, sqlExecutionContext);
+                        final String query = "SELECT t.id, p.price FROM trades t "
+                                + "HORIZON JOIN prices p ON (t.id = p.id) RANGE FROM -2s TO 2s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinProjectionRecordCursorFactory.class);
+                            // Repeating the cycle also verifies that the failed execution released
+                            // what it had charged.
+                            for (int i = 0; i < 3; i++) {
+                                long rows = 0;
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    while (cursor.hasNext()) {
+                                        rows++;
+                                    }
+                                    Assert.fail("expected a per-query memory breach at iteration " + i + ", drained " + rows + " rows");
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "memoryTag=" + MemoryTag.NATIVE_UNORDERED_MAP + ']');
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionOpenFailureReleasesAllocations() throws Exception {
+        // The first read opens the symbol translation caches and the keyed ASOF maps of the
+        // matchers under the per-query tracker. The owner matcher's translation cache comes first,
+        // with 256 bytes for its page table, so a tiny limit breaches there; the loop verifies the
+        // factory stays reusable after each breach.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 100, 8);
+                        createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        final String query = "SELECT t.sym, p.price FROM trades t "
+                                + "HORIZON JOIN prices p ON (t.sym = p.sym) RANGE FROM -2s TO 2s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinProjectionRecordCursorFactory.class);
+                            for (int i = 0; i < 5; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    //noinspection StatementWithEmptyBody
+                                    while (cursor.hasNext()) {
+                                    }
+                                    Assert.fail("expected a per-query memory breach at iteration " + i);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionReleasesAllocations() throws Exception {
+        // Repeated open/drain/close cycles on the same factory, with a keyed and an unkeyed slave.
+        // The owner and per-worker ASOF maps, the slave time frame states and the owner's tail list
+        // bind to the tracker on each open and must release every byte on close. A tiny task
+        // budget makes the owner thread match most of each frame, so the tail list is in play.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 40);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createMultiHorizonTables(engine, sqlExecutionContext, 5_000);
+                        final String query = "SELECT t.sym, p0.px0, p1.px1 FROM trades t "
+                                + "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) "
+                                + "HORIZON JOIN prices1 p1 RANGE FROM -2s TO 2s STEP 1s AS h "
+                                + "WHERE t.sym <> '3'";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinProjectionRecordCursorFactory.class);
+                            for (int i = 0; i < 10; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    long rows = 0;
+                                    while (cursor.hasNext()) {
+                                        rows++;
+                                    }
+                                    // 5_000 trades over 8 symbols, one of them filtered out, times 5 offsets.
+                                    Assert.assertEquals("iteration " + i, 4_375 * 5, rows);
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionTailSlotsBreachLimit() throws Exception {
+        // The master frames hold 200 rows: the small page frame budget of 1,000 over 5 offsets and
+        // one slave. A task budget of 500 lets a task match 100 of them, and the owner thread
+        // matches the other 100 into its tail list: 500 slots, or 4,000 bytes. The join has no key
+        // and reads native partitions, so the query charges the tracker for nothing else, and a
+        // 1 KiB limit breaches on the tail list. Without the binding the list escapes the limit
+        // and the query completes, tripping the Assert.fail.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024L);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 500);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 1_000, 8);
+                        createPrices(engine, sqlExecutionContext, 10_000, 8);
+                        final String query = "SELECT t.sym, p.price FROM trades t "
+                                + "HORIZON JOIN prices p RANGE FROM -2s TO 2s STEP 1s AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinProjectionRecordCursorFactory.class);
+                            // Repeating the cycle also verifies that the failed execution released
+                            // what it had charged.
+                            for (int i = 0; i < 3; i++) {
+                                long rows = 0;
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    while (cursor.hasNext()) {
+                                        rows++;
+                                    }
+                                    Assert.fail("expected a per-query memory breach at iteration " + i + ", drained " + rows + " rows");
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "size=4000, memoryTag=" + MemoryTag.NATIVE_DEFAULT + ']');
+                                    // The owner thread emits the 100 rows that the task of the first frame
+                                    // matched, 5 offsets each, and breaches when it turns to the tail.
+                                    Assert.assertEquals("iteration " + i, 100 * 5, rows);
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private static void createHighCardinalityTables(io.questdb.cairo.CairoEngine engine, io.questdb.griffin.SqlExecutionContext ctx) throws Exception {
+        engine.execute(
+                "CREATE TABLE trades (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                ctx
+        );
+        // Trades 1s apart, the first one 101s after the last price, so that every horizon
+        // timestamp has the last price as its ASOF position. Trade x carries the key of price x.
+        engine.execute(
+                "INSERT INTO trades SELECT ((300 + x) * 1_000_000)::timestamp, x FROM long_sequence(1_000)",
+                ctx
+        );
+        engine.execute(
+                "CREATE TABLE prices (ts TIMESTAMP, id LONG, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                ctx
+        );
+        // Prices 1ms apart over 200s, one distinct key per row.
+        engine.execute(
+                "INSERT INTO prices SELECT (x * 1_000)::timestamp, x, x::double FROM long_sequence(200_000)",
+                ctx
+        );
     }
 
     private static void createMultiHorizonTables(io.questdb.cairo.CairoEngine engine, io.questdb.griffin.SqlExecutionContext ctx, int tradeRows) throws Exception {

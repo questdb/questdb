@@ -285,6 +285,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
@@ -302,6 +303,7 @@ import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
@@ -1726,6 +1728,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
     }
 
+    // FunctionParser resolves a column literal through SqlUtil.getColumnIndexQuiet(), which ignores
+    // letter case and accepts every table alias the base metadata knows. This check resolves the
+    // literal the same way and reports whether it reads the designated timestamp column of the base,
+    // rather than a projection column or another base column, such as a same-named column of a
+    // joined table.
+    private static boolean isBaseTimestampLiteral(ExpressionNode node, PriorityMetadata metadata, int baseTimestampIndex) {
+        return baseTimestampIndex > -1
+                && node.type == LITERAL
+                && metadata.getBaseColumnIndex(SqlUtil.getColumnIndexQuiet(metadata, node.token)) == baseTimestampIndex;
+    }
+
     // Fixed-size scalars and wide types that MapValue can put/get directly.
     // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
@@ -2507,7 +2520,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.position(context.getRangeFromPosition()).put("FROM must be less than or equal to TO");
             }
 
-            final long count = ((to - from) / step) + 1;
+            // FROM and TO can lie more than Long.MAX_VALUE apart, and a span of Long.MAX_VALUE with
+            // a STEP of one unit has one offset more than a long can count. A wrapped difference
+            // or count yields no offsets, a negative number of them or a wrong positive one.
+            final long count;
+            try {
+                count = Math.addExact(Math.subtractExact(to, from) / step, 1);
+            } catch (ArithmeticException e) {
+                throw SqlException.position(context.getRangeFromPosition()).put("RANGE span overflow");
+            }
             final int maxOffsets = configuration.getSqlHorizonJoinMaxOffsets();
             if (count > maxOffsets) {
                 throw SqlException.position(context.getRangeFromPosition())
@@ -5750,6 +5771,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private RecordCursorFactory generateHorizonJoinProjection(
+            IQueryModel parentModel,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory factory,
+            boolean isOutputTimestampRequired
+    ) throws SqlException {
+        // generateJoins() keeps the timestamp requirement of the HORIZON JOIN operands on top of
+        // the stack while it builds the join. The projection is the output of the join, so it
+        // follows the requirement of the enclosing query instead. Otherwise, the projection adds
+        // a hidden timestamp column that nothing above it reads, and a UNION ALL branch ends up
+        // with more columns than its siblings.
+        executionContext.pushTimestampRequiredFlag(isOutputTimestampRequired);
+        try {
+            // The projection keeps the master's designated timestamp under every spelling that
+            // resolves to it. Other virtual SELECTs keep matching the exact column name.
+            return generateSelectVirtualWithSubQuery(parentModel, executionContext, factory, true);
+        } finally {
+            executionContext.popTimestampRequiredFlag();
+        }
+    }
+
     private RecordCursorFactory generateIntersectOrExceptAllFactory(
             IQueryModel model,
             SqlExecutionContext executionContext,
@@ -6244,6 +6286,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<RecordCursorFactory> pendingHorizonSlaves = null;
         ObjList<IQueryModel> pendingHorizonSlaveModels = null;
         boolean isHorizonJoinCompleted = false;
+        // The loop below pushes the timestamp requirement of each join operand. Capture the
+        // requirement of the enclosing query first: it applies to the output of the joins.
+        final boolean isOutputTimestampRequired = executionContext.isTimestampRequired();
 
         try {
             int n = ordered.size();
@@ -7151,7 +7196,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // Process join context for key-based matching (similar to ASOF JOIN)
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
-                                if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
+                                if (horizonContext.isProjection() || pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
+                                    // The streaming projection uses the same cursor for one or many slaves.
+                                    if (pendingHorizonSlaves == null) {
+                                        pendingHorizonSlaves = new ObjList<>();
+                                        pendingHorizonSlaveModels = new ObjList<>();
+                                    }
                                     // Multi-slave HORIZON JOIN: collect all slaves.
                                     // Ownership of all slave factories transfers to generateMultiHorizonJoinFactory,
                                     // which frees them on error. Clear the pending list and set closeSlaveOnFailure
@@ -7174,7 +7224,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             masterMetadata,
                                             slaves,
                                             slaveModels,
-                                            executionContext
+                                            executionContext,
+                                            isOutputTimestampRequired
                                     );
                                 } else {
                                     // Single-slave HORIZON JOIN (existing path)
@@ -8023,7 +8074,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata masterMetadata,
             ObjList<RecordCursorFactory> slaveFactories,
             ObjList<IQueryModel> slaveModels,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            boolean isOutputTimestampRequired
     ) throws SqlException {
         long[] offsets;
         final int slaveCount = slaveFactories.size();
@@ -8052,6 +8104,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // This method adopts the master and every slave factory on entry. Until a cursor
             // factory constructor adopts them, this catch owns their rollback.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
+            // A projection evaluates its output expressions on the thread that reads the rows, so
+            // only the master filter has to be safe to run on workers, as for an aggregation.
+            final boolean isProjection = horizonContext.isProjection();
             if (executionContext.isParallelHorizonJoinEnabled()) {
                 // !supportsPageFrameCursor(): prefer the runtime-const gate's direct page-frame
                 // passthrough over stealing its filter, same as the single-slave horizon path.
@@ -8059,6 +8114,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && masterFactory.supportsFilterStealing()
                         && masterFactory.getBaseFactory().supportsPageFrameCursor();
                 supportsParallelism = masterFactory.supportsPageFrameCursor() || canStealFilter;
+                // The parallel projection cuts the master into frames that shrink as the offsets
+                // times the slaves grow, and every frame costs a reduce task whether or not its
+                // rows pass the filter. Past the slot cap the serial projection takes over, which
+                // leaves the filter on the master, so it scans frames of the usual size. A master
+                // that lacks random access, such as a covering index scan, stays parallel: the
+                // serial projection cannot read it.
+                if (supportsParallelism
+                        && isProjection
+                        && !AsyncHorizonJoinProjectionRecordCursorFactory.isWithinSlotCap(offsets.length, slaveCount)
+                        && masterFactory.recordCursorSupportsRandomAccess()) {
+                    supportsParallelism = false;
+                }
             }
 
             // validateBothTimestamps() already checks this before we get here
@@ -8116,34 +8183,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
-            GroupByUtils.assembleGroupByFunctions(
-                    functionParser,
-                    sqlNodeStack,
-                    parentModel,
-                    executionContext,
-                    innerMetadata,
-                    timestampIndex,
-                    false,
-                    true,
-                    groupByFunctions,
-                    groupByFunctionPositions,
-                    outerProjectionFunctions,
-                    innerProjectionFunctions,
-                    recordFunctionPositions,
-                    projectionFunctionFlags,
-                    outerProjectionMetadata,
-                    valueTypes,
-                    keyTypes,
-                    listColumnFilterA,
-                    null,
-                    validateSampleByFillType,
-                    parentModel.getColumns(),
-                    null
-            );
+            if (!isProjection) {
+                GroupByUtils.assembleGroupByFunctions(
+                        functionParser,
+                        sqlNodeStack,
+                        parentModel,
+                        executionContext,
+                        innerMetadata,
+                        timestampIndex,
+                        false,
+                        true,
+                        groupByFunctions,
+                        groupByFunctionPositions,
+                        outerProjectionFunctions,
+                        innerProjectionFunctions,
+                        recordFunctionPositions,
+                        projectionFunctionFlags,
+                        outerProjectionMetadata,
+                        valueTypes,
+                        keyTypes,
+                        listColumnFilterA,
+                        null,
+                        validateSampleByFillType,
+                        parentModel.getColumns(),
+                        null
+                );
 
-            keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
-            if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
-                supportsParallelism = false;
+                keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
+                if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
+                    supportsParallelism = false;
+                }
             }
 
             // Now that we know parallelism is confirmed, steal the filter from the
@@ -8178,7 +8247,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // The keyed parallel branch clones the whole projection per worker below and reuses
             // the GROUP_BY-flagged clones from it, so only the not-keyed parallel branch compiles
             // dedicated worker group-by clones here.
-            if (supportsParallelism && keyTypesCopy.getColumnCount() == 0) {
+            if (supportsParallelism && !isProjection && keyTypesCopy.getColumnCount() == 0) {
                 perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
                         executionContext,
                         parentModel.getColumns(),
@@ -8335,6 +8404,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .put("left-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
 
+                if (isProjection) {
+                    // The cursor emits the master rows in order, so the master's designated
+                    // timestamp stays the designated timestamp of the projection.
+                    final JoinRecordMetadata projectionMetadata = innerMetadata;
+                    final ObjList<HorizonJoinSlaveState> projectionSlaves = slaveStates;
+                    innerMetadata = null;
+                    slaveStates = null;
+                    isMasterFactoryTransferred = true;
+                    isSlaveFactoriesTransferred = true;
+                    return generateHorizonJoinProjection(
+                            parentModel,
+                            executionContext,
+                            new HorizonJoinProjectionRecordCursorFactory(
+                                    configuration,
+                                    projectionMetadata,
+                                    masterFactory,
+                                    projectionSlaves,
+                                    masterAsOfJoinMapSinkClasses,
+                                    slaveAsOfJoinMapSinkClasses,
+                                    offsets,
+                                    masterTimestampColumnIndex,
+                                    columnSources,
+                                    columnIndices
+                            ),
+                            isOutputTimestampRequired
+                    );
+                }
+
                 // Before passing the objects to the cursor factory,
                 // transfer ownership away from variables handled in our local try-catch block.
                 // keyFunctions is empty on the not-keyed branch (no keys means no virtual key
@@ -8393,6 +8490,61 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // Parallel path
+            if (isProjection) {
+                perWorkerFilters = compileWorkerFiltersConditionally(
+                        executionContext,
+                        filter,
+                        workerCount,
+                        filterExpr,
+                        masterFactory.getMetadata()
+                );
+                // Transfer ownership to the factory, which frees every adopted resource when its
+                // constructor fails. The factory sizes the master page frames per execution.
+                final JoinRecordMetadata projectionMetadata = innerMetadata;
+                final ObjList<HorizonJoinSlaveState> projectionSlaves = slaveStates;
+                final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(
+                        null,
+                        null,
+                        compiledFilter,
+                        bindVarMemory,
+                        bindVarFunctions,
+                        filter,
+                        filterUsedColumnIndexes,
+                        perWorkerFilters
+                );
+                innerMetadata = null;
+                slaveStates = null;
+                isSlaveFactoriesTransferred = true;
+                compiledFilter = null;
+                bindVarMemory = null;
+                bindVarFunctions = null;
+                filter = null;
+                perWorkerFilters = null;
+                isMasterFactoryTransferred = true;
+                return generateHorizonJoinProjection(
+                        parentModel,
+                        executionContext,
+                        new AsyncHorizonJoinProjectionRecordCursorFactory(
+                                configuration,
+                                executionContext.getCairoEngine(),
+                                executionContext.getMessageBus(),
+                                projectionMetadata,
+                                masterFactory,
+                                projectionSlaves,
+                                masterAsOfJoinMapSinkClasses,
+                                slaveAsOfJoinMapSinkClasses,
+                                offsets,
+                                masterTimestampColumnIndex,
+                                columnSources,
+                                columnIndices,
+                                resources,
+                                reduceTaskFactory,
+                                workerCount
+                        ),
+                        isOutputTimestampRequired
+                );
+            }
+
             masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
 
             perWorkerFilters = compileWorkerFiltersConditionally(
@@ -9792,7 +9944,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (columnTypeMismatch) {
-                return generateSelectVirtualWithSubQuery(model, executionContext, factory);
+                return generateSelectVirtualWithSubQuery(model, executionContext, factory, false);
             }
         }
 
@@ -10631,14 +10783,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectVirtual(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
-        return generateSelectVirtualWithSubQuery(model, executionContext, factory);
+        return generateSelectVirtualWithSubQuery(model, executionContext, factory, false);
     }
 
+    // With isTimestampSpellingResolved set, a literal that resolves to the designated timestamp
+    // column of the base keeps that column as the designated timestamp in any spelling, such as
+    // another letter case or another table alias. Without it, only the exact column name keeps it.
+    // generateHorizonJoinProjection() sets it. Every other caller matches the exact name, which
+    // INSERT INTO ... SELECT without a column list and CREATE TABLE AS SELECT depend on.
     @NotNull
     private VirtualRecordCursorFactory generateSelectVirtualWithSubQuery(
             IQueryModel model,
             SqlExecutionContext executionContext,
-            RecordCursorFactory factory
+            RecordCursorFactory factory,
+            boolean isTimestampSpellingResolved
     ) throws SqlException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
@@ -10685,9 +10843,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timestampOffsetAlias == null
                                 && modelTimestampIndex < 0
                                 && node.type == LITERAL
-                                && Chars.equalsNc(node.token, timestampColumn)
+                                && (Chars.equalsNc(node.token, timestampColumn)
+                                || (isTimestampSpellingResolved
+                                && virtualMetadata.getTimestampIndex() == -1
+                                && isBaseTimestampLiteral(node, priorityMetadata, timestampIndex)))
                 ) {
                     // Only use literal match when there is no derived timestamp selected by alias.
+                    // When the caller asks for it, a literal that spells the base timestamp column
+                    // differently, such as in another letter case or with another table alias, reads
+                    // the same column and matches too. The exact spelling still wins when the
+                    // projection selects the column more than once.
                     virtualMetadata.setTimestampIndex(i);
                 }
 
@@ -10847,22 +11012,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // here the base timestamp column name can name-clash with one of the
                 // functions, so we have to use bottomUpColumns to lookup alias we should
-                // be using. Bottom up column should have our timestamp because optimiser puts it there
-
+                // be using. Bottom up column should have our timestamp because optimiser puts it there.
+                // The exact spelling of the column wins. Otherwise, when the caller asks for it, the
+                // first literal that resolves to the column, spelled in another letter case or with
+                // another table alias, names it.
+                QueryColumn timestampSource = null;
                 for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                     QueryColumn qc = model.getBottomUpColumns().getQuick(i);
                     if (qc.getAst().type == LITERAL && Chars.equals(timestampColumn, qc.getAst().token)) {
-                        virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
-                        TableColumnMetadata m;
-                        m = new TableColumnMetadata(
-                                SqlUtil.toColumnName(qc.getAlias()),
-                                timestampFunction.getType(),
-                                timestampFunction.getMetadata()
-                        );
-                        virtualMetadata.add(m);
-                        priorityMetadata.add(m);
+                        timestampSource = qc;
                         break;
                     }
+                    if (isTimestampSpellingResolved
+                            && timestampSource == null
+                            && isBaseTimestampLiteral(qc.getAst(), priorityMetadata, timestampIndex)) {
+                        timestampSource = qc;
+                    }
+                }
+                if (timestampSource != null) {
+                    virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
+                    TableColumnMetadata m;
+                    m = new TableColumnMetadata(
+                            SqlUtil.toColumnName(timestampSource.getAlias()),
+                            timestampFunction.getType(),
+                            timestampFunction.getMetadata()
+                    );
+                    virtualMetadata.add(m);
+                    priorityMetadata.add(m);
                 }
             }
 
