@@ -35,6 +35,7 @@ import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -45,22 +46,25 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 /**
- * A parallel COPY that reported success on an adaptive instance must survive a power loss, into a new table as
- * well as into an existing empty one. The importer writes every partition outside the WAL, so nothing can redo
- * it after the crash: the import must be durable before COPY reports it done. Nothing is written back by the
- * kernel here: only the product's own barriers make bytes durable. Where syncfs is filesystem-wide one syncfs
- * makes the import durable; elsewhere the importer flushes file by file. Outside ADAPTIVE the import promises
- * nothing new, and the importer makes no extra flush there.
+ * A parallel COPY that reported success must survive a power loss in SYNC, and in ADAPTIVE into a WAL table, into a
+ * new table as well as into an existing empty one. The importer writes every partition outside the WAL, so nothing
+ * can redo it after the crash: the import must be durable before COPY reports it done. Nothing is written back by
+ * the kernel here: only the product's own barriers make bytes durable. Where syncfs is filesystem-wide one syncfs
+ * makes the import durable; elsewhere the importer flushes file by file. NOSYNC, ASYNC and a non-WAL table in
+ * ADAPTIVE promise nothing on a power loss, and the importer makes no flush there.
  */
 @RunWith(Parameterized.class)
 public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest {
@@ -81,20 +85,24 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
     private final String commitMode;
     private final boolean newTable;
     private final boolean syncfsFileSystemWide;
+    private final boolean walTable;
 
-    public AdaptiveParallelCopyPowerLossTest(String commitMode, boolean newTable, boolean syncfsFileSystemWide) {
+    public AdaptiveParallelCopyPowerLossTest(String commitMode, boolean newTable, boolean walTable, boolean syncfsFileSystemWide) {
         this.commitMode = commitMode;
         this.newTable = newTable;
+        this.walTable = walTable;
         this.syncfsFileSystemWide = syncfsFileSystemWide;
     }
 
-    @Parameterized.Parameters(name = "mode={0}, newTable={1}, syncfsFileSystemWide={2}")
+    @Parameterized.Parameters(name = "mode={0}, newTable={1}, walTable={2}, syncfsFileSystemWide={3}")
     public static Collection<Object[]> data() {
         final List<Object[]> params = new ArrayList<>();
-        for (String mode : new String[]{"adaptive", "nosync", "async"}) {
-            for (boolean syncfsFileSystemWide : new boolean[]{true, false}) {
-                params.add(new Object[]{mode, true, syncfsFileSystemWide});
-                params.add(new Object[]{mode, false, syncfsFileSystemWide});
+        for (String mode : new String[]{"adaptive", "sync", "nosync", "async"}) {
+            for (boolean walTable : new boolean[]{true, false}) {
+                for (boolean syncfsFileSystemWide : new boolean[]{true, false}) {
+                    params.add(new Object[]{mode, true, walTable, syncfsFileSystemWide});
+                    params.add(new Object[]{mode, false, walTable, syncfsFileSystemWide});
+                }
             }
         }
         return params;
@@ -119,7 +127,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
     public void testImportSurvivesPowerLoss() throws Exception {
         assumeCrashHarnessSupported();
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, Boolean.toString(walTable));
         // A power loss takes no close-time save point.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
         inputRoot = temp.newFolder().getAbsolutePath();
@@ -161,8 +169,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         crashFf.setDbRoot(root);
         assertMemoryLeak(crashFf, () -> {
             if (!newTable) {
-                execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                drainWalQueue();
+                createTable();
             }
             markDurableBaseline();
             syncfsCalls.set(0);
@@ -172,14 +179,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             final int importSyncfsCalls = syncfsCalls.get();
-            if ("adaptive".equals(commitMode) && newTable) {
-                if (syncfsFileSystemWide) {
-                    Assert.assertEquals("one syncfs makes the import durable", 1, importSyncfsCalls);
-                    Assert.assertEquals("no column file fsync where syncfs is filesystem-wide", 0, columnFileFsyncs.get());
-                } else {
-                    Assert.assertTrue("the import is flushed file by file", columnFileFsyncs.get() > 0);
-                }
-            }
+            final int importColumnFileFsyncs = columnFileFsyncs.get();
             final String imported = rows(engine);
             Assert.assertEquals(IMPORTED, imported);
 
@@ -188,17 +188,27 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
             engine.releaseAllWalWriters();
             engine.releaseInactive();
             crashFf.crash(root);
+            final boolean promised = "sync".equals(commitMode) || ("adaptive".equals(commitMode) && walTable);
             try (CairoEngine restarted = new CairoEngine(configuration)) {
                 TestUtils.drainWalQueue(restarted);
                 final String recovered = rows(restarted);
-                if ("adaptive".equals(commitMode)) {
+                if (promised) {
                     Assert.assertEquals("a finished COPY must survive a power loss", imported, recovered);
                 } else {
                     // No promise: the rows that come back are some of the imported ones.
                     for (String line : recovered.split("\n")) {
                         Assert.assertTrue("unexpected row after the crash: " + line, imported.contains(line));
                     }
-                    Assert.assertEquals("no flush outside adaptive", 0, importSyncfsCalls);
+                    Assert.assertEquals("no flush where nothing is promised", 0, importSyncfsCalls);
+                }
+            }
+            // An existing WAL table in ADAPTIVE is flushed by the writer's save point instead.
+            if ("sync".equals(commitMode) || ("adaptive".equals(commitMode) && walTable && newTable)) {
+                if (syncfsFileSystemWide) {
+                    Assert.assertEquals("one syncfs makes the import durable", 1, importSyncfsCalls);
+                    Assert.assertEquals("no column file fsync where syncfs is filesystem-wide", 0, importColumnFileFsyncs);
+                } else {
+                    Assert.assertTrue("the import is flushed file by file", importColumnFileFsyncs > 0);
                 }
             }
         });
@@ -206,14 +216,19 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
 
     private void assertFailedFlushStopsTheEngine(DropFailure dropFailure) throws Exception {
         // syncfs reports a write-back error of any file on the filesystem, so a failed device flush may belong to
-        // another table: in adaptive commit mode the engine must stop, whichever flush that makes the imported
-        // partitions live and durable fails. The drop of the created table is a best effort before the stop: the
-        // engine must stop whether the drop succeeds or fails.
-        Assume.assumeTrue("the import flushes nothing outside adaptive", "adaptive".equals(commitMode));
-        Assume.assumeTrue("an existing table is flushed by the writer's save point, which stops the engine itself", newTable);
+        // another table: in SYNC, and in ADAPTIVE for a WAL table, the engine must stop, whichever flush that makes
+        // the imported partitions live and durable fails. The drop of a created table, or the truncate of an existing
+        // one, is a best effort before the stop: the engine must stop whether the drop succeeds or fails.
+        if ("adaptive".equals(commitMode)) {
+            Assume.assumeTrue("a non-WAL table in adaptive commit mode is flushed nowhere", walTable);
+            Assume.assumeTrue("an existing table is flushed by the writer's save point, which stops the engine itself", newTable);
+        } else {
+            Assume.assumeTrue("the import flushes nothing in nosync and async", "sync".equals(commitMode));
+        }
+        Assume.assumeTrue("an existing table is not dropped", newTable || dropFailure == DropFailure.NONE);
         assumeCrashHarnessSupported();
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, Boolean.toString(walTable));
         inputRoot = temp.newFolder().getAbsolutePath();
         inputWorkRoot = temp.newFolder().getAbsolutePath();
         Files.writeString(java.nio.file.Path.of(inputRoot, "t.csv"), CSV, StandardCharsets.UTF_8);
@@ -297,6 +312,9 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         assertMemoryLeak(crashFf, () -> {
             execute("CREATE TABLE other (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
+            if (!newTable) {
+                createTable();
+            }
             // Fail the first device flush from the attach on, then the second, and so on, until an import completes
             // without reaching the failing one.
             for (int i = 1; ; i++) {
@@ -339,7 +357,23 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                 } finally {
                     engine.resetDurabilityFailure();
                 }
-                if (dropFailure == DropFailure.NONE) {
+                if (!newTable) {
+                    // The cleanup truncates the existing table, unless the failed flush was the writer's own: that
+                    // leaves the writer unusable, and the table keeps rows of the failed COPY until it is truncated.
+                    final String left = rows(engine);
+                    if (Chars.startsWith(failedFlush, "syncfs")) {
+                        // The importer's own flush.
+                        Assert.assertEquals(context + ": the existing table is truncated", "ts\ts\tv\n", left);
+                    }
+                    for (String line : left.split("\n")) {
+                        Assert.assertTrue(context + ": unexpected row " + line, IMPORTED.contains(line));
+                    }
+                    execute("TRUNCATE TABLE t");
+                    drainWalQueue();
+                    // A failed attach leaves imported partitions next to the table's own; a retry is refused until
+                    // they are removed, as its message says.
+                    removeLeftoverAttachables();
+                } else if (dropFailure == DropFailure.NONE) {
                     Assert.assertEquals(context + ": the created table is dropped", "", rows(engine));
                 } else {
                     Assert.assertNotEquals(context + ": the drop failed and left the table", "", rows(engine));
@@ -347,6 +381,24 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                 }
             }
         });
+    }
+
+    private void createTable() throws SqlException {
+        execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY" + (walTable ? " WAL" : " BYPASS WAL"));
+        drainWalQueue();
+    }
+
+    private void removeLeftoverAttachables() throws IOException {
+        final java.nio.file.Path tableDir = java.nio.file.Path.of(root, engine.verifyTableName("t").getDirName());
+        try (Stream<java.nio.file.Path> dirs = Files.list(tableDir)) {
+            for (java.nio.file.Path dir : dirs.filter(d -> d.getFileName().toString().endsWith(".attachable")).toList()) {
+                try (Stream<java.nio.file.Path> files = Files.walk(dir)) {
+                    for (java.nio.file.Path file : files.sorted(Comparator.reverseOrder()).toList()) {
+                        Files.delete(file);
+                    }
+                }
+            }
+        }
     }
 
     private static String rows(CairoEngine e) {
