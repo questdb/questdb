@@ -32,6 +32,8 @@
 #include <algorithm>
 #include "simd.h"
 #include "ooo.h"
+#include "pdqsort/pdqsort.h"
+#include <vector>
 
 #define assertm(exp, msg) assert(((void)msg, exp))
 
@@ -648,6 +650,327 @@ jlong merge_shuffle_symbol_column_by_reverse_index(
         dst[dst_index] = src[r_index];
     }
     return reverse_index_row_count - dups;
+}
+
+// Plan items with fewer rows than this are sorted with pdqsort, radix sort setup cost dominates below it
+constexpr uint64_t sort_plan_item_radix_min_rows = 64;
+
+// Reads the rows of the transactions plan_txns[txn_lo..txn_hi) into dst as {key, index} where the key is
+// (ts - min_ts) << txn_bits | seq_txn and the index is (row << segment_bits) | segment.
+// Returns false when a row timestamp is outside [min_ts, max_ts], the key would not preserve the order then.
+template<typename F>
+inline bool read_sort_plan_item_rows(
+        const index_l **segment_ts_maps,
+        const txn_info *txns,
+        const int64_t *plan_txns,
+        int64_t txn_lo,
+        int64_t txn_hi,
+        index_t *dst,
+        int64_t min_ts,
+        int64_t max_ts,
+        uint16_t txn_bits,
+        uint16_t segment_bits,
+        F &&on_key
+) {
+    const auto max_offset = (uint64_t) max_ts - (uint64_t) min_ts;
+    bool out_of_range = false;
+    uint64_t x = 0;
+    for (int64_t t = txn_lo; t < txn_hi; t++) {
+        const txn_info &txn = txns[plan_txns[t]];
+        const auto segment_index = (uint64_t) txn.seg_info_index;
+        const auto seq_txn = (uint64_t) txn.seq_txn;
+        const index_l *ts_map = segment_ts_maps[segment_index];
+        const auto hi = (uint64_t) (txn.segment_row_offset + txn.row_count);
+        for (auto row = (uint64_t) txn.segment_row_offset; row < hi; row++, x++) {
+            const auto offset = (uint64_t) ts_map[row].ts - (uint64_t) min_ts;
+            out_of_range |= offset > max_offset;
+            const uint64_t key = (offset << txn_bits) | seq_txn;
+            dst[x].ts = key;
+            dst[x].i = (row << segment_bits) | segment_index;
+            on_key(key);
+        }
+    }
+    return !out_of_range;
+}
+
+// Sorts the rows of one sort plan item into out[0..row_count) as index_l {ts, (row << segment_bits) | segment}.
+// LSD radix sort is stable, rows with equal key are from the same transaction and keep their row order.
+// out and cpy are used as scratch for the item's own range only, the final pass reads cpy and writes out.
+template<uint16_t n>
+bool radix_sort_plan_item(
+        const index_l **segment_ts_maps,
+        const txn_info *txns,
+        const int64_t *plan_txns,
+        int64_t txn_lo,
+        int64_t txn_hi,
+        index_t *out,
+        index_t *cpy,
+        uint64_t row_count,
+        int64_t min_ts,
+        int64_t max_ts,
+        uint16_t txn_bits,
+        uint16_t segment_bits
+) {
+    static_assert(n > 0 && n <= 8, "invalid byte range to sort");
+    uint64_t counts[n][256] = {{0}};
+
+    // n passes alternate between the buffers, pick the starting one so that the last pass writes out
+    index_t *src = n % 2 == 0 ? out : cpy;
+    index_t *dst = n % 2 == 0 ? cpy : out;
+
+    if (!read_sort_plan_item_rows(
+            segment_ts_maps, txns, plan_txns, txn_lo, txn_hi, src, min_ts, max_ts, txn_bits, segment_bits,
+            [&](uint64_t key) {
+                constexpr_for<0, n, 1>(
+                        [&](auto i) {
+                            constexpr uint64_t shift = 8u * (n - i - 1);
+                            counts[i][(key >> shift) & 0xffu]++;
+                        }
+                );
+            }
+    )) {
+        return false;
+    }
+
+    uint64_t o[n] = {0};
+    for (int xx = 0; xx < 256; xx++) {
+        constexpr_for<0, n, 1>(
+                [&](auto i) {
+                    auto t0 = o[i] + counts[i][xx];
+                    counts[i][xx] = o[i];
+                    o[i] = t0;
+                }
+        );
+    }
+
+    for (uint16_t p = 0; p + 1 < n; p++) {
+        radix_shuffle(counts[n - 1 - p], src, dst, row_count, 8u * p);
+        std::swap(src, dst);
+    }
+
+    // the last pass converts the key back to the timestamp
+    constexpr uint16_t sh = 8u * (n - 1);
+    uint64_t *last_counts = counts[0];
+    for (uint64_t x = 0; x < row_count; x++) {
+        const uint64_t key = src[x].ts;
+        auto &d = dst[last_counts[(key >> sh) & 0xffu]++];
+        d.ts = (uint64_t) (min_ts + (int64_t) (key >> txn_bits));
+        d.i = src[x].i;
+        MM_PREFETCH_T2(src + x + 64);
+    }
+    return true;
+}
+
+inline bool small_sort_plan_item(
+        const index_l **segment_ts_maps,
+        const txn_info *txns,
+        const int64_t *plan_txns,
+        int64_t txn_lo,
+        int64_t txn_hi,
+        index_t *out,
+        uint64_t row_count,
+        int64_t min_ts,
+        int64_t max_ts,
+        uint16_t txn_bits,
+        uint16_t segment_bits
+) {
+    if (!read_sort_plan_item_rows(
+            segment_ts_maps, txns, plan_txns, txn_lo, txn_hi, out, min_ts, max_ts, txn_bits, segment_bits,
+            [](uint64_t) {}
+    )) {
+        return false;
+    }
+    // Equal keys come from the same transaction, hence the same segment, and the index orders them by row,
+    // which makes the result identical to the stable radix sort
+    pdqsort(out, out + row_count, [](const index_t &l, const index_t &r) {
+        return l.ts < r.ts || (l.ts == r.ts && l.i < r.i);
+    });
+    for (uint64_t x = 0; x < row_count; x++) {
+        out[x].ts = (uint64_t) (min_ts + (int64_t) (out[x].ts >> txn_bits));
+    }
+    return true;
+}
+
+inline int64_t sort_plan_item_rows(
+        const index_l **segment_ts_maps,
+        const txn_info *txns,
+        const int64_t *plan_txns,
+        int64_t txn_lo,
+        int64_t txn_hi,
+        index_t *out,
+        index_t *cpy,
+        uint64_t row_count,
+        int64_t min_ts,
+        int64_t max_ts,
+        uint16_t txn_bits,
+        uint16_t segment_bits
+) {
+    if (max_ts < min_ts) {
+        return error_sort_plan_invalid;
+    }
+    const uint16_t ts_bits = range_bits((uint64_t) max_ts - (uint64_t) min_ts + 1);
+    if (ts_bits + txn_bits > 64) {
+        return error_sort_timestamp_txn_range_overflow;
+    }
+
+    bool in_range;
+    if (row_count <= sort_plan_item_radix_min_rows || ts_bits + txn_bits == 0) {
+        in_range = small_sort_plan_item(
+                segment_ts_maps, txns, plan_txns, txn_lo, txn_hi, out, row_count, min_ts, max_ts, txn_bits,
+                segment_bits
+        );
+    } else {
+#define QDB_RADIX_SORT_PLAN_ITEM(N) radix_sort_plan_item<N>( \
+        segment_ts_maps, txns, plan_txns, txn_lo, txn_hi, out, cpy, row_count, min_ts, max_ts, txn_bits, segment_bits)
+
+        switch ((ts_bits + txn_bits + 7) >> 3) {
+            case 1:
+                in_range = QDB_RADIX_SORT_PLAN_ITEM(1);
+                break;
+            case 2:
+                in_range = QDB_RADIX_SORT_PLAN_ITEM(2);
+                break;
+            case 3:
+                in_range = QDB_RADIX_SORT_PLAN_ITEM(3);
+                break;
+            case 4:
+                in_range = QDB_RADIX_SORT_PLAN_ITEM(4);
+                break;
+            case 5:
+                in_range = QDB_RADIX_SORT_PLAN_ITEM(5);
+                break;
+            case 6:
+                in_range = QDB_RADIX_SORT_PLAN_ITEM(6);
+                break;
+            case 7:
+                in_range = QDB_RADIX_SORT_PLAN_ITEM(7);
+                break;
+            default:
+                in_range = QDB_RADIX_SORT_PLAN_ITEM(8);
+                break;
+        }
+#undef QDB_RADIX_SORT_PLAN_ITEM
+    }
+    return in_range ? (int64_t) row_count : error_sort_plan_invalid;
+}
+
+// Builds the same shuffle index as radix_sort_segments_index_asc() with shuffle_index_format,
+// following a plan of copy and sort items, see sort_plan_item.
+template<typename TRevIdx>
+int64_t sort_segments_index_by_plan(
+        const index_l **segment_ts_maps,
+        const seg_info *segments,
+        uint32_t segment_count,
+        const txn_info *txns,
+        uint64_t txn_count,
+        const sort_plan_item *plan,
+        int64_t plan_item_count,
+        const int64_t *plan_txns,
+        int64_t plan_txn_count,
+        index_l *out,
+        index_l *cpy,
+        uint64_t total_row_count,
+        uint16_t segment_bits,
+        uint16_t txn_bits
+) {
+    static_assert(std::is_integral_v<TRevIdx> && std::is_unsigned_v<TRevIdx>, "TRevIdx must be an unsigned integer");
+
+    // The reverse index is addressed by the position of the row in txn_info order. Transactions are grouped
+    // by segment and cover [segment_lo, segment_hi) of every segment without gaps, so the position of
+    // a row is rev_base[segment] + row. Verify it, the shuffle relies on the same layout.
+    std::vector<int64_t> rev_base(segment_count);
+    int64_t pos = 0;
+    for (uint32_t s = 0; s < segment_count; s++) {
+        rev_base[s] = pos - segments[s].segment_lo;
+        pos += std::abs(segments[s].segment_hi) - segments[s].segment_lo;
+    }
+    if ((uint64_t) pos != total_row_count) {
+        return error_sort_plan_invalid;
+    }
+    pos = 0;
+    for (uint64_t t = 0; t < txn_count; t++) {
+        const auto seg = txns[t].seg_info_index;
+        if (seg < 0 || seg >= segment_count || rev_base[seg] + txns[t].segment_row_offset != pos) {
+            return error_sort_plan_invalid;
+        }
+        pos += txns[t].row_count;
+    }
+
+    // every transaction must be in the plan exactly once
+    if ((uint64_t) plan_txn_count != txn_count) {
+        return error_sort_plan_invalid;
+    }
+    std::vector<bool> planned(txn_count);
+    for (int64_t t = 0; t < plan_txn_count; t++) {
+        if (plan_txns[t] < 0 || (uint64_t) plan_txns[t] >= txn_count || planned[plan_txns[t]]) {
+            return error_sort_plan_invalid;
+        }
+        planned[plan_txns[t]] = true;
+    }
+
+    auto *rev = reinterpret_cast<TRevIdx *>(reinterpret_cast<uint64_t *>(out + total_row_count) + 1);
+    const uint64_t segment_mask = (1ull << segment_bits) - 1;
+    uint64_t dst = 0;
+    // Copy items rely on the transaction in-order flags and on the planner, verify the output is sorted
+    int64_t last_ts = INT64_MIN;
+    bool unsorted = false;
+
+    for (int64_t p = 0; p < plan_item_count; p++) {
+        const sort_plan_item &item = plan[p];
+        if (item.txn_lo < 0 || item.txn_hi > plan_txn_count || item.txn_lo > item.txn_hi) {
+            return error_sort_plan_invalid;
+        }
+        uint64_t row_count = 0;
+        for (int64_t t = item.txn_lo; t < item.txn_hi; t++) {
+            row_count += txns[plan_txns[t]].row_count;
+        }
+        if (dst + row_count > total_row_count) {
+            return error_sort_plan_invalid;
+        }
+
+        if (item.type == sort_plan_item_copy) {
+            for (int64_t t = item.txn_lo; t < item.txn_hi; t++) {
+                const txn_info &txn = txns[plan_txns[t]];
+                const auto segment_index = (uint64_t) txn.seg_info_index;
+                const index_l *ts_map = segment_ts_maps[segment_index];
+                const int64_t base = rev_base[segment_index];
+                const auto hi = (uint64_t) (txn.segment_row_offset + txn.row_count);
+                for (auto row = (uint64_t) txn.segment_row_offset; row < hi; row++, dst++) {
+                    const int64_t ts = ts_map[row].ts;
+                    unsorted |= ts < last_ts;
+                    last_ts = ts;
+                    out[dst].ts = ts;
+                    out[dst].i = (row << segment_bits) | segment_index;
+                    rev[base + (int64_t) row] = (TRevIdx) dst;
+                }
+            }
+        } else if (item.type == sort_plan_item_sort) {
+            auto sorted = sort_plan_item_rows(
+                    segment_ts_maps, txns, plan_txns, item.txn_lo, item.txn_hi,
+                    reinterpret_cast<index_t *>(out + dst), reinterpret_cast<index_t *>(cpy + dst),
+                    row_count, item.min_ts, item.max_ts, txn_bits, segment_bits
+            );
+            if (sorted < 0) {
+                return sorted;
+            }
+
+            for (uint64_t x = dst, hi = dst + row_count; x < hi; x++) {
+                const uint64_t i = out[x].i;
+                unsorted |= out[x].ts < last_ts;
+                last_ts = out[x].ts;
+                rev[rev_base[i & segment_mask] + (int64_t) (i >> segment_bits)] = (TRevIdx) x;
+            }
+            dst += row_count;
+        } else {
+            return error_sort_plan_invalid;
+        }
+    }
+
+    if (dst != total_row_count || unsorted) {
+        return error_sort_plan_invalid;
+    }
+    reinterpret_cast<uint64_t *>(out + total_row_count)[0] = total_row_count;
+    return (int64_t) total_row_count;
 }
 
 #endif //QUESTDB_OOO_RADIX_H

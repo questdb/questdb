@@ -59,6 +59,8 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.util.Arrays;
+
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
@@ -1562,6 +1564,21 @@ public class VectFuzzTest {
     }
 
     @Test
+    public void testSortLongIndexPatterns() throws Exception {
+        // sizes around the switch from pdqsort to radix sort at 600 pairs
+        final int[] counts = {0, 1, 2, 3, 17, 598, 599, 600, 601, 1_000};
+        TestUtils.assertMemoryLeak(() -> {
+            rnd = TestUtils.generateRandom(null);
+            for (int count : counts) {
+                for (int pattern = 0; pattern < 7; pattern++) {
+                    testSortLongIndexPattern(count, pattern, false);
+                    testSortLongIndexPattern(count, pattern, true);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSortManySegments() throws Exception {
         Rnd rnd = TestUtils.generateRandom(null);
         TestUtils.assertMemoryLeak(() -> {
@@ -1965,6 +1982,51 @@ public class VectFuzzTest {
         }
     }
 
+    private void testSortLongIndexPattern(int count, int pattern, boolean isIndexDescending) {
+        final long size = Math.max(1, count) * 2L * Long.BYTES;
+        final long indexAddr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            final long[][] expected = new long[count][];
+            for (int i = 0; i < count; i++) {
+                final long key = switch (pattern) {
+                    case 0 -> 42;
+                    case 1 -> i;
+                    case 2 -> count - i;
+                    // organ pipe
+                    case 3 -> Math.min(i, count - i);
+                    // sawtooth
+                    case 4 -> i % 8;
+                    // ascending signed values with the sign bit flipped, the way TableWriterSegmentCopyInfo
+                    // sorts timestamps, the unsigned order must match the signed order of the values
+                    case 5 -> (i - count / 2L) ^ Long.MIN_VALUE;
+                    // full 64-bit range, half of the keys have the sign bit set
+                    default -> rnd.nextLong();
+                };
+                final long index = isIndexDescending ? count - i : i;
+                Unsafe.putLong(indexAddr + i * 2L * Long.BYTES, key);
+                Unsafe.putLong(indexAddr + i * 2L * Long.BYTES + Long.BYTES, index);
+                expected[i] = new long[]{key, index};
+            }
+            // arrays under 600 pairs order equal keys by index, larger arrays keep the input order of equal keys
+            final boolean isTieByIndex = count < 600;
+            Arrays.sort(expected, (l, r) -> {
+                final int cmp = Long.compareUnsigned(l[0], r[0]);
+                return cmp != 0 || !isTieByIndex ? cmp : Long.compareUnsigned(l[1], r[1]);
+            });
+
+            Vect.sortLongIndexAscInPlace(indexAddr, count);
+
+            for (int i = 0; i < count; i++) {
+                final String message = "count " + count + ", pattern " + pattern
+                        + ", descending index " + isIndexDescending + ", pair " + i;
+                Assert.assertEquals(message, expected[i][0], Unsafe.getLong(indexAddr + i * 2L * Long.BYTES));
+                Assert.assertEquals(message, expected[i][1], Unsafe.getLong(indexAddr + i * 2L * Long.BYTES + Long.BYTES));
+            }
+        } finally {
+            Unsafe.free(indexAddr, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     private void testSortManySegments(long startTs, long tsIncrement, long rowsPerCommit, long commits, int segmentCount, boolean withLag, int expectedFailure) {
         // To simplify assertion, make lag rows same as very other segment
         long lagRows = withLag ? commits * rowsPerCommit : 0;
@@ -2001,7 +2063,7 @@ public class VectFuzzTest {
                             Unsafe.putLong(segmentAddr + (c * rowsPerCommit + r) * 2L * Long.BYTES, ts);
                             ts += tsIncrement;
                         }
-                        segmentCopyInfo.addTxn((long) c * rowsPerCommit, c * segmentCount + s, rowsPerCommit, s, startTs, ts - tsIncrement);
+                        segmentCopyInfo.addTxn((long) c * rowsPerCommit, c * segmentCount + s, rowsPerCommit, s, startTs, ts - tsIncrement, true);
                     }
                     segmentCopyInfo.addSegment(1, s, 0, commits * rowsPerCommit, false);
                 }

@@ -323,6 +323,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean ioURingEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
+    private final boolean isWalApplySortPlanEnabled;
     private final int jsonCacheLimit;
     private final int jsonCacheSize;
     private final int jsonUnnestMaxValueSize;
@@ -1075,6 +1076,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
         this.walApplySuspendedWriteDenied = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, false);
+        this.isWalApplySortPlanEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_SORT_PLAN_ENABLED, true);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
         this.tempRenamePendingTablePrefix = getString(properties, env, PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX, "temp_5822f658-31f6-11ee-be56-0242ac120002");
         this.sequencerCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_INTERVAL, 10_000);
@@ -5964,6 +5966,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isWalApplyParallelSqlEnabled() {
             return walParallelExecutionEnabled;
+        }
+
+        @Override
+        public boolean isWalApplySortPlanEnabled() {
+            return isWalApplySortPlanEnabled;
         }
 
         @Override
