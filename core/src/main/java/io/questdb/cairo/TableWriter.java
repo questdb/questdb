@@ -7632,7 +7632,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // destroy() may have already closed everything
         boolean tx = inTransaction();
         // A graceful close of a healthy adaptive WAL writer folds the committed tail into a final epoch, so a
-        // clean restart lands on the committed frontier with nothing to replay. It runs before the teardown
+        // clean restart lands on the committed frontier with nothing to replay. The tail includes a commit made
+        // without a WAL transaction (a storage policy change through the writer), seen as a txn the newest save
+        // point does not hold: no replay can redo it, so a restart would undo it. It runs before the teardown
         // below, while txWriter, columnVersionWriter and the sequencer are open (CairoEngine.close frees the
         // writer pool before the sequencer and the scoreboard). A distressed or rolled-back writer, the drop
         // path included, publishes no epoch over state that may be torn or about to be deleted. A negative
@@ -7654,7 +7656,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                 if (tracker.isDurableEpochOwed()
-                        || (configuration.getAdaptiveEpochIntervalMs() >= 0 && getSeqTxn() > tracker.getDurableEpochSeqTxn())) {
+                        || (configuration.getAdaptiveEpochIntervalMs() >= 0
+                        && (getSeqTxn() > tracker.getDurableEpochSeqTxn() || getTxn() != tracker.getPinnedEpochTxn()))) {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 }
             } catch (Throwable e) {

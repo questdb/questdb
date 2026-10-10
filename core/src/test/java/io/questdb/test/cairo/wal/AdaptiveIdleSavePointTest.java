@@ -25,11 +25,13 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PostingSealPurgeJob;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -81,6 +83,69 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
                     counter.check();
                 }
                 Assert.assertEquals("one save point per interval of writes", 6, counter.count);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testCleanRestartKeepsCommitWithoutWalTransaction() throws Exception {
+        // A writer change that moves the table's txn but not its seqTxn (a partition removed, a partition converted
+        // to Parquet, a row committed through the writer itself), made after the idle spell and followed by a clean
+        // restart before the next idle save point: the restart keeps the change, since no WAL replay can redo it.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            startClock();
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+                final String[] changes = {"remove partition", "convert partition to parquet", "writer commit"};
+                final ObjList<TableToken> tokens = new ObjList<>();
+                for (int i = 0; i < changes.length; i++) {
+                    tokens.add(createDays("t" + i, false));
+                }
+                for (int j = 0; j < 4; j++) {
+                    idlePass(INTERVAL_MS, purgeJob);
+                }
+                // All changes after the idle spells, so no idle save point of another table's pass takes them.
+                final ObjList<String> before = new ObjList<>();
+                for (int i = 0; i < changes.length; i++) {
+                    final TableToken tt = tokens.getQuick(i);
+                    final SeqTxnTracker tracker = tracker(tt);
+                    Assert.assertEquals(changes[i] + ", idle spell over", tracker.getPinnedEpochTxn(), tracker.getOtherPinnedEpochTxn());
+                    try (TableWriter writer = getWriter(tt)) {
+                        final long day = MicrosTimestampDriver.floor("2024-01-01");
+                        switch (i) {
+                            case 0 -> Assert.assertTrue(writer.removePartition(day));
+                            case 1 -> {
+                                Assert.assertTrue(writer.convertPartitionNativeToParquet(day, null, 0.01));
+                                writer.advanceDurableEpochAfter("convert partition");
+                            }
+                            default -> {
+                                final TableWriter.Row row = writer.newRow(day + 3_600_000_000L);
+                                row.putLong(1, 5);
+                                row.append();
+                                writer.commit();
+                            }
+                        }
+                    }
+                    before.add(tableState(engine, tt));
+                }
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseAllWalWriters();
+                engine.releaseInactiveTableSequencers();
+                final StringSink failures = new StringSink();
+                try (CairoEngine restarted = new CairoEngine(configuration)) {
+                    for (int i = 0; i < tokens.size(); i++) {
+                        final String after = tableState(restarted, tokens.getQuick(i));
+                        if (!before.getQuick(i).equals(after)) {
+                            failures.put(changes[i]).put(": before restart ").put(before.getQuick(i))
+                                    .put(", after ").put(after).put('\n');
+                        }
+                    }
+                }
+                Assert.assertEquals("", failures.toString());
             } finally {
                 setCurrentMicros(-1);
             }
@@ -596,6 +661,13 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
 
     private static void startClock() {
         setCurrentMicros(MicrosecondClockImpl.INSTANCE.getTicks());
+    }
+
+    // The table's rows, partitions and txn as a reader of the given engine sees them.
+    private static String tableState(CairoEngine eng, TableToken tt) {
+        try (TableReader reader = eng.getReader(tt)) {
+            return "rows=" + reader.size() + " partitions=" + reader.getPartitionCount() + " txn=" + reader.getTxn();
+        }
     }
 
     private static void tick(long ms) {
