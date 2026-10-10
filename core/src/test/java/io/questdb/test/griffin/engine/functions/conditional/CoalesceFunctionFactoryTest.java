@@ -524,6 +524,39 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHash() throws Exception {
+        // one column pair per geohash storage size: byte, short, int and long
+        assertQuery("""
+                SELECT k,
+                    coalesce(b1, b2) b, coalesce(s1, s2) s, coalesce(i1, i2) i, coalesce(l1, l2) l,
+                    coalesce(b1, b2, #z) b3, coalesce(s1, s2, #zz) s3, coalesce(i1, i2, #zzzz) i3, coalesce(l1, l2, #zzzzzzzz) l3
+                FROM t""")
+                .ddl(
+                        "CREATE TABLE t (k INT, b1 GEOHASH(1c), b2 GEOHASH(1c), s1 GEOHASH(2c), s2 GEOHASH(2c), " +
+                                "i1 GEOHASH(4c), i2 GEOHASH(4c), l1 GEOHASH(8c), l2 GEOHASH(8c))",
+                        """
+                                INSERT INTO t VALUES
+                                    (1, #u, #s, #u3, #s3, #u33d, #s33d, #u33dbfnp, #s33dbfnp),
+                                    (2, NULL, #s, NULL, #s3, NULL, #s33d, NULL, #s33dbfnp),
+                                    (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+                                """
+                )
+                .expectSize()
+                .returns("""
+                        k\tb\ts\ti\tl\tb3\ts3\ti3\tl3
+                        1\tu\tu3\tu33d\tu33dbfnp\tu\tu3\tu33d\tu33dbfnp
+                        2\ts\ts3\ts33d\ts33dbfnp\ts\ts3\ts33d\ts33dbfnp
+                        3\t\t\t\t\tz\tzz\tzzzz\tzzzzzzzz
+                        """);
+    }
+
+    @Test
+    public void testGeoHashDifferentPrecision() throws Exception {
+        assertQuery("SELECT coalesce(#u, #uu)")
+                .fails(20, "inconvertible types: GEOHASH(2c) -> GEOHASH(1c)");
+    }
+
+    @Test
     public void testIPv4Args() throws Exception {
         assertQuery("select coalesce(a, b, x) c1, coalesce(a, b) c2, a, b, x\n" +
                 "from test")

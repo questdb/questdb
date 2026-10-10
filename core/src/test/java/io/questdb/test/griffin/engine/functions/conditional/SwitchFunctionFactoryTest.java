@@ -1013,6 +1013,35 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHash() throws Exception {
+        // one column pair per geohash storage size: byte, short, int and long
+        assertQuery("""
+                SELECT k,
+                    CASE k WHEN 1 THEN b1 WHEN 2 THEN b2 ELSE #z END b,
+                    CASE k WHEN 1 THEN s1 WHEN 2 THEN s2 ELSE #zz END s,
+                    CASE k WHEN 1 THEN i1 WHEN 2 THEN i2 ELSE #zzzz END i,
+                    CASE k WHEN 1 THEN l1 WHEN 2 THEN l2 ELSE #zzzzzzzz END l
+                FROM t""")
+                .ddl(
+                        "CREATE TABLE t (k INT, b1 GEOHASH(1c), b2 GEOHASH(1c), s1 GEOHASH(2c), s2 GEOHASH(2c), " +
+                                "i1 GEOHASH(4c), i2 GEOHASH(4c), l1 GEOHASH(8c), l2 GEOHASH(8c))",
+                        """
+                                INSERT INTO t VALUES
+                                    (1, #u, #s, #u3, #s3, #u33d, #s33d, #u33dbfnp, #s33dbfnp),
+                                    (2, #u, #s, #u3, #s3, #u33d, #s33d, #u33dbfnp, #s33dbfnp),
+                                    (3, #u, #s, #u3, #s3, #u33d, #s33d, #u33dbfnp, #s33dbfnp)
+                                """
+                )
+                .expectSize()
+                .returns("""
+                        k\tb\ts\ti\tl
+                        1\tu\tu3\tu33d\tu33dbfnp
+                        2\ts\ts3\ts33d\ts33dbfnp
+                        3\tz\tzz\tzzzz\tzzzzzzzz
+                        """);
+    }
+
+    @Test
     public void testInt() throws Exception {
         assertQuery("""
                 select\s

@@ -1284,6 +1284,52 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHash() throws Exception {
+        assertQuery("SELECT x, CASE WHEN x % 2 = 0 THEN #u ELSE #s END h FROM long_sequence(2)")
+                .expectSize()
+                .returns("""
+                        x\th
+                        1\ts
+                        2\tu
+                        """);
+    }
+
+    @Test
+    public void testGeoHashColumns() throws Exception {
+        // one column pair per geohash storage size: byte, short, int and long
+        assertQuery("""
+                SELECT k,
+                    CASE WHEN k = 1 THEN b1 ELSE b2 END b,
+                    CASE WHEN k = 1 THEN s1 ELSE s2 END s,
+                    CASE WHEN k = 1 THEN i1 ELSE i2 END i,
+                    CASE WHEN k = 1 THEN l1 ELSE l2 END l
+                FROM t""")
+                .ddl(
+                        "CREATE TABLE t (k INT, b1 GEOHASH(1c), b2 GEOHASH(1c), s1 GEOHASH(2c), s2 GEOHASH(2c), " +
+                                "i1 GEOHASH(4c), i2 GEOHASH(4c), l1 GEOHASH(8c), l2 GEOHASH(8c))",
+                        """
+                                INSERT INTO t VALUES
+                                    (1, #u, #s, #u3, #s3, #u33d, #s33d, #u33dbfnp, #s33dbfnp),
+                                    (2, #u, #s, #u3, #s3, #u33d, #s33d, #u33dbfnp, #s33dbfnp),
+                                    (3, #u, NULL, #u3, NULL, #u33d, NULL, #u33dbfnp, NULL)
+                                """
+                )
+                .expectSize()
+                .returns("""
+                        k\tb\ts\ti\tl
+                        1\tu\tu3\tu33d\tu33dbfnp
+                        2\ts\ts3\ts33d\ts33dbfnp
+                        3\t\t\t\t
+                        """);
+    }
+
+    @Test
+    public void testGeoHashDifferentPrecision() throws Exception {
+        assertQuery("SELECT CASE WHEN x % 2 = 0 THEN #u ELSE #uu END h FROM long_sequence(2)")
+                .fails(40, "inconvertible types: GEOHASH(2c) -> GEOHASH(1c)");
+    }
+
+    @Test
     public void testIPv4ToVarcharCast() throws Exception {
         assertMemoryLeak(() -> {
             execute(

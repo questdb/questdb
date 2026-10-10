@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +36,10 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
+import io.questdb.griffin.engine.functions.GeoIntFunction;
+import io.questdb.griffin.engine.functions.GeoLongFunction;
+import io.questdb.griffin.engine.functions.GeoShortFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.Long256Function;
@@ -132,6 +137,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case VARCHAR ->
                     argsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, argsSize);
             case UUID -> argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
+            case GEOBYTE, GEOSHORT, GEOINT, GEOLONG ->
+                // geohash functions keep the argument list, and the SQL parser reuses
+                // a two-argument list, which the copy above skips
+                    newGeoHashCoalesceFunction(returnType, argsSize == 2 ? new ObjList<>(args) : args, argsSize);
             case BOOLEAN, SHORT, BYTE, CHAR ->
                 // Null on these data types not supported
                     args.getQuick(0);
@@ -164,6 +173,15 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 value.getLong1() != Numbers.LONG_NULL ||
                 value.getLong2() != Numbers.LONG_NULL ||
                 value.getLong3() != Numbers.LONG_NULL);
+    }
+
+    private static Function newGeoHashCoalesceFunction(int returnType, ObjList<Function> args, int argsSize) {
+        return switch (tagOf(returnType)) {
+            case GEOBYTE -> new GeoByteCoalesceFunction(returnType, args, argsSize);
+            case GEOSHORT -> new GeoShortCoalesceFunction(returnType, args, argsSize);
+            case GEOINT -> new GeoIntCoalesceFunction(returnType, args, argsSize);
+            default -> new GeoLongCoalesceFunction(returnType, args, argsSize);
+        };
     }
 
     private interface BinaryCoalesceFunction extends BinaryFunction {
@@ -419,6 +437,114 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return Float.NaN;
+        }
+    }
+
+    private static class GeoByteCoalesceFunction extends GeoByteFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public GeoByteCoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public byte getGeoByte(Record rec) {
+            for (int i = 0; i < size; i++) {
+                byte value = args.getQuick(i).getGeoByte(rec);
+                if (value != GeoHashes.BYTE_NULL) {
+                    return value;
+                }
+            }
+            return GeoHashes.BYTE_NULL;
+        }
+    }
+
+    private static class GeoIntCoalesceFunction extends GeoIntFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public GeoIntCoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public int getGeoInt(Record rec) {
+            for (int i = 0; i < size; i++) {
+                int value = args.getQuick(i).getGeoInt(rec);
+                if (value != GeoHashes.INT_NULL) {
+                    return value;
+                }
+            }
+            return GeoHashes.INT_NULL;
+        }
+    }
+
+    private static class GeoLongCoalesceFunction extends GeoLongFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public GeoLongCoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public long getGeoLong(Record rec) {
+            for (int i = 0; i < size; i++) {
+                long value = args.getQuick(i).getGeoLong(rec);
+                if (value != GeoHashes.NULL) {
+                    return value;
+                }
+            }
+            return GeoHashes.NULL;
+        }
+    }
+
+    private static class GeoShortCoalesceFunction extends GeoShortFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public GeoShortCoalesceFunction(int type, ObjList<Function> args, int size) {
+            super(type);
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            for (int i = 0; i < size; i++) {
+                short value = args.getQuick(i).getGeoShort(rec);
+                if (value != GeoHashes.SHORT_NULL) {
+                    return value;
+                }
+            }
+            return GeoHashes.SHORT_NULL;
         }
     }
 
