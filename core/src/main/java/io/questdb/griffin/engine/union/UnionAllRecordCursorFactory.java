@@ -52,6 +52,18 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
         return true;
     }
 
+    // The cursor drains branch A to exhaustion and then restarts at the first row of branch B, so
+    // the designated timestamp restarts at the branch boundary: the output is A-order followed by
+    // B-order, ascending within each branch and arbitrary across the two. That is what UNION ALL
+    // means - concatenation - so there is nothing to correct in the cursor; only the declaration
+    // has to be honest. Callers that need an ordered union get MergeUnionAllRecordCursorFactory,
+    // which merges the branches on the timestamp and answers FORWARD/BACKWARD accordingly;
+    // "... union all ... order by ts" already routes there.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_OTHER;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;

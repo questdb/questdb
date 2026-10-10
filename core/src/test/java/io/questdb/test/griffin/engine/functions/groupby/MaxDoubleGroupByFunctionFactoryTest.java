@@ -285,45 +285,122 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         """);
     }
 
+    /**
+     * SAMPLE BY ... FILL(LINEAR) over a UNION ALL, in both alignments, against the same rows fed in
+     * genuine ascending order. All four answers are the same, and this test pins that.
+     * <p>
+     * It took two corrections to get here, and the middle one is why the shape is worth keeping.
+     * {@code (x where b = 'PEHN' union all x where b = 'VTJW') timestamp(k)} concatenates rather than
+     * merges: it emits every PEHN row in ascending k, then restarts at the first VTJW row - k goes
+     * 00:18, 00:42, ... 08:06, then back to 00:06. SAMPLE BY consumes its input as a single ascending
+     * run, so it anchored the bucket grid on the first row it happened to see (PEHN's 00:18) rather
+     * than on the earliest row in the data (VTJW's 00:06), and folded the restarted VTJW rows into
+     * whatever bucket the walk had already reached. The maxima that came out were ones no grouping of
+     * the input can produce - VTJW 00:00 -> 0.9125204540487346 and VTJW 03:00 -> 0.8660879643164553 -
+     * and this test asserted them.
+     * <p>
+     * The first correction stopped the union claiming an ascending designated timestamp it does not
+     * have, so the generator refused with "base query does not provide ASC order over designated
+     * TIMESTAMP column", and this test asserted that refusal. The second correction removed it:
+     * refusing was never the repair, because the engine already knows how to produce the order. The
+     * optimiser now restates the requirement as an {@code ORDER BY k} on the base, which routes the
+     * union through MergeUnionAllRecordCursorFactory - a k-way merge of the branches, not a sort -
+     * and where no ordered plan exists it sorts instead. Either way SAMPLE BY sees one ascending run.
+     * <p>
+     * So do not re-introduce the refusal, and do not re-introduce the old numbers. The union arms below
+     * return, row for row, what the {@code xc} control returns, and {@code xc} is the same rows
+     * materialised into a designated-timestamp table - 0.8685154305419587 and 0.9441658975532605 in
+     * the two buckets that used to be wrong. The control is also what keeps the fill(linear)
+     * random-access coverage the test is named for honest: it pins the answer independently of the
+     * plan the union arms happen to take.
+     */
     @Test
     public void testSampleInterpolateRandomAccessConsistency() throws Exception {
+        final String ddl = "create table x as " +
+                "(" +
+                "select" +
+                " rnd_double(0) a," +
+                " rnd_symbol(5,4,4,1) b," +
+                " timestamp_sequence(172800000000, 360000000) k" +
+                " from" +
+                " long_sequence(100)" +
+                ") timestamp(k) partition by NONE";
+
+        // The union restarts the designated timestamp; the engine obtains the order rather than refusing.
+        // Which tier it obtains it through is pinned as well, because the two are indistinguishable in
+        // the rows: "order by 3, 2, 1" carries three terms and the optimiser restates the ordering
+        // requirement only across the single ascending designated-timestamp term, so this shape takes
+        // the tier-2 sort rather than the merge. That is the guard behaving as designed, and pinning it
+        // here is what stops this test staying green if tier 1 regressed entirely.
         assertQuery("select b, max(a), k from " +
                 " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
                 "sample by 3h fill(linear) align to first observation order by 3, 2, 1")
-                .ddl("create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0) a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 360000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
-                        ") timestamp(k) partition by NONE")
+                .ddl(ddl)
                 .timestamp("k")
-                .expectSize()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By", "fill: linear", "UnionSymbolCast", "Union All")
+                .withPlanNotContaining("Union All Merge")
                 .returns("""
                         b\tmax\tk
-                        PEHN\t0.8445258177211064\t1970-01-03T00:18:00.000000Z
-                        VTJW\t0.9125204540487346\t1970-01-03T00:18:00.000000Z
-                        PEHN\t0.7365115215570027\t1970-01-03T03:18:00.000000Z
-                        VTJW\t0.8660879643164553\t1970-01-03T03:18:00.000000Z
-                        PEHN\t0.4346135812930124\t1970-01-03T06:18:00.000000Z
-                        VTJW\t0.8196554745841765\t1970-01-03T06:18:00.000000Z
-                        PEHN\t0.13271564102902209\t1970-01-03T09:18:00.000000Z
-                        VTJW\t0.7732229848518976\t1970-01-03T09:18:00.000000Z
+                        PEHN\t0.8445258177211064\t1970-01-03T00:06:00.000000Z
+                        VTJW\t0.8685154305419587\t1970-01-03T00:06:00.000000Z
+                        PEHN\t0.7365115215570027\t1970-01-03T03:06:00.000000Z
+                        VTJW\t0.9441658975532605\t1970-01-03T03:06:00.000000Z
+                        PEHN\t0.4346135812930124\t1970-01-03T06:06:00.000000Z
+                        VTJW\t0.8196554745841765\t1970-01-03T06:06:00.000000Z
+                        PEHN\t0.13271564102902209\t1970-01-03T09:06:00.000000Z
+                        VTJW\t0.7732229848518976\t1970-01-03T09:06:00.000000Z
                         """);
 
         assertQuery("select b, max(a), k from " +
                 " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
                 "sample by 3h fill(linear) align to calendar order by 3, 2, 1")
                 .timestamp("k")
+                .inferRandomAccess()
+                .sizeMayVary()
+                .withPlanContaining("Sample By", "fill: linear", "UnionSymbolCast", "Union All")
+                .withPlanNotContaining("Union All Merge")
+                .returns("""
+                        b\tmax\tk
+                        PEHN\t0.8445258177211064\t1970-01-03T00:00:00.000000Z
+                        VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z
+                        PEHN\t0.7365115215570027\t1970-01-03T03:00:00.000000Z
+                        VTJW\t0.9441658975532605\t1970-01-03T03:00:00.000000Z
+                        PEHN\t0.4346135812930124\t1970-01-03T06:00:00.000000Z
+                        VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z
+                        PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z
+                        VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z
+                        """);
+
+        // Same rows, genuinely ascending: the control the two union arms above must match.
+        assertQuery("select b, max(a), k from xc " +
+                "sample by 3h fill(linear) align to first observation order by 3, 2, 1")
+                .ddl("create table xc as (select a, b, k from x where b = 'PEHN' or b = 'VTJW') timestamp(k) partition by NONE")
+                .timestamp("k")
+                .expectSize()
+                .returns("""
+                        b\tmax\tk
+                        PEHN\t0.8445258177211064\t1970-01-03T00:06:00.000000Z
+                        VTJW\t0.8685154305419587\t1970-01-03T00:06:00.000000Z
+                        PEHN\t0.7365115215570027\t1970-01-03T03:06:00.000000Z
+                        VTJW\t0.9441658975532605\t1970-01-03T03:06:00.000000Z
+                        PEHN\t0.4346135812930124\t1970-01-03T06:06:00.000000Z
+                        VTJW\t0.8196554745841765\t1970-01-03T06:06:00.000000Z
+                        PEHN\t0.13271564102902209\t1970-01-03T09:06:00.000000Z
+                        VTJW\t0.7732229848518976\t1970-01-03T09:06:00.000000Z
+                        """);
+
+        assertQuery("select b, max(a), k from xc " +
+                "sample by 3h fill(linear) align to calendar order by 3, 2, 1")
+                .timestamp("k")
                 .expectSize()
                 .returns("""
                         b\tmax\tk
                         PEHN\t0.8445258177211064\t1970-01-03T00:00:00.000000Z
-                        VTJW\t0.9125204540487346\t1970-01-03T00:00:00.000000Z
+                        VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z
                         PEHN\t0.7365115215570027\t1970-01-03T03:00:00.000000Z
-                        VTJW\t0.8660879643164553\t1970-01-03T03:00:00.000000Z
+                        VTJW\t0.9441658975532605\t1970-01-03T03:00:00.000000Z
                         PEHN\t0.4346135812930124\t1970-01-03T06:00:00.000000Z
                         VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z
                         PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z

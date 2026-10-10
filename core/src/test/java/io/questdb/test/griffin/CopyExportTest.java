@@ -3408,6 +3408,57 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyWithPartitionByOverUnionAllSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa holds 2024-01-01, -03 and -05, pb holds -02, -04 and -06, 24 hourly rows each.
+            // "pa UNION ALL pb" concatenates the branches, so the timestamp restarts at the branch
+            // boundary and the union declares an INDETERMINATE scan direction. A partitioned export
+            // goes through a temp table, which O3-sorts on insert, so that direction is irrelevant.
+            execute("create table pa (ts timestamp, v long) timestamp(ts) partition by day");
+            execute("create table pb (ts timestamp, v long) timestamp(ts) partition by day");
+            execute("insert into pa select timestamp_sequence('2024-01-01T00:00:00.000000Z', 3600000000L) ts, x v from long_sequence(24)");
+            execute("insert into pa select timestamp_sequence('2024-01-03T00:00:00.000000Z', 3600000000L) ts, 100 + x v from long_sequence(24)");
+            execute("insert into pa select timestamp_sequence('2024-01-05T00:00:00.000000Z', 3600000000L) ts, 200 + x v from long_sequence(24)");
+            execute("insert into pb select timestamp_sequence('2024-01-02T00:00:00.000000Z', 3600000000L) ts, 300 + x v from long_sequence(24)");
+            execute("insert into pb select timestamp_sequence('2024-01-04T00:00:00.000000Z', 3600000000L) ts, 400 + x v from long_sequence(24)");
+            execute("insert into pb select timestamp_sequence('2024-01-06T00:00:00.000000Z', 3600000000L) ts, 500 + x v from long_sequence(24)");
+
+            final String outDir = exportRoot + File.separator + "union_output" + File.separator;
+            // every exported file, and the v range that identifies the rows it must hold
+            final String[] days = {"2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06"};
+            final String[] vRanges = {"1\t24", "301\t324", "101\t124", "401\t424", "201\t224", "501\t524"};
+
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "copy ((pa union all pb) timestamp(ts)) to 'union_output' with format parquet partition_by DAY",
+                    sqlExecutionContext
+            );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" + outDir + "\t6\tfinished\n");
+                        // each file holds exactly the day its name claims - all 24 of its rows, no
+                        // row from a neighbouring day, and the values the source put on that day
+                        for (int i = 0; i < days.length; i++) {
+                            assertQuery("select count() c, min(ts) lo, max(ts) hi, min(v) vlo, max(v) vhi" +
+                                    " from read_parquet('" + outDir + days[i] + ".parquet')")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("c\tlo\thi\tvlo\tvhi\n24\t"
+                                            + days[i] + "T00:00:00.000000Z\t"
+                                            + days[i] + "T23:00:00.000000Z\t"
+                                            + vRanges[i] + "\n");
+                        }
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyWithPartitionByTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
