@@ -173,6 +173,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return true;
     }
 
+    // True when a timestamp in ms is set (not 0) and less than one interval before now. A backward clock step
+    // counts as elapsed.
+    private static boolean withinInterval(long ts, long nowMs, long intervalMs) {
+        return ts > 0 && nowMs >= ts && nowMs - ts < intervalMs;
+    }
+
     /**
      * Perform a broad sweep that searches for all tables that have closed
      * WAL segments across the database and deletes any which are no longer needed.
@@ -725,9 +731,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    /**
-     * Check if the segment directory has any outstanding ".pending" marker files in the ".pending" directory.
-     */
     // An adaptive table keeps the WAL and the partition and column versions its older save point names. On a table
     // that gets no further write, nothing else replaces that save point, so once the table has taken no save point
     // for one interval, ask the apply job for one more at the current state: both generations then stand on it and
@@ -757,11 +760,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             return;
         }
         final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000L;
-        final long lastEpochTs = tracker.getLastEpochTs();
-        if (lastEpochTs > 0 && nowMs >= lastEpochTs && nowMs - lastEpochTs < intervalMs) {
+        if (withinInterval(tracker.getLastEpochTs(), nowMs, intervalMs)
+                || withinInterval(tracker.getIdleEpochRequestTs(), nowMs, intervalMs)) {
             return;
         }
-        tracker.requestIdleEpoch();
+        tracker.requestIdleEpoch(nowMs);
         idleSavePointRequests++;
         // A live view's refresh worker owns its writer and takes the save point when it sees the request; the
         // apply job drops a live view's notifications.
@@ -770,6 +773,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    /**
+     * Check if the segment directory has any outstanding ".pending" marker files in the ".pending" directory.
+     */
     private boolean segmentHasPendingTasks(int walId, int segmentId) {
         return walDirectoryPolicy.isInUse(setSegmentPath(tableToken, walId, segmentId));
     }

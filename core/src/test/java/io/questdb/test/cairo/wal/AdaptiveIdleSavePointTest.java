@@ -26,8 +26,10 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -35,9 +37,11 @@ import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.LogCapture;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -128,6 +132,102 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
                 Assert.assertEquals("", failures.toString());
                 execute("DROP LIVE VIEW lv");
             } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testIdleRequestNotTakenIsAskedOncePerInterval() throws Exception {
+        // The idle save point cannot be taken while another holder keeps the writer: the purge job asks again one
+        // interval after its last request, not at every pass, and the save point is taken once the writer is free.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            startClock();
+            try {
+                final TableToken tt = createDays("t", false);
+                int requests = 0;
+                try (TableWriter ignore = engine.getWriter(tt, "rebase")) {
+                    Assert.assertNotNull(ignore);
+                    long lastRequestTs = tracker(tt).getIdleEpochRequestTs();
+                    // Eight passes over four intervals.
+                    for (int i = 0; i < 8; i++) {
+                        idlePass(INTERVAL_MS / 2, null);
+                        if (tracker(tt).getIdleEpochRequestTs() != lastRequestTs) {
+                            lastRequestTs = tracker(tt).getIdleEpochRequestTs();
+                            requests++;
+                        }
+                    }
+                }
+                Assert.assertEquals("requests over four intervals", 4, requests);
+                for (int i = 0; i < 2; i++) {
+                    idlePass(INTERVAL_MS, null);
+                }
+                Assert.assertEquals("taken once the writer is free", tracker(tt).getPinnedEpochTxn(), tracker(tt).getOtherPinnedEpochTxn());
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testIdleRequestRacingSuspensionTakesNoSavePoint() throws Exception {
+        // The purge job asks, then the table is suspended before the apply run: the run neither applies nor takes
+        // a save point on the suspended table. After RESUME WAL the next pass asks again.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            startClock();
+            try {
+                final TableToken tt = createDays("t", false);
+                final SavePointCounter counter = new SavePointCounter(tt);
+                tick(INTERVAL_MS);
+                drainPurgeJob();
+                Assert.assertTrue(tracker(tt).isIdleEpochRequested());
+                engine.getTableSequencerAPI().suspendTable(tt, ErrorTag.NONE, "test");
+                drainWalQueue();
+                counter.check();
+                Assert.assertEquals("save points on the suspended table", 0, counter.count);
+                Assert.assertFalse("the request is consumed", tracker(tt).isIdleEpochRequested());
+                execute("ALTER TABLE t RESUME WAL");
+                for (int i = 0; i < 2; i++) {
+                    idlePass(INTERVAL_MS, null);
+                    counter.check();
+                }
+                Assert.assertEquals("save points after RESUME WAL", 1, counter.count);
+                Assert.assertEquals(tracker(tt).getPinnedEpochTxn(), tracker(tt).getOtherPinnedEpochTxn());
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testIdleRequestWithWriterHeldLogsNoUnsolicitedLock() throws Exception {
+        // The writer is held for another reason (as REBASE or a demote hold it) when the idle request's apply run
+        // comes: with nothing to apply that is not abnormal, so no CRITICAL "unsolicited table lock". The
+        // request is asked again later and taken once the writer is free.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            startClock();
+            capture.start();
+            try {
+                final TableToken tt = createDays("t", false);
+                try (TableWriter ignore = engine.getWriter(tt, "rebase")) {
+                    Assert.assertNotNull(ignore);
+                    idlePass(INTERVAL_MS, null);
+                }
+                capture.drain();
+                capture.assertNotLogged("unsolicited table lock");
+                for (int i = 0; i < 2; i++) {
+                    idlePass(INTERVAL_MS, null);
+                }
+                Assert.assertEquals(tracker(tt).getPinnedEpochTxn(), tracker(tt).getOtherPinnedEpochTxn());
+            } finally {
+                capture.stop();
                 setCurrentMicros(-1);
             }
         });
@@ -338,6 +438,50 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIdleTableRemovesSupersededPostingFiles() throws Exception {
+        // DEDUP commits into the partition a save point indexed reseal its covering posting index in place, so the
+        // superseded value files wait for the save points that name them. With no write after the last commit,
+        // they go after the idle save points, at the posting purge's next retry.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);
+        assertMemoryLeak(() -> {
+            startClock();
+            try (PostingSealPurgeJob postingPurgeJob = new PostingSealPurgeJob(engine)) {
+                execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) "
+                        + "PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)");
+                // 2024-01-01, then four commits of ten rows into 2024-01-02, the first three an interval apart, each
+                // with its own save point, the last one a tail.
+                tick(INTERVAL_MS);
+                execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 'a', 0), ('2024-01-02T00:00:00.000000Z', 'b', 0)");
+                drainWalQueue();
+                for (int i = 0; i < 4; i++) {
+                    if (i < 3) {
+                        tick(INTERVAL_MS);
+                    }
+                    final StringBuilder sql = new StringBuilder("INSERT INTO t VALUES ");
+                    for (int j = 0; j < 10; j++) {
+                        sql.append(j > 0 ? ", " : "").append("('2024-01-02T0").append(i + 1).append(":0").append(j)
+                                .append(":00.000000Z', '").append((char) ('a' + j % 4)).append("', ").append(i * 10 + j).append(')');
+                    }
+                    execute(sql);
+                    drainWalQueue();
+                    runPostingPurgeJob(postingPurgeJob);
+                }
+                Assert.assertTrue("superseded posting files wait for the save points", postingPurgeJob.getOutstandingPurgeTasks() > 0);
+                for (int i = 0; i < 3; i++) {
+                    idlePass(INTERVAL_MS, null);
+                    runPostingPurgeJob(postingPurgeJob);
+                }
+                Assert.assertEquals("superseded posting files left after three idle intervals", 0, postingPurgeJob.getOutstandingPurgeTasks());
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testIdleTableRemovesVersionLeftByCommitWithoutWalTransaction() throws Exception {
         // A writer change that moves the table's txn but not its seqTxn (a partition removed, a partition converted
         // to Parquet, a row committed through the writer itself), made after the idle spell left both save points
@@ -440,6 +584,13 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     private static void runJob(LiveViewRefreshJob job) {
         //noinspection StatementWithEmptyBody
         for (int i = 0; i < 64 && job.run(); i++) {
+        }
+    }
+
+    private static void runPostingPurgeJob(PostingSealPurgeJob job) {
+        for (int i = 0; i < 4; i++) {
+            Os.sleep(1);
+            job.run();
         }
     }
 

@@ -1286,6 +1286,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } else {
                 long writerTxn, dirtyWriterTxn;
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                if (txnTracker.isSuspended() && txnTracker.consumeIdleEpochRequest()) {
+                    // The idle save point request raced a suspension: a suspended table gets no run, so its
+                    // failed transaction is not retried; RESUME WAL notifies the table again.
+                    return;
+                }
+                // A run for the idle save point alone has nothing to apply, so any holder of the writer is a
+                // normal one: the request is asked again at a later purge pass.
+                final boolean idleRunOnly = txnTracker.isIdleEpochRequested() && txnTracker.getSeqTxn() <= txnTracker.getWriterTxn();
                 TableWriterPressureControl pressureControl = txnTracker.getMemPressureControl();
                 TableWriter writer = null;
                 try {
@@ -1308,7 +1316,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
-                    if (isUnsolicitedTableLock(tableBusy.getReason())) {
+                    if (!idleRunOnly && isUnsolicitedTableLock(tableBusy.getReason())) {
                         LOG.critical().$("unsolicited table lock [table=").$(tableToken)
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();
