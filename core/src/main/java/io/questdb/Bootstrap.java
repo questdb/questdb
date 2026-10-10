@@ -226,7 +226,7 @@ public class Bootstrap {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
         }
-        if (!config.getMetricsConfiguration().isEnabled()) {
+        if (!config.getMetrics().isEnabled()) {
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
         Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
