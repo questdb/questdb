@@ -1774,11 +1774,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && model.getHorizonJoinContext().getAlias() != null;
     }
 
-    /**
-     * FillRecord reads a fill constant through the target type's getter, and base-class getters
-     * such as DoubleFunction.getLong throw UnsupportedOperationException. Probe the same getter
-     * once at compile time so the user sees a SqlException instead of a runtime failure.
-     */
+    // Base-class getters such as DoubleFunction.getLong throw UOE; probe the one FillRecord will use.
     private static boolean isFillReadable(Function fillFunc, int targetColType) {
         if (!fillFunc.isConstant()) {
             // Not safe to evaluate before Function.init(); leave it to the runtime path.
