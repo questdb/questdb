@@ -72,6 +72,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     protected DirectUtf8String url;
     private long _lo;
     private long _wptr;
+    private DirectUtf8Sequence authorizationOverride;
     private DirectUtf8String boundary;
     private DirectUtf8String charset;
     private DirectUtf8String contentDisposition;
@@ -148,6 +149,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     @Override
     public void clear() {
+        this.authorizationOverride = null;
         this.needMethod = true;
         this._wptr = this._lo = this.headerPtr;
         this.incomplete = true;
@@ -244,6 +246,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     @Override
     public DirectUtf8Sequence getHeader(Utf8Sequence name) {
+        if (authorizationOverride != null && Utf8s.equalsIgnoreCaseAscii(name, HEADER_AUTHORIZATION)) {
+            return authorizationOverride;
+        }
         return headers.get(name);
     }
 
@@ -396,6 +401,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     public int size() {
         return headers.size();
+    }
+
+    void setAuthorizationOverride(DirectUtf8Sequence authorizationOverride) {
+        this.authorizationOverride = authorizationOverride;
     }
 
     private static int cookieComparator(HttpCookie o1, HttpCookie o2) {
