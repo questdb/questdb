@@ -448,6 +448,16 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return isPayloadCopied;
     }
 
+    /**
+     * True when the open cursor's translation cache of the key-th SYMBOL key pair was filled from
+     * the build dictionary rather than opened unresolved; see {@link SymbolKeyTranslator}. False
+     * until the cursor builds, and for a factory without that many SYMBOL key pairs.
+     */
+    @TestOnly
+    public boolean isSymbolKeyCacheFilledFromBuild(int key) {
+        return key < symbolKeyCaches.size() && symbolKeyCaches.getQuick(key).isFilledFromBuild();
+    }
+
     @Override
     @TestOnly
     public PerWorkerLocks getPerWorkerLocks() {

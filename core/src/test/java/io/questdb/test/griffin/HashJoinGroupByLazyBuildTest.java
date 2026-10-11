@@ -702,7 +702,8 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
 
     /**
      * Opening and closing without a read, a partial read, a rewind and a second pass, a size
-     * calculation, and another execution of the same factory after each of them.
+     * calculation, and another execution of the same factory after each of them. Last, an
+     * execution without a read between two full reads.
      */
     private void assertLifecycle(
             CairoEngine db,
@@ -770,6 +771,23 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
         // The same factory answers once more after all of the above.
         try (RecordCursor cursor = factory.getCursor(context)) {
             Assert.assertEquals(sql, expected, readRows(cursor, factory.getMetadata()));
+        }
+        assertNotBuilt(sql, atom, idle);
+        // Open and close without a read right after a full read: the full read's build and counts
+        // are gone, and the idle execution starts none of its own.
+        try (RecordCursor cursor = factory.getCursor(context)) {
+            assertNotBuilt(sql, atom, idle);
+            Assert.assertEquals(sql, isKeyed ? -1 : 1, cursor.size());
+            cursor.toTop();
+            Assert.assertEquals(sql, 0, cursor.preComputedStateSize());
+            assertNotBuilt(sql, atom, idle);
+        }
+        assertNotBuilt(sql, atom, idle);
+        // The next full read builds anew and returns every row.
+        try (RecordCursor cursor = factory.getCursor(context)) {
+            Assert.assertEquals(sql, expected, readRows(cursor, factory.getMetadata()));
+            Assert.assertEquals(sql, 20_000, atom.getFrozenBuild().getRowCount());
+            Assert.assertEquals(sql, shape.startsWith("SELECT count() FROM"), atom.isCountedByKey());
         }
         assertNotBuilt(sql, atom, idle);
     }

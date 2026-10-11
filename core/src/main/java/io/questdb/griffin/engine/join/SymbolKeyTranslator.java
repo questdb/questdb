@@ -34,6 +34,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Translates probe-side SYMBOL join keys into the build table's symbol key domain, so that the
@@ -82,6 +83,7 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     private long cacheAddress;
     private int cacheKeyCount;
     private long cacheSize;
+    private boolean isFilledFromBuild;
     @Nullable
     private MemoryTracker memoryTracker;
 
@@ -116,11 +118,21 @@ public final class SymbolKeyTranslator implements QuietCloseable {
         }
         cacheSize = 0;
         cacheKeyCount = 0;
+        isFilledFromBuild = false;
         memoryTracker = null;
     }
 
     public long getSizeInBytes() {
         return cacheSize;
+    }
+
+    /**
+     * True when the open cache was filled from the build dictionary; false when it opened
+     * unresolved, and once it is closed.
+     */
+    @TestOnly
+    public boolean isFilledFromBuild() {
+        return isFilledFromBuild;
     }
 
     /**
@@ -167,7 +179,7 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     ) {
         final int probeKeyCount = probeKeyTable.getSymbolCount();
         final int buildKeyCount = buildKeyTable.getSymbolCount();
-        if (!isProbeDictionaryEligible || !isFilledFromBuild(probeKeyCount, buildKeyCount)) {
+        if (!isProbeDictionaryEligible || !isFillableFromBuild(probeKeyCount, buildKeyCount)) {
             of(probeKeyCount, memoryTracker, circuitBreaker);
             return;
         }
@@ -207,13 +219,14 @@ public final class SymbolKeyTranslator implements QuietCloseable {
                     }
                 }
             }
+            isFilledFromBuild = true;
         } catch (Throwable th) {
             close();
             throw th;
         }
     }
 
-    private static boolean isFilledFromBuild(int probeKeyCount, int buildKeyCount) {
+    private static boolean isFillableFromBuild(int probeKeyCount, int buildKeyCount) {
         return buildKeyCount <= FILL_FROM_BUILD_MAX_KEY_COUNT
                 && (long) buildKeyCount * FILL_FROM_BUILD_MIN_PROBE_RATIO <= probeKeyCount;
     }

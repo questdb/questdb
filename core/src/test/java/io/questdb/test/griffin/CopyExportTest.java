@@ -34,13 +34,16 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateTableOperationImpl;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
@@ -1892,6 +1895,56 @@ public class CopyExportTest extends AbstractCairoTest {
                                 30\t00000000 01 02 03 04 05 06
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableTempTableRetryKeepsQueryOrder() throws Exception {
+        // As in testCopyQueryCrossJoinedFirstTableTempTableRecompileFreesFactory, the temp table compiles
+        // its SELECT a second time, the way the query runs. A stale table reference then fails that attempt
+        // once, after the second compilation, so the temp table compiles the SELECT again. The retry keeps
+        // the decision of the failed attempt: it compiles once, the way the query runs, and the table has
+        // no designated timestamp and holds the rows in the query's order. A retry that compiled in the
+        // export's default mode again would run the equi-joined chain first: either it compiles twice,
+        // or the table holds the rows in the chain's order. Dev mode enables test_throwing_filter().
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String query = "SELECT r.rts, r.c1, l.b, test_throwing_filter() f FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    StaleOnceExecutionContext context = new StaleOnceExecutionContext(3)
+            ) {
+                try {
+                    TestThrowingFilterFunctionFactory.reset(-1);
+                    createTempExportTable(compiler, context, query, "tmp_chain_ts_stale");
+                    Assert.assertTrue("the first attempt should have met a stale table reference", context.hasThrown);
+                    // the validation, both compilations of the failed attempt and one of the retry
+                    Assert.assertEquals(4, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+                    Assert.assertEquals(4, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+                } finally {
+                    TestThrowingFilterFunctionFactory.reset(-1);
+                }
+            }
+            assertQuery("SELECT table_name, designatedTimestamp FROM tables() WHERE table_name = 'tmp_chain_ts_stale'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            table_name\tdesignatedTimestamp
+                            tmp_chain_ts_stale\t
+                            """);
+            assertQuery("SELECT * FROM tmp_chain_ts_stale")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            rts\tc1\tb\tf
+                            2020-01-01T00:20:00.000000Z\t10\t00000000 de ad be ef\ttrue
+                            2020-01-01T01:20:00.000000Z\t20\t00000000 de ad be ef\ttrue
+                            2020-01-01T03:20:00.000000Z\t30\t00000000 de ad be ef\ttrue
+                            2020-01-01T00:20:00.000000Z\t10\t00000000 01 02 03 04 05 06\ttrue
+                            2020-01-01T01:20:00.000000Z\t20\t00000000 01 02 03 04 05 06\ttrue
+                            2020-01-01T03:20:00.000000Z\t30\t00000000 01 02 03 04 05 06\ttrue
+                            """);
         });
     }
 
@@ -5045,6 +5098,15 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     private void createTempExportTable(SqlCompiler compiler, String selectText, String tableName) throws SqlException {
+        createTempExportTable(compiler, sqlExecutionContext, selectText, tableName);
+    }
+
+    private void createTempExportTable(
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            String selectText,
+            String tableName
+    ) throws SqlException {
         // builds the operation the way CopyExportFactory does: the validation compiles the SELECT as a
         // query and derives the temp table's designated timestamp from it
         try (
@@ -5062,7 +5124,7 @@ public class CopyExportTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select(selectText)) {
                 createOp.validateAndUpdateMetadataFromSelect(factory.getMetadata(), factory.getScanDirection());
             }
-            compiler.execute(createOp, sqlExecutionContext);
+            compiler.execute(createOp, context);
         }
     }
 
@@ -5087,9 +5149,32 @@ public class CopyExportTest extends AbstractCairoTest {
         void run() throws Exception;
     }
 
+    /**
+     * Reports a stale table reference once: on the first table reader taken after the given number of
+     * test_throwing_filter() functions were built. Compilation and the cursors both take readers here.
+     */
+    private static class StaleOnceExecutionContext extends SqlExecutionContextImpl {
+        private final int constructCount;
+        private boolean hasThrown;
+
+        private StaleOnceExecutionContext(int constructCount) {
+            super(engine, 1);
+            this.constructCount = constructCount;
+            with(AllowAllSecurityContext.INSTANCE);
+        }
+
+        @Override
+        public TableReader getReader(TableToken tableToken, long version) {
+            if (!hasThrown && TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get() == constructCount) {
+                hasThrown = true;
+                throw TableReferenceOutOfDateException.of(tableToken);
+            }
+            return super.getReader(tableToken, version);
+        }
+    }
+
     static {
         exceptionTypesToCatch.add(SqlException.class);
         exceptionTypesToCatch.add(AssertionError.class);
     }
-
 }

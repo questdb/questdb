@@ -95,6 +95,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                     // A trip releases the cache, whichever loop it lands in.
                     Assert.assertEquals(0, tracker.getUsed());
                     Assert.assertEquals(0, translator.getSizeInBytes());
+                    Assert.assertFalse(translator.isFilledFromBuild());
                     isTrippedWhileResolving |= probe.keyOfCalls > 0 && probe.keyOfCalls < buildKeyCount;
                 }
                 // The breaker trips between build keys, not only while the cache clears.
@@ -102,6 +103,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
 
                 // The same translator opens again and translates every key.
                 translator.of(probe, build, true, tracker, NOOP);
+                Assert.assertTrue(translator.isFilledFromBuild());
                 Assert.assertEquals(translator.getSizeInBytes(), tracker.getUsed());
                 view.of(translator, probe, build);
                 build.keyOfCalls = 0;
@@ -122,6 +124,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                 Assert.assertEquals(0, probe.keyOfCalls);
                 Assert.assertEquals(0, tracker.getUsed());
                 Assert.assertEquals(0, translator.getSizeInBytes());
+                Assert.assertFalse(translator.isFilledFromBuild());
             }
         });
     }
@@ -176,7 +179,8 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
             assertFill(1_000, 7_999, 0);
             assertFill(32_768, 262_144, 32_768);
             assertFill(32_769, 262_152, 0);
-            // A count whose product with the ratio overflows an int.
+            // A count far past the cap, whose product with the ratio would overflow an int. The
+            // cap check rejects it first; without that check, the gate's long product does.
             assertFill(Integer.MAX_VALUE / 8 + 1, 64, 0);
             // An empty build dictionary fills the cache with misses and looks nothing up.
             assertFill(0, 1, 0);
@@ -196,6 +200,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
             try (SymbolKeyTranslator translator = new SymbolKeyTranslator();
                  SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
                 translator.of(probe, build, false, null, NOOP);
+                Assert.assertFalse(translator.isFilledFromBuild());
                 Assert.assertEquals(11 * Integer.BYTES, translator.getSizeInBytes());
                 Assert.assertEquals(0, probe.keyOfCalls);
                 view.of(translator, probe, build);
@@ -214,6 +219,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                 // build key at key 9 alone. This is why only a dictionary that holds each text
                 // once is eligible.
                 translator.of(probe, build, true, null, NOOP);
+                Assert.assertTrue(translator.isFilledFromBuild());
                 Assert.assertEquals(1, probe.keyOfCalls);
                 view.of(translator, probe, build);
                 Assert.assertEquals(0, view.translate(9));
@@ -284,6 +290,8 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
 
     private static void assertFill(int buildKeyCount, int probeKeyCount, int probeLookupsWhileOpening) {
         final String message = "build=" + buildKeyCount + ", probe=" + probeKeyCount;
+        // An empty build dictionary fills from the build without a single lookup.
+        final boolean isFilledFromBuild = probeLookupsWhileOpening > 0 || buildKeyCount == 0;
         GeneratedDictionary probe = new GeneratedDictionary(probeKeyCount, 1);
         GeneratedDictionary build = new GeneratedDictionary(buildKeyCount, 9);
         try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(16 << 20);
@@ -293,15 +301,17 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
             Assert.assertEquals(message, (long) probeKeyCount * Integer.BYTES, translator.getSizeInBytes());
             Assert.assertEquals(message, translator.getSizeInBytes(), tracker.getUsed());
             Assert.assertEquals(message, probeLookupsWhileOpening, probe.keyOfCalls);
+            Assert.assertEquals(message, isFilledFromBuild, translator.isFilledFromBuild());
             view.of(translator, probe, build);
             for (int key = 0; key < probeKeyCount; key++) {
                 final int expected = key % 9 == 0 && key / 9 < buildKeyCount ? key / 9 : SymbolTable.VALUE_NOT_FOUND;
                 Assert.assertEquals(message, expected, view.translate(key));
             }
             // A cache filled from the build answers every probe key; a lazy one looks each up once.
-            Assert.assertEquals(message, probeLookupsWhileOpening > 0 || buildKeyCount == 0 ? 0 : probeKeyCount, build.keyOfCalls);
+            Assert.assertEquals(message, isFilledFromBuild ? 0 : probeKeyCount, build.keyOfCalls);
             view.close();
             translator.close();
+            Assert.assertFalse(message, translator.isFilledFromBuild());
             Assert.assertEquals(message, 0, tracker.getUsed());
         }
     }

@@ -129,7 +129,8 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
 
     // The probe's key dictionary is about seventy times the build's, so each execution fills the
     // SYMBOL key translation cache from the build's few texts before it publishes a probe task,
-    // and the workers only read the cache.
+    // and the workers only read the cache. Each run asserts that the cache was filled this way, so
+    // a change to the fill's gate cannot silently turn these into lazy translation tests.
     @Test
     public void testSmallBuildDictionaryWithOwnerWorkStealing() throws Exception {
         assertSmallBuildDictionary(null, false);
@@ -170,26 +171,34 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                 // r holds two or three rows of each of 509 keys, and p, the smaller table and so the
                 // build, two rows of each of 503. k holds the text of id; p interns the key texts in a
                 // different order, so equal text has different symbol keys in r and p.
-                db.execute("create table r as (select (x%509)::int id, ('k'||(x%509))::symbol k, (x%509)::long lk, "
-                        + "('k'||(x%509))::varchar vk, x*0.25 d, timestamp_sequence('2020-01-01', 100_000_000) t"
-                        + " from long_sequence(1200)) timestamp(t) partition by day", ignored);
-                db.execute("create table p as (select ((x+250)%503)::int id, ('k'||((x+250)%503))::symbol k, ((x+250)%503)::long lk, "
-                        + "('k'||((x+250)%503))::varchar vk, x*0.5 d, timestamp_sequence('2020-01-01', 100_000_000) t"
-                        + " from long_sequence(1006)) timestamp(t) partition by day", ignored);
+                db.execute("""
+                        CREATE TABLE r AS (
+                            SELECT (x % 509)::INT id, ('k' || (x % 509))::SYMBOL k, (x % 509)::LONG lk,
+                                ('k' || (x % 509))::VARCHAR vk, x * 0.25 d,
+                                timestamp_sequence('2020-01-01', 100_000_000) t
+                            FROM long_sequence(1200)
+                        ) TIMESTAMP(t) PARTITION BY DAY""", ignored);
+                db.execute("""
+                        CREATE TABLE p AS (
+                            SELECT ((x + 250) % 503)::INT id, ('k' || ((x + 250) % 503))::SYMBOL k, ((x + 250) % 503)::LONG lk,
+                                ('k' || ((x + 250) % 503))::VARCHAR vk, x * 0.5 d,
+                                timestamp_sequence('2020-01-01', 100_000_000) t
+                            FROM long_sequence(1006)
+                        ) TIMESTAMP(t) PARTITION BY DAY""", ignored);
                 // The two key shapes the INT layout reads, then the three that stage a key into the
                 // build's map, each over whole probe frames, filtered probe frames and a filtered build.
-                String[] keys = {"r.id=p.id", "r.k=p.k", "r.lk=p.lk", "r.id=p.id and r.vk=p.vk", "r.id=p.id and r.k=p.k"};
-                String[] filters = {"", " where r.d > 100", " where p.d > 100"};
+                String[] keys = {"r.id = p.id", "r.k = p.k", "r.lk = p.lk", "r.id = p.id AND r.vk = p.vk", "r.id = p.id AND r.k = p.k"};
+                String[] filters = {"", " WHERE r.d > 100", " WHERE p.d > 100"};
                 String[] queries = new String[keys.length * filters.length];
                 for (int key = 0; key < keys.length; key++) {
                     for (int filter = 0; filter < filters.length; filter++) {
-                        queries[key * filters.length + filter] = "select count() from r join p on " + keys[key] + filters[filter];
+                        queries[key * filters.length + filter] = "SELECT count() FROM r JOIN p ON " + keys[key] + filters[filter];
                     }
                 }
                 for (int format = 0; format < 2; format++) {
                     if (format > 0) {
                         for (String table : new String[]{"r", "p"}) {
-                            db.execute("alter table " + table + " convert partition to parquet where t < '2020-01-02'", ignored);
+                            db.execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE t < '2020-01-02'", ignored);
                         }
                     }
                     String[] expected = new String[queries.length];
@@ -440,7 +449,9 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
                                         CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
                                         Assert.assertEquals(query + ", format=" + format, expected, sink.toString());
                                         Assert.assertEquals(query, isParallelBuild, fused.getAtom().isBuiltInRounds());
+                                        Assert.assertTrue(query + ", format=" + format, fused.getAtom().isSymbolKeyCacheFilledFromBuild(0));
                                     }
+                                    Assert.assertFalse(query, fused.getAtom().isSymbolKeyCacheFilledFromBuild(0));
                                     Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                                 }
                             }
