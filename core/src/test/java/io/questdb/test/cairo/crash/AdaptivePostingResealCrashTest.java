@@ -522,6 +522,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     }
                 }
                 if (powerLoss) {
+                    crashFf.powerLoss();
                     engine.releaseAllReaders();
                     engine.releaseAllWriters();
                     engine.releaseCrashOrphanedWriters();
@@ -579,6 +580,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     }
                 }
                 if (powerLoss) {
+                    crashFf.powerLoss();
                     engine.releaseAllReaders();
                     engine.releaseAllWriters();
                     engine.releaseCrashOrphanedWriters();
@@ -745,6 +747,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
             }
 
             if (powerLoss) {
+                crashFf.powerLoss();
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseCrashOrphanedWriters();

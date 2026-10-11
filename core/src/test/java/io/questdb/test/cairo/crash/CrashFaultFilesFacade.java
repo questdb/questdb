@@ -122,6 +122,16 @@ import java.util.stream.Stream;
  * directory tree under the root become the kill image; the engine runs on, and the next {@link #crash} restores
  * that image instead of the last flushed content. Without an armed kill the facade models a power loss only.
  *
+ * <h3>The instant of the power loss ({@link #powerLoss})</h3>
+ * A test cannot roll the files back under a live engine, so it releases the engine's handles first. Those closes
+ * flush: an adaptive writer's close takes a save point, whose {@code syncfs} makes every file durable, and a
+ * {@code WalWriter} close flushes its pending batch. A real power loss runs none of it. So the power loss and the
+ * rollback are two steps: {@link #powerLoss} freezes the durable state, and {@link #crash} restores the frozen state
+ * under its root, so nothing done in between counts. An armed crash marks the power loss when it fires, so the
+ * engine's own work after the {@link CrashSimulationError} (a swallowed error, its catch path, other jobs) does not
+ * count either. {@link #crash} refuses to run without a mark, so every caller states where the power loss is. After
+ * the rollback the files hold exactly their durable bytes, so the device cache and the watermarks restart from them.
+ *
  * <h3>Modelling limitations</h3>
  * <ul>
  *   <li>{@code write}/{@code append} are intercepted only to advance {@code writtenDataEnd}; they do not clear
@@ -193,6 +203,14 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     private final Set<String> killImageDirectories = new HashSet<>();
     private final Map<String, byte[]> killImageFiles = new HashMap<>();
+    // The durable state frozen by powerLoss(); crash() restores it under the crashed root.
+    private final Map<String, byte[]> powerLossContent = new HashMap<>();
+    private final Set<String> powerLossDirectories = new HashSet<>();
+    private final Set<String> powerLossFileEntries = new HashSet<>();
+    private final Map<String, byte[]> powerLossNamespaceImages = new HashMap<>();
+    private final Map<String, byte[]> powerLossRenameTargetImages = new HashMap<>();
+    private final Map<String, Long> powerLossSize = new HashMap<>();
+    private boolean powerLossMarked;
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
     private int killAtPoint = -1; // -1 = disarmed
@@ -688,10 +706,20 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         trackedFiles.removeIf(key -> matchesRemovedPath(key, path, includeDescendants));
     }
 
+    // Drops the model state of every path at or under root that is no longer on disk. The keys come from every
+    // per-path map, not only trackedFiles: a rollback can put back a frozen entry for a path that is not tracked.
     private void evictMissingDurability(String root) {
-        final String prefix = root + File.separator;
-        for (String key : new ArrayList<>(trackedFiles)) {
-            if ((key.equals(root) || key.startsWith(prefix)) && !Files.exists(Paths.get(key))) {
+        final Set<String> keys = new HashSet<>(trackedFiles);
+        keys.addAll(durableContent.keySet());
+        keys.addAll(deviceCacheContent.keySet());
+        keys.addAll(durableSize.keySet());
+        keys.addAll(writtenDataEnd.keySet());
+        keys.addAll(syncedDataEnd.keySet());
+        keys.addAll(journaledDataEnd.keySet());
+        keys.addAll(pteFlushed.keySet());
+        keys.addAll(tornTails.keySet());
+        for (String key : keys) {
+            if (isUnder(key, root) && !Files.exists(Paths.get(key))) {
                 evictDurability(key, false);
             }
         }
@@ -840,13 +868,16 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         killImageTaken = false;
         killPoints = 0;
         killRoot = null;
+        clearPowerLoss();
         // modelSharedJournal is a configured policy, not per-cycle state, so it is not reset here.
     }
 
     /**
-     * Records the current sizes and content of all files under dbRoot as durable (prior committed state).
+     * Records the current sizes and content of all files under dbRoot as durable (prior committed state). A pending
+     * {@link #powerLoss} mark is dropped: the baseline is the new durable state.
      */
     public void markDurableBaseline(CharSequence dbRoot) {
+        clearPowerLoss();
         final Path root = Paths.get(dbRoot.toString()).toAbsolutePath();
         namespaceRoots.add(root.toString());
         snapshotNamespaceTree(root);
@@ -898,6 +929,39 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         writtenDataEnd.put(key, (long) now.length);
         syncedDataEnd.put(key, (long) now.length);
         journaledDataEnd.put(key, (long) now.length);
+        if (powerLossMarked) {
+            // The test states what the power loss left, so it counts even when called after the mark.
+            powerLossContent.put(key, now);
+            powerLossSize.put(key, (long) now.length);
+        }
+    }
+
+    /**
+     * Marks the power loss: the durable state of every file and directory entry is frozen at this instant, and the
+     * next {@link #crash} rolls the files back to it, so what the engine or the test does afterwards (closing
+     * writers, releasing pools, a close-time save point, the catch path of a swallowed {@link CrashSimulationError},
+     * recovery work) adds no durability. An armed crash calls it when it fires. The first mark stands until
+     * {@link #crash}, {@link #markDurableBaseline} or {@link #reset} consumes it; marking again before that is a
+     * no-op, so a helper can mark unconditionally after an armed crash fired.
+     */
+    public void powerLoss() {
+        if (powerLossMarked) {
+            return;
+        }
+        powerLossMarked = true;
+        powerLossContent.putAll(durableContent);
+        powerLossSize.putAll(durableSize);
+        powerLossDirectories.addAll(durableDirectories);
+        powerLossFileEntries.addAll(durableFileEntries);
+        powerLossNamespaceImages.putAll(namespaceFileImages);
+        powerLossRenameTargetImages.putAll(pendingRenameTargetImages);
+    }
+
+    /**
+     * True between a {@link #powerLoss} mark (or an armed crash firing) and the {@link #crash} that consumes it.
+     */
+    public boolean isPowerLossMarked() {
+        return powerLossMarked;
     }
 
     /**
@@ -914,15 +978,28 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      * A file with a {@code durableContent} snapshot is restored to those exact bytes, which also fixes the durable
      * length. A file the content model never tracked is truncated to its last durable size.
      * <p>
+     * The durable state is the one frozen by {@link #powerLoss}, which must be marked first. Under {@code dbRoot}
+     * the mark is consumed and the model restarts from the rolled-back files: they are durable, and nothing is left
+     * in the page or device cache. Files outside {@code dbRoot} keep their live state (another engine's root, which
+     * this power loss did not hit).
+     * <p>
      * When a kill image was taken ({@link #armKillAt}, {@link #takeKillImage}), the tree under the kill's root is
      * restored to that image instead, and the image is consumed.
      */
     public void crash(CharSequence dbRoot) {
         if (killImageTaken) {
+            clearPowerLoss();
             restoreKillImage();
             return;
         }
-        restoreNamespace(Paths.get(dbRoot.toString()).toAbsolutePath());
+        if (!powerLossMarked) {
+            throw new IllegalStateException("crash() without a power loss: call powerLoss() at the instant of the "
+                    + "power loss, before releasing the engine's handles (their close flushes)");
+        }
+        final Path root = Paths.get(dbRoot.toString()).toAbsolutePath();
+        restorePowerLossState(root.toString());
+        clearPowerLoss();
+        restoreNamespace(root);
         walk(dbRoot, p -> {
             String key = p.toAbsolutePath().toString();
             byte[] durable = durableContent.get(key);
@@ -976,6 +1053,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             }
         });
         pendingRenameTargetImages.clear();
+        // A path the rollback deleted starts empty if the engine creates it again: no durable bytes, device cache or
+        // watermarks of the deleted file survive.
+        evictMissingDurability(root.toString());
+        // A rebooted machine reads back exactly the durable bytes: no page-cache or device-cache content survives,
+        // so a later flush cannot promote bytes this power loss destroyed.
+        markDurableBaseline(dbRoot);
     }
 
     /**
@@ -1154,10 +1237,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * The bytes the content model currently considers durable for this file (null if untracked).
+     * The bytes the content model considers durable for this file (null if untracked). After a {@link #powerLoss}
+     * mark, the bytes frozen by the mark, which {@link #crash} restores: a flush after the mark does not count.
      */
     public byte[] durableContentOf(CharSequence absPath) {
-        return durableContent.get(Paths.get(absPath.toString()).toAbsolutePath().toString());
+        final String key = Paths.get(absPath.toString()).toAbsolutePath().toString();
+        return powerLossMarked ? powerLossContent.get(key) : durableContent.get(key);
     }
 
     /**
@@ -1190,14 +1275,16 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * The written-data end (data-at-device) the model has recorded for this file (0 if untracked).
+     * The written-data end (data-at-device) the model has recorded for this file (0 if untracked). Live: after a
+     * {@link #powerLoss} mark it still counts later writebacks, which {@link #crash} discards.
      */
     public long syncedDataEndOf(CharSequence absPath) {
         return syncedDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
     }
 
     /**
-     * The journaled written-data end (metadata-journaled) the model has recorded (0 if untracked).
+     * The journaled written-data end (metadata-journaled) the model has recorded (0 if untracked). Live: after a
+     * {@link #powerLoss} mark it still counts later journal commits, which {@link #crash} discards.
      */
     public long journaledDataEndOf(CharSequence absPath) {
         return journaledDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
@@ -1289,7 +1376,61 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         durabilityOpLog.add(durabilityOps + " " + kind + " " + relativePath(path));
         if (crashAtOp > 0 && durabilityOps >= crashAtOp) {
             crashAtOp = -1; // one-shot
+            // The op completed; the machine stops right after it.
+            powerLoss();
             throw new CrashSimulationError(durabilityOps);
+        }
+    }
+
+    private void clearPowerLoss() {
+        powerLossMarked = false;
+        powerLossContent.clear();
+        powerLossSize.clear();
+        powerLossDirectories.clear();
+        powerLossFileEntries.clear();
+        powerLossNamespaceImages.clear();
+        powerLossRenameTargetImages.clear();
+    }
+
+    /**
+     * Puts the durable state frozen by {@link #powerLoss} back for every path under {@code rootKey}. A durable file
+     * removed or renamed away after the mark kept its bytes in {@code namespaceFileImages}; those images are kept, so
+     * the rollback can recreate the name.
+     */
+    private void restorePowerLossState(String rootKey) {
+        final Map<String, byte[]> laterImages = new HashMap<>(namespaceFileImages);
+        restoreUnder(durableContent, powerLossContent, rootKey);
+        restoreUnder(durableSize, powerLossSize, rootKey);
+        restoreUnder(durableDirectories, powerLossDirectories, rootKey);
+        restoreUnder(durableFileEntries, powerLossFileEntries, rootKey);
+        restoreUnder(namespaceFileImages, powerLossNamespaceImages, rootKey);
+        restoreUnder(pendingRenameTargetImages, powerLossRenameTargetImages, rootKey);
+        for (Map.Entry<String, byte[]> e : laterImages.entrySet()) {
+            if (isUnder(e.getKey(), rootKey)) {
+                namespaceFileImages.putIfAbsent(e.getKey(), e.getValue());
+            }
+        }
+    }
+
+    private static boolean isUnder(String key, String rootKey) {
+        return key.equals(rootKey) || key.startsWith(rootKey + File.separator);
+    }
+
+    private static <V> void restoreUnder(Map<String, V> live, Map<String, V> frozen, String rootKey) {
+        live.keySet().removeIf(key -> isUnder(key, rootKey));
+        for (Map.Entry<String, V> e : frozen.entrySet()) {
+            if (isUnder(e.getKey(), rootKey)) {
+                live.put(e.getKey(), e.getValue());
+            }
+        }
+    }
+
+    private static void restoreUnder(Set<String> live, Set<String> frozen, String rootKey) {
+        live.removeIf(key -> isUnder(key, rootKey));
+        for (String key : frozen) {
+            if (isUnder(key, rootKey)) {
+                live.add(key);
+            }
         }
     }
 

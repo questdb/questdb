@@ -189,6 +189,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
             final String imported = rows(engine);
             Assert.assertEquals(IMPORTED, imported);
 
+            crashFf.powerLoss();
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             engine.releaseAllWalWriters();
@@ -255,6 +256,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                     }
                 }
                 // The power fails here: no later flush reaches the disk.
+                crashFf.powerLoss();
                 frozen.set(true);
             }
             return frozen.get();

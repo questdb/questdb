@@ -634,6 +634,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     }
                     final Map<String, byte[]> started = readTableFiles(tt, true);
                     final List<String> lost = bytesLostAtPowerLoss(crashFf, tt, started);
+                    crashFf.powerLoss();
                     crashFf.crash(engine.getConfiguration().getDbRoot());
                     lost.addAll(changedPrefixes(started, readTableFiles(tt, true)));
                     if (!lost.isEmpty()) {
@@ -2133,6 +2134,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     if (tracker.getPinnedEpochTxn() > -1) {
                         failures.add(mode + " start: the save point's pin remains");
                     }
+                    crashFf.powerLoss();
                     engine.releaseAllReaders();
                     engine.releaseAllWriters();
                     if (mode.equals("nosync")) {
