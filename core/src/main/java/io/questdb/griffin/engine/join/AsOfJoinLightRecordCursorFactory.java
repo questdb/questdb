@@ -80,7 +80,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         super(metadata, joinContext, masterFactory, slaveFactory);
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
                 : null;
         Map joinKeyMap = null;
         try {
@@ -209,6 +209,8 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             if (isOpen) {
                 isOpen = false;
                 joinKeyToRowId.close();
+                Misc.free(symbolTranslatingRecord);
+                Misc.free(symbolJoinKeyMapping);
                 super.close();
             }
         }
@@ -321,12 +323,17 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isOpen = true;
                 joinKeyToRowId.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyToRowId.reopen();
+                if (symbolJoinKeyMapping != null) {
+                    symbolJoinKeyMapping.setMemoryTracker(executionContext.getMemoryTracker());
+                    symbolJoinKeyMapping.reopen();
+                }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             if (symbolJoinKeyMapping != null) {
                 symbolJoinKeyMapping.of(slaveCursor);
             }
             if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.setMemoryTracker(executionContext.getMemoryTracker());
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
             slaveTimestamp = Long.MIN_VALUE;

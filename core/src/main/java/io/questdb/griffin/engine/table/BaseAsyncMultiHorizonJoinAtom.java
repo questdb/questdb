@@ -258,6 +258,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                 HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 if (state.getMasterSymbolKeyColumnIndices() != null) {
                     ownerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(
+                            configuration,
                             state.getMasterColumnCount(),
                             state.getMasterSymbolKeyColumnIndices(),
                             state.getSlaveSymbolKeyColumnIndices()
@@ -272,6 +273,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                     HorizonJoinSlaveState state = slaveStates.getQuick(s);
                     if (state.getMasterSymbolKeyColumnIndices() != null) {
                         perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(
+                                configuration,
                                 state.getMasterColumnCount(),
                                 state.getMasterSymbolKeyColumnIndices(),
                                 state.getSlaveSymbolKeyColumnIndices()
@@ -362,9 +364,9 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
         // Clear filter context (memory pools, etc.)
         filterCtx.clear();
 
-        // Clear symbol translating records (per-slave)
-        Misc.clearObjList(ownerSymbolTranslatingRecords);
-        Misc.clearObjList(perWorkerSymbolTranslatingRecords);
+        // Release symbol translating records' native caches (per-slave); initSlaveTimeFrameCursors() reopens them
+        Misc.freeObjListAndKeepObjects(ownerSymbolTranslatingRecords);
+        Misc.freeObjListAndKeepObjects(perWorkerSymbolTranslatingRecords);
 
         // Clear time frame cursors (per-slave)
         Misc.freeObjListAndKeepObjects(ownerSlaveTimeFrameCursors);
@@ -643,11 +645,14 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
         }
 
         // Initialize symbol translating records for this slave
-        if (ownerSymbolTranslatingRecords.getQuick(slaveIndex) != null) {
-            ownerSymbolTranslatingRecords.getQuick(slaveIndex).initSources(masterSymbolTableSource, slavePageFrameCursor);
+        final SymbolTranslatingRecord ownerSymbolTranslatingRecord = ownerSymbolTranslatingRecords.getQuick(slaveIndex);
+        if (ownerSymbolTranslatingRecord != null) {
+            ownerSymbolTranslatingRecord.setMemoryTracker(memoryTracker);
+            ownerSymbolTranslatingRecord.initSources(masterSymbolTableSource, slavePageFrameCursor);
             for (int w = 0; w < workerCount; w++) {
                 SymbolTranslatingRecord r = perWorkerSymbolTranslatingRecords.getQuick(w * slaveCount + slaveIndex);
                 if (r != null) {
+                    r.setMemoryTracker(memoryTracker);
                     r.initSources(masterSymbolTableSource, slavePageFrameCursor);
                 }
             }
