@@ -66,6 +66,8 @@ class WalEventWriter implements Closeable {
     private final MemoryMARW eventMem = Vm.getCMARWInstance();
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
+    // A record was appended since the files were last flushed at the grade a power-loss-durable mode needs.
+    private boolean hasUnflushedRecords;
     private AtomicIntList initialSymbolCounts;
     // used to test older mat view format
     private boolean legacyMatViewFormat;
@@ -231,6 +233,8 @@ class WalEventWriter implements Closeable {
 
     private void appendIndex(long value) {
         eventIndexMem.putLong(value);
+        // Every record ends with its index entry, so this marks every record type, present and future.
+        hasUnflushedRecords = true;
     }
 
     private void init() {
@@ -524,9 +528,9 @@ class WalEventWriter implements Closeable {
      */
     void sync(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            // With a group window the mappings are pushed with MS_ASYNC, and the caller fdatasyncs these
-            // private files before sequencing; only the shared sequencer flush is batched. ADAPTIVE with no
-            // window takes MS_SYNC plus the barrier below. ASYNC and SYNC keep their own grade.
+            // With a group window the mappings are pushed with MS_ASYNC, and the writer fdatasyncs these private
+            // files before sequencing (syncBeforeSequencing); only the shared sequencer flush is batched. ADAPTIVE
+            // with no window takes MS_SYNC plus the barrier below. ASYNC and SYNC keep their own grade.
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
@@ -537,6 +541,9 @@ class WalEventWriter implements Closeable {
             // commit point is the full device flush.
             if (commitMode == CommitMode.ADAPTIVE && !deferDeviceFlush) {
                 barrierFsync();
+            } else if (commitMode == CommitMode.SYNC) {
+                // MS_SYNC is a range fsync: the records are on the device.
+                hasUnflushedRecords = false;
             }
         }
     }
@@ -544,7 +551,8 @@ class WalEventWriter implements Closeable {
     /**
      * Orders the WAL event and index files ahead of the sequencer record. Under ADAPTIVE, WalWriter calls this
      * after the private column data and before sequencing: on the data commit path at every group window, on the
-     * other paths with a window above zero ({@link #sync(int)} calls it with none).
+     * other paths with a window above zero ({@link #sync(int)} calls it with none, and
+     * {@link #syncBeforeSequencing(int)} for any record still unflushed).
      * <p>
      * It is an ordering barrier, not a durability barrier: a sequencer record must never reach the medium ahead
      * of the _event entry it names. The sequencer flush at the commit point, which advances localDurableSeqTxn,
@@ -557,6 +565,23 @@ class WalEventWriter implements Closeable {
         }
         if (eventIndexMem.isOpen()) {
             ff.barrierFsync(eventIndexMem.getFd());
+        }
+        hasUnflushedRecords = false;
+    }
+
+    /**
+     * Makes every record appended since the last flush durable before the sequencer names it, at the grade the
+     * mode promises across a power loss, and does nothing when the caller's path has flushed already. Each WAL
+     * writer calls it right before it sequences, so a path that appends a record without its own flush cannot
+     * get a sequencer record ahead of its _event entry.
+     */
+    void syncBeforeSequencing(int commitMode) {
+        if (hasUnflushedRecords && CommitMode.isPowerLossDurable(commitMode)) {
+            sync(commitMode);
+            if (hasUnflushedRecords) {
+                // A group window leaves sync() at MS_ASYNC.
+                barrierFsync();
+            }
         }
     }
 

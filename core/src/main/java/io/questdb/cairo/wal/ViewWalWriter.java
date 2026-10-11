@@ -163,7 +163,7 @@ public class ViewWalWriter extends WalWriterBase {
 
     private long getSequencerTxn() {
         try {
-            long seqTxn = sequencer.nextTxn(tableToken, walId, 0L, segmentId, lastSegmentTxn, Long.MAX_VALUE, -1L, 0L);
+            long seqTxn = nextSeqTxn(0L, Long.MAX_VALUE, -1L, 0L);
             assert seqTxn != NO_TXN;
             // Group commit leaves the log's flush to a batch that only table WAL writers run.
             if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
@@ -207,9 +207,11 @@ public class ViewWalWriter extends WalWriterBase {
 
             if (dirFd != -1) {
                 ff.fsyncAndClose(dirFd);
+                fsyncSegmentDirEntries(commitMode, newSegmentId);
             }
             lastSegmentTxn = -1;
-            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
+            path.trimTo(pathSize).slash().put(newSegmentId);
+            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path).I$();
         } finally {
             int oldMinSegmentLocked = minSegmentLocked;
             if (moveMinSegmentLock(newSegmentId)) {
