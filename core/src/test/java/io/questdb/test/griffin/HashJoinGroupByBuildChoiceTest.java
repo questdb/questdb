@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.jit.JitUtil;
@@ -222,6 +223,42 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLoneCountTakesKeyRowCountsInEitherOrientation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // q carries p's 8 rows once a day for four days, so each of its plant ids has four rows.
+            execute("CREATE TABLE q (plant_id INT, country SYMBOL, installed_kwp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO q SELECT p.plant_id, p.country, p.installed_kwp, d.ts FROM p CROSS JOIN"
+                    + " (SELECT '2020-01-01'::TIMESTAMP + (x - 1) * 86_400_000_000L ts FROM long_sequence(4)) d");
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                String sql = "SELECT count() FROM r JOIN q ON r.plant_id = q.plant_id"
+                        + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2";
+                // The analysis rejects a bind variable without a type, so bind before compiling.
+                bindInterval("2020-01-01T00", "2020-01-01T10");
+                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                    HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);
+                    // Either orientation counts the pairs alone, and says so.
+                    final String plan = plan(factory, context);
+                    Assert.assertEquals(plan, 2, plan.split("countStrategy: per key", -1).length - 1);
+                    // 10 rows of r against q's 32: r builds, and two of its eight keys have two rows.
+                    assertCountExecution(sql, factory, choice, context, true, 10, true, 36);
+                    // 48 rows of r, more than q has: q builds, four rows of every key.
+                    bindInterval("2020-01-01T00", "2020-01-03T00");
+                    assertCountExecution(sql, factory, choice, context, false, 32, true, 168);
+                    // 5 rows of r, one of each key, which leaves nothing to count ahead of the probes.
+                    bindInterval("2020-01-01T00", "2020-01-01T05");
+                    assertCountExecution(sql, factory, choice, context, true, 5, false, 20);
+                    // An interval past the data builds an empty r.
+                    bindInterval("2021-01-01T00", "2021-01-02T00");
+                    assertCountExecution(sql, factory, choice, context, true, 0, false, 0);
+                    bindInterval("2020-01-01T00", "2020-01-01T10");
+                    assertCountExecution(sql, factory, choice, context, true, 10, true, 36);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMemoryLimitFailsEitherOrientationAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -393,6 +430,41 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    /**
+     * Runs the lone count once: checks the total against the ordinary plan's, which orientation ran,
+     * the rows it built, and whether that build took the count from its key row counts.
+     */
+    private void assertCountExecution(
+            String sql,
+            RecordCursorFactory factory,
+            HashJoinGroupByBuildChoiceRecordCursorFactory choice,
+            SqlExecutionContextImpl context,
+            boolean isAlternate,
+            long buildRows,
+            boolean isCountedByKey,
+            long expected
+    ) throws Exception {
+        Assert.assertEquals(sql, "count\n" + expected + ":LONG\n", ordinary(sql, context));
+        final AsyncHashJoinGroupByAtom primary = choice.getPrimary().getAtom();
+        final AsyncHashJoinGroupByAtom alternate = choice.getAlternate().getAtom();
+        try (RecordCursor cursor = factory.getCursor(context)) {
+            Assert.assertEquals(sql, isAlternate, choice.isAlternateChosen());
+            final AsyncHashJoinGroupByAtom chosen = isAlternate ? alternate : primary;
+            final AsyncHashJoinGroupByAtom other = isAlternate ? primary : alternate;
+            // The choice is made when the cursor opens; the chosen orientation builds on the first read.
+            Assert.assertNull(sql, chosen.getFrozenBuild());
+            Assert.assertTrue(cursor.hasNext());
+            Assert.assertEquals(sql, buildRows, chosen.getFrozenBuild().getRowCount());
+            Assert.assertEquals(sql, isCountedByKey, chosen.isCountedByKey());
+            Assert.assertNull(sql, other.getFrozenBuild());
+            Assert.assertFalse(sql, other.isCountedByKey());
+            Assert.assertEquals(sql, expected, cursor.getRecord().getLong(0));
+            Assert.assertFalse(cursor.hasNext());
+        }
+        Assert.assertFalse(sql, primary.isCountedByKey());
+        Assert.assertFalse(sql, alternate.isCountedByKey());
     }
 
     private void assertExecution(

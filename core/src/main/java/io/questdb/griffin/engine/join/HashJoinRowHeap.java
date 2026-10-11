@@ -55,6 +55,10 @@ import java.io.Closeable;
  * back; see {@link #getLinkAddress(long)}.
  * {@link #freeze()} publishes it and hands out the generation that every probe asserts against,
  * so that a probe of an expired execution faults instead of reading a freed or re-filled row.
+ * <p>
+ * A query that only counts the joined pairs needs each key's row count and none of its rows, so
+ * its owner turns the frozen links into chain lengths before any probe runs; see
+ * {@link #countChains()}.
  */
 final class HashJoinRowHeap implements Closeable {
     private static final int LINK_SIZE = Long.BYTES;
@@ -66,6 +70,8 @@ final class HashJoinRowHeap implements Closeable {
     private final int rowSize;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long generation;
+    // True once countChains() replaced this execution's links with chain lengths.
+    private boolean hasChainLengths;
     private long nextHandleBase;
     private long rowBytes;
 
@@ -125,8 +131,37 @@ final class HashJoinRowHeap implements Closeable {
     public void close() {
         rows.close();
         rowBytes = 0;
+        hasChainLengths = false;
         generation++;
         circuitBreaker = null;
+    }
+
+    /**
+     * Replaces every row's link with the length of the chain that the row heads: the row itself
+     * plus every row that its link reached. Every build links a row to the row of its key that it
+     * wrote last, which lies at a lower offset, so one pass in heap order finds each link's target
+     * already counted. The head of a key's chain then holds the key's row count, which a probe reads
+     * through {@link AbstractHashJoinProbe#getKeyRowCount(int)} in place of walking the chain. The
+     * pass runs in place and allocates nothing, and it leaves no link behind: no probe of this
+     * execution may walk a chain afterwards. The owner runs it once on the frozen heap, before any
+     * probe reads it, and checks the breaker once per MiB of rows.
+     */
+    void countChains() {
+        if (hasChainLengths) {
+            throw new IllegalStateException("hash join build rows are already counted");
+        }
+        final long base = rows.address;
+        final long limit = rowBytes;
+        for (long chunkLo = 0; chunkLo < limit; chunkLo += HashJoinBuffer.COPY_CHUNK_SIZE) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            final long chunkHi = Math.min(limit, chunkLo + HashJoinBuffer.COPY_CHUNK_SIZE);
+            for (long offset = chunkLo; offset < chunkHi; offset += rowSize) {
+                final long link = Unsafe.getLong(base + offset);
+                assert link == 0 || link - LINK_SIZE < offset;
+                Unsafe.putLong(base + offset, link == 0 ? 1 : Unsafe.getLong(base + link - LINK_SIZE) + 1);
+            }
+        }
+        hasChainLengths = true;
     }
 
     /**
@@ -165,6 +200,13 @@ final class HashJoinRowHeap implements Closeable {
      */
     long getSizeInBytes() {
         return rows.capacity;
+    }
+
+    /**
+     * True once {@link #countChains()} replaced this execution's links with chain lengths.
+     */
+    boolean hasChainLengths() {
+        return hasChainLengths;
     }
 
     /**

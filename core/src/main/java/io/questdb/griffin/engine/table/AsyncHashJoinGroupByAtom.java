@@ -47,6 +47,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
@@ -70,17 +72,33 @@ import org.jetbrains.annotations.TestOnly;
  * Owns execution backing; functions, both filter contexts, the build ON filter and the build
  * scan are borrowed from the factory. Each acquired slot owns every mutable
  * probe/record/decoder/aggregate view, and each slot's probe owns the reader it reads build
- * payload columns through. init() builds once the probe frame cursor is open: it walks the build
- * scan's page frames, filters each one and keeps the key and the row id of every row that passes.
+ * payload columns through.
+ * <p>
+ * init() runs when the cursor opens and reads no row: it opens the build scan and initializes
+ * the filters of both inputs and the functions against the two open scans. Bind variables,
+ * dynamic intervals and symbol tables are ready from there on, and every SqlException surfaces
+ * from getCursor(). A caller that opens the cursor and reads nothing, such as EXPLAIN or LIMIT 0,
+ * pays for no more than that.
+ * <p>
+ * {@link #build(SqlExecutionCircuitBreaker)} runs once per execution, when the cursor is first
+ * asked for a result: it walks the build scan's page frames, filters each one and keeps the key
+ * and the row id of every row that passes.
  * The owner builds alone, unless the build input holds at least the configured row count; then
  * the frames filter and sort their rows on the workers, and the workers fill the hash partitions
  * of {@link IntHashJoinBuild} or {@link MapHashJoinBuild}, through rounds of the frame sequence's
- * tasks. init() binds the SYMBOL key translation too: one cache per SYMBOL key column,
- * shared by every slot, plus a pair of symbol tables per slot. The build frames stay open until
+ * tasks. build() binds the SYMBOL key translation too: one cache per SYMBOL key column,
+ * shared by every slot, plus a pair of symbol tables per slot. Last, it gives every slot its
+ * probe of the frozen build. The build frames stay open until
  * clear(), because probes read payload columns through them and the translation's keyOf()
- * lookups resolve through their symbol tables. The frozen build is published by
- * UnorderedPageFrameSequence before reducers run. clear() requires all reducers to have finished
- * and output consumers to be done.
+ * lookups resolve through their symbol tables. The owner dispatches the probe tasks after build()
+ * returns, and the first task that UnorderedPageFrameSequence publishes is what publishes the
+ * frozen build, its flags and the slots' probes to the reducers. clear() requires all reducers
+ * to have finished and output consumers to be done.
+ * <p>
+ * A query that only counts the joined pairs of an INNER join reads nothing of a pair, so a build
+ * that repeats a key need not hand its rows out one by one: build() has the frozen build replace
+ * each key's rows with their count, on the owner and before any reducer runs, and the reducers add
+ * a count per probe row; see {@link #isCountedByKey()}.
  */
 public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLockOwner {
     private static final UnorderedPageFrameReducer BUILD_PARTITION = AsyncHashJoinGroupByAtom::buildPartition;
@@ -99,8 +117,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final long copyMaxSize;
     private final double copyMinProbeRatio;
     private final double copyParallelMinProbeRatio;
+    // The value column of the lone count(*) of a query that only counts the joined pairs, -1 otherwise.
+    private final int countValueIndex;
     private final AsyncFilterContext filterContext;
     private final HashJoinGroupByFunctions functions;
+    // True when the query reads nothing of a joined pair but that it exists; see isPairCount().
+    private final boolean isCountOnly;
     private final boolean isKeyCapacityPresized;
     private final boolean isKeyStaged;
     // True when the build may run on the workers: a filter context slot and a filter of its own
@@ -114,7 +136,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final PerWorkerLocks perWorkerLocks;
     // The INT layout's only probe key column, -1 when the key sinks stage the key instead.
     private final int probeKeyColumn;
-    private final ObjList<HashJoinGroupByRecord> records = new ObjList<>();
     // The rows each task of a parallel build's round processes, by which fiber workers batch tasks.
     private final LongList roundTaskRowCounts = new LongList();
     // This factory's own copy of the per-row aggregation step; see HashJoinGroupByRowUpdater.
@@ -141,12 +162,20 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private boolean isBuildUnique;
     // True when the open cursor's build ran on the workers, which lays the heap out by partition.
     private boolean isBuiltInRounds;
+    // True when the open cursor's build holds each key's row count in place of the key's rows.
+    private boolean isCountedByKey;
     private boolean isPayloadCopied;
     private boolean functionsInitialized;
     private boolean filtersInitialized;
     // The sequence that owns this atom, through which a parallel build dispatches its rounds.
     private UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence;
+    // The open cursor's tracker, which init() takes for build(): the build runs after getCursor()
+    // returned, when the execution context may no longer carry it.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long pairsPerCheck;
+    // The open cursor's probe scan, whose dictionaries build() sizes the SYMBOL key translation by.
+    private SymbolTableSource probeSymbols;
     private GroupByShardingContext shardingContext;
 
     AsyncHashJoinGroupByAtom(
@@ -171,6 +200,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         this.isKeyStaged = metadata.isKeyStaged();
         this.isSymbolKey = metadata.isSymbolKey();
         this.isKeyCapacityPresized = metadata.isKeyCapacityPresized();
+        // An outer join counts a probe row without a match too, which no key's row count covers.
+        this.isCountOnly = !outer && isPairCount(functions);
+        this.countValueIndex = isCountOnly ? functions.getGroupByFunctions(-1).getQuick(0).getValueIndex() : -1;
         this.buildFrames = new HashJoinBuildFrames(engine.getConfiguration(), metadata.getBuildColumns(), buildFactory.getMetadata());
         this.probeKeyColumn = isKeyStaged ? -1 : metadata.getProbeKeyColumn();
         this.buildKeyColumn = isKeyStaged ? -1 : metadata.getBuildKeyColumn();
@@ -210,6 +242,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                         perWorkerLocks, workerCount);
             }
             final boolean hasSymbolKey = symbolKeyProbeColumns.size() > 0;
+            // The metadata does not outlive construction, so the slots share a copy of its mapping.
+            final IntList payloadBuildColumns = new IntList();
+            payloadBuildColumns.addAll(metadata.getBuildColumns());
             for (int i = -1; i < workerCount; i++) {
                 // Sinks hold scratch state, so each slot probes and builds through ones of its own,
                 // and so does the translating record the staged key sink reads from.
@@ -218,12 +253,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                         hasSymbolKey && isKeyStaged
                                 ? new SymbolKeyTranslatingRecord(metadata.getProbeColumnCount(), symbolKeyProbeColumns)
                                 : null,
-                        hasSymbolKey && !isKeyStaged ? new SymbolKeyTranslator.View() : null);
+                        hasSymbolKey && !isKeyStaged ? new SymbolKeyTranslator.View() : null,
+                        metadata.getProbeColumnCount(), payloadBuildColumns);
                 if (!functions.isKeyed()) {
                     slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount());
                 }
                 slots.add(slot);
-                records.add(slot.joinedRecord);
             }
         } catch (Throwable th) {
             Misc.free(this, th);
@@ -299,6 +334,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         isBuildPartitioned = false;
         isBuildUnique = false;
         isBuiltInRounds = false;
+        isCountedByKey = false;
         isPayloadCopied = false;
         failure = Misc.freeBestEffort(failure, intBuild);
         failure = Misc.freeBestEffort(failure, mapBuild);
@@ -311,6 +347,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         } catch (Throwable th) {
             failure = addFailure(failure, th);
         }
+        memoryTracker = null;
+        probeSymbols = null;
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -331,7 +369,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
-     * Page frames of the open cursor's build input.
+     * Page frames of the open cursor's build input, zero until the cursor builds.
      */
     @TestOnly
     public int getBuildFrameCount() {
@@ -363,7 +401,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
-     * The build published for the open cursor, or null when no cursor is open.
+     * The build published for the open cursor, or null when no cursor is open, or when the open
+     * cursor has not been asked for a result yet; see {@link #build(SqlExecutionCircuitBreaker)}.
      */
     @TestOnly
     public FrozenHashJoinBuild getFrozenBuild() {
@@ -391,6 +430,16 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
+     * True when the open cursor's build holds each key's row count in place of the key's rows: the
+     * query only counts the joined pairs and the build repeats a key. The reducers then add a
+     * key's count per probe row and visit no pair; see {@link FrozenHashJoinBuild#countKeyRows()}.
+     * A build of one row per key keeps its rows, since its loops take one step per probe row already.
+     */
+    public boolean isCountedByKey() {
+        return isCountedByKey;
+    }
+
+    /**
      * True when the open cursor's probes read a copy of the build's payload columns rather than the
      * columns where they live; see {@link #maybeCopyPayload(long, SqlExecutionCircuitBreaker)}.
      */
@@ -405,12 +454,35 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return perWorkerLocks;
     }
 
+    /**
+     * Opens the build scan and initializes the filters and the functions, and reads no row of
+     * either input: {@link #build(SqlExecutionCircuitBreaker)} does the work that grows with the
+     * build, when the cursor is first asked for a result. Everything that can throw a
+     * SqlException runs here, so that it surfaces from getCursor().
+     */
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         try {
             assert frozen == null && buildFrames.getSymbolTableSource() == null;
-            build(executionContext);
-            bindSymbolKeyTranslation(symbolTableSource, executionContext);
+            memoryTracker = executionContext.getMemoryTracker();
+            probeSymbols = symbolTableSource;
+            // The open scan serves the build input's symbol tables; build() walks its frames.
+            buildFrames.open(buildFactory, executionContext);
+            final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
+            buildFiltersInitialized = true;
+            buildFilterContext.initFilters(buildSymbols, executionContext);
+            if (buildOnFilter != null) {
+                buildOnFilter.init(buildSymbols, executionContext);
+                if (workerBuildOnFilters != null) {
+                    final boolean current = executionContext.getCloneSymbolTables();
+                    executionContext.setCloneSymbolTables(true);
+                    try {
+                        Function.init(workerBuildOnFilters, buildSymbols, executionContext, buildOnFilter);
+                    } finally {
+                        executionContext.setCloneSymbolTables(current);
+                    }
+                }
+            }
             // Join fanout is not bounded by a frame, so reducers check once per page frame of matched pairs.
             pairsPerCheck = Math.max(1, executionContext.getPageFrameMaxRows());
             if (shardingContext != null) {
@@ -423,47 +495,14 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                     functions.getUpdater(i - 1).updateEmpty(slot.value);
                     slot.value.setNew(true);
                 }
-                // Casting here, once per slot per execution, keeps the reducers' hot call sites
-                // on a single probe implementation; see the monomorphic-reducer rule.
-                final FrozenHashJoinBuild.Probe probe;
-                if (isKeyStaged) {
-                    if (isBuildPartitioned) {
-                        if (slot.partitionedRecordProbe == null) {
-                            slot.partitionedRecordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.probeKeySink);
-                        } else {
-                            slot.partitionedRecordProbe.reopen();
-                        }
-                        probe = slot.partitionedRecordProbe;
-                    } else {
-                        if (slot.recordProbe == null) {
-                            slot.recordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.probeKeySink);
-                        } else {
-                            slot.recordProbe.reopen();
-                        }
-                        probe = slot.recordProbe;
-                    }
-                } else if (isBuildPartitioned) {
-                    if (slot.partitionedIntProbe == null) {
-                        slot.partitionedIntProbe = ((FrozenHashJoinBuild.IntKeyed) frozen).newProbe();
-                    } else {
-                        slot.partitionedIntProbe.reopen();
-                    }
-                    probe = slot.partitionedIntProbe;
-                } else {
-                    if (slot.intProbe == null) {
-                        slot.intProbe = ((FrozenHashJoinBuild.IntKeyed) frozen).newProbe();
-                    } else {
-                        slot.intProbe.reopen();
-                    }
-                    probe = slot.intProbe;
-                }
-                slot.probeRecord.of(symbolTableSource);
-                slot.joinedRecord.of(slot.probeRecord, slot.probeRecord, probe);
+                slot.bindSymbols(symbolTableSource, buildSymbols);
             }
             filtersInitialized = true;
             filterContext.initFilters(symbolTableSource, executionContext);
             functionsInitialized = true;
-            functions.init(records, executionContext);
+            // A slot resolves a function's symbol tables through the two open scans, so the
+            // functions need no frozen build and parents can resolve output symbols at once.
+            functions.init(slots, executionContext);
         } catch (Throwable th) {
             // The sequence closes the frame cursor when init throws. Release functions
             // while their borrowed symbol sources are still alive, then the build cursor.
@@ -495,6 +534,19 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
         }
         return failure;
+    }
+
+    /**
+     * True when the functions only count the joined pairs: no grouping key, no post-join filter and
+     * count(*) as the lone aggregate, which reads no column of either input. The number of pairs
+     * is then all the query takes from the join.
+     */
+    private static boolean isPairCount(HashJoinGroupByFunctions functions) {
+        final ObjList<GroupByFunction> groupByFunctions = functions.getGroupByFunctions(-1);
+        return !functions.isKeyed()
+                && functions.getFilter(-1) == null
+                && groupByFunctions.size() == 1
+                && groupByFunctions.getQuick(0).getClass() == CountLongConstGroupByFunction.class;
     }
 
     /**
@@ -602,67 +654,33 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
-     * Sizes each SYMBOL key column's shared cache from the probe dictionary and gives every slot
-     * its own pair of symbol tables over it. Symbol tables are not thread safe, so a worker
-     * cannot share one; the cache it fills is a function of the two dictionaries alone, so every
-     * worker does share that. The caller's failure path releases both.
+     * Sizes each SYMBOL key column's shared cache from the probe dictionary, fills it from the
+     * build dictionary when that one is small, and gives every slot its own pair of symbol tables
+     * over it. Symbol tables are not thread safe, so a worker cannot share one; the cache is a
+     * function of the two dictionaries alone, so every worker does share that. The caller's
+     * failure path releases both.
      */
-    private void bindSymbolKeyTranslation(SymbolTableSource probeSymbols, SqlExecutionContext executionContext) {
-        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+    private void bindSymbolKeyTranslation(SqlExecutionCircuitBreaker circuitBreaker) {
         for (int key = 0, keyCount = symbolKeyCaches.size(); key < keyCount; key++) {
             final int probeColumn = symbolKeyProbeColumns.getQuick(key);
             final int buildColumn = symbolKeyBuildColumns.getQuick(key);
             final SymbolKeyTranslator cache = symbolKeyCaches.getQuick(key);
-            // The owner's own table answers for the dictionary size the cache is sized by, and
-            // then stays as slot -1's, so no table is taken that a slot does not keep.
+            // The owner's own tables answer for the dictionaries the cache is sized and filled
+            // by, and then stay as slot -1's, so no table is taken that a slot does not keep.
             final StaticSymbolTable ownerProbeTable = (StaticSymbolTable) probeSymbols.newSymbolTable(probeColumn);
-            cache.of(ownerProbeTable.getSymbolCount(), memoryTracker, circuitBreaker);
+            final StaticSymbolTable ownerBuildTable = (StaticSymbolTable) buildFrames.getSymbolTableSource().newSymbolTable(buildColumn);
+            // The probe's shared table is the dictionary that its views read: a table's symbol map,
+            // or the in-memory overlay of a live view, which can hold a text under two keys.
+            final boolean isProbeDictionaryEligible = SymbolKeyTranslator.isEligibleProbeDictionary(probeSymbols.getSymbolTable(probeColumn));
+            cache.of(ownerProbeTable, ownerBuildTable, isProbeDictionaryEligible, memoryTracker, circuitBreaker);
             for (int i = 0, n = slots.size(); i < n; i++) {
                 final SymbolTable probeTable = i == 0 ? ownerProbeTable : probeSymbols.newSymbolTable(probeColumn);
-                slots.getQuick(i).getSymbolKeyView(key)
-                        .of(cache, probeTable, (StaticSymbolTable) buildFrames.getSymbolTableSource().newSymbolTable(buildColumn));
+                final StaticSymbolTable buildTable = i == 0
+                        ? ownerBuildTable
+                        : (StaticSymbolTable) buildFrames.getSymbolTableSource().newSymbolTable(buildColumn);
+                slots.getQuick(i).getSymbolKeyView(key).of(cache, probeTable, buildTable);
             }
         }
-    }
-
-    /**
-     * Walks the build scan's page frames, keeping the key and the row id of every row that the
-     * build filters pass. The frame count is known before the first row, and so is the row count
-     * of an unfiltered build, interval scans included. The owner walks the frames itself, unless
-     * the frames hold enough rows to build on the workers; see {@link #buildInRounds}. There, every
-     * build knows its exact row count before it sizes anything. On the owner, a filtered build stays
-     * unknown and grows as it goes: the unfiltered row count only bounds it, and sizing by that bound
-     * over-allocates by the filter's selectivity. The caller's failure path closes the build, the filters and the frames.
-     */
-    private void build(SqlExecutionContext executionContext) throws SqlException {
-        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        buildFrames.of(buildFactory, executionContext);
-        final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
-        buildFiltersInitialized = true;
-        buildFilterContext.initFilters(buildSymbols, executionContext);
-        if (buildOnFilter != null) {
-            buildOnFilter.init(buildSymbols, executionContext);
-            if (workerBuildOnFilters != null) {
-                final boolean current = executionContext.getCloneSymbolTables();
-                executionContext.setCloneSymbolTables(true);
-                try {
-                    Function.init(workerBuildOnFilters, buildSymbols, executionContext, buildOnFilter);
-                } finally {
-                    executionContext.setCloneSymbolTables(current);
-                }
-            }
-        }
-        buildFilterContext.initMemoryPools(buildFrames.getAddressCache(), memoryTracker);
-        final boolean isFiltered = buildFilterContext.getFilter(-1) != null || buildOnFilter != null;
-        final int frameCount = buildFrames.getFrameCount();
-        if (isParallelBuildCapable && frameCount > 0 && buildFrames.getRowCount() >= parallelBuildMinRows) {
-            buildInRounds(memoryTracker, circuitBreaker, buildSymbols, isFiltered);
-        } else {
-            buildOnOwner(memoryTracker, circuitBreaker, buildSymbols, isFiltered);
-        }
-        isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
     }
 
     /**
@@ -844,6 +862,16 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return isKeyStaged ? mapBuild.getSegmentStart(frameIndex, partition) : intBuild.getSegmentStart(frameIndex, partition);
     }
 
+    /**
+     * Adds a frame's joined pairs to the slot's count(*), as the row updater's update per pair does.
+     */
+    void addPairCount(Slot slot, long pairCount) {
+        if (pairCount > 0) {
+            slot.value.addLong(countValueIndex, pairCount);
+            slot.value.setNew(false);
+        }
+    }
+
     AsyncFilterContext getFilterContext() {
         return filterContext;
     }
@@ -876,6 +904,81 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
+     * Builds the open cursor's hash table and binds every slot to it. The cursor calls it once per
+     * execution, on first demand for a result, on the thread that then dispatches the probes and
+     * before it dispatches any; nothing here runs when the cursor merely opens.
+     * <p>
+     * Walks the build scan's page frames, keeping the key and the row id of every row that the
+     * build filters pass. The frame count is known before the first row, and so is the row count
+     * of an unfiltered build, interval scans included. The owner walks the frames itself, unless
+     * the frames hold enough rows to build on the workers; see {@link #buildInRounds}. There, every
+     * build knows its exact row count before it sizes anything. On the owner, a filtered build stays
+     * unknown and grows as it goes: the unfiltered row count only bounds it, and sizing by that bound
+     * over-allocates by the filter's selectivity. The count pass, the SYMBOL key translation and the
+     * slots' probes follow, all of which need the frozen build. On failure the caller closes the
+     * cursor, whose clear() closes the build, the filters and the frames.
+     */
+    void build(SqlExecutionCircuitBreaker circuitBreaker) {
+        assert frozen == null && buildFrames.getSymbolTableSource() != null;
+        buildFrames.loadFrames();
+        final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
+        buildFilterContext.initMemoryPools(buildFrames.getAddressCache(), memoryTracker);
+        final boolean isFiltered = buildFilterContext.getFilter(-1) != null || buildOnFilter != null;
+        final int frameCount = buildFrames.getFrameCount();
+        if (isParallelBuildCapable && frameCount > 0 && buildFrames.getRowCount() >= parallelBuildMinRows) {
+            buildInRounds(memoryTracker, circuitBreaker, buildSymbols, isFiltered);
+        } else {
+            buildOnOwner(memoryTracker, circuitBreaker, buildSymbols, isFiltered);
+        }
+        isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
+        if (isCountOnly && !isBuildUnique) {
+            // The pass over the build's rows runs here, on the owner, so the counts are in place
+            // before the sequence publishes the first probe task. A failure closes the build.
+            frozen.countKeyRows();
+            isCountedByKey = true;
+        }
+        bindSymbolKeyTranslation(circuitBreaker);
+        for (int i = 0; i < slots.size(); i++) {
+            Slot slot = slots.getQuick(i);
+            // Casting here, once per slot per execution, keeps the reducers' hot call sites
+            // on a single probe implementation; see the monomorphic-reducer rule.
+            final FrozenHashJoinBuild.Probe probe;
+            if (isKeyStaged) {
+                if (isBuildPartitioned) {
+                    if (slot.partitionedRecordProbe == null) {
+                        slot.partitionedRecordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.probeKeySink);
+                    } else {
+                        slot.partitionedRecordProbe.reopen();
+                    }
+                    probe = slot.partitionedRecordProbe;
+                } else {
+                    if (slot.recordProbe == null) {
+                        slot.recordProbe = ((FrozenHashJoinBuild.RecordKeyed) frozen).newProbe(slot.probeKeySink);
+                    } else {
+                        slot.recordProbe.reopen();
+                    }
+                    probe = slot.recordProbe;
+                }
+            } else if (isBuildPartitioned) {
+                if (slot.partitionedIntProbe == null) {
+                    slot.partitionedIntProbe = ((FrozenHashJoinBuild.IntKeyed) frozen).newProbe();
+                } else {
+                    slot.partitionedIntProbe.reopen();
+                }
+                probe = slot.partitionedIntProbe;
+            } else {
+                if (slot.intProbe == null) {
+                    slot.intProbe = ((FrozenHashJoinBuild.IntKeyed) frozen).newProbe();
+                } else {
+                    slot.intProbe.reopen();
+                }
+                probe = slot.intProbe;
+            }
+            slot.joinedRecord.of(slot.probeRecord, slot.probeRecord, probe);
+        }
+    }
+
+    /**
      * True when the open cursor's build has more than one hash partition, so that the reducers run
      * the loops over the slots' partitioned probes.
      */
@@ -885,6 +988,14 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     boolean isBuildUnique() {
         return isBuildUnique;
+    }
+
+    /**
+     * True when the query only counts the joined pairs of an INNER join, as EXPLAIN reports. Each
+     * execution then takes a key's pairs from the key's row count; see {@link #isCountedByKey()}.
+     */
+    boolean isCountOnly() {
+        return isCountOnly;
     }
 
     /**
@@ -997,7 +1108,14 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return outer || frozen.getRowCount() > 0;
     }
 
-    static final class Slot implements QuietCloseable {
+    /**
+     * One execution slot's mutable views. A slot is also the symbol table source that its
+     * functions initialize against, over the columns of the joined record: a probe column
+     * resolves through the slot's probe record and a build payload column through a table of the
+     * slot's own that it takes from the open build scan. Neither needs the frozen build, so the
+     * functions initialize when the cursor opens, before the build.
+     */
+    static final class Slot implements QuietCloseable, SymbolTableSource {
         // Null for the INT layout; the slot's own sink and stager of a staged build key, which a
         // frame task of a parallel build, or the owner's build, stages through.
         @Nullable
@@ -1015,6 +1133,13 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         // The INT layout's lone SYMBOL key translates through this view; null otherwise.
         @Nullable
         final SymbolKeyTranslator.View symbolKeyView;
+        // The table of each build payload column that a function of this slot resolved, by payload
+        // column; a slot's functions and its probe's reader each read through tables of their own.
+        private final ObjList<SymbolTable> buildSymbolTables = new ObjList<>();
+        // Build scan column of each payload column, in payload order; shared by every slot.
+        private final IntList payloadBuildColumns;
+        // Columns of the joined record that belong to the probe input; payload columns follow them.
+        private final int probeColumnCount;
         // A staged key with SYMBOL columns translates through this record's views; null otherwise.
         @Nullable
         private final SymbolKeyTranslatingRecord probeKeyRecord;
@@ -1027,6 +1152,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         FrozenHashJoinBuild.RecordProbe partitionedRecordProbe;
         FrozenHashJoinBuild.RecordProbe recordProbe;
         SimpleMapValue value;
+        // The open cursor's build scan, which serves this slot's build symbol tables; null otherwise.
+        private SymbolTableSource buildSymbols;
 
         Slot(
                 HashJoinGroupByRecord joinedRecord,
@@ -1034,7 +1161,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 @Nullable RecordSink buildKeySink,
                 @Nullable MapHashJoinBuild.KeyStager buildKeyStager,
                 @Nullable SymbolKeyTranslatingRecord probeKeyRecord,
-                @Nullable SymbolKeyTranslator.View symbolKeyView
+                @Nullable SymbolKeyTranslator.View symbolKeyView,
+                int probeColumnCount,
+                IntList payloadBuildColumns
         ) {
             this.joinedRecord = joinedRecord;
             this.probeKeySink = probeKeySink;
@@ -1042,6 +1171,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             this.buildKeyStager = buildKeyStager;
             this.probeKeyRecord = probeKeyRecord;
             this.symbolKeyView = symbolKeyView;
+            this.probeColumnCount = probeColumnCount;
+            this.payloadBuildColumns = payloadBuildColumns;
             if (probeKeyRecord != null) {
                 probeKeyRecord.of(probeRecord);
             }
@@ -1065,7 +1196,43 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             failure = Misc.freeBestEffort(failure, symbolKeyView);
             failure = Misc.freeBestEffort(failure, probeRecord);
             failure = Misc.freeBestEffort(failure, buildRecord);
+            failure = Misc.freeObjListIfCloseableBestEffort(failure, buildSymbolTables);
+            buildSymbolTables.clear();
+            buildSymbols = null;
             CairoException.rethrowCleanupFailure(failure);
+        }
+
+        /**
+         * The slot's table of a joined record column. A build payload column takes its table from
+         * the open build scan on first request and keeps it until {@link #clear}.
+         */
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            if (columnIndex < probeColumnCount) {
+                return probeRecord.getSymbolTable(columnIndex);
+            }
+            final int payloadColumn = columnIndex - probeColumnCount;
+            SymbolTable symbolTable = buildSymbolTables.getQuiet(payloadColumn);
+            if (symbolTable == null) {
+                symbolTable = buildSymbols.newSymbolTable(payloadBuildColumns.getQuick(payloadColumn));
+                buildSymbolTables.extendAndSet(payloadColumn, symbolTable);
+            }
+            return symbolTable;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return columnIndex < probeColumnCount
+                    ? probeRecord.newSymbolTable(columnIndex)
+                    : buildSymbols.newSymbolTable(payloadBuildColumns.getQuick(columnIndex - probeColumnCount));
+        }
+
+        /**
+         * Binds the slot to the two open scans of an execution, which serve its symbol tables.
+         */
+        void bindSymbols(SymbolTableSource probeSymbols, SymbolTableSource buildSymbols) {
+            probeRecord.of(probeSymbols);
+            this.buildSymbols = buildSymbols;
         }
 
         /**
@@ -1083,6 +1250,11 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             joinedRecord.clear();
             probeRecord.of(null);
             buildRecord.of(null);
+            // The functions released their views of these tables already, and the build scan that
+            // serves them closes after the slots.
+            Misc.freeObjListIfCloseable(buildSymbolTables);
+            buildSymbolTables.clear();
+            buildSymbols = null;
             // The views borrow this execution's symbol tables and read a cache the atom is
             // about to release, so they drop both here. The objects stay for the next execution.
             if (probeKeyRecord != null) {

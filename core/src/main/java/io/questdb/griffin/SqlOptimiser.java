@@ -134,9 +134,6 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
-    // The alias prefix of the join model that LateralJoinRewriter adds to a LATERAL body for the
-    // distinct outer values. LateralJoinRewriter keeps the same literal in its private OUTER_REF_PREFIX.
-    private static final String LATERAL_OUTER_REF_PREFIX = "__qdb_outer_ref__";
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
     // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
@@ -719,16 +716,16 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Returns true for a join model whose alias starts with the prefix that LateralJoinRewriter gives
-     * the join model it adds to a LATERAL body for the distinct outer values. That model stands for
-     * "once per outer value" and is no table of the body's FROM clause, so
-     * {@link #constrainRightAndFullJoinOrder} keeps it out of the SQL prefix. The test reads the alias
-     * only, so a table that a query aliases with this prefix passes it as well. The rewriter's
-     * count-driver model carries another prefix and keeps its prefix edges.
+     * Returns true for the join model that LateralJoinRewriter adds to a LATERAL body for the distinct
+     * outer values. That model stands for "once per outer value" and is no table of the body's FROM
+     * clause, so {@link #constrainRightAndFullJoinOrder} keeps it out of the SQL prefix. The test reads
+     * the marker that the rewriter sets when it creates the model, not the model's alias: a table that
+     * a query aliases with the rewriter's alias prefix, __qdb_outer_ref__, is a table of the FROM
+     * clause like any other. The rewriter's count-driver model carries no marker and keeps its prefix
+     * edges.
      */
     private static boolean isLateralOuterRefModel(IQueryModel model) {
-        final ExpressionNode alias = model.getAlias();
-        return alias != null && Chars.startsWith(alias.token, LATERAL_OUTER_REF_PREFIX);
+        return model instanceof QueryModel queryModel && queryModel.isLateralOuterRef();
     }
 
     /**
@@ -1823,6 +1820,42 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Makes an equality of the join models at {@code lhi} and {@code rhi} a filter of the join at
+     * {@code anchorIndex}, the join that analyseEquals() picked for it. An equality from the ON
+     * clause of the INNER join at {@code joinIndex} that reads the join model LateralJoinRewriter
+     * adds to a LATERAL body for the distinct outer values goes to assignFilters() instead, see
+     * {@link #isLateralOuterRefModel}. No prefix edge holds that model before a RIGHT/FULL OUTER
+     * join, see {@link #constrainRightAndFullJoinOrder}, so doReorderTables() may run it after the
+     * join at {@code anchorIndex}, whose filter cannot read it then. assignFilters() reads the
+     * execution order and anchors the equality on a join that executes after both models, as it
+     * does for a correlated conjunct that is no plain equality.
+     * <p>
+     * The equality stays on the join at {@code anchorIndex} when a master-nulling join follows the
+     * join at {@code joinIndex} in SQL. That join reads the rows that the equality keeps, and the
+     * outer-ref model may execute after it: a filter above it would drop or keep the rows that it
+     * NULL-extends, not gate the rows that it reads. A WHERE equality, which has no join of its
+     * own and a negative {@code joinIndex}, stays on the join at {@code anchorIndex} as well.
+     */
+    private void addPostJoinEqualityFilter(
+            IQueryModel parent,
+            int anchorIndex,
+            int joinIndex,
+            int lhi,
+            int rhi,
+            ExpressionNode node,
+            boolean innerPredicate
+    ) {
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        if (joinIndex >= 0
+                && masterNullingJoinIndex(joinIndex) < 0
+                && (isLateralOuterRefModel(joinModels.getQuick(lhi)) || isLateralOuterRefModel(joinModels.getQuick(rhi)))) {
+            parent.addParsedWhereNode(node, innerPredicate);
+        } else {
+            addPostJoinWhereClause(joinModels.getQuick(anchorIndex), node);
+        }
+    }
+
     private void addPostJoinWhereClause(IQueryModel model, ExpressionNode node) {
         model.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, model.getPostJoinWhereClause(), node));
     }
@@ -2250,10 +2283,10 @@ public class SqlOptimiser implements Mutable {
                             // later table's join, it would drop rows before a RIGHT/FULL OUTER join, which then
                             // NULL-extends the rows that only those matched, and the NULL-extended rows would
                             // bypass the equality. Keep it a filter of its own join.
-                            addPostJoinWhereClause(parent.getJoinModels().getQuick(joinIndex), node);
+                            addPostJoinEqualityFilter(parent, joinIndex, joinIndex, lhi, rhi, node, innerPredicate);
                         } else if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                             //we can't push anything into another left/right join
-                            addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
+                            addPostJoinEqualityFilter(parent, jc.slaveIndex, joinIndex, lhi, rhi, node, innerPredicate);
                         } else {
                             addJoinContext(parent, jc);
                             // lhi == rhi returned above, so we are guaranteed to have two
@@ -2412,7 +2445,14 @@ public class SqlOptimiser implements Mutable {
             IntHashSet indexes = intHashSetPool.next();
             literalCollector.resetCounts();
             traversalAlgo.traverse(filterNode, literalCollector.to(indexes));
-            modelOnJoinIndexes.add(modelOnJoinIndexAfterNullingBoundary(filterNode));
+            int modelOnJoinIndex = modelOnJoinIndexAfterNullingBoundary(filterNode);
+            if (modelOnJoinIndex >= 0 && isWaitingForLateralOuterRef(parent, indexes, modelOnJoinIndex)) {
+                // The conjunct reads the distinct outer values of a LATERAL body, and their join model
+                // executes after the conjunct's INNER origin, whose filter cannot read it. The loop
+                // below anchors the conjunct on the join of the last model that it reads instead.
+                modelOnJoinIndex = -1;
+            }
+            modelOnJoinIndexes.add(modelOnJoinIndex);
             postFilterTableRefs.add(indexes);
         }
 
@@ -6761,6 +6801,44 @@ public class SqlOptimiser implements Mutable {
         // Also check against the timestamp offset alias (for virtual models without timestamp designation)
         CharSequence alias = model.getTimestampOffsetAlias();
         return alias != null && referencesColumn(node, alias);
+    }
+
+    /**
+     * Returns true when an INNER ON conjunct that reads the join models in {@code refs} has to wait
+     * for a LATERAL outer-ref model, see {@link #isLateralOuterRefModel}: the model executes after
+     * the conjunct's own join, the one at {@code joinIndex}, whose filter cannot read it then. No
+     * prefix edge holds such a model before a RIGHT/FULL OUTER join, see
+     * {@link #constrainRightAndFullJoinOrder}, so doReorderTables() may run it after a join whose
+     * ON clause reads it.
+     * <p>
+     * Returns false when a master-nulling join executes after the conjunct's own join and no later
+     * than the last model that the conjunct reads. That join reads the rows that the conjunct
+     * keeps, so a filter above it would not gate them, and the conjunct stays on its own join.
+     * Reads the execution order that {@link #precomputeNullingJoinAnchors} fills, and returns false
+     * when that order is partial.
+     */
+    private boolean isWaitingForLateralOuterRef(IQueryModel parent, IntHashSet refs, int joinIndex) {
+        if (!isNullingExecOrderValid) {
+            return false;
+        }
+        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
+        final int joinExecPos = nullingExecPosByModel.getQuick(joinIndex);
+        boolean isOuterRefLater = false;
+        int lastExecPos = joinExecPos;
+        for (int i = 0, n = refs.size(); i < n; i++) {
+            final int ref = refs.get(i);
+            final int execPos = nullingExecPosByModel.getQuick(ref);
+            if (execPos > joinExecPos) {
+                isOuterRefLater |= isLateralOuterRefModel(joinModels.getQuick(ref));
+                lastExecPos = Math.max(lastExecPos, execPos);
+            }
+        }
+        if (!isOuterRefLater) {
+            return false;
+        }
+        // the nearest master-nulling join that executes after the conjunct's own join
+        final int nullingJoinIndex = nullingAnchorByExecPos.getQuick(joinExecPos);
+        return nullingJoinIndex < 0 || nullingExecPosByModel.getQuick(nullingJoinIndex) > lastExecPos;
     }
 
     /**

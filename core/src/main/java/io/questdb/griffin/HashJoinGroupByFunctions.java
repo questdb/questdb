@@ -54,8 +54,9 @@ import java.util.ArrayDeque;
 /**
  * Compiled grouping, aggregate and post-join functions, with one mutable instance
  * per execution slot where required. Owns functions only; it borrows joined
- * metadata and all execution symbol sources. Initialize once after the build is
- * frozen, before dispatch or parent initialization. Drain workers and finish output
+ * metadata and all execution symbol sources. Initialize once per execution, when the
+ * cursor opens: before the build, dispatch or parent initialization. Initialization
+ * needs both inputs' symbol tables and no frozen build. Drain workers and finish output
  * before releasing symbol backing. No model or expression nodes survive compilation.
  */
 public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSource {
@@ -241,8 +242,10 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
     }
 
     /**
-     * Sources are owner followed by worker slots. Each must already be bound to
-     * its execution's frozen build and independent logical probe symbol source.
+     * Sources are owner followed by worker slots. Each must already serve the symbol
+     * tables of the joined record's columns for its execution, through symbol table
+     * flyweights that no other slot shares. The build need not be frozen: the fused
+     * operator calls this when its cursor opens, before it builds.
      * The caller cleans up partial initialization before retrying an execution.
      */
     public void init(ObjList<? extends SymbolTableSource> sources, SqlExecutionContext executionContext) throws SqlException {

@@ -29,8 +29,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
@@ -38,13 +40,18 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -53,6 +60,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.QueryAssertion;
@@ -71,6 +79,7 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.test.tools.TestUtils.assertEventually;
@@ -1178,6 +1187,336 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportCrossJoinedFirstTableCancelledExportCleansTempTable() throws Exception {
+        // The export opens the temp table's column files after it has compiled the SELECT of the table,
+        // so a cancellation requested there stops the copy at its next progress check.
+        final AtomicReference<CairoEngine> engineRef = new AtomicReference<>();
+        final AtomicBoolean isCancelRequested = new AtomicBoolean();
+        final AtomicBoolean isCancelAccepted = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final CairoEngine engine = engineRef.get();
+                if (
+                        engine != null
+                                && Utf8s.containsAscii(name, "zzz.copy.")
+                                && Utf8s.endsWithAscii(name, ".d")
+                                && isCancelRequested.compareAndSet(false, true)
+                ) {
+                    isCancelAccepted.set(engine.getCopyExportContext().cancel(engine.getCopyExportContext().getActiveExportId(), null));
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        getExportTester()
+                .withFilesFacade(ff)
+                .run((engine, sqlExecutionContext) -> {
+                    createCrossJoinedFirstTableTables(engine, sqlExecutionContext);
+                    engineRef.set(engine);
+                    try (TestHttpClient testHttpClient = new TestHttpClient();
+                         var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                        req.GET().url("/exp");
+                        req.query("query", "SELECT l.ts lts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts");
+                        req.query("fmt", "parquet");
+                        final String status = testHttpClient.reqToSink(req, sink, null, null, null, null);
+                        Assert.assertTrue("the export did not reach the temp table", isCancelRequested.get());
+                        Assert.assertTrue("the export did not accept the cancellation", isCancelAccepted.get());
+                        Assert.assertEquals("400", status);
+                        TestUtils.assertContains(sink.toString(), "cancelled by user");
+                    } finally {
+                        engineRef.set(null);
+                    }
+                    assertExportReleased(engine);
+                });
+    }
+
+    @Test
+    public void testParquetExportCrossJoinedFirstTableChainTimestampMatchesSelect() throws Exception {
+        // The query declares the first table's timestamp, which it does not project, so the temp table
+        // has no designated timestamp. A plan that runs the equi-joined chain first would declare the
+        // chain's timestamp, which the query projects, so the temp table compiles its SELECT again the
+        // way the query runs. The file holds the query's rows in the query's order and declares no
+        // designated timestamp, as the query does.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createCrossJoinedFirstTableTables(engine, sqlExecutionContext);
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT r.rts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts",
+                            "cross_first_chain_ts.parquet",
+                            false,
+                            null,
+                            """
+                                    rts\tc1\tb
+                                    2020-01-01T00:20:00.000000Z\t10\t00000000 de ad be ef
+                                    2020-01-01T01:20:00.000000Z\t20\t00000000 de ad be ef
+                                    2020-01-01T03:20:00.000000Z\t30\t00000000 de ad be ef
+                                    2020-01-01T00:20:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                                    2020-01-01T01:20:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                                    2020-01-01T03:20:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                                    """
+                    );
+                });
+    }
+
+    @Test
+    public void testParquetExportCrossJoinedFirstTableFailedExportCleansTempTable() throws Exception {
+        final LongHashSet tempTableColumnFds = new LongHashSet();
+        final AtomicBoolean isMmapFailed = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                tempTableColumnFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (tempTableColumnFds.contains(fd) && isMmapFailed.compareAndSet(false, true)) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, "zzz.copy.") && Utf8s.endsWithAscii(name, ".d")) {
+                    tempTableColumnFds.add(fd);
+                }
+                return fd;
+            }
+        };
+        getExportTester()
+                .withFilesFacade(ff)
+                .run((engine, sqlExecutionContext) -> {
+                    createCrossJoinedFirstTableTables(engine, sqlExecutionContext);
+                    try (TestHttpClient testHttpClient = new TestHttpClient();
+                         var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                        req.GET().url("/exp");
+                        req.query("query", "SELECT l.ts lts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts");
+                        req.query("fmt", "parquet");
+                        final String status = testHttpClient.reqToSink(req, sink, null, null, null, null);
+                        Assert.assertTrue("the export did not reach the temp table", isMmapFailed.get());
+                        Assert.assertEquals("400", status);
+                        TestUtils.assertContains(sink.toString(), "could not mmap");
+                    }
+                    assertExportReleased(engine);
+                });
+    }
+
+    @Test
+    public void testParquetExportCrossJoinedFirstTableKeepsItsTimestampAndOrder() throws Exception {
+        // The projection holds the timestamps of both the first table and the table that the plan of
+        // CREATE TABLE AS SELECT streams. The temp table takes the timestamp that the query declares,
+        // the first table's, so the file holds the rows in the query's order.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createCrossJoinedFirstTableTables(engine, sqlExecutionContext);
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT l.ts lts, r.rts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts",
+                            "cross_first_both.parquet",
+                            false,
+                            """
+                                    lts\trts\tc1\tb
+                                    2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10\t00000000 de ad be ef
+                                    2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20\t00000000 de ad be ef
+                                    2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30\t00000000 de ad be ef
+                                    2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                                    2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                                    2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                                    """
+                    );
+                });
+    }
+
+    @Test
+    public void testParquetExportCrossJoinedFirstTableOrderReadingMatchesSelect() throws Exception {
+        // LIMIT and window functions read the order of the join's rows. The export through the temp
+        // table writes the rows the query returns.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createCrossJoinedFirstTableTables(engine, sqlExecutionContext);
+                    final String join = " FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT l.ts lts, r.c1, l.b" + join + " LIMIT 2",
+                            "cross_first_limit.parquet",
+                            false,
+                            """
+                                    lts\tc1\tb
+                                    2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                                    2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef
+                                    """
+                    );
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT l.ts lts, r.c1, l.b" + join + " LIMIT -2",
+                            "cross_first_tail.parquet",
+                            true,
+                            """
+                                    lts\tc1\tb
+                                    2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                                    2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                                    """
+                    );
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT l.ts lts, r.c1, l.b, row_number() OVER () rn" + join,
+                            "cross_first_rn.parquet",
+                            false,
+                            """
+                                    lts\tc1\tb\trn
+                                    2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef\t1
+                                    2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef\t2
+                                    2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef\t3
+                                    2020-01-01T02:10:00.000000Z\t10\t00000000 01 02 03 04 05 06\t4
+                                    2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06\t5
+                                    2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06\t6
+                                    """
+                    );
+                });
+    }
+
+    @Test
+    public void testParquetExportCrossJoinedFirstTableThroughTempTable() throws Exception {
+        // The BINARY column sends the export through the temp table, which compiles the SELECT again.
+        // Every compilation runs the cross-joined first table first and declares its timestamp, so the
+        // non-partitioned temp table receives its rows in the order of its designated timestamp.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createCrossJoinedFirstTableTables(engine, sqlExecutionContext);
+                    final String rows = """
+                            lts\tc1\tb
+                            2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef
+                            2020-01-01T02:10:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                            """;
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT l.ts lts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts",
+                            "cross_first.parquet",
+                            false,
+                            rows
+                    );
+                    // the comma join spelling takes the same plan
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT l.ts lts, r.c1, l.b FROM tal l, tb2 r, tc2 n WHERE n.cts = r.rts",
+                            "cross_first_comma.parquet",
+                            false,
+                            rows
+                    );
+                });
+    }
+
+    @Test
+    public void testParquetExportCrossJoinedFirstTableWithoutTimestampKeepsCreateTableAsSelectOrder() throws Exception {
+        // The query declares the first table's timestamp but does not project it, so the temp table has
+        // no designated timestamp and nothing reads the order of its rows. The temp table's SELECT then
+        // takes the plan of CREATE TABLE AS SELECT, which runs the equi-joined chain first and probes its
+        // hash table once per chain row, not once per row of the cross product. The file holds the
+        // query's rows in the order CREATE TABLE AS SELECT stores them.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createCrossJoinedFirstTableTables(engine, sqlExecutionContext);
+                    final String query = "SELECT r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+                    final String chainFirstRows = """
+                            c1\tb
+                            10\t00000000 de ad be ef
+                            10\t00000000 01 02 03 04 05 06
+                            20\t00000000 de ad be ef
+                            20\t00000000 01 02 03 04 05 06
+                            30\t00000000 de ad be ef
+                            30\t00000000 01 02 03 04 05 06
+                            """;
+                    try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                        Assert.assertEquals(
+                                ParquetExportMode.TEMP_TABLE,
+                                ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
+                        );
+                    }
+                    engine.execute("CREATE TABLE tj AS (" + query + ")", sqlExecutionContext);
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "SELECT * FROM tj")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(chainFirstRows);
+
+                    final String filename = "cross_first_no_ts.parquet";
+                    try (TestHttpClient testHttpClient = new TestHttpClient();
+                         var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        requestParquetExport(testHttpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, "SELECT * FROM tj", filename);
+                    }
+                    new QueryAssertion(engine, sqlExecutionContext, () -> {
+                    }, "SELECT * FROM read_parquet('" + filename + "')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(chainFirstRows);
+                    assertExportReleased(engine);
+                });
+    }
+
+    @Test
+    public void testParquetExportCrossJoinedFirstTableWithoutTimestampOrderReadingMatchesSelect() throws Exception {
+        // The temp table has no designated timestamp, but LIMIT and window functions read the order of
+        // the join's rows. The temp table's SELECT keeps the first table first wherever they read it, so
+        // the file holds the rows the query returns.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createCrossJoinedFirstTableTables(engine, sqlExecutionContext);
+                    final String join = " FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT r.c1, l.b" + join + " LIMIT 2",
+                            "cross_first_no_ts_limit.parquet",
+                            false,
+                            null,
+                            """
+                                    c1\tb
+                                    10\t00000000 de ad be ef
+                                    20\t00000000 de ad be ef
+                                    """
+                    );
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT r.c1, l.b, row_number() OVER () rn" + join,
+                            "cross_first_no_ts_rn.parquet",
+                            false,
+                            null,
+                            """
+                                    c1\tb\trn
+                                    10\t00000000 de ad be ef\t1
+                                    20\t00000000 de ad be ef\t2
+                                    30\t00000000 de ad be ef\t3
+                                    10\t00000000 01 02 03 04 05 06\t4
+                                    20\t00000000 01 02 03 04 05 06\t5
+                                    30\t00000000 01 02 03 04 05 06\t6
+                                    """
+                    );
+                });
+    }
+
+    @Test
     public void testParquetExportCursorBasedMultipleRowGroups() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1340,6 +1679,38 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testParquetExportFirstTableLinkedByEqualityThroughTempTable() throws Exception {
+        // An equality links the first table to the join, so the table drives the join in every
+        // compilation mode, and the export through the temp table keeps writing the query's rows.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    createCrossJoinedFirstTableTables(engine, sqlExecutionContext);
+                    final String rows = """
+                            lts\tc1\tb
+                            2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                            2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                            """;
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT l.ts lts, r.c1, l.b FROM tal l JOIN tb2 r ON r.v = l.v JOIN tc2 n ON n.cts = r.rts",
+                            "linked_first.parquet",
+                            false,
+                            rows
+                    );
+                    assertTempTableExportMatchesSelect(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT l.ts lts, r.c1, l.b FROM tal l, tb2 r, tc2 n WHERE n.cts = r.rts AND r.v = l.v",
+                            "linked_first_comma.parquet",
+                            false,
+                            rows
+                    );
+                });
     }
 
     @Test
@@ -2492,6 +2863,60 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 });
     }
 
+    private static void assertExportReleased(CairoEngine engine) throws Exception {
+        // the export left neither its temp table nor its entry in the export context
+        assertEventually(() -> {
+            final CharSequence prefix = engine.getConfiguration().getParquetExportTableNamePrefix();
+            ObjHashSet<TableToken> bucket = new ObjHashSet<>();
+            engine.getTableTokens(bucket, false);
+            for (int i = 0, n = bucket.size(); i < n; i++) {
+                TableToken token = bucket.get(i);
+                Assert.assertFalse(
+                        "temp table should have been cleaned up: " + token.getTableName(),
+                        Chars.startsWith(token.getTableName(), prefix)
+                );
+            }
+            Assert.assertEquals("export entry should have been released", -1L, engine.getCopyExportContext().getActiveExportId());
+        });
+    }
+
+    private static void createCrossJoinedFirstTableTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // tal is the first table of the joins under test: it has a designated timestamp, at least two
+        // distinct timestamp values and a BINARY column, which sends a Parquet export through the temp
+        // table. from_base64() yields fixed bytes, unlike rnd_bin().
+        engine.execute("CREATE TABLE tal (ts TIMESTAMP, v INT, b BINARY) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+        engine.execute("CREATE TABLE tb2 (rts TIMESTAMP, v INT, c1 INT) TIMESTAMP(rts) PARTITION BY DAY", sqlExecutionContext);
+        engine.execute("CREATE TABLE tc2 (cts TIMESTAMP, v INT) TIMESTAMP(cts) PARTITION BY DAY", sqlExecutionContext);
+        engine.execute("""
+                INSERT INTO tal VALUES
+                    ('2020-01-01T00:10', 1, from_base64('3q2+7w==')),
+                    ('2020-01-01T02:10', 2, from_base64('AQIDBAUG'))
+                """, sqlExecutionContext);
+        engine.execute("""
+                INSERT INTO tb2 VALUES
+                    ('2020-01-01T00:20', 1, 10),
+                    ('2020-01-01T01:20', 2, 20),
+                    ('2020-01-01T03:20', 1, 30)
+                """, sqlExecutionContext);
+        engine.execute("""
+                INSERT INTO tc2 VALUES
+                    ('2020-01-01T00:20', 5),
+                    ('2020-01-01T01:20', 0),
+                    ('2020-01-01T03:20', 100)
+                """, sqlExecutionContext);
+    }
+
+    private static void requestParquetExport(TestHttpClient testHttpClient, DirectUtf8Sink sink, String query) {
+        HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+        req.GET().url("/exp");
+        req.query("query", query);
+        req.query("fmt", "parquet");
+        final String status = testHttpClient.reqToSink(req, sink, null, null, null, null);
+        if (!"200".equals(status)) {
+            Assert.fail("expected response code 200 but got " + status + ": " + sink);
+        }
+    }
+
     private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         return new Thread(() -> {
             try {
@@ -2706,6 +3131,65 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
         TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    /**
+     * Asserts that the query returns the expected rows, streaming its first table and declaring that
+     * table's timestamp, and that its export through the temp table succeeds and sends a file that
+     * holds the same rows in the same order.
+     */
+    private void assertTempTableExportMatchesSelect(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            String filename,
+            boolean isSizeExpected,
+            String expectedRows
+    ) throws Exception {
+        assertTempTableExportMatchesSelect(engine, sqlExecutionContext, query, filename, isSizeExpected, "lts", expectedRows);
+    }
+
+    /**
+     * Asserts that the query returns the expected rows with the given designated timestamp, none when it
+     * is null, and that its export through the temp table succeeds and sends a file that holds the same
+     * rows in the same order, with the same designated timestamp.
+     */
+    private void assertTempTableExportMatchesSelect(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            String filename,
+            boolean isSizeExpected,
+            @Nullable String timestamp,
+            String expectedRows
+    ) throws Exception {
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+            Assert.assertEquals(
+                    ParquetExportMode.TEMP_TABLE,
+                    ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
+            );
+        }
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize(isSizeExpected)
+                .timestamp(timestamp)
+                .returns(expectedRows);
+
+        try (TestHttpClient testHttpClient = new TestHttpClient();
+             var sink = new DirectUtf8Sink(16_384)
+        ) {
+            requestParquetExport(testHttpClient, sink, query);
+            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, filename);
+        }
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "SELECT * FROM read_parquet('" + filename + "')")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp(timestamp)
+                .returns(expectedRows);
+        assertExportReleased(engine);
     }
 
     private HttpQueryTestBuilder getExportTester() {

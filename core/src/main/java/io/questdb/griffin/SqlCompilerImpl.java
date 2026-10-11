@@ -220,7 +220,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
-    // false while executeCreateTable() compiles the SELECT of CREATE TABLE AS SELECT, see SqlOptimiser.optimise()
+    // false while executeCreateTable() compiles the SELECT of CREATE TABLE AS SELECT, unless the statement
+    // creates the temp table of a Parquet export that declares a designated timestamp, see
+    // executeCreateTable() and SqlOptimiser.optimise()
+    private boolean isQueryOrderObserved = true;
+    // false while executeCreateTable() compiles the SELECT of CREATE TABLE AS SELECT, unless the statement
+    // creates the temp table of a Parquet export, see executeCreateTable() and SqlOptimiser.optimise()
     private boolean isQueryOrderTracked = true;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
@@ -3438,7 +3443,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
-                return optimiser.optimise((IQueryModel) model, executionContext, this, isQueryOrderTracked);
+                return optimiser.optimise((IQueryModel) model, executionContext, this, isQueryOrderObserved, isQueryOrderTracked);
             case ExecutionModel.INSERT: {
                 final InsertModel insertModel = (InsertModel) model;
                 if (insertModel.getQueryModel() != null) {
@@ -4954,20 +4959,55 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final int position = createTableOp.getTableNamePosition();
                     RecordCursorFactory newFactory = null;
                     RecordCursor newCursor;
+                    // As for INSERT AS SELECT, no level of the SELECT keeps the first table of a join chain
+                    // first for the order of the rows. The temp table of a Parquet export is the exception:
+                    // CopyExportFactory and CopyExportContext compile its SELECT as a query to validate the
+                    // export and to derive the table's designated timestamp, and the exported file shows the
+                    // rows the way the table stores them. Its SELECT compiles with the order tracked, so
+                    // every level whose own clauses read the order of their rows, such as LIMIT or a window
+                    // function, reads the rows in the query's order. The order of the SELECT's own rows is
+                    // observed only when the validation declared a designated timestamp, so that the table
+                    // receives its rows in that timestamp's order. Otherwise the cost model may run an
+                    // equi-joined chain before a first table that only a cross join links to it, which
+                    // probes the chain once per chain row rather than once per row of the cross product,
+                    // and the file holds the rows in the order CREATE TABLE AS SELECT would store them. An
+                    // export with PARTITION_BY always declares a timestamp, so when that timestamp is the
+                    // first table's it pays for the query's order even over a selective chain: the plan
+                    // that runs the chain first does not declare that timestamp.
+                    final boolean isTempExport = createTableOp.getTableKind() == TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT;
+                    boolean isOrderObserved = isTempExport && createTableOp.getTimestampIndex() > -1;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
                             lexer.of(createTableOp.getSelectText());
                             clearExceptSqlText();
-                            // as for INSERT AS SELECT, no level of the SELECT keeps the first table of a
-                            // join chain first for the order of the rows
-                            isQueryOrderTracked = false;
+                            isQueryOrderObserved = isOrderObserved;
+                            isQueryOrderTracked = isTempExport;
                             try {
                                 compileInner(executionContext, createTableOp.getSelectText(), false);
                             } finally {
+                                isQueryOrderObserved = true;
                                 isQueryOrderTracked = true;
                             }
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
+                            if (
+                                    isTempExport
+                                            && !isOrderObserved
+                                            && newFactory.getMetadata().getTimestampIndex() > -1
+                                            && newFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                            ) {
+                                // the plan declares a designated timestamp that the validation did not, such
+                                // as the timestamp of a join chain that the plan runs first. The SELECT compiles
+                                // again in the default mode, the validation's, so the table, like the
+                                // validation, has no designated timestamp. newFactory keeps the first factory
+                                // until then, so the catch blocks below free it if this compilation fails
+                                isOrderObserved = true;
+                                lexer.of(createTableOp.getSelectText());
+                                clearExceptSqlText();
+                                compileInner(executionContext, createTableOp.getSelectText(), false);
+                                Misc.free(newFactory);
+                                newFactory = compiledQuery.getRecordCursorFactory();
+                            }
                             newCursor = newFactory.getCursor(executionContext);
                             break;
                         } catch (TableReferenceOutOfDateException e) {

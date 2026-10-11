@@ -1169,10 +1169,12 @@ class LateralJoinRewriter implements Mutable {
     }
 
     private IQueryModel cloneOuterRef(IQueryModel outerRefJoinModel) {
-        return cloneOuterRef(outerRefJoinModel, OUTER_REF_PREFIX, null);
+        final QueryModel clonedOuterRef = cloneOuterRef(outerRefJoinModel, OUTER_REF_PREFIX, null);
+        clonedOuterRef.setLateralOuterRef(true);
+        return clonedOuterRef;
     }
 
-    private IQueryModel cloneOuterRef(
+    private QueryModel cloneOuterRef(
             IQueryModel outerRefJoinModel,
             CharSequence aliasPrefix,
             IQueryModel aliasOwner
@@ -1207,7 +1209,7 @@ class LateralJoinRewriter implements Mutable {
             renamingLayer.addBottomUpColumnIfNotExists(generatedColumn);
         }
 
-        IQueryModel clonedOuterRef = queryModelPool.next();
+        QueryModel clonedOuterRef = queryModelPool.next();
         clonedOuterRef.setNestedModel(renamingLayer);
         clonedOuterRef.setNestedModelIsSubQuery(true);
         ExpressionNode cloneAliasExpr = expressionNodePool.next().of(
@@ -1709,10 +1711,11 @@ class LateralJoinRewriter implements Mutable {
             }
 
             if (isPushDeep) {
-                IQueryModel deepOuterRef = queryModelPool.next();
+                QueryModel deepOuterRef = queryModelPool.next();
                 deepOuterRef.setNestedModel(branchOuterRef.getNestedModel());
                 deepOuterRef.setAlias(branchOuterRef.getAlias());
                 deepOuterRef.setJoinType(IQueryModel.JOIN_CROSS);
+                deepOuterRef.setLateralOuterRef(true);
                 pushDownOuterRefs(
                         current, current.getNestedModel(), outerToInnerAlias,
                         false, deepOuterRef, current, depth
@@ -2021,7 +2024,8 @@ class LateralJoinRewriter implements Mutable {
                 setupOuterRefDataSource(outerRefSubquery, model, joinModel.getCorrelatedColumns());
                 pushOuterWhereToRefBases(model, outerRefSubquery);
 
-                IQueryModel outerRefJoinModel = queryModelPool.next();
+                QueryModel outerRefJoinModel = queryModelPool.next();
+                outerRefJoinModel.setLateralOuterRef(true);
                 outerRefJoinModel.setJoinType(IQueryModel.JOIN_CROSS);
                 outerRefJoinModel.setNestedModel(outerRefSubquery);
                 outerRefJoinModel.setNestedModelIsSubQuery(true);

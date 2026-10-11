@@ -28,8 +28,11 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Numbers;
+import io.questdb.test.QueryAssertion;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -707,6 +710,96 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                             "a\t10\t2026-01-01T00:00:01.000000Z\t1\n" +
                             "a\t20\t2026-01-01T00:00:02.000000Z\t2\n" +
                             "a\t99\t2026-01-01T00:00:03.000000Z\t3\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFusedSymbolJoinMatchesOrdinaryJoinAfterLeadTextReplayedAway() throws Exception {
+        // An upsert replays away a lead-only text, so the view's symbol cache keeps the id it
+        // interned for that text, and the next new text takes the id after it while the view's
+        // table commits that text at the id before it. The in-memory tier then holds that text
+        // under two keys, and its rows carry the key that keyOf() does not return. A fused
+        // SYMBOL-key join that probes the view must still match those rows by text, as the
+        // ordinary join does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP, g SYMBOL) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Nine texts, flushed to the view's table.
+                execute("""
+                        INSERT INTO base (sym, val, ts) VALUES
+                            ('k0', 1, '2026-01-01T00:00:01.000000Z'), ('k1', 1, '2026-01-01T00:00:02.000000Z'),
+                            ('k2', 1, '2026-01-01T00:00:03.000000Z'), ('k3', 1, '2026-01-01T00:00:04.000000Z'),
+                            ('k4', 1, '2026-01-01T00:00:05.000000Z'), ('k5', 1, '2026-01-01T00:00:06.000000Z'),
+                            ('k6', 1, '2026-01-01T00:00:07.000000Z'), ('k7', 1, '2026-01-01T00:00:08.000000Z'),
+                            ('k8', 1, '2026-01-01T00:00:09.000000Z')
+                        """);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Within FLUSH EVERY (clock still 0): an un-flushed lead with the new text x.
+                execute("INSERT INTO base (sym, val, ts) VALUES ('x', 2, '2026-01-01T00:00:10.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+
+                // Enable dedup and upsert the x row away with a flushed text: the replay commits
+                // no x, while the symbol cache keeps the id it gave x.
+                execute("ALTER TABLE base DEDUP ENABLE UPSERT KEYS(ts)");
+                drainWalQueue();
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('k0', 3, '2026-01-01T00:00:10.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // The new text y: the in-memory tier serves its row.
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('y', 4, '2026-01-01T00:00:11.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+            // dim holds one text against the view's eleven keys, the shape that fills the
+            // translation cache from the build side, were the view's dictionary eligible. The
+            // queries return no SYMBOL column: the view's keyOf() gives y's other key, which the
+            // query assertion's symbol table checks would report on their own.
+            execute("CREATE TABLE dim (sym SYMBOL, w INT)");
+            execute("INSERT INTO dim VALUES ('y', 1)");
+            final String innerSql = "SELECT d.w, count(*) n, sum(l.val) s FROM lv l JOIN dim d ON l.sym = d.sym ORDER BY d.w";
+            final String innerExpected = """
+                    w\tn\ts
+                    1\t1\t4
+                    """;
+            final String leftSql = "SELECT l.val, count(d.w) m, count(*) n FROM lv l LEFT JOIN dim d ON l.sym = d.sym ORDER BY l.val";
+            final String leftExpected = """
+                    val\tm\tn
+                    1\t0\t9
+                    3\t0\t1
+                    4\t1\t1
+                    """;
+            for (boolean isFused : new boolean[]{false, true}) {
+                try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 4)
+                        .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null)) {
+                    context.setParallelGroupByEnabled(true);
+                    context.setParallelHashJoinGroupByEnabled(isFused);
+                    for (String[] query : new String[][]{{innerSql, innerExpected}, {leftSql, leftExpected}}) {
+                        final QueryAssertion assertion = assertQuery(query[0])
+                                .withContext(context)
+                                .noLeakCheck()
+                                .expectSize();
+                        if (isFused) {
+                            // The view probes, through the in-memory tier.
+                            assertion.withPlanContaining("Async Hash Join Group By", "symbolKeyJoin: true", "inMemory: true");
+                        } else {
+                            assertion.withPlanNotContaining("Hash Join Group By");
+                        }
+                        assertion.returns(query[1]);
+                    }
+                }
+            }
             execute("DROP LIVE VIEW lv");
         });
     }

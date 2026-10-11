@@ -45,6 +45,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Keeps probe/build symbols alive until output and parent consumers finish.
+ * <p>
+ * Opening the cursor reads no row: the factory's getCursor() opens the two scans and initializes
+ * the filters and the functions. The first {@link #hasNext()} or {@link #calculateSize} builds
+ * the hash table, probes it and merges the result, in that order and once per execution, on the
+ * calling thread. {@link #size()} and {@link #toTop()} ask for no row and start none of it.
  */
 final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
     private final CairoEngine engine;
@@ -151,6 +156,10 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
         mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), rowId);
     }
 
+    /**
+     * The group count once the result exists, and -1 for a keyed result that does not yet. It
+     * never builds: LIMIT asks for the size while its cursor opens.
+     */
     @Override
     public long size() {
         return functions.isKeyed() ? (mapCursor == null ? -1 : mapCursor.size()) : 1;
@@ -172,6 +181,11 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
             try {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 AsyncHashJoinGroupByAtom atom = frameSequence.getAtom();
+                // The build runs here, on first demand for a result, rather than when the cursor
+                // opens. It completes on this thread before the first probe task is published,
+                // which is what publishes the frozen build and the slots' probes to the reducers.
+                // A failure closes the cursor below, and with it the build.
+                atom.build(circuitBreaker);
                 if (atom.shouldProbe()) {
                     frameSequence.prepareForDispatch();
                     long probeRows = 0;

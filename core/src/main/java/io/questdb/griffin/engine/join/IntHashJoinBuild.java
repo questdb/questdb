@@ -671,6 +671,19 @@ public final class IntHashJoinBuild implements Closeable {
         long size;
 
         @Override
+        public void countKeyRows() {
+            if (frozen != this) {
+                throw new IllegalStateException("hash join build has expired");
+            }
+            try {
+                heap.countChains();
+            } catch (Throwable th) {
+                IntHashJoinBuild.this.close();
+                throw th;
+            }
+        }
+
+        @Override
         public long getKeyCount() {
             return keysCount;
         }
@@ -739,6 +752,11 @@ public final class IntHashJoinBuild implements Closeable {
                 assert isCurrent();
                 long slot = IntHashJoinKeyTable.findSlot(keysAddress, slots, key);
                 next = toRowLink(Unsafe.getInt(slot + 4));
+            }
+
+            @Override
+            public long findRowCountUnchecked(int key) {
+                return getKeyRowCount(findHead(key));
             }
 
             @Override
@@ -842,6 +860,11 @@ public final class IntHashJoinBuild implements Closeable {
             @Override
             public void find(int key) {
                 next = toRowLink(findHead(key));
+            }
+
+            @Override
+            public long findRowCountUnchecked(int key) {
+                return getKeyRowCount(findHead(key));
             }
 
             @Override

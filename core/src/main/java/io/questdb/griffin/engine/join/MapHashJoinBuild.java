@@ -969,6 +969,19 @@ public final class MapHashJoinBuild implements Closeable {
         long size;
 
         @Override
+        public void countKeyRows() {
+            if (frozen != this) {
+                throw new IllegalStateException("hash join build has expired");
+            }
+            try {
+                heap.countChains();
+            } catch (Throwable th) {
+                MapHashJoinBuild.this.close();
+                throw th;
+            }
+        }
+
+        @Override
         public long getKeyCount() {
             return keysCount;
         }
@@ -1040,6 +1053,11 @@ public final class MapHashJoinBuild implements Closeable {
             public void find(Record probeRecord) {
                 assert isCurrent();
                 next = toRowLink(findHead(probeRecord));
+            }
+
+            @Override
+            public long findRowCountUnchecked(Record probeRecord) {
+                return getKeyRowCount(findHead(probeRecord));
             }
 
             @Override
@@ -1134,6 +1152,11 @@ public final class MapHashJoinBuild implements Closeable {
             @Override
             public void find(Record probeRecord) {
                 next = toRowLink(findHead(probeRecord));
+            }
+
+            @Override
+            public long findRowCountUnchecked(Record probeRecord) {
+                return getKeyRowCount(findHead(probeRecord));
             }
 
             @Override

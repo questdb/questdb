@@ -2373,6 +2373,21 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossTripleOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = select("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c")) {
+                Assert.assertNotNull(factory);
+                sink.clear();
+                CursorPrinter.println(factory.getMetadata(), sink);
+                TestUtils.assertEquals("x\tx1\tx2\n", sink);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(Long.MAX_VALUE, cursor.size());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFirstTableKeepsTimestampOrderOfChain() throws Exception {
         // The join chain streams rows in the order of the table that drives it, and ASOF JOIN matches
         // on that table's timestamps. The implied equalities make m a candidate to take over
@@ -8650,6 +8665,321 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateralBodyOuterJoinThenInnerJoinOnCorrelatedEquality() throws Exception {
+        // c's ON clause equates a with the outer row, and a joins before the RIGHT or FULL join. The
+        // equality cannot filter a below that join: the join would NULL-extend the d rows that lose
+        // their a row, and those rows would bypass it. No join of the body reads the rewriter's join
+        // to the distinct outer values, so that join runs last, and the equality filters its output.
+        // See createLateralBodyOuterJoinTables().
+        assertMemoryLeak(() -> {
+            createLateralBodyOuterJoinTables();
+
+            // The RIGHT join yields (aid, a.k, did) = (1, 1, 1), (2, 2, 2) and the NULL-extended
+            // (null, null, 3), which matches no c row. The FULL join adds (4, 2, null) for a's row 4.
+            // c's key pairs a.k = 1 with b's row 11, and a.k = 2 with b's rows 12 and 13.
+            // o.id = 1 keeps the a.k = 1 row and o.id = 2 keeps the a.k = 2 rows. No a.k equals 3.
+            for (String outerJoin : new String[]{"RIGHT", "FULL"}) {
+                final String rows = """
+                        id\taid\tdid\tcid
+                        1\t1\t1\t11
+                        2\t2\t2\t12
+                        2\t2\t2\t13
+                        """ + ("FULL".equals(outerJoin) ? """
+                        2\t4\tnull\t12
+                        2\t4\tnull\t13
+                        """ : "");
+                for (String equality : new String[]{"a.k = o.id", "o.id = a.k"}) {
+                    final String from = "FROM a " + outerJoin + " JOIN d ON d.id = a.id JOIN b c ON c.k = a.k AND " + equality;
+                    final String body = "SELECT a.id aid, d.id did, c.id cid " + from;
+                    for (String lateral : new String[]{
+                            "o CROSS JOIN LATERAL (" + body + ") t",
+                            "o JOIN LATERAL (" + body + ") t ON true",
+                            "o, LATERAL (" + body + ") t"
+                    }) {
+                        assertQuery("SELECT o.id, t.aid, t.did, t.cid FROM " + lateral + " ORDER BY o.id, t.aid, t.did, t.cid")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(rows);
+                    }
+                    // the LEFT form keeps the outer row that the body returns no row for
+                    assertQuery("SELECT o.id, t.aid, t.did, t.cid FROM o LEFT JOIN LATERAL (" + body + ") t ON true"
+                            + " ORDER BY o.id, t.aid, t.did, t.cid")
+                            .noLeakCheck()
+                            .returns(rows + "3\tnull\tnull\tnull\n");
+                    // an aggregate body returns a row for every outer row
+                    assertQuery("SELECT o.id, t.n FROM o CROSS JOIN LATERAL (SELECT count(*) n " + from + ") t ORDER BY o.id")
+                            .noLeakCheck()
+                            .returns("FULL".equals(outerJoin) ? """
+                                    id\tn
+                                    1\t1
+                                    2\t4
+                                    3\t0
+                                    """ : """
+                                    id\tn
+                                    1\t1
+                                    2\t2
+                                    3\t0
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLateralBodyOuterJoinThenInnerJoinOnCorrelatedEqualityOfOtherTables() throws Exception {
+        // The correlated equality of c's ON clause reads d, the table that the RIGHT or FULL join
+        // preserves, a table that joins between a and the outer join, or it comes with a second
+        // correlated equality. In each body the rewriter's join to the distinct outer values runs
+        // last, and every correlated conjunct filters its output. See createLateralBodyOuterJoinTables().
+        assertMemoryLeak(() -> {
+            createLateralBodyOuterJoinTables();
+
+            final String matchedRows = """
+                    id\taid\tdid\tcid
+                    1\t1\t1\t11
+                    2\t2\t2\t12
+                    2\t2\t2\t13
+                    """;
+            for (String outerJoin : new String[]{"RIGHT", "FULL"}) {
+                // c's key reads d, so b's row 14 joins the NULL-extended (null, 3) row, which
+                // o.id = 3 keeps. The join to the outer values must not run before the outer join: it
+                // would NULL-extend the outer value of that row, and the row would reach no outer row.
+                for (String equality : new String[]{"d.id = o.id", "o.id = d.id", "d.id = o.id + 0"}) {
+                    for (String from : new String[]{
+                            "a " + outerJoin + " JOIN d ON d.id = a.id",
+                            // a second outer join executes between d and c
+                            "a " + outerJoin + " JOIN d ON d.id = a.id FULL JOIN d d2 ON d2.id = d.id"
+                    }) {
+                        assertQuery("SELECT o.id, t.aid, t.did, t.cid FROM o CROSS JOIN LATERAL (SELECT a.id aid, d.id did, c.id cid FROM "
+                                + from + " JOIN b c ON c.k = d.id AND " + equality + ") t ORDER BY o.id, t.aid, t.did, t.cid")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(matchedRows + "3\tnull\t3\t14\n");
+                    }
+                }
+                // c's key reads a, so no c row joins the NULL-extended (null, 3) row. The FULL join
+                // pairs a's row 4 with no d row, and the second equality of each body drops it. e
+                // stands for a table that joins before the outer join: it has no row for a's row 4.
+                for (String from : new String[]{
+                        "a " + outerJoin + " JOIN d ON d.id = a.id JOIN b c ON c.k = a.k AND d.id = o.id",
+                        "a " + outerJoin + " JOIN d ON d.id = a.id JOIN b c ON c.k = a.k AND a.k = o.id AND a.id = o.id",
+                        "a " + outerJoin + " JOIN d ON d.id = a.id JOIN b c ON c.k = a.k AND a.k = o.id AND d.id = o.id",
+                        "a JOIN d e ON e.id = a.id " + outerJoin + " JOIN d ON d.id = a.id JOIN b c ON c.k = a.k AND e.id = o.id",
+                        "a JOIN d e ON e.id = a.id " + outerJoin + " JOIN d ON d.id = a.id JOIN b c ON c.k = a.k AND e.id = o.id + 0"
+                }) {
+                    assertQuery("SELECT o.id, t.aid, t.did, t.cid FROM o CROSS JOIN LATERAL (SELECT a.id aid, d.id did, c.id cid FROM "
+                            + from + ") t ORDER BY o.id, t.aid, t.did, t.cid")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(matchedRows);
+                }
+            }
+
+            // a LEFT join NULL-extends d instead, and the equality on d drops a's row 4
+            assertQuery("""
+                    SELECT o.id, t.aid, t.did, t.cid
+                    FROM o CROSS JOIN LATERAL (
+                        SELECT a.id aid, d.id did, c.id cid
+                        FROM a
+                        LEFT JOIN d ON d.id = a.id
+                        JOIN b c ON c.k = a.k AND d.id = o.id
+                    ) t
+                    ORDER BY o.id, t.aid, t.did, t.cid
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(matchedRows);
+
+            // a LEFT join after c keeps the rows that the equality keeps: no d row has c's x
+            assertQuery("""
+                    SELECT o.id, t.aid, t.did, t.cid, t.fid
+                    FROM o CROSS JOIN LATERAL (
+                        SELECT a.id aid, d.id did, c.id cid, f.id fid
+                        FROM a
+                        RIGHT JOIN d ON d.id = a.id
+                        JOIN b c ON c.k = a.k AND a.k = o.id
+                        LEFT JOIN d f ON f.id = c.x
+                    ) t
+                    ORDER BY o.id, t.aid, t.did, t.cid
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tdid\tcid\tfid
+                            1\t1\t1\t11\tnull
+                            2\t2\t2\t12\tnull
+                            2\t2\t2\t13\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralBodyOuterJoinThenInnerJoinOnCorrelatedEqualityThenOuterJoin() throws Exception {
+        // A RIGHT or FULL join follows c and reads the rows that c's correlated conjunct keeps, so the
+        // conjunct has to filter below that join. The rewriter's join to the distinct outer values
+        // runs last, above it. There the conjunct would filter the rows that the join NULL-extends
+        // instead, and f's rows, none of which matches a c row, would reach no outer row. No join can
+        // hold the conjunct, so the query fails to compile rather than return rows without them.
+        // See createLateralBodyOuterJoinTables().
+        assertMemoryLeak(() -> {
+            createLateralBodyOuterJoinTables();
+
+            for (String outerJoin : new String[]{"RIGHT", "FULL"}) {
+                for (String from : new String[]{
+                        "a RIGHT JOIN d ON d.id = a.id JOIN b c ON c.k = a.k AND a.k = o.id",
+                        "a RIGHT JOIN d ON d.id = a.id JOIN b c ON c.k = d.id AND d.id = o.id",
+                        // a second outer join executes between d and c
+                        "a RIGHT JOIN d ON d.id = a.id FULL JOIN d d2 ON d2.id = d.id JOIN b c ON c.k = d.id AND d.id = o.id + 0"
+                }) {
+                    final String sql = "SELECT o.id, t.aid, t.did, t.cid, t.fid FROM o CROSS JOIN LATERAL ("
+                            + "SELECT a.id aid, d.id did, c.id cid, f.id fid FROM " + from + " " + outerJoin + " JOIN d f ON f.id = c.x"
+                            + ") t ORDER BY o.id, t.aid, t.did, t.cid, t.fid";
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .fails(sql.indexOf("= o.id") + 2, "Invalid column: __qdb_outer_ref__0_id");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLateralBodyOuterJoinThenInnerJoinOnCorrelatedEqualityWithNullKeys() throws Exception {
+        // The correlated equality of c's ON clause has to return the rows of its two other spellings:
+        // inside a function, where it never was a join key, and in the WHERE clause.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("CREATE TABLE d (id INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20), (NULL, 30)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO d VALUES (1), (2), (3)");
+            execute("INSERT INTO b VALUES (11, 1, 10), (12, 2, 20), (13, 2, 30), (14, 3, 10), (15, NULL, 10)");
+
+            final String[] bodies = {
+                    "SELECT a.id aid, d.id did, c.id cid FROM a RIGHT JOIN d ON d.id = a.id JOIN b c ON c.k = a.k AND a.k = o.id",
+                    "SELECT a.id aid, d.id did, c.id cid FROM a RIGHT JOIN d ON d.id = a.id JOIN b c ON c.k = a.k AND a.k = o.id + 0",
+                    "SELECT a.id aid, d.id did, c.id cid FROM a RIGHT JOIN d ON d.id = a.id JOIN b c ON c.k = a.k WHERE a.k = o.id"
+            };
+
+            // No a row has d's id 3, so the RIGHT join NULL-extends d's row 3. A hash join matches a
+            // NULL key to a NULL key, so c's key pairs that row with b's row 15, and the equality
+            // holds NULL equal to NULL as well, so the outer row with the NULL id keeps the pair.
+            for (String body : bodies) {
+                assertQuery("SELECT o.id, t.aid, t.did, t.cid FROM o CROSS JOIN LATERAL (" + body + ") t ORDER BY o.id, t.aid, t.did, t.cid")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\taid\tdid\tcid
+                                null\tnull\t3\t15
+                                1\t1\t1\t11
+                                2\t2\t2\t12
+                                2\t2\t2\t13
+                                """);
+            }
+
+            // a's new row matches d's row 3, so the RIGHT join NULL-extends no row, and no a.k is NULL:
+            // b's row 15 finds no pair. A plan that applies the equality below the RIGHT join drops
+            // a's new row there, NULL-extends d's row 3 again and returns the (null, null, 3, 15) row.
+            execute("INSERT INTO a VALUES (3, 9)");
+            for (String body : bodies) {
+                assertQuery("SELECT o.id, t.aid, t.did, t.cid FROM o CROSS JOIN LATERAL (" + body + ") t ORDER BY o.id, t.aid, t.did, t.cid")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\taid\tdid\tcid
+                                1\t1\t1\t11
+                                2\t2\t2\t12
+                                2\t2\t2\t13
+                                """);
+                assertQuery("SELECT o.id, t.aid, t.did, t.cid FROM o LEFT JOIN LATERAL (" + body + ") t ON true ORDER BY o.id, t.aid, t.did, t.cid")
+                        .noLeakCheck()
+                        .returns("""
+                                id\taid\tdid\tcid
+                                null\tnull\tnull\tnull
+                                1\t1\t1\t11
+                                2\t2\t2\t12
+                                2\t2\t2\t13
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testLateralBodyRightJoinSubQueryWithNotEqualCorrelationInWhere() throws Exception {
+        // testLateralBodyRightJoinWithNotEqualCorrelationInWhere() with the RIGHT join in a sub-query
+        // of the body or in both branches of a UNION ALL. The rewriter gives each such sub-query and
+        // branch a copy of its join to the distinct outer values, and each copy has to run after the
+        // RIGHT join as well.
+        assertMemoryLeak(() -> {
+            createLateralBodyTables();
+
+            final String rightJoin = "SELECT a.id aid, c.id cid FROM a RIGHT JOIN b c ON c.k = a.k WHERE c.x != o.x";
+            // b.id is unique, so the join to b keeps every row of the sub-query once
+            assertQuery("SELECT o.id, t.aid, t.cid FROM o CROSS JOIN LATERAL ("
+                    + "SELECT s.aid, s.cid FROM b JOIN (" + rightJoin + ") s ON s.cid = b.id"
+                    + ") t ORDER BY o.id, t.cid")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tcid
+                            1\t1\t11
+                            1\t2\t12
+                            1\t2\t13
+                            1\tnull\t14
+                            2\t1\t11
+                            2\t2\t13
+                            2\tnull\t14
+                            3\t1\t11
+                            3\t2\t12
+                            3\tnull\t14
+                            5\t1\t11
+                            5\t2\t12
+                            5\t2\t13
+                            5\tnull\t14
+                            """);
+            for (String secondBranch : new String[]{rightJoin, "SELECT aid, cid FROM (" + rightJoin + ")"}) {
+                assertQuery("SELECT o.id, t.aid, t.cid FROM o CROSS JOIN LATERAL ("
+                        + rightJoin + " UNION ALL " + secondBranch
+                        + ") t ORDER BY o.id, t.cid")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\taid\tcid
+                                1\t1\t11
+                                1\t1\t11
+                                1\t2\t12
+                                1\t2\t12
+                                1\t2\t13
+                                1\t2\t13
+                                1\tnull\t14
+                                1\tnull\t14
+                                2\t1\t11
+                                2\t1\t11
+                                2\t2\t13
+                                2\t2\t13
+                                2\tnull\t14
+                                2\tnull\t14
+                                3\t1\t11
+                                3\t1\t11
+                                3\t2\t12
+                                3\t2\t12
+                                3\tnull\t14
+                                3\tnull\t14
+                                5\t1\t11
+                                5\t1\t11
+                                5\t2\t12
+                                5\t2\t12
+                                5\t2\t13
+                                5\t2\t13
+                                5\tnull\t14
+                                5\tnull\t14
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testLateralBodyRightJoinThenAsOfJoinWithNotEqualCorrelationInWhere() throws Exception {
         // The ASOF join follows a non-equi RIGHT join, whose output has no designated timestamp, so it
         // runs before the RIGHT join, on that join's SQL prefix. The prefix must not include the
@@ -8700,6 +9030,80 @@ public class JoinTest extends AbstractCairoTest {
                             2\tnull\t11\tnull
                             2\t1\t13\tnull
                             2\t2\t13\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralBodyRightJoinThenInnerJoinOnCorrelatedEquality() throws Exception {
+        // c's ON clause holds a.k = o.id, an equality of a, which joins before the RIGHT join, and the
+        // outer row. It stays out of the RIGHT join's master, so it is a filter, and the filter has to
+        // sit on a join that runs after the rewriter's join to the distinct outer values. Nothing
+        // holds that join before the RIGHT join, so it runs after c's join, and the filter with it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("CREATE TABLE d (id INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO d VALUES (1), (2), (3)");
+            execute("INSERT INTO b VALUES (11, 1, 10), (12, 2, 20), (13, 2, 30), (14, 3, 10)");
+
+            // The RIGHT join yields (aid, a.k, did) = (1, 1, 1), (2, 2, 2) and the NULL-extended
+            // (null, null, 3), which matches no c row. c's key pairs a.k = 1 with b's row 11, and
+            // a.k = 2 with b's rows 12 and 13. o.id = 1 keeps the first pair, o.id = 2 the other two.
+            assertQuery("""
+                    SELECT o.id, t.aid, t.did, t.cid
+                    FROM o CROSS JOIN LATERAL (
+                        SELECT a.id aid, d.id did, c.id cid
+                        FROM a RIGHT JOIN d ON d.id = a.id
+                        JOIN b c ON c.k = a.k AND a.k = o.id
+                    ) t
+                    ORDER BY 1, 2, 3, 4
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, aid, did, cid]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: t.__qdb_outer_ref__0_id=o.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            SelectedRecord
+                                                Filter filter: a.k=__qdb_outer_ref__0.__qdb_outer_ref__0_id
+                                                    Cross Join
+                                                        Hash Join Light
+                                                          condition: c.k=a.k
+                                                            Hash Right Outer Join Light
+                                                              condition: d.id=a.id
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: a
+                                                                Hash
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: d
+                                                            Hash
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: b
+                                                        GroupBy vectorized: true workers: 1
+                                                          keys: [id]
+                                                          values: [count(*)]
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\taid\tdid\tcid
+                            1\t1\t1\t11
+                            2\t2\t2\t12
+                            2\t2\t2\t13
                             """);
         });
     }
@@ -11335,6 +11739,65 @@ public class JoinTest extends AbstractCairoTest {
                 assertQuery("SELECT a.x, b.y, x2.k FROM a " + joinType + " JOIN b ON a.x > b.y FULL JOIN x2 ON x2.k = a.k ORDER BY b.y, x2.k")
                         .noLeakCheck()
                         .returns(expectedFull);
+            }
+        });
+    }
+
+    @Test
+    public void testNullLiteralMasterFilterStaysPostJoin() throws Exception {
+        // A NULL-literal master predicate (m.x = null, which QuestDB evaluates as IS NULL) keeps the
+        // NULL-master rows instead of dropping them, the opposite of the operator/equality tests. It
+        // still must stay a post-join filter: pushing it into the master sub-query strips it from the
+        // post-join stage, so the NULL-master rows that the join synthesizes afterwards bypass it. The
+        // matched master row (x=5) fails IS NULL and is dropped; the single NULL-master row passes and
+        // is the only survivor under RIGHT/FULL/SPLICE. Pushing the predicate left the matched row in
+        // and re-leaked the NULL-master rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (5, 1, 2)");
+            execute("CREATE TABLE s (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES (1, 1), (2, 3)");
+
+            final String expected = "x\nnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.x FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.x = null")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.x=null")
+                        .returns(expected);
+            }
+
+            // SPLICE NULL-extends the master for the pre-master timestamp; only that NULL-master row
+            // passes IS NULL, the prevailing-master rows (x=5) are dropped.
+            assertQuery("SELECT m.x FROM m SPLICE JOIN s WHERE m.x = null")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: m.x=null")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testOperatorMasterFilterStaysPostJoin() throws Exception {
+        // assignFilters routes a non-folded operator predicate (a.c1 < 100) on a NULL-extending
+        // master to a post-join filter; the existing folded-FALSE splice test only exercises that
+        // path for a constant-FALSE predicate. The master row (c1=50) matches the slave and passes
+        // the filter; the slave's unmatched row becomes a NULL-master row that c1<100 drops
+        // (NULL<100 is NULL/false). Pushing the predicate into the master would leak that
+        // NULL-master row, so RIGHT/FULL must return only the matched row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c1 INT, k INT)");
+            execute("INSERT INTO m VALUES (50, 10)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (10), (20)");
+
+            final String expected = "c1\n50\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT m.c1 FROM m " + joinType + " JOIN s ON m.k = s.k WHERE m.c1 < 100")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Filter filter: m.c1<100")
+                        .returns(expected);
             }
         });
     }
@@ -14401,6 +14864,108 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableAliasedAsLateralOuterRefInLateralBodyThenOuterJoin() throws Exception {
+        // The LATERAL body holds both the rewriter's join model for the distinct outer values and a
+        // table aliased with the same prefix. Only the rewriter's model may run after the RIGHT join.
+        // The table runs inside the RIGHT join's master, like the same table aliased t0, so the RIGHT
+        // join NULL-extends d's row 3 once, not once per row of t.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT)");
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("CREATE TABLE t (id INT)");
+            execute("CREATE TABLE d (id INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            execute("INSERT INTO d VALUES (1), (2), (3)");
+
+            // The body yields (aid, did) = (1, 1) and (2, 2) once per t row, and the NULL-extended
+            // (null, 3). o.id = 1 keeps did 2 and 3, o.id = 2 keeps did 3.
+            for (String alias : new String[]{"__qdb_outer_ref__9", "t0"}) {
+                assertQuery("SELECT o.id, x.aid, x.did FROM o CROSS JOIN LATERAL ("
+                        + "SELECT a.id aid, d.id did FROM a CROSS JOIN t " + alias
+                        + " RIGHT JOIN d ON d.id = a.id WHERE d.id > o.id) x ORDER BY o.id, x.aid, x.did")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\taid\tdid
+                                1\tnull\t3
+                                1\t2\t2
+                                1\t2\t2
+                                2\tnull\t3
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testTableAliasedAsLateralOuterRefThenOuterJoinOnEquality() throws Exception {
+        // LateralJoinRewriter aliases the join model that it adds to a LATERAL body for the distinct
+        // outer values __qdb_outer_ref__N, and the optimiser lets that model run after a RIGHT join. A
+        // table that the query itself aliases __qdb_outer_ref__0 gets no such treatment: like the same
+        // table aliased t0, it joins inside the RIGHT join's master, and the equality of c's ON clause
+        // filters the rows of c's join. See assertTableAliasedAsLateralOuterRef().
+        assertMemoryLeak(() -> {
+            createTableAliasedAsLateralOuterRefTables();
+            assertQuery("""
+                    SELECT a.id aid, d.id did, c.k ck
+                    FROM a CROSS JOIN t __qdb_outer_ref__0
+                    RIGHT JOIN d ON d.id = a.id
+                    JOIN c ON c.k = a.k AND a.k = __qdb_outer_ref__0.id
+                    ORDER BY did, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [did, ck]
+                                SelectedRecord
+                                    Filter filter: a.k=__qdb_outer_ref__0.id
+                                        Hash Join Light
+                                          condition: c.k=a.k
+                                            Hash Right Outer Join Light
+                                              condition: d.id=a.id
+                                                Cross Join
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: d
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                            """)
+                    .returns("""
+                            aid\tdid\tck
+                            1\t1\t1
+                            null\t2\tnull
+                            """);
+            assertTableAliasedAsLateralOuterRef("a.k = %s.id", "%s.id = a.k");
+            // A cross join to t after the RIGHT join would repeat its NULL-extended row once per t row
+            // with a NULL id.
+            execute("INSERT INTO t VALUES (NULL), (NULL)");
+            assertTableAliasedAsLateralOuterRef("a.k = %s.id", "%s.id = a.k");
+        });
+    }
+
+    @Test
+    public void testTableAliasedAsLateralOuterRefThenOuterJoinOnNonEquality() throws Exception {
+        // The same as testTableAliasedAsLateralOuterRefThenOuterJoinOnEquality() for a correlation that
+        // is no plain column equality.
+        assertMemoryLeak(() -> {
+            createTableAliasedAsLateralOuterRefTables();
+            assertTableAliasedAsLateralOuterRef("a.k + 0 = %s.id", "a.k >= %s.id");
+            execute("INSERT INTO t VALUES (NULL), (NULL)");
+            assertTableAliasedAsLateralOuterRef("a.k + 0 = %s.id", "a.k >= %s.id");
+        });
+    }
+
+    @Test
     public void testThreeTableMasterFilterStaysPostJoin() throws Exception {
         // A WHERE predicate that references THREE master tables (t0.a + t1.b + t2.c > 0), wrapped in a
         // sub-query so moveWhereInsideSubQueries re-anchors it. The multi-table branch there routes
@@ -14926,6 +15491,40 @@ public class JoinTest extends AbstractCairoTest {
         }
     }
 
+    // Runs each correlation, with %s standing for the alias of t, in c's ON clause after
+    // "a CROSS JOIN t" and after "t CROSS JOIN a", under a RIGHT and a FULL join, with c's key and
+    // without it. The alias __qdb_outer_ref__0 has to return the rows that the alias t0 returns. See
+    // createTableAliasedAsLateralOuterRefTables() for the rows.
+    private void assertTableAliasedAsLateralOuterRef(String... correlations) throws Exception {
+        for (String correlation : correlations) {
+            for (String alias : new String[]{"__qdb_outer_ref__0", "t0"}) {
+                final String condition = String.format(correlation, alias);
+                for (String from : new String[]{"a CROSS JOIN t " + alias, "t " + alias + " CROSS JOIN a"}) {
+                    for (String outerJoin : new String[]{"RIGHT", "FULL"}) {
+                        final String join = "SELECT a.id aid, d.id did, c.k ck FROM " + from + " " + outerJoin
+                                + " JOIN d ON d.id = a.id JOIN c ON ";
+                        assertQuery(join + "c.k = a.k AND " + condition + " ORDER BY did, ck")
+                                .noLeakCheck()
+                                .returns("""
+                                        aid\tdid\tck
+                                        1\t1\t1
+                                        null\t2\tnull
+                                        """);
+                        assertQuery(join + condition + " ORDER BY did, ck")
+                                .noLeakCheck()
+                                .returns("""
+                                        aid\tdid\tck
+                                        1\t1\tnull
+                                        1\t1\t1
+                                        null\t2\tnull
+                                        null\t2\t1
+                                        """);
+                    }
+                }
+            }
+        }
+    }
+
     // Tables of testFirstTableWithTimestampStopsChainAt*(): s0 has a designated timestamp, each s1 row
     // joins one s2 row on x, and s4 matches the first s0 and s2 rows on a and b, at a time before s0's.
     private void createFirstTableBarrierTables() throws SqlException {
@@ -14973,6 +15572,25 @@ public class JoinTest extends AbstractCairoTest {
                 """);
     }
 
+    // Tables of the testLateralBodyOuterJoinThenInnerJoinOnCorrelatedEquality*() tests that call it.
+    // d's row 3 has no a row and a's row 4 has no d row, so a RIGHT or FULL join of a and d
+    // NULL-extends d's row 3, and a FULL join NULL-extends a's row 4 as well. b's row 14 has the id
+    // of d's row 3 as its k, and b's rows 12 and 13 have the k of a's rows 2 and 4. c's ON clause in
+    // each body equates a table of the body with the outer row, so the rewriter keeps its join to
+    // the distinct outer values in the body. o's row 3 matches d's row 3 only, which shows whether
+    // that join ran before the RIGHT or FULL join: the join then NULL-extends the outer value of
+    // d's row 3, and the row reaches no outer row.
+    private void createLateralBodyOuterJoinTables() throws SqlException {
+        execute("CREATE TABLE o (id INT, x INT)");
+        execute("CREATE TABLE a (id INT, k INT)");
+        execute("CREATE TABLE d (id INT)");
+        execute("CREATE TABLE b (id INT, k INT, x INT)");
+        execute("INSERT INTO o VALUES (1, 10), (2, 20), (3, 30)");
+        execute("INSERT INTO a VALUES (1, 1), (2, 2), (4, 2)");
+        execute("INSERT INTO d VALUES (1), (2), (3)");
+        execute("INSERT INTO b VALUES (11, 1, 10), (12, 2, 20), (13, 2, 30), (14, 3, 10)");
+    }
+
     // Tables of testLateralBodyFullJoinWith*() and testLateralBodyRightJoinWith*(). a's row 3 has no
     // b row and b's row 14 has no a row, so a RIGHT or FULL join of a and b NULL-extends a row on
     // either side. The WHERE clause of each body reads the outer row through a condition that is no
@@ -14986,6 +15604,24 @@ public class JoinTest extends AbstractCairoTest {
         execute("INSERT INTO o VALUES (1, 5), (2, 20), (3, 30), (5, 40)");
         execute("INSERT INTO a VALUES (1, 1), (2, 2), (3, 5)");
         execute("INSERT INTO b VALUES (11, 1, 10), (12, 2, 20), (13, 2, 30), (14, 3, 10)");
+    }
+
+    // Tables of testTableAliasedAsLateralOuterRefThenOuterJoinOn*(). The cross join of a and t yields
+    // (a.id, a.k, t.id) = (1, 1, 1). The RIGHT or FULL join pairs it with d's row 1 and NULL-extends d's
+    // row 2 as (null, null, null). c's key pairs a.k = 1 with c's row 1, and the NULL a.k with c's NULL
+    // row, as QuestDB matches a NULL key to a NULL key. Each correlation of
+    // assertTableAliasedAsLateralOuterRef() holds for 1 against 1 and for NULL against NULL, and fails
+    // for 1 against NULL. The rows of t with a NULL id that the tests add pair with d's row 1 as
+    // (1, 1, null), which no correlation keeps, so they change no result.
+    private void createTableAliasedAsLateralOuterRefTables() throws SqlException {
+        execute("CREATE TABLE a (id INT, k INT)");
+        execute("CREATE TABLE t (id INT)");
+        execute("CREATE TABLE d (id INT)");
+        execute("CREATE TABLE c (k INT)");
+        execute("INSERT INTO a VALUES (1, 1)");
+        execute("INSERT INTO t VALUES (1)");
+        execute("INSERT INTO d VALUES (1), (2)");
+        execute("INSERT INTO c VALUES (1), (NULL)");
     }
 
     private void testAsOfJoin0(boolean fullFatJoin) throws Exception {

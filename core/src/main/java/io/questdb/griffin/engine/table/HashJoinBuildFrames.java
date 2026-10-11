@@ -300,6 +300,32 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         return frameCursor;
     }
 
+    /**
+     * Walks the frames of the cursor that {@link #open} opened into the address cache, once per
+     * execution. The walk opens every partition the build scan reads, so the owner runs it when
+     * the build starts rather than when the cursor opens. On failure the caller's cleanup path
+     * calls {@link #clear()}.
+     */
+    public void loadFrames() {
+        assert frameCursor != null && frameRowCounts.size() == 0 && rowCount == 0;
+        PageFrame frame;
+        int frameIndex = 0;
+        while ((frame = frameCursor.next()) != null) {
+            final long frameRows = frame.getPartitionHi() - frame.getPartitionLo();
+            frameRowCounts.add(frameRows);
+            addressCache.add(frameIndex++, frame);
+            rowCount += frameRows;
+        }
+        final DirectLongList pageAddresses = addressCache.getPageAddresses();
+        for (int f = 0; f < frameIndex; f++) {
+            final boolean isNative = addressCache.getFrameFormat(f) == PartitionFormat.NATIVE;
+            final int columnOffset = addressCache.toColumnOffset(f);
+            for (int column : payloadColumns) {
+                payloadAddresses.add(isNative ? pageAddresses.get(columnOffset + column) : 0);
+            }
+        }
+    }
+
     @Override
     public HashJoinPayloadSource.Reader newReader() {
         return new Reader();
@@ -328,30 +354,25 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     }
 
     /**
-     * Opens the build scan's page frame cursor for an execution and walks its frames. On failure
-     * the caller's cleanup path calls {@link #clear()}.
+     * Opens the build scan's page frame cursor for an execution and walks its frames:
+     * {@link #open} and {@link #loadFrames()} in one call. On failure the caller's cleanup path
+     * calls {@link #clear()}.
      */
     public void of(RecordCursorFactory buildFactory, SqlExecutionContext executionContext) throws SqlException {
+        open(buildFactory, executionContext);
+        loadFrames();
+    }
+
+    /**
+     * Opens the build scan's page frame cursor for an execution and reads no frame of it. The
+     * cursor serves the build input's symbol tables from here on; {@link #loadFrames()} walks its
+     * frames. On failure the caller's cleanup path calls {@link #clear()}.
+     */
+    public void open(RecordCursorFactory buildFactory, SqlExecutionContext executionContext) throws SqlException {
         assert frameCursor == null;
         memoryTracker = executionContext.getMemoryTracker();
         frameCursor = buildFactory.getPageFrameCursor(executionContext, ORDER_ASC);
         addressCache.of(buildFactory.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
-        PageFrame frame;
-        int frameIndex = 0;
-        while ((frame = frameCursor.next()) != null) {
-            final long frameRows = frame.getPartitionHi() - frame.getPartitionLo();
-            frameRowCounts.add(frameRows);
-            addressCache.add(frameIndex++, frame);
-            rowCount += frameRows;
-        }
-        final DirectLongList pageAddresses = addressCache.getPageAddresses();
-        for (int f = 0; f < frameIndex; f++) {
-            final boolean isNative = addressCache.getFrameFormat(f) == PartitionFormat.NATIVE;
-            final int columnOffset = addressCache.toColumnOffset(f);
-            for (int column : payloadColumns) {
-                payloadAddresses.add(isNative ? pageAddresses.get(columnOffset + column) : 0);
-            }
-        }
     }
 
     /**

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
@@ -106,7 +107,8 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
 
     @Override
     public final long next() {
-        assert isCurrent();
+        // A build that counted its key rows has no links left to follow.
+        assert isCurrent() && !rowHeap.hasChainLengths();
         if (next == 0) {
             throw new IllegalStateException("hash join probe is exhausted");
         }
@@ -125,6 +127,20 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         final long offset = handle - handleBase;
         assert offset >= 0 && offset % rowHeap.getRowSize() == 0 && offset / rowHeap.getRowSize() < rowsCount;
         positionAt(offset);
+    }
+
+    /**
+     * The rows of the key whose chain this compressed head starts, zero for the empty head of a key
+     * the build lacks. Only a build that counted its key rows keeps them; see
+     * {@link HashJoinRowHeap#countChains()}.
+     * <p>
+     * A caller reads one count per probe row, so this read asserts nothing: assertions run in
+     * production, and a per-row check here measurably slows every count. The lookup that found the
+     * head asserts that the probe is current. The fused reducers pick a count loop once per page
+     * frame, and only for a build whose count pass has returned.
+     */
+    protected final long getKeyRowCount(int head) {
+        return head != 0 ? Unsafe.getLong(heapAddress + CompressedOffsets.uncompressBiased8(head)) : 0;
     }
 
     /**

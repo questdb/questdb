@@ -144,6 +144,9 @@ public class QueryModel implements IQueryModel {
     private boolean isCteModel;
     private ExpressionNode lateralCountCoalesceGuard;
     private boolean isLateralCountCoalesceRequired;
+    // LateralJoinRewriter marks the join model that it adds to a LATERAL body for the distinct outer
+    // values, so that SqlOptimiser tells it from a table that a query aliases with the same prefix.
+    private boolean isLateralOuterRef;
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
     // synthesized alignment columns after wildcard expansion assigns final aliases.
     private boolean isOuterRefWildcardExcluded;
@@ -464,6 +467,7 @@ public class QueryModel implements IQueryModel {
         isCteModel = false;
         isLateralCountCoalesceRequired = false;
         lateralCountCoalesceGuard = null;
+        isLateralOuterRef = false;
         isOuterRefWildcardExcluded = false;
         lateralCountTemplates.clear();
         modelType = ExecutionModel.QUERY;
@@ -1347,6 +1351,10 @@ public class QueryModel implements IQueryModel {
         return isLateralCountCoalesceRequired;
     }
 
+    public boolean isLateralOuterRef() {
+        return isLateralOuterRef;
+    }
+
     @Override
     public boolean isNestedModelIsSubQuery() {
         return nestedModelIsSubQuery;
@@ -1790,6 +1798,10 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired) {
         this.isLateralCountCoalesceRequired = isLateralCountCoalesceRequired;
+    }
+
+    public void setLateralOuterRef(boolean isLateralOuterRef) {
+        this.isLateralOuterRef = isLateralOuterRef;
     }
 
     @Override

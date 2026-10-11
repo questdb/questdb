@@ -45,6 +45,18 @@ import io.questdb.std.QuietCloseable;
  * {@link Probe}.
  */
 public interface FrozenHashJoinBuild {
+    /**
+     * Replaces each key's chain of rows with the key's row count, for a query that only counts the
+     * joined pairs: a probe then adds the rows a key matches without visiting them, through
+     * {@link IntProbe#findRowCountUnchecked(int)} or {@link RecordProbe#findRowCountUnchecked(Record)}.
+     * The count runs in place over the row heap, in one pass over the build's rows, and allocates
+     * nothing. The owner calls it at most once per execution, after the build froze and before it
+     * publishes the build to the probes' threads. Afterwards the build keeps no chain to walk, so
+     * its probes answer those two lookups alone: no other lookup, and no {@link Probe#next()}.
+     * On failure all execution allocations are released.
+     */
+    void countKeyRows();
+
     long getKeyCount();
 
     long getRowCount();
@@ -90,6 +102,14 @@ public interface FrozenHashJoinBuild {
          * Replaces the current duplicate iterator, including on a miss.
          */
         void find(int key);
+
+        /**
+         * The rows the build holds for this key, zero for a key it lacks, using the lookup
+         * metadata cached at reopen. Only a build that counted its key rows answers it; see
+         * {@link FrozenHashJoinBuild#countKeyRows()}. Positions neither the duplicate iterator
+         * nor the payload.
+         */
+        long findRowCountUnchecked(int key);
 
         /**
          * Positions the payload directly for a build with exactly one row per key.
@@ -161,6 +181,14 @@ public interface FrozenHashJoinBuild {
          * Replaces the current duplicate iterator, including on a miss.
          */
         void find(Record probeRecord);
+
+        /**
+         * The rows the build holds for the probe record's key, zero for a key it lacks, using the
+         * lookup metadata cached at reopen. Only a build that counted its key rows answers it;
+         * see {@link FrozenHashJoinBuild#countKeyRows()}. Positions neither the duplicate
+         * iterator nor the payload.
+         */
+        long findRowCountUnchecked(Record probeRecord);
 
         /**
          * Positions the payload directly for a build with exactly one row per key.

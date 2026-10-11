@@ -491,16 +491,20 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
             // The second execution checks that the closed cache reopens.
             for (int i = 0; i < 2; i++) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    // getCursor() runs the build and then opens the cache. The probe starts on the first
-                    // hasNext() and may copy the build's payload under the same tag, so the counter holds
-                    // exactly the build and the cache here.
-                    Assert.assertEquals(
-                            query,
-                            atom.getFrozenBuild().getSizeInBytes() + cacheSize,
-                            Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline
-                    );
+                    // getCursor() neither builds nor opens the cache: both wait for the first hasNext().
+                    Assert.assertNull(query, atom.getFrozenBuild());
+                    Assert.assertEquals(query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));
                     // a scalar aggregate returns one row
                     Assert.assertTrue(query, cursor.hasNext());
+                    // The first hasNext() runs the build, opens the cache and then probes. The probe may copy
+                    // the build's payload under the same tag: one DOUBLE column per build row in each of these
+                    // queries. The counter holds exactly the build, the cache and that copy until the cursor closes.
+                    final long copySize = atom.isPayloadCopied() ? atom.getFrozenBuild().getRowCount() * Double.BYTES : 0;
+                    Assert.assertEquals(
+                            query,
+                            atom.getFrozenBuild().getSizeInBytes() + cacheSize + copySize,
+                            Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP) - baseline
+                    );
                     Assert.assertFalse(query, cursor.hasNext());
                 }
                 Assert.assertEquals(query, baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_JOIN_MAP));

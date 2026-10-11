@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -37,8 +38,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
+import io.questdb.griffin.engine.ops.CreateTableOperationImpl;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -63,6 +67,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -1388,6 +1393,680 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryCrossJoinedFirstTableCancelledExportCleansTempTable() throws Exception {
+        // The export thread opens the temp table's column files after it has compiled the SELECT of the
+        // table, so a cancellation requested there stops the copy at its next progress check.
+        final AtomicBoolean isCancelRequested = new AtomicBoolean();
+        final AtomicBoolean isCancelAccepted = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (
+                        Utf8s.containsAscii(name, File.separator + "copy.")
+                                && Utf8s.endsWithAscii(name, ".d")
+                                && isCancelRequested.compareAndSet(false, true)
+                ) {
+                    isCancelAccepted.set(engine.getCopyExportContext().cancel(engine.getCopyExportContext().getActiveExportId(), null));
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            createCrossJoinedFirstTableTables();
+
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT l.ts lts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) " +
+                            "TO 'cross_first_cancelled' WITH FORMAT PARQUET",
+                    sqlExecutionContext
+            );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        Assert.assertTrue("the export did not reach the temp table", isCancelRequested.get());
+                        Assert.assertTrue("the export did not accept the cancellation", isCancelAccepted.get());
+                        assertQuery("SELECT phase, status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        phase\tstatus\tmessage
+                                        populating_data_to_temp_table\tcancelled\tcancelled by user
+                                        """);
+                        assertExportReleased("cross_first_cancelled");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableChainTimestampMatchesSelect() throws Exception {
+        // The query declares the first table's timestamp, which it does not project, so the temp table
+        // has no designated timestamp. A plan that runs the equi-joined chain first would declare the
+        // chain's timestamp, which the query projects, so the temp table compiles its SELECT again the
+        // way the query runs. The file holds the query's rows in the query's order and declares no
+        // designated timestamp, as the query does.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            assertTempTableExportMatchesSelect(
+                    "SELECT r.rts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts",
+                    "",
+                    "cross_first_chain_ts",
+                    false,
+                    null,
+                    """
+                            rts\tc1\tb
+                            2020-01-01T00:20:00.000000Z\t10\t00000000 de ad be ef
+                            2020-01-01T01:20:00.000000Z\t20\t00000000 de ad be ef
+                            2020-01-01T03:20:00.000000Z\t30\t00000000 de ad be ef
+                            2020-01-01T00:20:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                            2020-01-01T01:20:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                            2020-01-01T03:20:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableFailedExportCleansTempTable() throws Exception {
+        final LongHashSet tempTableColumnFds = new LongHashSet();
+        final AtomicBoolean isMmapFailed = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                tempTableColumnFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (tempTableColumnFds.contains(fd) && isMmapFailed.compareAndSet(false, true)) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, File.separator + "copy.") && Utf8s.endsWithAscii(name, ".d")) {
+                    tempTableColumnFds.add(fd);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            createCrossJoinedFirstTableTables();
+
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT l.ts lts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) " +
+                            "TO 'cross_first_failed' WITH FORMAT PARQUET",
+                    sqlExecutionContext
+            );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        Assert.assertTrue("the export did not reach the temp table", isMmapFailed.get());
+                        assertQuery("SELECT phase, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        phase\tstatus
+                                        populating_data_to_temp_table\tfailed
+                                        """);
+                        assertExportReleased("cross_first_failed");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableKeepsCreateTableAsSelect() throws Exception {
+        // The export compiles its SELECT the way a query runs it, while CREATE TABLE AS SELECT keeps the
+        // plan that runs the cross-joined first table last. The compilers are pooled, so a CREATE TABLE
+        // AS SELECT that follows an export must not inherit the export's mode.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String query = "SELECT l.ts lts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (" + query + ") TO 'cross_first_then_ctas' WITH FORMAT PARQUET PARTITION_BY DAY",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> assertQuery("SELECT phase, status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    phase\tstatus\tmessage
+                                    success\tfinished\t
+                                    """));
+            testCopyExport(stmt, test);
+
+            execute("CREATE TABLE tj AS (" + query + ")");
+            assertQuery("SELECT designatedTimestamp FROM tables() WHERE table_name = 'tj'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            designatedTimestamp
+
+                            """);
+            assertQuery("SELECT * FROM tj")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            lts\tc1\tb
+                            2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                            2020-01-01T02:10:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                            2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef
+                            2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                            2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef
+                            2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                            """);
+            // the query itself keeps the first table first
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("lts")
+                    .returns("""
+                            lts\tc1\tb
+                            2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef
+                            2020-01-01T02:10:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                            """);
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableKeepsItsTimestampAndOrder() throws Exception {
+        // The projection holds the timestamps of both the first table and the table that the plan of
+        // CREATE TABLE AS SELECT streams. The temp table takes the timestamp that the query declares,
+        // the first table's, so the file holds the rows in the query's order and PARTITION_BY splits
+        // them on that timestamp.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String query = "SELECT l.ts lts, r.rts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            assertTempTableExportMatchesSelect(
+                    query,
+                    "",
+                    "cross_first_both",
+                    false,
+                    """
+                            lts\trts\tc1\tb
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30\t00000000 de ad be ef
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                            """
+            );
+
+            final String outputDir = exportRoot + File.separator + "cross_first_both_hour" + File.separator;
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (" + query + ") TO 'cross_first_both_hour' WITH FORMAT PARQUET PARTITION_BY HOUR",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, phase, status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tphase\tstatus\tmessage\n" +
+                                        outputDir + "\t2\tsuccess\tfinished\t\n");
+                        assertQuery("SELECT * FROM read_parquet('" + outputDir + "2020-01-01T00.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("lts")
+                                .returns("""
+                                        lts\trts\tc1\tb
+                                        2020-01-01T00:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10\t00000000 de ad be ef
+                                        2020-01-01T00:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20\t00000000 de ad be ef
+                                        2020-01-01T00:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30\t00000000 de ad be ef
+                                        """);
+                        assertQuery("SELECT * FROM read_parquet('" + outputDir + "2020-01-01T02.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("lts")
+                                .returns("""
+                                        lts\trts\tc1\tb
+                                        2020-01-01T02:10:00.000000Z\t2020-01-01T00:20:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                                        2020-01-01T02:10:00.000000Z\t2020-01-01T01:20:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                                        2020-01-01T02:10:00.000000Z\t2020-01-01T03:20:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                                        """);
+                    });
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableOrderReadingMatchesSelect() throws Exception {
+        // LIMIT and window functions read the order of the join's rows. The export through the temp
+        // table writes the rows the query returns, with and without PARTITION_BY.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String join = " FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            final String firstRows = """
+                    lts\tc1\tb
+                    2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                    2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef
+                    """;
+            final String lastRows = """
+                    lts\tc1\tb
+                    2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                    2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                    """;
+            final String numberedRows = """
+                    lts\tc1\tb\trn
+                    2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef\t1
+                    2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef\t2
+                    2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef\t3
+                    2020-01-01T02:10:00.000000Z\t10\t00000000 01 02 03 04 05 06\t4
+                    2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06\t5
+                    2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06\t6
+                    """;
+            assertTempTableExportMatchesSelect("SELECT l.ts lts, r.c1, l.b" + join + " LIMIT 2", "", "cross_first_limit", false, firstRows);
+            assertTempTableExportMatchesSelect("SELECT l.ts lts, r.c1, l.b" + join + " LIMIT 2", " PARTITION_BY DAY", "cross_first_limit_day", false, firstRows);
+            assertTempTableExportMatchesSelect("SELECT l.ts lts, r.c1, l.b" + join + " LIMIT -2", "", "cross_first_tail", true, lastRows);
+            assertTempTableExportMatchesSelect("SELECT l.ts lts, r.c1, l.b" + join + " LIMIT -2", " PARTITION_BY DAY", "cross_first_tail_day", true, lastRows);
+            assertTempTableExportMatchesSelect("SELECT l.ts lts, r.c1, l.b, row_number() OVER () rn" + join, "", "cross_first_rn", false, numberedRows);
+            assertTempTableExportMatchesSelect("SELECT l.ts lts, r.c1, l.b, row_number() OVER () rn" + join, " PARTITION_BY DAY", "cross_first_rn_day", false, numberedRows);
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTablePartitionBy() throws Exception {
+        // PARTITION_BY always exports through the temp table. The table takes the first table's
+        // timestamp, and every partition file holds the rows the query returns for it.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String outputDir = exportRoot + File.separator + "cross_first_hour" + File.separator;
+
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT l.ts lts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) " +
+                            "TO 'cross_first_hour' WITH FORMAT PARQUET PARTITION_BY HOUR",
+                    sqlExecutionContext
+            );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, phase, status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tphase\tstatus\tmessage\n" +
+                                        outputDir + "\t2\tsuccess\tfinished\t\n");
+                        assertQuery("SELECT * FROM read_parquet('" + outputDir + "2020-01-01T00.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("lts")
+                                .returns("""
+                                        lts\tc1\tb
+                                        2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                                        2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef
+                                        2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef
+                                        """);
+                        assertQuery("SELECT * FROM read_parquet('" + outputDir + "2020-01-01T02.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("lts")
+                                .returns("""
+                                        lts\tc1\tb
+                                        2020-01-01T02:10:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                                        2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                                        2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                                        """);
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTablePartitionByNeedsItsTimestamp() throws Exception {
+        // The query declares the timestamp of its first table, so PARTITION_BY needs that column in
+        // the projection. COPY rejects the statement when it validates the query, before it queues the
+        // export.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            try {
+                runAndFetchCopyExportID(
+                        "COPY (SELECT r.rts, r.c1 FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts) " +
+                                "TO 'cross_first_rts' WITH FORMAT PARQUET PARTITION_BY DAY",
+                        sqlExecutionContext
+                );
+                Assert.fail("Expected failure due to missing timestamp column");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "partitioning is possible only on tables with designated timestamps");
+            }
+            assertExportReleased("cross_first_rts");
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableTempTableModeDoesNotLeak() throws Exception {
+        // The temp table of an export without a designated timestamp compiles its SELECT with the order
+        // of its rows unobserved. The compiler returns to the pool afterwards, and the next query that it
+        // compiles keeps the first table first again, whether the temp table's SELECT compiled or failed.
+        // Dev mode enables test_throwing_filter().
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String join = " FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            final String query = "SELECT r.c1, l.b" + join;
+            final String queryRows = """
+                    c1\tb
+                    10\t00000000 de ad be ef
+                    20\t00000000 de ad be ef
+                    30\t00000000 de ad be ef
+                    10\t00000000 01 02 03 04 05 06
+                    20\t00000000 01 02 03 04 05 06
+                    30\t00000000 01 02 03 04 05 06
+                    """;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                createTempExportTable(compiler, query, "tmp_no_ts");
+                assertQuery(query)
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(queryRows);
+
+                try {
+                    // the validation builds the function, and the temp table's compilation fails to build it
+                    TestThrowingFilterFunctionFactory.reset(2);
+                    createTempExportTable(compiler, "SELECT r.c1, l.b, test_throwing_filter() f" + join, "tmp_no_ts_failed");
+                    Assert.fail("the temp table's compilation should have failed");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "test_throwing_filter: configured to throw on call 2");
+                } finally {
+                    TestThrowingFilterFunctionFactory.reset(-1);
+                }
+                assertQuery(query)
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(queryRows);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableTempTableRecompileFreesFactory() throws Exception {
+        // The query projects the equi-joined chain's timestamp and declares none, while a plan that runs
+        // the chain first would declare the chain's. The temp table compiles its SELECT a second time, the
+        // way the query runs, and frees the factory of the first compilation whether the second one
+        // succeeds or fails. Each compilation builds one test_throwing_filter() function, which owns
+        // native memory until its factory closes it. Dev mode enables test_throwing_filter().
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String query = "SELECT r.rts, r.c1, l.b, test_throwing_filter() f FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    TestThrowingFilterFunctionFactory.reset(-1);
+                    createTempExportTable(compiler, query, "tmp_chain_ts");
+                    // the validation and both compilations of the temp table's SELECT
+                    Assert.assertEquals(3, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+                    Assert.assertEquals(3, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+
+                    // the second compilation fails, after the first one built its factory
+                    TestThrowingFilterFunctionFactory.reset(3);
+                    try {
+                        createTempExportTable(compiler, query, "tmp_chain_ts_failed");
+                        Assert.fail("the second compilation of the temp table's SELECT should have failed");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "test_throwing_filter: configured to throw on call 3");
+                    }
+                    Assert.assertEquals(3, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+                    Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+                } finally {
+                    TestThrowingFilterFunctionFactory.reset(-1);
+                }
+            }
+            assertQuery("SELECT table_name, designatedTimestamp FROM tables() WHERE table_name LIKE 'tmp_chain_ts%'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            table_name\tdesignatedTimestamp
+                            tmp_chain_ts\t
+                            """);
+            assertQuery("SELECT * FROM tmp_chain_ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            rts\tc1\tb\tf
+                            2020-01-01T00:20:00.000000Z\t10\t00000000 de ad be ef\ttrue
+                            2020-01-01T01:20:00.000000Z\t20\t00000000 de ad be ef\ttrue
+                            2020-01-01T03:20:00.000000Z\t30\t00000000 de ad be ef\ttrue
+                            2020-01-01T00:20:00.000000Z\t10\t00000000 01 02 03 04 05 06\ttrue
+                            2020-01-01T01:20:00.000000Z\t20\t00000000 01 02 03 04 05 06\ttrue
+                            2020-01-01T03:20:00.000000Z\t30\t00000000 01 02 03 04 05 06\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableTempTableRetryFreesFactories() throws Exception {
+        // As in testCopyQueryCrossJoinedFirstTableTempTableRecompileFreesFactory, the temp table compiles
+        // its SELECT a second time, the way the query runs. Every cursor of test_table_reference_out_of_date()
+        // reports a stale table reference, so the temp table then compiles the SELECT again, in the query's
+        // mode, until it runs out of attempts. It frees every factory it built, and the compiler's next
+        // query keeps the first table first. Dev mode enables test_throwing_filter().
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String join = " FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    TestThrowingFilterFunctionFactory.reset(-1);
+                    createTempExportTable(
+                            compiler,
+                            "SELECT r.rts, r.c1, l.b, test_throwing_filter() f" + join + " CROSS JOIN test_table_reference_out_of_date() x",
+                            "tmp_chain_ts_retry"
+                    );
+                    Assert.fail("the temp table should have run out of attempts");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table=test_table_reference_out_of_date");
+                    // the validation, both first compilations of the temp table's SELECT and one per retry
+                    final int compilations = 3 + configuration.getMaxSqlRecompileAttempts();
+                    Assert.assertEquals(compilations, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+                    Assert.assertEquals(compilations, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+                } finally {
+                    TestThrowingFilterFunctionFactory.reset(-1);
+                }
+                assertQuery("SELECT r.c1, l.b" + join)
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                c1\tb
+                                10\t00000000 de ad be ef
+                                20\t00000000 de ad be ef
+                                30\t00000000 de ad be ef
+                                10\t00000000 01 02 03 04 05 06
+                                20\t00000000 01 02 03 04 05 06
+                                30\t00000000 01 02 03 04 05 06
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableThroughTempTable() throws Exception {
+        // The BINARY column sends the export through the temp table, which compiles the SELECT a second
+        // time. Both compilations run the cross-joined first table first and declare its timestamp, so
+        // the non-partitioned temp table receives its rows in the order of its designated timestamp.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            assertTempTableExportMatchesSelect(
+                    "SELECT l.ts lts, r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts",
+                    "",
+                    "cross_first",
+                    false,
+                    """
+                            lts\tc1\tb
+                            2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef
+                            2020-01-01T02:10:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                            """
+            );
+            // the comma join spelling takes the same plan
+            assertTempTableExportMatchesSelect(
+                    "SELECT l.ts lts, r.c1, l.b FROM tal l, tb2 r, tc2 n WHERE n.cts = r.rts",
+                    "",
+                    "cross_first_comma",
+                    false,
+                    """
+                            lts\tc1\tb
+                            2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t20\t00000000 de ad be ef
+                            2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef
+                            2020-01-01T02:10:00.000000Z\t10\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                            2020-01-01T02:10:00.000000Z\t30\t00000000 01 02 03 04 05 06
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableWithoutTimestampKeepsCreateTableAsSelectOrder() throws Exception {
+        // The query declares the first table's timestamp but does not project it, so the temp table has
+        // no designated timestamp and nothing reads the order of its rows. The temp table's SELECT then
+        // takes the plan of CREATE TABLE AS SELECT, which runs the equi-joined chain first and probes its
+        // hash table once per chain row, not once per row of the cross product. The file holds the
+        // query's rows in the order CREATE TABLE AS SELECT stores them.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String query = "SELECT r.c1, l.b FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            final String chainFirstRows = """
+                    c1\tb
+                    10\t00000000 de ad be ef
+                    10\t00000000 01 02 03 04 05 06
+                    20\t00000000 de ad be ef
+                    20\t00000000 01 02 03 04 05 06
+                    30\t00000000 de ad be ef
+                    30\t00000000 01 02 03 04 05 06
+                    """;
+            try (RecordCursorFactory factory = select(query)) {
+                Assert.assertEquals(
+                        ParquetExportMode.TEMP_TABLE,
+                        ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
+                );
+            }
+            // the query itself keeps the first table first
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            c1\tb
+                            10\t00000000 de ad be ef
+                            20\t00000000 de ad be ef
+                            30\t00000000 de ad be ef
+                            10\t00000000 01 02 03 04 05 06
+                            20\t00000000 01 02 03 04 05 06
+                            30\t00000000 01 02 03 04 05 06
+                            """);
+            execute("CREATE TABLE tj AS (" + query + ")");
+            assertQuery("SELECT * FROM tj")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(chainFirstRows);
+
+            final String parquetPath = exportRoot + File.separator + "cross_first_no_ts.parquet";
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (" + query + ") TO 'cross_first_no_ts' WITH FORMAT PARQUET",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, phase, status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tphase\tstatus\tmessage\n" +
+                                        parquetPath + "\t1\tsuccess\tfinished\t\n");
+                        assertQuery("SELECT * FROM read_parquet('" + parquetPath + "')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(chainFirstRows);
+                    });
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryCrossJoinedFirstTableWithoutTimestampOrderReadingMatchesSelect() throws Exception {
+        // The temp table has no designated timestamp, but LIMIT and window functions read the order of
+        // the join's rows, at the top level or in a sub-query. The temp table's SELECT keeps the first
+        // table first wherever they read it, so the file holds the rows the query returns.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String join = " FROM tal l CROSS JOIN tb2 r JOIN tc2 n ON n.cts = r.rts";
+            assertTempTableExportMatchesSelect(
+                    "SELECT r.c1, l.b" + join + " LIMIT 2",
+                    "",
+                    "cross_first_no_ts_limit",
+                    false,
+                    null,
+                    """
+                            c1\tb
+                            10\t00000000 de ad be ef
+                            20\t00000000 de ad be ef
+                            """
+            );
+            assertTempTableExportMatchesSelect(
+                    "SELECT r.c1, l.b" + join + " LIMIT -2",
+                    "",
+                    "cross_first_no_ts_tail",
+                    true,
+                    null,
+                    """
+                            c1\tb
+                            20\t00000000 01 02 03 04 05 06
+                            30\t00000000 01 02 03 04 05 06
+                            """
+            );
+            assertTempTableExportMatchesSelect(
+                    "SELECT r.c1, l.b, row_number() OVER () rn" + join,
+                    "",
+                    "cross_first_no_ts_rn",
+                    false,
+                    null,
+                    """
+                            c1\tb\trn
+                            10\t00000000 de ad be ef\t1
+                            20\t00000000 de ad be ef\t2
+                            30\t00000000 de ad be ef\t3
+                            10\t00000000 01 02 03 04 05 06\t4
+                            20\t00000000 01 02 03 04 05 06\t5
+                            30\t00000000 01 02 03 04 05 06\t6
+                            """
+            );
+            assertTempTableExportMatchesSelect(
+                    "SELECT c1, b FROM (SELECT r.c1, l.b" + join + " LIMIT 4)",
+                    "",
+                    "cross_first_no_ts_nested_limit",
+                    false,
+                    null,
+                    """
+                            c1\tb
+                            10\t00000000 de ad be ef
+                            20\t00000000 de ad be ef
+                            30\t00000000 de ad be ef
+                            10\t00000000 01 02 03 04 05 06
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testCopyQueryCursorBackedPreservesDictionaryEncodingAcrossPartitions() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1497,6 +2176,42 @@ public class CopyExportTest extends AbstractCairoTest {
                     });
 
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryFirstTableLinkedByEqualityThroughTempTable() throws Exception {
+        // An equality links the first table to the join, so the table drives the join in every
+        // compilation mode, and the export through the temp table keeps writing the query's rows.
+        assertMemoryLeak(() -> {
+            createCrossJoinedFirstTableTables();
+            final String rows = """
+                    lts\tc1\tb
+                    2020-01-01T00:10:00.000000Z\t30\t00000000 de ad be ef
+                    2020-01-01T00:10:00.000000Z\t10\t00000000 de ad be ef
+                    2020-01-01T02:10:00.000000Z\t20\t00000000 01 02 03 04 05 06
+                    """;
+            assertTempTableExportMatchesSelect(
+                    "SELECT l.ts lts, r.c1, l.b FROM tal l JOIN tb2 r ON r.v = l.v JOIN tc2 n ON n.cts = r.rts",
+                    "",
+                    "linked_first",
+                    false,
+                    rows
+            );
+            assertTempTableExportMatchesSelect(
+                    "SELECT l.ts lts, r.c1, l.b FROM tal l, tb2 r, tc2 n WHERE n.cts = r.rts AND r.v = l.v",
+                    "",
+                    "linked_first_comma",
+                    false,
+                    rows
+            );
+            assertTempTableExportMatchesSelect(
+                    "SELECT l.ts lts, r.c1, l.b FROM tal l JOIN tb2 r ON r.v = l.v JOIN tc2 n ON n.cts = r.rts",
+                    " PARTITION_BY DAY",
+                    "linked_first_day",
+                    false,
+                    rows
+            );
         });
     }
 
@@ -4164,6 +4879,21 @@ public class CopyExportTest extends AbstractCairoTest {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
     }
 
+    private void assertExportReleased(String fileName) {
+        // the export left neither its temp table, nor its entry in the export context, nor a file
+        ObjHashSet<TableToken> bucket = new ObjHashSet<>();
+        engine.getTableTokens(bucket, false);
+        for (int i = 0, n = bucket.size(); i < n; i++) {
+            TableToken token = bucket.get(i);
+            Assert.assertFalse(
+                    "temp table should have been cleaned up: " + token.getTableName(),
+                    token.getTableName().startsWith("copy.")
+            );
+        }
+        Assert.assertEquals("export entry should have been released", -1L, engine.getCopyExportContext().getActiveExportId());
+        Assert.assertFalse("export file should not exist: " + fileName, exportFileExists(fileName));
+    }
+
     private void assertParquetExportOfConvertedColumn(String srcType, String srcValueExpr, String dstType, String expectedReadback) throws Exception {
         assertParquetExportOfConvertedColumn(srcType, srcValueExpr, dstType, expectedReadback, false);
     }
@@ -4224,6 +4954,116 @@ public class CopyExportTest extends AbstractCairoTest {
         TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
         TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    /**
+     * Asserts that the query returns the expected rows, streaming its first table and declaring that
+     * table's timestamp, and that its export through the temp table succeeds and writes one file that
+     * holds the same rows in the same order.
+     */
+    private void assertTempTableExportMatchesSelect(
+            String query,
+            String copyOptions,
+            String fileName,
+            boolean isSizeExpected,
+            String expectedRows
+    ) throws Exception {
+        assertTempTableExportMatchesSelect(query, copyOptions, fileName, isSizeExpected, "lts", expectedRows);
+    }
+
+    /**
+     * Asserts that the query returns the expected rows with the given designated timestamp, none when it
+     * is null, and that its export through the temp table succeeds and writes one file that holds the
+     * same rows in the same order, with the same designated timestamp.
+     */
+    private void assertTempTableExportMatchesSelect(
+            String query,
+            String copyOptions,
+            String fileName,
+            boolean isSizeExpected,
+            @Nullable String timestamp,
+            String expectedRows
+    ) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertEquals(
+                    ParquetExportMode.TEMP_TABLE,
+                    ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
+            );
+        }
+        assertQuery(query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize(isSizeExpected)
+                .timestamp(timestamp)
+                .returns(expectedRows);
+
+        final String parquetPath = exportRoot + File.separator + fileName + ".parquet";
+        CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                "COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + copyOptions,
+                sqlExecutionContext
+        );
+        CopyExportRunnable test = () ->
+                assertEventually(() -> {
+                    assertQuery("SELECT export_path, num_exported_files, phase, status, message FROM \"sys.copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("export_path\tnum_exported_files\tphase\tstatus\tmessage\n" +
+                                    parquetPath + "\t1\tsuccess\tfinished\t\n");
+                    assertQuery("SELECT * FROM read_parquet('" + parquetPath + "')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp(timestamp)
+                            .returns(expectedRows);
+                });
+        testCopyExport(stmt, test);
+    }
+
+    private void createCrossJoinedFirstTableTables() throws SqlException {
+        // tal is the first table of the joins under test: it has a designated timestamp, at least two
+        // distinct timestamp values and a BINARY column, which sends a Parquet export through the temp
+        // table. from_base64() yields fixed bytes, unlike rnd_bin().
+        execute("CREATE TABLE tal (ts TIMESTAMP, v INT, b BINARY) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tb2 (rts TIMESTAMP, v INT, c1 INT) TIMESTAMP(rts) PARTITION BY DAY");
+        execute("CREATE TABLE tc2 (cts TIMESTAMP, v INT) TIMESTAMP(cts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO tal VALUES
+                    ('2020-01-01T00:10', 1, from_base64('3q2+7w==')),
+                    ('2020-01-01T02:10', 2, from_base64('AQIDBAUG'))
+                """);
+        execute("""
+                INSERT INTO tb2 VALUES
+                    ('2020-01-01T00:20', 1, 10),
+                    ('2020-01-01T01:20', 2, 20),
+                    ('2020-01-01T03:20', 1, 30)
+                """);
+        execute("""
+                INSERT INTO tc2 VALUES
+                    ('2020-01-01T00:20', 5),
+                    ('2020-01-01T01:20', 0),
+                    ('2020-01-01T03:20', 100)
+                """);
+    }
+
+    private void createTempExportTable(SqlCompiler compiler, String selectText, String tableName) throws SqlException {
+        // builds the operation the way CopyExportFactory does: the validation compiles the SELECT as a
+        // query and derives the temp table's designated timestamp from it
+        try (
+                CreateTableOperationImpl createOp = new CreateTableOperationImpl(
+                        selectText,
+                        tableName,
+                        PartitionBy.NONE,
+                        false,
+                        configuration.getDefaultSymbolCapacity(),
+                        "COPY (" + selectText + ") TO '" + tableName + "' WITH FORMAT PARQUET",
+                        false
+                )
+        ) {
+            createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
+            try (RecordCursorFactory factory = select(selectText)) {
+                createOp.validateAndUpdateMetadataFromSelect(factory.getMetadata(), factory.getScanDirection());
+            }
+            compiler.execute(createOp, sqlExecutionContext);
+        }
     }
 
     private boolean exportFileExists(String fileName) {
