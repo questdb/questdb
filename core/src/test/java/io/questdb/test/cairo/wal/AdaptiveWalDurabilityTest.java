@@ -1044,6 +1044,60 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The writeback drain's kick, {@code sync_file_range(WRITE)}, only starts the writeback early. A kick that fails
+     * (an {@code ENOMEM} from block allocation, say) must neither fail an ADAPTIVE commit or a save point nor stop the
+     * engine: the drain's wait and the barrier or {@code syncfs} after it still write the data back and report any
+     * real error. At window 0 and above, the commits become durable, the save point publishes and the rows apply.
+     */
+    @Test
+    public void testWritebackKickFailureIsIgnored() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        final WritebackDrainFacade ff = new WritebackDrainFacade() {
+            @Override
+            public boolean isSyncfsFileSystemWide() {
+                // Pinned, so the save point takes its batched flush on every platform.
+                return true;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            int t = 0;
+            for (long window : new long[]{0, 50_000}) {
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, window);
+                Assert.assertEquals(window, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+                final String name = "x" + t++;
+                final String row = "window=" + window + "us: ";
+                execute("CREATE TABLE " + name + " (ts TIMESTAMP, v LONG, s SYMBOL, txt VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(name));
+                ff.failKicks = true;
+                try {
+                    ff.failedKicks = 0;
+                    try (WalWriter writer = getWalWriter(name)) {
+                        appendRow(writer, 0);
+                        writer.commit();
+                        appendRow(writer, 1);
+                        writer.commit();
+                    }
+                    Assert.assertTrue(row + "the commits must kick the writeback", ff.failedKicks > 0);
+                    Assert.assertEquals(row + "durable frontier", 2, tracker.getLocalDurableSeqTxn());
+                    drainWalQueue();
+                    ff.failedKicks = 0;
+                    try (TableWriter writer = getWriter(name)) {
+                        writer.advanceDurableEpoch(1L);
+                    }
+                    Assert.assertTrue(row + "the save point must kick the writeback", ff.failedKicks > 0);
+                } finally {
+                    ff.failKicks = false;
+                }
+                Assert.assertFalse(row + "the engine must not stop", engine.isDurabilityFailed());
+                Assert.assertFalse(row + "must not be suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(name)));
+                Assert.assertEquals(row + "save point", 2, tracker.getDurableEpochSeqTxn());
+                assertQuery("SELECT v FROM " + name + " ORDER BY v").expectSize().returns("v\n0\n1\n");
+            }
+        });
+    }
+
     private int readMarkerGeneration(TableToken token) {
         return currentSavePoint(token).generation;
     }
@@ -1541,6 +1595,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         private final Map<Long, String> addrToFile = new HashMap<>();
         private final Map<Long, String> fdToFile = new HashMap<>();
         boolean drain = true;
+        boolean failKicks;
+        int failedKicks;
         int probeCount, syncFileRangeCount;
         String probedPath;
         String writebackErrorCall;
@@ -1620,6 +1676,11 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             syncFileRangeCalls.add(fd, flags);
             countSegmentSync(fdToFile.get(fd), "syncFileRange");
             if ((flags & Files.SYNC_FILE_RANGE_WAIT_AFTER) != 0 && takeWritebackError(fdToFile.get(fd), "sync_file_range")) {
+                return -1;
+            }
+            if (failKicks && flags == Files.SYNC_FILE_RANGE_WRITE) {
+                // A kick that starts no writeback and fails, as sync_file_range(WRITE) does on ENOMEM.
+                failedKicks++;
                 return -1;
             }
             return super.syncFileRange(fd, offset, nbytes, flags);

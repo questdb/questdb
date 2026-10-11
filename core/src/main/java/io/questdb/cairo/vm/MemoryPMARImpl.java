@@ -208,7 +208,9 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         // Batched flush, stage 2: sync_file_range(WRITE | WAIT_AFTER) waits for the writeback stage 1 started
         // and writes back anything it left; no device flush. Waiting reports a writeback error, as in
         // MemoryCMARWImpl.
-        syncFlushRange(Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
+        if (syncFlushRange(Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER) != 0) {
+            throw CairoException.dataSyncFailure(ff.errno(), "sync_file_range").put("could not sync_file_range [fd=").put(fd).put(']');
+        }
     }
 
     @Override
@@ -223,7 +225,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     public void syncFlushKick() {
         // Batched flush, stage 1: sync_file_range(WRITE) starts writeback of the current page's dirty bytes and
-        // returns, so every file's writeback runs at once before stage 2 waits. No device flush.
+        // returns, so every file's writeback runs at once before stage 2 waits. No device flush. A hint only, so
+        // its result is ignored, as in MemoryCMARWImpl: stage 2 and the caller's flush report any error.
         syncFlushRange(Files.SYNC_FILE_RANGE_WRITE);
     }
 
@@ -263,14 +266,15 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     // The page sits at file offset pageOffset(mappedPage), so the range is [pageStart, pageStart + dirtyLen),
     // the bytes sync() selects.
-    private void syncFlushRange(int flags) {
+    private int syncFlushRange(int flags) {
         if (pageAddress != 0) {
             final long pageStart = pageOffset(mappedPage);
             final long dirtyLen = appendOnly ? inPageWritten() : getPageSize();
-            if (dirtyLen > 0 && ff.syncFileRange(fd, pageStart, dirtyLen, flags) != 0) {
-                throw CairoException.dataSyncFailure(ff.errno(), "sync_file_range").put("could not sync_file_range [fd=").put(fd).put(']');
+            if (dirtyLen > 0) {
+                return ff.syncFileRange(fd, pageStart, dirtyLen, flags);
             }
         }
+        return 0;
     }
 
     @Override
