@@ -301,7 +301,13 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 tracker(s).setLastEpochTs(0);
                 faultFf.armFaultAt(faultFf.durabilityOpCount() + op);
                 tryInsertRows(s, 0, 2, true);
-                drainWalQueue();
+                try {
+                    drainWalQueue();
+                } catch (CairoError stop) {
+                    // A failed flush in the apply stops the engine (D61); the writes below are then refused, as in
+                    // production, where the process halts at the failed flush.
+                    Assert.assertTrue(engine.isDurabilityFailed());
+                }
                 final boolean faulted = !faultFf.isFaultArmed();
                 s.firedAt = faulted ? faultFf.faultedOp : null;
                 faultFf.disarm();
