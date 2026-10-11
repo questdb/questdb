@@ -705,20 +705,23 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      * {@code _event} files), per commit mode and group window. ADAPTIVE drains writeback at every window,
      * W=0 included: each file gets {@code msync(MS_ASYNC)}, two {@code sync_file_range} calls (start the
      * writeback, then wait for it) and its own barrier, and never a blocking {@code msync(MS_SYNC)}. NOSYNC,
-     * ASYNC and SYNC run neither the drain nor a barrier. The filesystem probe is pinned on, so the drain runs
+     * ASYNC and SYNC run neither the drain nor a barrier. The first commit in a segment also flushes the
+     * segment {@code _meta}, once, in SYNC and ADAPTIVE. The filesystem probe is pinned on, so the drain runs
      * on every platform.
      */
     @Test
     public void testWalCommitSegmentFileSyncsPerMode() throws Exception {
-        final String perFile = "_event: %1$s; _event.i: %1$s; ts.d: %1$s; v.d: %1$s";
-        final String drained = String.format(perFile, "barrierFsync=1 msyncAsync=1 syncFileRange=2");
-        // commit mode, group window in microseconds, the sync calls of one commit on the segment files.
+        final String perFile = "_event: %1$s; _event.i: %1$s;%2$s ts.d: %1$s; v.d: %1$s";
+        final String drained = "barrierFsync=1 msyncAsync=1 syncFileRange=2";
+        final String adaptiveMeta = " _meta: barrierFsync=1 msyncAsync=1;";
+        // commit mode, group window in microseconds, the sync calls of the first commit and of a later one on the
+        // segment files.
         final String[][] cases = {
-                {"adaptive", "50000", drained},
-                {"nosync", "0", ""},
-                {"async", "0", String.format(perFile, "msyncAsync=1")},
-                {"sync", "0", String.format(perFile, "msyncSync=1")},
-                {"adaptive", "0", drained}
+                {"adaptive", "50000", String.format(perFile, drained, adaptiveMeta), String.format(perFile, drained, "")},
+                {"nosync", "0", "", ""},
+                {"async", "0", String.format(perFile, "msyncAsync=1", ""), String.format(perFile, "msyncAsync=1", "")},
+                {"sync", "0", String.format(perFile, "msyncSync=1", " _meta: msyncSync=1;"), String.format(perFile, "msyncSync=1", "")},
+                {"adaptive", "0", String.format(perFile, drained, adaptiveMeta), String.format(perFile, drained, "")}
         };
         final WritebackDrainFacade ff = new WritebackDrainFacade();
         assertMemoryLeak(ff, () -> {
@@ -738,7 +741,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                         writer.commit();
                         Assert.assertEquals(
                                 "mode=" + mode[0] + ", window=" + mode[1] + "us, commit " + i,
-                                mode[2],
+                                i == 0 ? mode[2] : mode[3],
                                 ff.segmentSyncSummary()
                         );
                     }
@@ -989,6 +992,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     @Test
     public void testWritebackErrorFailsTheCommit() throws Exception {
         final String[] files = {"_event", "_event.i", "s.d", "ts.d", "txt.d", "txt.i", "v.d"};
+        final String[] firstCommitFiles = {"_event", "_event.i", "_meta", "s.d", "ts.d", "txt.d", "txt.i", "v.d"};
         final WritebackDrainFacade ff = new WritebackDrainFacade();
         assertMemoryLeak(ff, () -> {
             final List<String> acknowledged = new ArrayList<>();
@@ -1008,7 +1012,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                             appendRow(writer, 0);
                             ff.segmentSyncs.clear();
                             writer.commit();
-                            Assert.assertEquals("the files a commit barriers", Arrays.toString(files), ff.barrieredFiles());
+                            // The writer's first commit also flushes the _meta of the segment it opened.
+                            Assert.assertEquals("the files a commit barriers", Arrays.toString(firstCommitFiles), ff.barrieredFiles());
                         }
                         // Closing the writer flushes the pending sequencer record at W > 0.
                         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(name));
@@ -1036,6 +1041,126 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 }
             }
             Assert.assertTrue("commits not failed by a writeback error:\n" + String.join("\n", acknowledged), acknowledged.isEmpty());
+        });
+    }
+
+    /**
+     * The writeback drain's kick, {@code sync_file_range(WRITE)}, only starts the writeback early. A transient
+     * failure (ENOMEM, EAGAIN, EINTR) leaves the pages dirty: it must neither fail an ADAPTIVE commit or a save point
+     * nor stop the engine, since the drain's wait and the barrier or {@code syncfs} after it still write the data
+     * back. Any other failure (EIO, ENOSPC) can follow pages the kernel dropped without recording an error for the
+     * wait or the barrier, so it is a flush failure: in ADAPTIVE and SYNC the engine stops and nothing past it
+     * becomes durable. NOSYNC keeps base behaviour: its commits never kick, and a failed save point flush does not
+     * stop the engine. ADAPTIVE runs at window 0 and above.
+     */
+    @Test
+    public void testWritebackKickFailure() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        final WritebackDrainFacade ff = new WritebackDrainFacade() {
+            @Override
+            public boolean isSyncfsFileSystemWide() {
+                // Pinned, so the save point takes its batched flush on every platform.
+                return true;
+            }
+        };
+        final int[] transientErrnos = {12 /* ENOMEM */, 11 /* EAGAIN */, 4 /* EINTR */};
+        final int[] errnos = {12, 11, 4, 5 /* EIO */, 28 /* ENOSPC */};
+        final String[] modes = {"adaptive", "adaptive", "sync", "nosync"};
+        final long[] windows = {0, 50_000, 0, 0};
+        assertMemoryLeak(ff, () -> {
+            int t = 0;
+            for (int m = 0; m < modes.length; m++) {
+                final String mode = modes[m];
+                final boolean adaptive = "adaptive".equals(mode);
+                final boolean durable = !"nosync".equals(mode);
+                for (int errno : errnos) {
+                    boolean isTransient = false;
+                    for (int e : transientErrnos) {
+                        isTransient |= e == errno;
+                    }
+                    node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+                    node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, windows[m]);
+                    Assert.assertEquals(CommitMode.fromString(mode), engine.getConfiguration().getCommitMode());
+                    final String row = mode + ", window=" + windows[m] + "us, errno=" + errno + ": ";
+                    final boolean stops = durable && !isTransient;
+
+                    // The commits: only ADAPTIVE kicks on the WAL commit path.
+                    final String commitTable = "c" + t;
+                    execute("CREATE TABLE " + commitTable + " (ts TIMESTAMP, v LONG, s SYMBOL, txt VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    final SeqTxnTracker commitTracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(commitTable));
+                    Throwable failure = null;
+                    ff.failKicks(errno);
+                    try (WalWriter writer = getWalWriter(commitTable)) {
+                        appendRow(writer, 0);
+                        writer.commit();
+                        appendRow(writer, 1);
+                        writer.commit();
+                    } catch (Throwable th) {
+                        failure = th;
+                    } finally {
+                        ff.failKicks(0);
+                    }
+                    Assert.assertEquals(row + "the commits kick the writeback", adaptive, ff.failedKicks > 0);
+                    if (adaptive && !isTransient) {
+                        Assert.assertTrue(row + "the commit must fail with the engine stop: " + failure, failure instanceof CairoError && CairoException.isDataSyncFailure(failure));
+                        Assert.assertTrue(row + "the engine must stop", engine.isDurabilityFailed());
+                        Assert.assertTrue(row + "the error names the file: " + failure.getMessage(), failure.getMessage().contains("could not start writeback") && failure.getMessage().contains("path="));
+                        Assert.assertTrue(row + "nothing becomes durable", commitTracker.getLocalDurableSeqTxn() < 1);
+                        engine.releaseAllWriters();
+                        engine.resetDurabilityFailure();
+                    } else {
+                        Assert.assertNull(row + "the commits must succeed", failure);
+                        Assert.assertFalse(row + "the engine must not stop", engine.isDurabilityFailed());
+                        if (adaptive) {
+                            Assert.assertEquals(row + "durable frontier", 2, commitTracker.getLocalDurableSeqTxn());
+                        }
+                        drainWalQueue();
+                        assertQuery("SELECT v FROM " + commitTable + " ORDER BY v").expectSize().returns("v\n0\n1\n");
+                    }
+
+                    // The save point: its batched flush kicks the writeback in every mode.
+                    final String savePointTable = "p" + t++;
+                    execute("CREATE TABLE " + savePointTable + " (ts TIMESTAMP, v LONG, s SYMBOL, txt VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    final TableToken savePointToken = engine.verifyTableName(savePointTable);
+                    final SeqTxnTracker savePointTracker = engine.getTableSequencerAPI().getTxnTracker(savePointToken);
+                    try (WalWriter writer = getWalWriter(savePointTable)) {
+                        appendRow(writer, 0);
+                        writer.commit();
+                        appendRow(writer, 1);
+                        writer.commit();
+                    }
+                    drainWalQueue();
+                    final long savePointBefore = savePointTracker.getDurableEpochSeqTxn();
+                    failure = null;
+                    ff.failKicks(errno);
+                    try (TableWriter writer = getWriter(savePointTable)) {
+                        writer.advanceDurableEpoch(1L);
+                    } catch (Throwable th) {
+                        failure = th;
+                    } finally {
+                        ff.failKicks(0);
+                    }
+                    Assert.assertTrue(row + "the save point must kick the writeback", ff.failedKicks > 0);
+                    if (stops) {
+                        Assert.assertTrue(row + "the save point must fail: " + failure, CairoException.isDataSyncFailure(failure));
+                        Assert.assertTrue(row + "the engine must stop", engine.isDurabilityFailed());
+                        Assert.assertEquals(row + "the save point must not publish", savePointBefore, savePointTracker.getDurableEpochSeqTxn());
+                        engine.releaseAllWriters();
+                        engine.resetDurabilityFailure();
+                    } else if (isTransient) {
+                        Assert.assertNull(row + "the save point must succeed", failure);
+                        Assert.assertFalse(row + "the engine must not stop", engine.isDurabilityFailed());
+                        Assert.assertEquals(row + "save point", 2, savePointTracker.getDurableEpochSeqTxn());
+                    } else {
+                        // NOSYNC: the failed flush fails the save point only, as a failed flush does in base.
+                        Assert.assertTrue(row + "the save point must fail: " + failure, CairoException.isDataSyncFailure(failure));
+                        Assert.assertFalse(row + "the engine must not stop", engine.isDurabilityFailed());
+                        engine.releaseAllWriters();
+                    }
+                    Assert.assertFalse(row + "must not be suspended", engine.getTableSequencerAPI().isSuspended(savePointToken));
+                    assertQuery("SELECT v FROM " + savePointTable + " ORDER BY v").expectSize().returns("v\n0\n1\n");
+                }
+            }
         });
     }
 
@@ -1536,6 +1661,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         private final Map<Long, String> addrToFile = new HashMap<>();
         private final Map<Long, String> fdToFile = new HashMap<>();
         boolean drain = true;
+        int failedKicks;
+        int kickErrno;
+        int pendingErrno;
         int probeCount, syncFileRangeCount;
         String probedPath;
         String writebackErrorCall;
@@ -1551,6 +1679,16 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         public boolean close(long fd) {
             fdToFile.remove(fd);
             return super.close(fd);
+        }
+
+        @Override
+        public int errno() {
+            if (pendingErrno != 0) {
+                final int errno = pendingErrno;
+                pendingErrno = 0;
+                return errno;
+            }
+            return super.errno();
         }
 
         @Override
@@ -1617,6 +1755,12 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             if ((flags & Files.SYNC_FILE_RANGE_WAIT_AFTER) != 0 && takeWritebackError(fdToFile.get(fd), "sync_file_range")) {
                 return -1;
             }
+            if (kickErrno != 0 && flags == Files.SYNC_FILE_RANGE_WRITE) {
+                // A kick that starts no writeback and fails with the armed errno.
+                failedKicks++;
+                pendingErrno = kickErrno;
+                return -1;
+            }
             return super.syncFileRange(fd, offset, nbytes, flags);
         }
 
@@ -1634,6 +1778,16 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             if (file != null) {
                 segmentSyncs.computeIfAbsent(file, k -> new TreeMap<>()).computeIfAbsent(call, k -> new int[1])[0]++;
             }
+        }
+
+        /**
+         * Every writeback kick fails with {@code errno} until called with 0; arming resets the count of failed kicks.
+         */
+        private void failKicks(int errno) {
+            if (errno != 0) {
+                failedKicks = 0;
+            }
+            kickErrno = errno;
         }
 
         /**

@@ -566,8 +566,9 @@ and report it.
 
 In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs`, `sync_file_range` or synchronous `msync` stops
 the server at once, wherever it happens (a table, its WAL, a checkpoint), because the data it was flushing, or other
-data on the same disk, may not be on the disk. So does a failed flush of a conversion to non-WAL, in every mode. A
-parallel COPY's work files count as table data: a failed flush of its index chunks or of the staging tables that
+data on the same disk, may not be on the disk. (A write-back that could not start for lack of memory, or was
+interrupted, is retried by the wait and the flush after it and does not stop the server.) So does a failed flush of a
+conversion to non-WAL, in every mode. A parallel COPY's work files count as table data: a failed flush of its index chunks or of the staging tables that
 become the table's partitions stops the server too, also when `cairo.sql.copy.work.root` is on another disk, and a
 restart clears it. The server stops at the failed flush itself, before any clean-up, so a parallel COPY never
 reports an import done that is not on the disk, and section 11.6 says what it can leave behind. An Enterprise replica

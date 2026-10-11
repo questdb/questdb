@@ -31,6 +31,7 @@ import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
@@ -41,10 +42,12 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -68,6 +71,10 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * Header and record is described in {@link TableTransactionLogFile}
  * <p>
  * Transaction record: 60 bytes
+ * <p>
+ * Under ADAPTIVE a power loss can leave the tail torn: the header can reach the disk ahead of the part page that holds
+ * the records it counts, and a record can be caught half-stored. {@link #UNSYNCED_FROM_TXN_OFFSET_64} names the first
+ * record a completed flush may not have covered, and {@link #open(Path)} drops a torn record at or above it.
  */
 public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long MIN_TIMESTAMP_OFFSET = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
@@ -75,9 +82,20 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long ROW_COUNT_OFFSET = MAX_TIMESTAMP_OFFSET + Long.BYTES;
     public static final long RESERVED_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
     public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
+    /**
+     * Header slot, in the reserved area, holding the first txn whose record a completed flush may not have covered.
+     * Zero means every record is trusted: a log no ADAPTIVE append on a node that keeps it durable itself has
+     * touched, one written by a binary without the slot, or one a replica's downloader appends to. The first such
+     * append starts it, and it moves only after a flush of the part and the header. Every record at or above it was
+     * appended by this binary with a checksum. It is V1's slot and encoding, and shares the header's first sector
+     * with {@code MAX_TXN_OFFSET_64}, so a power loss cannot persist one without the other.
+     */
+    public static final long UNSYNCED_FROM_TXN_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
+    // A replica's object store holds the durable copy: the log is not scanned there, and its field stays 0.
+    private final LocalDurabilityPolicy durabilityPolicy;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final Path rootPath;
@@ -87,8 +105,19 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private long partId = -1;
     private int partTransactionCount;
 
+    @TestOnly
     public TableTransactionLogV2(CairoConfiguration configuration, int seqPartTransactionCount, WalDirectoryPolicy walDirectoryPolicy) {
+        this(configuration, seqPartTransactionCount, walDirectoryPolicy, LocalDurabilityPolicy.ALWAYS_ON);
+    }
+
+    public TableTransactionLogV2(
+            CairoConfiguration configuration,
+            int seqPartTransactionCount,
+            WalDirectoryPolicy walDirectoryPolicy,
+            LocalDurabilityPolicy durabilityPolicy
+    ) {
         this.configuration = configuration;
+        this.durabilityPolicy = durabilityPolicy;
         this.ff = configuration.getFilesFacade();
         this.partTransactionCount = seqPartTransactionCount;
         this.walDirectoryPolicy = walDirectoryPolicy;
@@ -129,6 +158,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     @Override
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         openTxnPart();
+        startUnsyncedFrom();
 
         final long recordStart = txnPartMem.getAppendOffset();
         txnPartMem.putLong(structureVersion);
@@ -153,6 +183,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     @Override
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         openTxnPart();
+        startUnsyncedFrom();
 
         final long recordStart = txnPartMem.getAppendOffset();
         txnPartMem.putLong(newStructureVersion);
@@ -260,11 +291,20 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
-        maxTxn.set(lastTxn);
         partTransactionCount = txnMem.getInt(HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
         }
+        final boolean isAdaptive = LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), durabilityPolicy) == CommitMode.ADAPTIVE;
+        if (isAdaptive) {
+            lastTxn = recoverTail(path, lastTxn);
+        } else if (!durabilityPolicy.isLocalDurabilityEnabled() && txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64) != 0) {
+            // A replica's downloader appends records the field does not cover, without a checksum when its primary
+            // is older. A promoted node must trust them, so the field a demoted primary left goes, durably.
+            txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, 0);
+            ff.fdatasync(txnMem.getFd());
+        }
+        maxTxn.set(lastTxn);
 
         long maxStructureVersion = 0L;
         if (lastTxn > 0L) {
@@ -276,7 +316,19 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         openTxnPart();
         // Open part can leave prev txn append position when part is the same
         setAppendPosition();
+        if (isAdaptive) {
+            zeroPastTail();
+        }
         return maxStructureVersion;
+    }
+
+    private static boolean isZero(long lo, long hi) {
+        for (long p = lo; p < hi; p++) {
+            if (Unsafe.getByte(p) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static long openPartFileRO(final FilesFacade ff, final LPSZ path, boolean bypassFdCache) {
@@ -309,11 +361,32 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     /**
+     * Whether the record in part slot {@code slot} fails its check: its stored checksum is 0 or does not match its
+     * body. Only records at or above the field are checked, and this binary wrote each of them with a checksum
+     * (calculateCvAreaChecksum never returns 0), so a failure is a tear, wherever the lost bytes fall.
+     */
+    private boolean failsCheck(long slot) {
+        final long address = txnPartMem.addressOf(slot * RECORD_SIZE);
+        final long storedCrc = Unsafe.getLong(address + RESERVED_OFFSET);
+        return storedCrc == 0L || storedCrc != TableUtils.calculateCvAreaChecksum(address, RESERVED_OFFSET);
+    }
+
+    /**
      * True under ADAPTIVE with a group window above zero, where the batched flush takes over the per-commit
      * sequencer fdatasync. It depends on configuration only, so concurrent WAL writers of a table agree.
      */
     private boolean isDeviceFlushDeferred() {
         return configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0;
+    }
+
+    /**
+     * Moves the field past the records a completed flush of the part and the header covered. A field that has not
+     * started stays 0, and a replica never moves it.
+     */
+    private void markFlushed(long flushedTxn) {
+        if (txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64) > 0 && durabilityPolicy.isLocalDurabilityEnabled()) {
+            txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, flushedTxn + 1);
+        }
     }
 
     private void openTxnMem(Path path) {
@@ -355,8 +428,67 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         openTxnPart(this.maxTxn.get());
     }
 
+    /**
+     * Drops a torn tail left by a power loss and returns the txn the log ends at. Under ADAPTIVE with a group window
+     * the part and the header reach the disk together only at the batched flush, and a power loss before it can leave
+     * the header counting records the part does not hold, or holds only in part. Scans from the field, never below
+     * the last part, and cuts the log before the first record that fails its check. Records below the field were
+     * covered by a completed flush and are never cut: a damaged one is reported by the cursor. Earlier parts are
+     * whole: ADAPTIVE flushes a part before it opens the next (openTxnPart), and at every append without a window. A
+     * cut zeroes everything past the new tail and makes that durable before the header, so a record later written
+     * over it tears over zeros and the header never counts a dropped record again. A log whose field is 0 is trusted.
+     * Reads the records since the last completed flush, at most one part.
+     */
+    private long recoverTail(Path path, long publishedTxn) {
+        final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
+        if (unsyncedFrom <= 0) {
+            return publishedTxn;
+        }
+        final long lastPartFirstTxn = Math.max(publishedTxn - 1, 0) / partTransactionCount * partTransactionCount + 1;
+        final long scanFrom = Math.max(unsyncedFrom, lastPartFirstTxn);
+        long tail = publishedTxn;
+        if (scanFrom <= publishedTxn) {
+            openTxnPart(publishedTxn - 1);
+            for (long txn = scanFrom; txn <= publishedTxn; txn++) {
+                if (failsCheck((txn - 1) % partTransactionCount)) {
+                    tail = txn - 1;
+                    break;
+                }
+            }
+        }
+        if (tail != publishedTxn) {
+            LOG.info().$("dropping torn sequencer txnlog tail [path=").$(path)
+                    .$(", publishedTxn=").$(publishedTxn)
+                    .$(", keptTxn=").$(tail)
+                    .I$();
+            final long cutOffset = (tail - lastPartFirstTxn + 1) * RECORD_SIZE;
+            Vect.memset(txnPartMem.addressOf(cutOffset), (long) partTransactionCount * RECORD_SIZE - cutOffset, 0);
+            ff.fdatasync(txnPartMem.getFd());
+            txnMem.putLong(MAX_TXN_OFFSET_64, tail);
+            txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, tail + 1);
+            ff.fdatasync(txnMem.getFd());
+        } else if (unsyncedFrom > publishedTxn + 1) {
+            // The max txn was lowered under the field (a checkpoint restore): the records past it are written again.
+            txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, publishedTxn + 1);
+        }
+        return tail;
+    }
+
     private void setAppendPosition() {
         txnPartMem.jumpTo((this.maxTxn.get() % partTransactionCount) * RECORD_SIZE);
+    }
+
+    /**
+     * Starts the field at the record about to be appended, before the header counts it, on a log that has none and a
+     * node that keeps the log durable itself in ADAPTIVE. The records below it were written by something that keeps
+     * no field and stay trusted.
+     */
+    private void startUnsyncedFrom() {
+        if (configuration.getCommitMode() == CommitMode.ADAPTIVE
+                && txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64) == 0
+                && durabilityPolicy.isLocalDurabilityEnabled()) {
+            txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, maxTxn.get() + 1);
+        }
     }
 
     private void sync0() {
@@ -382,18 +514,37 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                     ff.fdatasync(txnPartMem.getFd());
                 }
                 ff.fdatasync(txnMem.getFd());
+                markFlushed(maxTxn.get());
             }
+        }
+    }
+
+    /**
+     * Zeroes the part past the tail when a record sits there, left by an append that crashed before the header
+     * counted it or by a checkpoint restore that lowered the max txn, and makes that durable before the next append. A
+     * record written over it and torn by a power loss could otherwise show the old record whole, which passes its
+     * check. Appends are sequential, so the first slot past the tail tells.
+     */
+    private void zeroPastTail() {
+        final long offset = (maxTxn.get() % partTransactionCount) * RECORD_SIZE;
+        final long address = txnPartMem.addressOf(offset);
+        if (!isZero(address, address + RECORD_SIZE)) {
+            Vect.memset(address, (long) partTransactionCount * RECORD_SIZE - offset, 0);
+            ff.fdatasync(txnPartMem.getFd());
         }
     }
 
     @Override
     public void fdatasyncTxnLog() {
-        // The batched device flush of adaptive group commit, part file before the header as in sync0().
+        // The batched device flush of adaptive group commit, part file before the header as in sync0(). The caller
+        // holds the sequencer write lock, so no record is half-written up to this tail.
+        final long flushedTxn = maxTxn.get();
         if (txnPartMem.isOpen()) {
             ff.fdatasync(txnPartMem.getFd());
         }
         if (txnMem.isOpen()) {
             ff.fdatasync(txnMem.getFd());
+            markFlushed(flushedTxn);
         }
     }
 

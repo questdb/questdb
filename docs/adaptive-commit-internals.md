@@ -395,7 +395,10 @@ root (COPY staging) never marks a table safe. `nosync`, `async` and non-WAL tabl
 
 **The engine stop.** In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs`, `sync_file_range` or
 synchronous `msync` is fatal, because the data it covered may not be on the disk and the next commit would build on
-it. The failure is decided where it is created: `CairoException.dataSyncFailure(ff, ...)`, the one Java factory of a
+it. The one exception is the write-back drain's kick (`sync_file_range(WRITE)`, which starts a write-back and does
+not wait): ENOMEM, EAGAIN and EINTR leave the pages dirty, and the drain's wait and the barrier after it write them
+back and report any error, so the kick ignores them (`Vm.checkWritebackKick`); any other error is fatal, since ext4
+can drop pages whose block allocation failed for good without recording an error for a later wait or barrier. The failure is decided where it is created: `CairoException.dataSyncFailure(ff, ...)`, the one Java factory of a
 flush failure (with the forms `dataSyncFailureOfFd` and `dataSyncFailureOfMapping` that name the file), tells the
 engine that owns the file at once, so a path that later drops, counts or wraps the exception (a task's error counter,
 a job's top-level catch, a wrapper without the cause) cannot lose the stop. The owner is a live engine whose files
@@ -629,6 +632,14 @@ change reads as unverified, never as torn, and a released binary ignores the new
 - **Version 2 sequencer log.** Each 60-byte record carries a checksum of its first 52 bytes in its 8 reserved
   bytes. A stored 0 reads unverified; a mismatch fails the read with `torn sequencer txnlog record [txn=...,
   ...]`. A new log's header also carries a capability marker at offset 24, which nothing reads yet.
+- **Version 2 sequencer log: the torn tail (`adaptive` only).** The header keeps, at offset 40, the first transaction
+  a completed flush may not have covered. Only an `adaptive` node that keeps the log durable itself moves it, after a
+  flush of the part and the header, so every record at or above it was written by this release with a checksum. An
+  `adaptive` open scans from it (no lower than the last part's first transaction) to `maxTxn` and cuts before the
+  first record whose checksum is 0 or does not match (`dropping torn sequencer txnlog tail [...]`); a record below it
+  is never cut. The open also zeroes the part past the tail (`TableTransactionLogV2.recoverTail`, `zeroPastTail`).
+  A field of 0 trusts every record: an older log, a log another mode wrote, or one a replica's downloader appends to
+  (Enterprise clears the field when its downloader advances `maxTxn`, and a replica's first open clears it too).
 - **Version 1 sequencer log: the zero tail.** A V1 log has no room for a checksum. Instead, an open scans the records
   after a hint kept in the header (offset 40: the first transaction a completed flush may not have covered) and cuts
   the tail at the first record that cannot be whole (zero WAL id, zero timestamp, a gap in the structure version): it

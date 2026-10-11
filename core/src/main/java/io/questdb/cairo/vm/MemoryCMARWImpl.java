@@ -423,10 +423,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         }
         // Batched flush, stage 1: sync_file_range(WRITE) starts writeback of the written range and returns, so
         // the writeback of every file in the batch runs at once before stage 2 waits. Pages dirtied through the
-        // mapping need no msync first: Linux tracks them as dirty. No device flush, no watermark change.
+        // mapping need no msync first: Linux tracks them as dirty. No device flush, no watermark change. A
+        // transient failure leaves the pages dirty for stage 2 and the caller's flush; any other is a flush
+        // failure (see Vm.checkWritebackKick()).
         final long dirtyLen = syncFlushLen();
         if (dirtyLen > 0 && ff.syncFileRange(fd, 0, dirtyLen, Files.SYNC_FILE_RANGE_WRITE) != 0) {
-            throw CairoException.dataSyncFailureOfFd(ff, fd, ff.errno(), "sync_file_range", "could not sync_file_range");
+            Vm.checkWritebackKick(ff, fd, ff.errno());
         }
     }
 

@@ -33,6 +33,7 @@ import io.questdb.cairo.IDGenerator;
 import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -102,7 +103,12 @@ public class TableSequencerImpl implements TableSequencer {
                     WAL_INDEX_FILE_NAME,
                     configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep()
             );
-            tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy);
+            // The engine swaps its policy when the node changes role; the log reads the current one.
+            tableTransactionLog = new TableTransactionLog(
+                    configuration,
+                    walDirectoryPolicy,
+                    () -> engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()
+            );
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
                 schemaLock.writeLock().lock();
@@ -172,7 +178,8 @@ public class TableSequencerImpl implements TableSequencer {
         final int rootLen = path.concat(SEQ_DIR).size();
         try (
                 SequencerMetadata metadata = new SequencerMetadata(configuration);
-                TableTransactionLog tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy)
+                // Only creates the log, which writes no field, so the policy plays no part.
+                TableTransactionLog tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy, LocalDurabilityPolicy.ALWAYS_ON)
         ) {
             createSequencerFiles(
                     configuration.getFilesFacade(),

@@ -111,9 +111,11 @@ public interface MemoryMA extends MemoryM, MemoryA {
      * Stage 1 of the batched flush (Linux only): starts writeback of this memory's written range with
      * {@code sync_file_range(WRITE)} and returns without waiting, so the caller can start every file of the
      * batch before {@link #syncFlushDrain()} waits on any, and the writebacks overlap. Pages dirtied through the
-     * mapping need no {@code msync} first: Linux tracks them as dirty. A speed aid only: it issues no device
-     * flush and must not advance a {@code lastSynced*} watermark; only {@link #syncFlushFinishIfExtended()},
-     * which runs once the data is durable, may do that.
+     * mapping need no {@code msync} first: Linux tracks them as dirty. A speed aid: it issues no device flush and
+     * must not advance a {@code lastSynced*} watermark; only {@link #syncFlushFinishIfExtended()}, which runs once
+     * the data is durable, may do that. A transient failure is ignored ({@link #syncFlushDrain()} and the caller's
+     * flush report any error); any other is thrown as a flush failure (see
+     * {@link Vm#checkWritebackKick(FilesFacade, long, int)}).
      * <p>
      * The default does nothing; {@link #syncFlushFinishIfExtended()} then falls back to {@code sync(false)}.
      */
