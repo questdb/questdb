@@ -58,9 +58,11 @@ import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCur
  * Same as HashOuterJoinRecordCursorFactory but with added filtering (for non-equality
  * or complex join conditions that use functions).
  */
-public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecordCursorFactory implements OuterJoinRecordSource {
     private final int columnSplit;
     private final JoinSymbolTableSource filterSymbolTableSource;
+    // the filter reads no slave column, so the LEFT JOIN cursor evaluates it once per master row
+    private final boolean isMasterOnlyFilter;
     private final int joinType;
     private final RecordSink masterSink;
     private final RecordSink slaveKeySink;
@@ -83,12 +85,14 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             RecordSink slaveChainSink,
             int columnSplit,
             @NotNull Function filter,
+            boolean isMasterOnlyFilter,
             JoinContext joinContext,
             int joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.isMasterOnlyFilter = isMasterOnlyFilter;
         try {
             this.masterSink = masterSink;
             this.slaveKeySink = slaveKeySink;
@@ -172,6 +176,12 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             Misc.free(cursor);
             throw e;
         }
+    }
+
+    // The record of the RIGHT or FULL join's cursor, see OuterJoinNullCheck.
+    @Override
+    public @Nullable Record getOuterJoinRecord() {
+        return cursor != null ? cursor.getRecord() : null;
     }
 
     @Override
@@ -392,7 +402,8 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             if (useSlaveCursor) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 while (slaveChain.hasNext()) {
-                    if (filter.getBool(record)) {
+                    // a master-only filter passed for this master row before the chain walk began
+                    if (isMasterOnlyFilter || filter.getBool(record)) {
                         return true;
                     }
                 }
@@ -403,12 +414,14 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
-                if (value != null) {
+                // A filter that reads master columns only has one value per master row, so one
+                // evaluation decides the whole chain: skip it or return every entry unfiltered.
+                if (value != null && (!isMasterOnlyFilter || isFilterTrueForMasterRow())) {
                     slaveChain.of(value.getLong(0));
                     useSlaveCursor = true;
                     record.hasSlave(true);
                     while (slaveChain.hasNext()) {
-                        if (filter.getBool(record)) {
+                        if (isMasterOnlyFilter || filter.getBool(record)) {
                             return true;
                         }
                     }
@@ -424,6 +437,12 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         public void toTop() {
             super.toTop();
             filter.toTop();
+        }
+
+        private boolean isFilterTrueForMasterRow() {
+            // the filter reads no slave column, so the null slave side cannot change its value
+            record.hasSlave(false);
+            return filter.getBool(record);
         }
 
         @Override

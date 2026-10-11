@@ -25,46 +25,22 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
+import org.jetbrains.annotations.Nullable;
 
-public class FullOuterJoinRecord extends JoinRecord {
-    protected Record masterNullRecord;
-    protected Record slaveNullRecord;
-    private Record flappingMaster;
-    private Record flappingSlave;
+/**
+ * A hash join factory that runs a RIGHT or FULL join with join keys. The record of its cursor tells
+ * whether the current row NULL-extends the left side of the join, see {@link OuterJoinNullCheck}.
+ */
+public interface OuterJoinRecordSource {
 
-    public FullOuterJoinRecord(int split, Record masterNullRecord, Record slaveNullRecord) {
-        super(split);
-        this.masterNullRecord = masterNullRecord;
-        this.slaveNullRecord = slaveNullRecord;
-    }
-
-    public void of(Record master, Record slave) {
-        super.of(master, slave);
-        this.flappingMaster = master;
-        this.flappingSlave = slave;
-    }
-
-    void hasMaster(boolean value) {
-        if (value) {
-            master = flappingMaster;
-        } else {
-            master = masterNullRecord;
-        }
-    }
-
-    boolean hasMaster() {
-        return master != masterNullRecord;
-    }
-
-    boolean hasSlave() {
-        return slave != slaveNullRecord;
-    }
-
-    void hasSlave(boolean value) {
-        if (value) {
-            slave = flappingSlave;
-        } else {
-            slave = slaveNullRecord;
-        }
-    }
+    /**
+     * Returns the record of the join's cursor, a {@link RightOuterJoinRecord} for a RIGHT join and a
+     * {@link FullOuterJoinRecord} for a FULL join, or null while the factory has not opened a cursor yet.
+     * The factory creates its cursor in its first getCursor() call and keeps it, with the same record,
+     * until it closes.
+     *
+     * @return the record of the join's cursor, or null before the first getCursor() call
+     */
+    @Nullable
+    Record getOuterJoinRecord();
 }

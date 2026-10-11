@@ -7506,6 +7506,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectChooseFreesJoinFactoryOnUnresolvedColumn() throws Exception {
+        // generateSelectChoose() owns the nested join factory once generateSubQuery() returns it.
+        // An optimiser bug that projects a column the join does not produce fails the projection
+        // lookup there, and the hash join map must not leak on that path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, id INT)");
+            execute("CREATE TABLE c (k INT, id INT)");
+            execute("INSERT INTO a VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO c VALUES (1, 100), (3, 300)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final IQueryModel model = (IQueryModel) compiler.generateExecutionModel(
+                        "SELECT a.id, c.id FROM a JOIN c ON a.k = c.k",
+                        sqlExecutionContext
+                );
+                Assert.assertEquals(IQueryModel.SELECT_MODEL_CHOOSE, model.getSelectModelType());
+                model.getColumns().getQuick(1).getAst().token = "c.missing";
+                // the "wtf?" assert fires with -ea, getColumnMetadata(-1) without it
+                Throwable failure = null;
+                try (RecordCursorFactory ignore = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false)) {
+                    Assert.assertNotNull(ignore);
+                } catch (AssertionError | ArrayIndexOutOfBoundsException e) {
+                    failure = e;
+                }
+                Assert.assertNotNull("generateSelectChoose() accepted a column the join does not produce", failure);
+                TestUtils.assertContains(failure.toString(), failure instanceof AssertionError ? "c.missing" : "-1");
+            }
+        });
+    }
+
+    @Test
     public void testSelectColumns() throws Exception {
         assertQuery("select a,a1,b,c,d,e,f1,f,g,h,i,j,j1,k,l,m from x")
                 .ddl("create table x as (" +

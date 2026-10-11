@@ -26,45 +26,20 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 
-public class FullOuterJoinRecord extends JoinRecord {
-    protected Record masterNullRecord;
-    protected Record slaveNullRecord;
-    private Record flappingMaster;
-    private Record flappingSlave;
+/**
+ * The hash table of an INNER hash join, which a CROSS or nested loop LEFT join that the hash join
+ * reads as its master consults to skip the master rows that the hash join drops anyway. SqlCodeGenerator
+ * connects the two only when every key column of the hash join reads the master side of the join that
+ * consults it, so the slave row that a skipped master row is joined with does not matter.
+ */
+public interface JoinKeyFilter {
 
-    public FullOuterJoinRecord(int split, Record masterNullRecord, Record slaveNullRecord) {
-        super(split);
-        this.masterNullRecord = masterNullRecord;
-        this.slaveNullRecord = slaveNullRecord;
-    }
-
-    public void of(Record master, Record slave) {
-        super.of(master, slave);
-        this.flappingMaster = master;
-        this.flappingSlave = slave;
-    }
-
-    void hasMaster(boolean value) {
-        if (value) {
-            master = flappingMaster;
-        } else {
-            master = masterNullRecord;
-        }
-    }
-
-    boolean hasMaster() {
-        return master != masterNullRecord;
-    }
-
-    boolean hasSlave() {
-        return slave != slaveNullRecord;
-    }
-
-    void hasSlave(boolean value) {
-        if (value) {
-            slave = flappingSlave;
-        } else {
-            slave = slaveNullRecord;
-        }
-    }
+    /**
+     * Returns false when no row of the hash join's table has the key of the record, whose master side
+     * is positioned on the master row in question. Returns true while the table is not built yet.
+     *
+     * @param record the record of the join that consults the filter; only its master columns are read
+     * @return false when the hash join cannot match any row with the record's key
+     */
+    boolean hasMatch(Record record);
 }

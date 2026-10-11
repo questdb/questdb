@@ -80,6 +80,8 @@ public class QueryModel implements IQueryModel {
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<IQueryModel> joinModels = new ObjList<>();
     private final ObjList<QueryColumn> lateralCountTemplates = new ObjList<>();
+    private final IntList lateralNullCheckTypes = new IntList();
+    private final ObjList<ExpressionNode> lateralNullChecks = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
@@ -154,6 +156,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_NONE;
+    private LateralNullRejection lateralNullRejection;
     private int latestByType = LATEST_BY_NONE;
     private ExpressionNode limitAdviceHi;
     private ExpressionNode limitAdviceLo;
@@ -164,6 +167,7 @@ public class QueryModel implements IQueryModel {
     private long metadataVersion = -1;
     private int modelPosition = 0;
     private int modelType = ExecutionModel.QUERY;
+    private boolean movableAfterOuterJoins;
     private IQueryModel nestedModel;
     private boolean nestedModelIsSubQuery = false;
     private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
@@ -309,6 +313,12 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void addLateralNullCheck(ExpressionNode check, int columnType) {
+        lateralNullChecks.add(check);
+        lateralNullCheckTypes.add(columnType);
+    }
+
+    @Override
     public void addLatestBy(ExpressionNode latestBy) {
         this.latestBy.add(latestBy);
     }
@@ -414,6 +424,9 @@ public class QueryModel implements IQueryModel {
         originatingViewNameExpr = null;
         alias = null;
         latestByType = LATEST_BY_NONE;
+        lateralNullChecks.clear();
+        lateralNullCheckTypes.clear();
+        lateralNullRejection = null;
         latestBy.clear();
         joinCriteria = null;
         joinType = JOIN_NONE;
@@ -451,6 +464,7 @@ public class QueryModel implements IQueryModel {
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
+        movableAfterOuterJoins = false;
         unionModel = null;
         orderHash.clear();
         modelPosition = 0;
@@ -845,6 +859,21 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<QueryColumn> getLateralCountTemplates() {
         return lateralCountTemplates;
+    }
+
+    @Override
+    public IntList getLateralNullCheckTypes() {
+        return lateralNullCheckTypes;
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getLateralNullChecks() {
+        return lateralNullChecks;
+    }
+
+    @Override
+    public LateralNullRejection getLateralNullRejection() {
+        return lateralNullRejection;
     }
 
     @Override
@@ -1348,6 +1377,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isMovableAfterOuterJoins() {
+        return movableAfterOuterJoins;
+    }
+
+    @Override
     public boolean isNestedModelIsSubQuery() {
         return nestedModelIsSubQuery;
     }
@@ -1793,6 +1827,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setLateralNullRejection(LateralNullRejection lateralNullRejection) {
+        this.lateralNullRejection = lateralNullRejection;
+    }
+
+    @Override
     public void setLatestByType(int latestByType) {
         this.latestByType = latestByType;
     }
@@ -1827,6 +1866,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setModelType(int modelType) {
         this.modelType = modelType;
+    }
+
+    @Override
+    public void setMovableAfterOuterJoins(boolean movableAfterOuterJoins) {
+        this.movableAfterOuterJoins = movableAfterOuterJoins;
     }
 
     @Override

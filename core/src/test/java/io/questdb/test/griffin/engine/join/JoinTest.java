@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Numbers;
@@ -50,6 +51,18 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class JoinTest extends AbstractCairoTest {
+    // joins after which reorderTables moves i.sym = t.sym onto trades and starts the cheapest order at
+    // params, see createTablesForTimeSeriesJoinAfterKeyMove()
+    private static final String KEY_MOVE_JOINS = "FROM trades t CROSS JOIN params p JOIN venues v ON v.id = p.venue"
+            + " JOIN instruments i ON i.venue = v.id AND i.sym = t.sym";
+    // the rows of a time-series join after KEY_MOVE_JOINS that matches each trade with the latest quote of
+    // its symbol before the trade
+    private static final String KEY_MOVE_ROWS = """
+            sym\tts\tbid
+            A\t2024-01-01T00:00:10.000000Z\t9.5
+            B\t2024-01-01T00:00:20.000000Z\t19.5
+            A\t2024-01-01T00:00:30.000000Z\t10.5
+            """;
 
     @Test
     public void test2686() throws Exception {
@@ -1923,6 +1936,86 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinAfterFullJoinRunsAfterKeyedJoin() throws Exception {
+        // The RIGHT JOIN pins the CROSS JOIN ahead of it, which also makes the CROSS JOIN a consumer of the
+        // non-equi FULL JOIN before it. The CROSS JOIN runs after that FULL JOIN and after the keyed join
+        // written after it, ahead of the RIGHT JOIN.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, d.k dk, c.y, b.k bk, f.k fk FROM a FULL JOIN d ON a.x < d.k CROSS JOIN c JOIN b ON b.k = a.k RIGHT JOIN f ON f.k = b.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: f.k=b.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Nested Loop Full Join
+                                              filter: a.x<d.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: d
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: f
+                            """)
+                    .returns("""
+                            k\tdk\ty\tbk\tfk
+                            2\t7\t1\t2\t2
+                            2\t7\t2\t2\t2
+                            2\t7\t3\t2\t2
+                            2\t100\t1\t2\t2
+                            2\t100\t2\t2\t2
+                            2\t100\t3\t2\t2
+                            4\t100\t1\t4\t4
+                            4\t100\t2\t4\t4
+                            4\t100\t3\t4\t4
+                            6\t100\t1\t6\t6
+                            6\t100\t2\t6\t6
+                            6\t100\t3\t6\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinAfterReorderedInnerJoinKeepsMovedKey() throws Exception {
+        // reorderTables tries another root for the cross-joined tables, moves cid = x from c onto a and
+        // rejects that order. It kept the earlier order without undoing the move, so the join of c lost
+        // the key and the query returned 8.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 1)");
+            execute("CREATE TABLE b (bid INT, y INT)");
+            execute("INSERT INTO b VALUES (5, 1)");
+            execute("CREATE TABLE c (cid INT, z INT)");
+            execute("INSERT INTO c VALUES (9, 5), (1, 5)");
+            execute("CREATE TABLE d (did INT, w INT)");
+            execute("INSERT INTO d VALUES (0, 0), (1, 1)");
+            assertQuery("SELECT count(*) FROM a JOIN b ON y = x JOIN c ON z = bid AND cid = x CROSS JOIN d")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -1983,6 +2076,928 @@ public class JoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinKeepsLaterLeftJoinAfterIt() throws Exception {
+        // A LEFT join written after a RIGHT/FULL join has no ordering edge to it: doReorderTables runs the
+        // outer join first because it is written first. Moving the CROSS JOIN that the outer join waits for
+        // must not let the LEFT join run ahead of the outer join, or the LEFT join misses the NULL-extended
+        // row, whose NULL a.k matches the NULL key of e.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, e.z ez FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k LEFT JOIN e ON e.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: e.k=a.k
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: e
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk\tez
+                            4\t1\t4\t7\t0
+                            4\t2\t4\t7\t0
+                            4\t3\t4\t7\t0
+                            6\t1\t6\t7\t2
+                            6\t2\t6\t7\t2
+                            6\t3\t6\t7\t2
+                            null\tnull\tnull\t100\t1
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, e.z ez FROM a CROSS JOIN c JOIN b ON a.k = b.k FULL JOIN d ON a.x >= d.k LEFT JOIN e ON e.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\ty\tbk\tdk\tez
+                            2\t1\t2\tnull\t2
+                            2\t2\t2\tnull\t2
+                            2\t3\t2\tnull\t2
+                            4\t1\t4\t7\t0
+                            4\t2\t4\t7\t0
+                            4\t3\t4\t7\t0
+                            6\t1\t6\t7\t2
+                            6\t2\t6\t7\t2
+                            6\t3\t6\t7\t2
+                            null\tnull\tnull\t100\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinKeepsOrderOfCrossJoins() throws Exception {
+        // Both CROSS JOINs move behind the keyed join and keep their written order.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c1.y y1, c2.y y2, b.k bk, d.k dk FROM a CROSS JOIN c c1 CROSS JOIN c c2 JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty1\ty2\tbk\tdk
+                            4\t1\t1\t4\t7
+                            4\t1\t2\t4\t7
+                            4\t1\t3\t4\t7
+                            4\t2\t1\t4\t7
+                            4\t2\t2\t4\t7
+                            4\t2\t3\t4\t7
+                            4\t3\t1\t4\t7
+                            4\t3\t2\t4\t7
+                            4\t3\t3\t4\t7
+                            6\t1\t1\t6\t7
+                            6\t1\t2\t6\t7
+                            6\t1\t3\t6\t7
+                            6\t2\t1\t6\t7
+                            6\t2\t2\t6\t7
+                            6\t2\t3\t6\t7
+                            6\t3\t1\t6\t7
+                            6\t3\t2\t6\t7
+                            6\t3\t3\t6\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinOnCrossJoinRunsAfterKeyedJoin() throws Exception {
+        // The RIGHT JOIN reads the CROSS JOIN, which still moves behind the keyed join, up to the RIGHT JOIN.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, f.k fk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN f ON f.k = c.y")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: f.k=c.y
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: f
+                            """)
+                    .returns("""
+                            k\ty\tbk\tfk
+                            2\t2\t2\t2
+                            4\t2\t4\t2
+                            6\t2\t6\t2
+                            null\tnull\tnull\t4
+                            null\tnull\tnull\t6
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON d.k = c.y + 4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: d.k=c.y+4
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            2\t3\t2\t7
+                            4\t3\t4\t7
+                            6\t3\t6\t7
+                            null\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsAfterInnerJoinReadingIt() throws Exception {
+        // The INNER join's ON conjunct b.k > c.y is a filter, and it moves with the CROSS JOIN.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k AND b.k > c.y RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Filter filter: c.y<b.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            4\t1\t4\t7
+                            4\t2\t4\t7
+                            4\t3\t4\t7
+                            6\t1\t6\t7
+                            6\t2\t6\t7
+                            6\t3\t6\t7
+                            null\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsAfterKeyedJoin() throws Exception {
+        // A RIGHT/FULL join pins the CROSS JOIN written before it ahead of it, and doReorderTables then ran
+        // the CROSS JOIN at its written position, so the keyed join probed the cross product: 0.9 s instead
+        // of 6 ms with 100,000 rows in a, 1,000 in c and 100 in b. The CROSS JOIN now runs after the keyed
+        // join, as when no RIGHT/FULL join pins it.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, a.x, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\tx\ty\tbk\tdk
+                            4\t12\t1\t4\t7
+                            4\t12\t2\t4\t7
+                            4\t12\t3\t4\t7
+                            6\t18\t1\t6\t7
+                            6\t18\t2\t6\t7
+                            6\t18\t3\t6\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, a.x, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k FULL JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Full Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\tx\ty\tbk\tdk
+                            2\t6\t1\t2\tnull
+                            2\t6\t2\t2\tnull
+                            2\t6\t3\t2\tnull
+                            4\t12\t1\t4\t7
+                            4\t12\t2\t4\t7
+                            4\t12\t3\t4\t7
+                            6\t18\t1\t6\t7
+                            6\t18\t2\t6\t7
+                            6\t18\t3\t6\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.k = d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: d.k=a.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            null\tnull\tnull\t100
+                            null\tnull\tnull\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsAfterKeyedJoinUnderMarkoutHint() throws Exception {
+        // A markout_horizon hint does not keep the CROSS JOIN ahead of the keyed join, whether it names other
+        // tables or the CROSS-joined tables themselves, and whether it is written on the query or on an outer
+        // query that passes it down. c is a table, so no markout join can form, and keeping it in place made
+        // the keyed join probe the cross product.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            for (String hint : new String[]{"zz yy", "a c"}) {
+                assertQuery("SELECT /*+ markout_horizon(" + hint + ") */ a.k, a.x, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlan("""
+                                SelectedRecord
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                                """)
+                        .returns("""
+                                k\tx\ty\tbk\tdk
+                                4\t12\t1\t4\t7
+                                4\t12\t2\t4\t7
+                                4\t12\t3\t4\t7
+                                6\t18\t1\t6\t7
+                                6\t18\t2\t6\t7
+                                6\t18\t3\t6\t7
+                                null\tnull\tnull\tnull\t100
+                                """);
+            }
+            assertQuery("""
+                    SELECT /*+ markout_horizon(t o) */ t.k, t.y, t.dk, o.k ok
+                    FROM (SELECT a.k, c.y, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k FULL JOIN d ON a.x >= d.k) t
+                    CROSS JOIN l o
+                    WHERE o.k = 1
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Cross Join
+                                    SelectedRecord
+                                        Nested Loop Full Join
+                                          filter: a.x>=d.k
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: b.k=a.k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: b
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: d
+                                    Async JIT Filter workers: 1
+                                      filter: k=1
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: l
+                            """)
+                    .returns("""
+                            k\ty\tdk\tok
+                            2\t1\tnull\t1
+                            2\t2\tnull\t1
+                            2\t3\tnull\t1
+                            4\t1\t7\t1
+                            4\t2\t7\t1
+                            4\t3\t7\t1
+                            6\t1\t7\t1
+                            6\t2\t7\t1
+                            6\t3\t7\t1
+                            null\tnull\t100\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsAfterLeftJoin() throws Exception {
+        // The LEFT join does not read the CROSS JOIN, so the CROSS JOIN moves behind it and the keyed join.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, e.z, b.k bk, d.k dk FROM a CROSS JOIN c LEFT JOIN e ON e.k = a.k JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Hash Left Outer Join Light
+                                              condition: e.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: e
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tz\tbk\tdk
+                            4\t1\t0\t4\t7
+                            4\t2\t0\t4\t7
+                            4\t3\t0\t4\t7
+                            6\t1\t2\t6\t7
+                            6\t2\t2\t6\t7
+                            6\t3\t2\t6\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsAfterTimeSeriesJoin() throws Exception {
+        // The ASOF and LT joins read the timestamp of a, which still drives the join, so the CROSS JOIN moves
+        // behind them.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoinWithTimeSeriesJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, q.v, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k ASOF JOIN q RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        AsOf Join Fast
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: q
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tv\tdk
+                            4\t1\t4\t3\t7
+                            4\t2\t4\t3\t7
+                            4\t3\t4\t3\t7
+                            6\t1\t6\t5\t7
+                            6\t2\t6\t5\t7
+                            6\t3\t6\t5\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, q.v, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k LT JOIN q RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Lt Join Fast
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: q
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tv\tdk
+                            4\t1\t4\t3\t7
+                            4\t2\t4\t3\t7
+                            4\t3\t4\t3\t7
+                            6\t1\t6\t5\t7
+                            6\t2\t6\t5\t7
+                            6\t3\t6\t5\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinRunsBeforeLaterJoins() throws Exception {
+        // A join after the non-equi RIGHT JOIN keeps the joins written before it in written order, as on
+        // master, so the CROSS JOIN runs before the keyed join. It skips the rows of a that the keyed join
+        // drops, which master joins with every row of c first (#7759). A LEFT JOIN after the RIGHT JOIN keeps
+        // no such order, and the CROSS JOIN runs after the keyed join.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, b2.k b2k FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b2.k=a.k
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Cross Join
+                                              joinKeyCheck: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk\tb2k
+                            4\t1\t4\t7\t4
+                            4\t2\t4\t7\t4
+                            4\t3\t4\t7\t4
+                            6\t1\t6\t7\t6
+                            6\t2\t6\t7\t6
+                            6\t3\t6\t7\t6
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, b2.k b2k FROM a CROSS JOIN c JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k LEFT JOIN b b2 ON b2.k = d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: b2.k=d.k
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk\tb2k
+                            4\t1\t4\t7\tnull
+                            4\t2\t4\t7\tnull
+                            4\t3\t4\t7\tnull
+                            6\t1\t6\t7\tnull
+                            6\t2\t6\t7\tnull
+                            6\t3\t6\t7\tnull
+                            null\tnull\tnull\t100\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinStaysAheadOfAsOfJoinOnIt() throws Exception {
+        // The ASOF JOIN keys on the CROSS JOIN, so the CROSS JOIN stays ahead of it.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoinWithTimeSeriesJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, q.v, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k ASOF JOIN q ON q.k = c.y RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    AsOf Join Fast
+                                      condition: q.k=c.y
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Cross Join
+                                              joinKeyCheck: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: q
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tv\tdk
+                            4\t1\t4\t1\t7
+                            4\t2\t4\t2\t7
+                            4\t3\t4\tnull\t7
+                            6\t1\t6\t4\t7
+                            6\t2\t6\t5\t7
+                            6\t3\t6\tnull\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinStaysAheadOfLeftJoinKeyedOnIt() throws Exception {
+        // The LEFT JOIN keys on the CROSS JOIN, so the CROSS JOIN stays ahead of it. The optimiser moves
+        // a.k = c.y into the LEFT JOIN's outer join expression and makes the first table a key-less CROSS
+        // JOIN, which keeps its place at the head of the order.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, l.k lk, b.k bk, d.k dk FROM a CROSS JOIN c LEFT JOIN l ON l.k = a.k AND l.k = c.y JOIN b ON b.k = l.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Hash Join Light
+                                      condition: b.k=l.k
+                                        Hash Left Outer Join Light
+                                          condition: l.k=c.y
+                                          filter: a.k=c.y
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: l
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tlk\tbk\tdk
+                            null\tnull\tnull\tnull\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinStaysAheadOfLeftJoinReadingIt() throws Exception {
+        // The LEFT JOIN's ON clause reads the CROSS JOIN, by its qualified or plain name, so the CROSS JOIN
+        // moves behind the keyed join only, and stays ahead of the LEFT JOIN.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, e.k ek, e.z, f.k fk, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k LEFT JOIN e ON e.k = a.k AND e.z > c.y JOIN f ON f.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Hash Join Light
+                                      condition: f.k=b.k
+                                        Hash Left Outer Join Light
+                                          condition: e.k=a.k
+                                          filter: c.y<e.z
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: b.k=a.k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: b
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: e
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: f
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tek\tz\tfk\tdk
+                            4\t1\t4\tnull\tnull\t4\t7
+                            4\t2\t4\tnull\tnull\t4\t7
+                            4\t3\t4\tnull\tnull\t4\t7
+                            6\t1\t6\t6\t2\t6\t7
+                            6\t2\t6\tnull\tnull\t6\t7
+                            6\t3\t6\tnull\tnull\t6\t7
+                            null\tnull\tnull\tnull\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, e.k ek, e.z, d.k dk FROM a CROSS JOIN c JOIN b ON a.k = b.k LEFT JOIN e ON e.k = a.k AND e.z > y RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Hash Left Outer Join Light
+                                      condition: e.k=a.k
+                                      filter: c.y<e.z
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: e
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tek\tz\tdk
+                            4\t1\t4\tnull\tnull\t7
+                            4\t2\t4\tnull\tnull\t7
+                            4\t3\t4\tnull\tnull\t7
+                            6\t1\t6\t6\t2\t7
+                            6\t2\t6\tnull\tnull\t7
+                            6\t3\t6\tnull\tnull\t7
+                            null\tnull\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinBeforeRightJoinUnderOuterWhere() throws Exception {
+        // moveWhereInsideSubQueries() pushed t0x = 1 into the join sub-query, and
+        // deriveTransitiveFiltersFromPushedPredicate() overwrote the outer level's nulling-join anchors with the
+        // sub-query's. The next conjunct read a stale anchor, and the query failed with a NullPointerException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (t0k INT, t0x INT)");
+            execute("INSERT INTO t0 VALUES (null, null), (2, 1)");
+            execute("CREATE TABLE t1 (t1k INT, t1x INT)");
+            execute("INSERT INTO t1 VALUES (2, 2), (1, null), (1, 3), (3, 2)");
+            execute("CREATE TABLE t3 (t3k INT, t3x INT)");
+            execute("INSERT INTO t3 VALUES (1, 1), (1, 1), (null, 1)");
+            final String crossRight = "SELECT t0.t0k, t0.t0x, t1.t1k, t1.t1x, t3.t3k, t3.t3x FROM t0 CROSS JOIN t1 RIGHT JOIN t3 ON t3.t3k = t1.t1k";
+            execute("CREATE VIEW vv AS (" + crossRight + ")");
+            final String[] sources = {
+                    "SELECT * FROM vv",
+                    "SELECT * FROM (" + crossRight + ")",
+                    "WITH q AS (" + crossRight + ") SELECT * FROM q",
+                    "SELECT * FROM (SELECT t0.t0k, t0.t0x, t1.t1k, t1.t1x, t3.t3k, t3.t3x FROM t0, t1 RIGHT JOIN t3 ON t3.t3k = t1.t1k)",
+                    "SELECT * FROM (SELECT t0.t0k, t0.t0x, t1.t1k, t1.t1x, t3.t3k, t3.t3x FROM t0 CROSS JOIN t1 FULL JOIN t3 ON t3.t3k = t1.t1k)"
+            };
+            for (String source : sources) {
+                for (String where : new String[]{" WHERE t0x IS NULL AND t3k > 0", " WHERE t3k > 0 AND t0x IS NULL"}) {
+                    assertQuery(source + where + " ORDER BY 1, 2, 3, 4, 5, 6")
+                            .noLeakCheck()
+                            .returns("""
+                                    t0k\tt0x\tt1k\tt1x\tt3k\tt3x
+                                    null\tnull\t1\tnull\t1\t1
+                                    null\tnull\t1\tnull\t1\t1
+                                    null\tnull\t1\t3\t1\t1
+                                    null\tnull\t1\t3\t1\t1
+                                    """);
+                }
+                for (String where : new String[]{" WHERE t0x = 1 AND t3k > 0", " WHERE t3k > 0 AND t0x = 1"}) {
+                    assertQuery(source + where + " ORDER BY 1, 2, 3, 4, 5, 6")
+                            .noLeakCheck()
+                            .returns("""
+                                    t0k\tt0x\tt1k\tt1x\tt3k\tt3x
+                                    2\t1\t1\tnull\t1\t1
+                                    2\t1\t1\tnull\t1\t1
+                                    2\t1\t1\t3\t1\t1
+                                    2\t1\t1\t3\t1\t1
+                                    """);
+                }
+            }
+            // the keyed INNER JOIN already ran t0 ahead of the RIGHT JOIN before the CROSS JOIN reordering
+            for (String where : new String[]{" WHERE t0x IS NULL AND t3k > 0", " WHERE t3k > 0 AND t0x IS NULL"}) {
+                assertQuery("SELECT * FROM (SELECT t0.t0k, t0.t0x, t1.t1k, t1.t1x, t3.t3k, t3.t3x FROM t0 JOIN t1 ON t0.t0k = t1.t1k RIGHT JOIN t3 ON t3.t3k = t1.t1k)"
+                        + where + " ORDER BY 1, 2, 3, 4, 5, 6")
+                        .noLeakCheck()
+                        .returns("""
+                                t0k\tt0x\tt1k\tt1x\tt3k\tt3x
+                                null\tnull\tnull\tnull\t1\t1
+                                null\tnull\tnull\tnull\t1\t1
+                                """);
+            }
         });
     }
 
@@ -2055,6 +3070,262 @@ public class JoinTest extends AbstractCairoTest {
                     "cross join " +
                     "(select * from TabB where ts > 15L*60L*1000000L order by ts desc) )";
             assertSkipToAndCalculateSize(selectWithIntervalBwdFrame, 81);
+        });
+    }
+
+    @Test
+    public void testCrossJoinFirstBeforeRightJoinRunsAfterKeyedJoin() throws Exception {
+        // The first table has no key, so the RIGHT/FULL join only pins it ahead of the outer join, and it runs
+        // after the keyed join as on master. A level with a RIGHT/FULL join has no designated timestamp, so
+        // nothing reads the timestamp of the first table. The FULL JOIN keyed on a still runs after it.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON c.y = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=c.y
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            3\t2\t2\t7
+                            4\t2\t2\t7
+                            5\t2\t2\t7
+                            6\t2\t2\t7
+                            null\tnull\tnull\t100
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk FROM a CROSS JOIN c JOIN b ON c.y = b.k FULL JOIN d ON a.x = d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Full Outer Join Light
+                                  condition: d.k=a.x
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: b.k=c.y
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tdk
+                            1\t2\t2\tnull
+                            2\t2\t2\tnull
+                            3\t2\t2\tnull
+                            4\t2\t2\tnull
+                            5\t2\t2\tnull
+                            6\t2\t2\tnull
+                            null\tnull\tnull\t100
+                            null\tnull\tnull\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinFirstBeforeRightJoinStaysFirstBeforeTimeSeriesJoin() throws Exception {
+        // The ASOF JOIN reads the designated timestamp of its master, which the first table of the order gives,
+        // so the first table keeps its place although it has no key.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoinWithTimeSeriesJoin();
+            assertQuery("SELECT a.k, c.y, b.k bk, q.v, d.k dk FROM a CROSS JOIN c JOIN b ON c.y = b.k ASOF JOIN q RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    AsOf Join Fast
+                                        Hash Join Light
+                                          condition: b.k=c.y
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: q
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\ty\tbk\tv\tdk
+                            3\t2\t2\t2\t7
+                            4\t2\t2\t3\t7
+                            5\t2\t2\t4\t7
+                            6\t2\t2\t5\t7
+                            null\tnull\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinGetsHashKeyPastEarlierOuterJoin() throws Exception {
+        // reorderTables started the key-steal scan for the cross-joined b at b's position among the
+        // crosses instead of at b's join model index. The scan stopped at LEFT JOIN d, before it reached
+        // e's key b.z = e.z, and b stayed a nested-loop Cross Join.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+            assertQuery("""
+                    SELECT a.id, b.id id1, e.id eid
+                    FROM a
+                    JOIN a c ON a.id = c.id
+                    LEFT JOIN b d ON a.id = d.id
+                    CROSS JOIN b
+                    JOIN e ON a.x = e.y AND b.z = e.z
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("condition: b.z=e.z")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            id\tid1\teid
+                            1\t1\t10
+                            2\t2\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinKeyImpliedAfterRightJoin() throws Exception {
+        // x2's keys imply b.z = e.z, which addFilterOrEmitJoin turns into a filter after RIGHT JOIN f.
+        // Its ordering edge stayed fixed while reorderTables moved e's key b.z = e.z onto b, and the
+        // query failed with "could not determine join order".
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+            assertQuery("SELECT * FROM a CROSS JOIN b JOIN e ON b.z = e.z AND a.x = e.y RIGHT JOIN f ON f.id = e.id JOIN x2 ON x2.id = f.id AND x2.z = b.z AND x2.z = e.z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tx\tid1\tz\tid2\ty\tz1\tid3\tid4\tz2
+                            1\tnull\t1\t5\t10\tnull\t5\t10\t10\t5
+                            2\t7\t2\t7\t20\t7\t7\t20\t20\t7
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\t40\t40\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinKeyRepeatedAfterFullJoin() throws Exception {
+        // analyseEquals turns x's b.z = e.z into a filter after FULL JOIN f. Its ordering edge stayed fixed
+        // while reorderTables moved e's key b.z = e.z onto b, and the query failed with
+        // "could not determine join order".
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+            assertQuery("SELECT * FROM a CROSS JOIN b JOIN e ON b.z = e.z AND a.x = e.y FULL JOIN f ON f.id = e.id JOIN x ON x.id = f.id AND b.z = e.z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tx\tid1\tz\tid2\ty\tz1\tid3\tid4
+                            1\tnull\t1\t5\t10\tnull\t5\t10\t10
+                            2\t7\t2\t7\t20\t7\t7\t20\t20
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\t40\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinKeyRepeatedAfterRightJoin() throws Exception {
+        // analyseEquals turns x's b.z = e.z into a filter after RIGHT JOIN f. Its ordering edge stayed fixed
+        // while reorderTables moved e's key b.z = e.z onto b, and the query failed with
+        // "could not determine join order". The plan keeps the hash join on b.z = e.z.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+            assertQuery("SELECT * FROM a CROSS JOIN b JOIN e ON b.z = e.z AND a.x = e.y RIGHT JOIN f ON f.id = e.id JOIN x ON x.id = f.id AND b.z = e.z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Filter filter: b.z=e.z
+                                    Hash Join Light
+                                      condition: x.id=f.id
+                                        Hash Right Outer Join Light
+                                          condition: f.id=e.id
+                                            Hash Join Light
+                                              condition: b.z=e.z
+                                                Hash Join Light
+                                                  condition: e.y=a.x
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: e
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: f
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """)
+                    .returns("""
+                            id\tx\tid1\tz\tid2\ty\tz1\tid3\tid4
+                            1\tnull\t1\t5\t10\tnull\t5\t10\t10
+                            2\t7\t2\t7\t20\t7\t7\t20\t20
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\t40\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinKeyRepeatedAfterRightJoinBehindInnerJoin() throws Exception {
+        // Same shape as testCrossJoinKeyRepeatedAfterRightJoin, with an INNER join before the cross join.
+        // The query failed with "could not determine join order".
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+            assertQuery("SELECT * FROM a JOIN c ON a.id = c.id CROSS JOIN b JOIN e ON b.z = e.z AND a.x = e.y RIGHT JOIN f ON f.id = e.id JOIN x ON x.id = f.id AND b.z = e.z")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tx\tid1\tid2\tz\tid3\ty\tz1\tid4\tid5
+                            1\tnull\t1\t1\t5\t10\tnull\t5\t10\t10
+                            2\t7\t2\t2\t7\t20\t7\t7\t20\t20
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t40\t40
+                            """);
         });
     }
 
@@ -2165,6 +3436,182 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinStaysBeforeFullJoinWithOnNameSharedWithLaterTable() throws Exception {
+        // w exists in f1 and in the later f2. The ON clause of the LEFT JOIN f1 sees only f0 and f1, so w
+        // means f1.w, and the optimiser must keep the CROSS JOIN f3 before the FULL JOIN that follows it.
+        // Each unmatched row of the FULL JOIN appears once, with NULL f3 columns.
+        assertMemoryLeak(() -> {
+            createTablesForOnNameSharedWithLaterTable();
+            assertQuery("""
+                    SELECT * FROM f0
+                    LEFT JOIN f1 ON b1 = b0 AND w > 1
+                    FULL JOIN f2 ON a2 = a0
+                    CROSS JOIN f3
+                    FULL JOIN f4 ON a4 = a2 AND a4 = b2
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta2\tb2\tw1\tv1\ta3\tb3\ta4\tb4
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t2\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t2\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\t3\tnull\t1\t3\tnull\t3\tnull
+                            3\t1\t3\t3\t1\t3\t3\t3\tnull\t1\t1\t2\t3\tnull
+                            3\t1\t3\t3\t1\t3\t3\t3\tnull\t1\t1\tnull\t3\tnull
+                            3\t1\t3\t3\t1\t3\t3\t3\tnull\t1\t3\t2\t3\tnull
+                            3\t1\t3\t3\t1\t3\t3\t1\t2\t3\t3\tnull\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\t1\t2\t3\t1\t2\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\t1\t2\t3\t1\tnull\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\t1\t2\t3\t3\t2\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t3\tnull\t1\t3\tnull\t3\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t3\tnull\t1\t1\t2\t3\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t3\tnull\t1\t1\tnull\t3\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t3\tnull\t1\t3\t2\t3\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t1\t2\t3\t3\tnull\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t1\t2\t3\t1\t2\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t1\t2\t3\t1\tnull\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\t1\t2\t3\t3\t2\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull\t3\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull\t1\t2\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull\t1\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull\t3\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3\t3\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3\t1\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3\t1\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3\t3\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1\t3\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1\t1\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1\t1\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1\t3\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2\t3\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2\t1\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2\t1\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2\t3\t2\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3
+                            """);
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON b1 = b0 AND w > 1 CROSS JOIN f3 FULL JOIN f2 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta3\tb3\ta2\tb2\tw1\tv1
+                            2\tnull\t1\tnull\tnull\tnull\t3\tnull\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t1\t2\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t1\tnull\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t3\t2\tnull\tnull\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\tnull\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t3\tnull\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t1\t2\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t1\t2\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t1\tnull\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t1\tnull\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t3\t2\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t3\t2\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t3\tnull\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t3\tnull\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t1\t2\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t1\t2\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t1\tnull\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t1\tnull\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t3\t2\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t3\t2\t3\t1\t2\t3
+                            2\t2\t2\t2\t2\t2\t3\tnull\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t1\t2\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t1\tnull\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t3\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinSubQueryOuterWhereAnchorsAtLastJoinedTable() throws Exception {
+        // optimiseJoins orders the sub-query as b, c, a. moveWhereInsideSubQueries pushed a.j < c.j
+        // onto c, the highest referenced model index, which joins before a, so the filter failed
+        // with "Invalid column: a.j". It must anchor at a, the referenced table that joins last.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinSubQueryOuterWhere();
+            assertQuery("SELECT * FROM (SELECT a.j aj, b.j bj, c.j cj FROM a CROSS JOIN b JOIN c ON c.k = b.k) s WHERE aj < cj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            aj\tbj\tcj
+                            0\t10\t5
+                            0\t10\t5
+                            0\t10\t5
+                            0\t20\t6
+                            0\t20\t6
+                            0\t20\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinSubQueryOuterWhereFiltersAfterReorderedCrossJoin() throws Exception {
+        // optimiseJoins orders the sub-query as b, c, a. moveWhereInsideSubQueries pushed a.j < b.j
+        // onto b, the first table in the join order, where eraseColumnPrefixInWhereClauses turned
+        // it into j < j on b's scan. It must anchor at a, the referenced table that joins last.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinSubQueryOuterWhere();
+            assertQuery("SELECT * FROM (SELECT a.j aj, b.j bj, c.j cj FROM a CROSS JOIN b JOIN c ON c.k = b.k) s WHERE aj < bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: a.j<b.j")
+                    .returns("""
+                            aj\tbj\tcj
+                            0\t10\t5
+                            0\t10\t5
+                            0\t10\t5
+                            0\t20\t6
+                            0\t20\t6
+                            0\t20\t6
+                            """);
+            assertQuery("SELECT * FROM (SELECT a.j aj, b.j bj, c.j cj FROM a CROSS JOIN b JOIN c ON c.k = b.k) s WHERE aj = bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("aj\tbj\tcj\n");
+            assertQuery("SELECT count(*) FROM (SELECT a.j aj, b.j bj, c.j cj FROM a CROSS JOIN b JOIN c ON c.k = b.k) s WHERE aj < bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            6
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinViewOuterWhereFiltersAfterReorderedCrossJoin() throws Exception {
+        // The view's comma join orders as b, c, a. moveWhereInsideSubQueries must anchor the pushed
+        // a.j < b.j at a, the referenced table that joins last, not at b, which joins first.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinSubQueryOuterWhere();
+            execute("CREATE VIEW v AS (SELECT a.j aj, b.j bj, c.j cj FROM a, b, c WHERE c.k = b.k)");
+            assertQuery("SELECT * FROM v WHERE aj < bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            aj\tbj\tcj
+                            0\t10\t5
+                            0\t10\t5
+                            0\t10\t5
+                            0\t20\t6
+                            0\t20\t6
+                            0\t20\t6
+                            """);
+            assertQuery("SELECT * FROM v WHERE aj = bj")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("aj\tbj\tcj\n");
+        });
+    }
+
+    @Test
     public void testCrossJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2252,12 +3699,10 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCrossJoinedMasterFilterPushesDownWhenNotNulled() throws Exception {
-        // t0 is cross-joined and, after reordering, executes AFTER the RIGHT join, so that join never
-        // NULL-extends t0. WHERE t0.c = 1 must push down into t0's scan. Anchoring the post-join filter by
-        // model index (where the RIGHT join precedes t0) compiled it against metadata lacking t0 -
-        // "Invalid column: t0.c". Choosing the anchor in execution order fixes the failure and keeps the
-        // pushdown.
+    public void testCrossJoinedMasterFilterStaysPostJoinBeforeRightJoin() throws Exception {
+        // The RIGHT join takes the whole prefix t0 CROSS JOIN t1 as its master, so it NULL-extends t0
+        // for the unmatched t2 row, and WHERE t0.c = 1 must drop that row. t0 therefore runs before
+        // the RIGHT join, and t0.c = 1 stays a post-join filter instead of pushing into t0's scan.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (c INT)");
             execute("INSERT INTO t0 VALUES (1)");
@@ -2267,11 +3712,124 @@ public class JoinTest extends AbstractCairoTest {
             execute("INSERT INTO t2 VALUES (1), (2)");
             assertQuery("SELECT t0.c, t1.k, t2.k FROM t0 CROSS JOIN t1 RIGHT JOIN t2 ON t2.k = t1.k WHERE t0.c = 1 ORDER BY t2.k")
                     .noLeakCheck()
-                    // A non-pushed master filter would render alias-qualified as a post-join
-                    // "Filter filter: t0.c=1" node (cf. testMasterFilterAnchorsAtLastNullingJoinInOrder);
-                    // its absence proves t0.c=1 pushed into t0's scan instead.
-                    .withPlanNotContaining("Filter filter: t0.c")
-                    .returns("c\tk\tk1\n1\t1\t1\n1\tnull\t2\n");
+                    .withPlanContaining("Filter filter: t0.c=1")
+                    .returns("""
+                            c\tk\tk1
+                            1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinedTableKeepsEveryMovedKey() throws Exception {
+        // reorderTables moves a2 = a0 from f2 and then a3 = a0 from f3 onto the key-less f1. The second
+        // move created a new join context for f1 and dropped the first key, but f1 still waited for f2
+        // only. f1 then joined on a3 = a0 before f3 and the query failed with InvalidColumnException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (7, 100), (8, 200)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 100), (2, 200), (1, 200)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 100), (2, 100)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 JOIN f2 ON a2 = a0 AND b2 = b1 JOIN f3 ON a3 = a0 AND b3 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            1\t10\t7\t100\t1\t100\t1\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinedTableKeepsEveryMovedSymbolKey() throws Exception {
+        // reorderTables moves b2 = b1 from f2 and b3 = b1 from f3 onto the key-less f1, so the hash join
+        // builds f1 on b1 = b2 and b1 = b3. The tables assign different symbol ids to the same strings, so
+        // the f1 key column b1 must not translate through one symbol table for both keys.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT)");
+            execute("INSERT INTO f0 VALUES (1), (2)");
+            execute("CREATE TABLE f1 (b1 SYMBOL)");
+            execute("INSERT INTO f1 VALUES ('x'), ('y')");
+            execute("CREATE TABLE f2 (a2 INT, b2 SYMBOL)");
+            execute("INSERT INTO f2 VALUES (1, 'y'), (2, 'x'), (1, 'x')");
+            execute("CREATE TABLE f3 (a3 INT, b3 SYMBOL)");
+            execute("INSERT INTO f3 VALUES (1, 'x'), (2, 'y'), (1, 'y')");
+            final String expected = """
+                    a0\tb1\ta2\tb2\ta3\tb3
+                    1\ty\t1\ty\t1\ty
+                    1\tx\t1\tx\t1\tx
+                    """;
+            for (String query : new String[]{
+                    "SELECT * FROM f0 CROSS JOIN f1 JOIN f2 ON a2 = a0 AND b2 = b1 JOIN f3 ON a3 = a0 AND b3 = b1",
+                    "SELECT * FROM f0, f1, f2, f3 WHERE a2 = a0 AND b2 = b1 AND a3 = a0 AND b3 = b1"
+            }) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(expected);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testCrossJoinedTableKeyedToTablesSharingColumnName() throws Exception {
+        // #7716: the optimiser moves c.k = d.k and c.k = e.k onto the CROSS-joined c and joins c last,
+        // after a, d and e. Code generation looked up those keys by the plain name k, as if c joined a
+        // alone. d and e both have k, so the query failed with InvalidColumnException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x INT)");
+            execute("INSERT INTO ta VALUES (1), (2)");
+            execute("CREATE TABLE tc (k INT)");
+            execute("INSERT INTO tc VALUES (1), (2)");
+            execute("CREATE TABLE td (k INT, x INT)");
+            execute("INSERT INTO td VALUES (1, 1), (2, 2), (1, 2)");
+            execute("CREATE TABLE te (k INT, x INT)");
+            execute("INSERT INTO te VALUES (1, 1), (2, 1), (2, 2)");
+            assertQuery("SELECT * FROM ta a CROSS JOIN tc c JOIN td d ON d.k = c.k AND d.x = a.x JOIN te e ON e.k = c.k AND e.x = a.x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tk\tk1\tx1\tk2\tx2
+                            1\t1\t1\t1\t1\t1
+                            2\t2\t2\t2\t2\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testCrossJoinedTableSkipsKeyMoveThatClosesCycle() throws Exception {
+        // f3 follows f2 through b3 = b2, and f2 follows f1 through b2 = a1. Moving a3 = a1 from f3 onto
+        // the key-less f1 would make f1 follow f3 as well, so no join order would exist and the query
+        // would fail with "could not determine join order". swapJoinOrder must skip that move.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (0, 5), (0, 6)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 10), (2, 10), (1, 11)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (0, 1), (0, 2)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 1), (2, 3), (1, 2)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (10, 5), (11, 6)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 JOIN f2 ON b2 = a1 JOIN f3 ON a3 = a1 AND b3 = b2 AND a3 = b3 JOIN f4 ON a4 = b1 AND b4 = b0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4
+                            0\t5\t1\t10\t0\t1\t1\t1\t10\t5
+                            0\t6\t1\t11\t0\t1\t1\t1\t11\t6
+                            """);
         });
     }
 
@@ -2287,6 +3845,380 @@ public class JoinTest extends AbstractCairoTest {
                     Assert.assertEquals(Long.MAX_VALUE, cursor.size());
                 }
             }
+        });
+    }
+
+    @Test
+    public void testEquiFullJoinAfterCrossJoinOnKeysSharingColumn() throws Exception {
+        // An equi FULL/RIGHT join takes its whole prefix as master. When its ON keys share a column, the
+        // optimiser moves one key into the outer join expression, and the CROSS JOIN tables ran after the
+        // outer join, which then NULL-extended too few tables.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("""
+                    SELECT * FROM f0
+                    CROSS JOIN f1
+                    CROSS JOIN f2
+                    FULL JOIN f3 ON b3 = a1 AND b3 = b2
+                    LEFT JOIN f4 ON a4 = a1
+                    ORDER BY a0, a1, a2, a3, a4
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4
+                            null\tnull\tnull\tnull\tnull\tnull\t2\t9\tnull\tnull
+                            1\t1\t1\t2\t1\t4\tnull\tnull\t1\t1
+                            1\t1\t1\t2\t2\t2\tnull\tnull\t1\t1
+                            1\t1\t1\t2\t4\t1\t1\t1\t1\t1
+                            1\t1\t3\t1\t1\t4\tnull\tnull\t3\t3
+                            1\t1\t3\t1\t2\t2\tnull\tnull\t3\t3
+                            1\t1\t3\t1\t4\t1\tnull\tnull\t3\t3
+                            2\t3\t1\t2\t1\t4\tnull\tnull\t1\t1
+                            2\t3\t1\t2\t2\t2\tnull\tnull\t1\t1
+                            2\t3\t1\t2\t4\t1\t1\t1\t1\t1
+                            2\t3\t3\t1\t1\t4\tnull\tnull\t3\t3
+                            2\t3\t3\t1\t2\t2\tnull\tnull\t3\t3
+                            2\t3\t3\t1\t4\t1\tnull\tnull\t3\t3
+                            """);
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 RIGHT JOIN f2 ON a2 = a1 AND a2 = a0 ORDER BY a0, a1, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2
+                            null\tnull\tnull\tnull\t2\t2
+                            null\tnull\tnull\tnull\t4\t1
+                            1\t1\t1\t2\t1\t4
+                            """);
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 FULL JOIN f2 ON a2 = b0 AND a2 = a0 ORDER BY a0, a1, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2
+                            null\tnull\tnull\tnull\t2\t2
+                            null\tnull\tnull\tnull\t4\t1
+                            1\t1\t1\t2\t1\t4
+                            1\t1\t3\t1\t1\t4
+                            2\t3\t1\t2\tnull\tnull
+                            2\t3\t3\t1\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testEquiFullJoinAfterCrossJoinResolvesPrefixColumns() throws Exception {
+        // The CROSS JOIN table f0 ran after the FULL JOIN, so the LEFT JOIN condition b2 < a0 could not
+        // resolve a0.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON b2 < a0 FULL JOIN f3 ON a3 = a2 ORDER BY a3, a0, a1, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            1\t1\t1\t2\tnull\tnull\tnull\tnull
+                            1\t1\t3\t1\tnull\tnull\tnull\tnull
+                            2\t3\t1\t2\t4\t1\tnull\tnull
+                            2\t3\t3\t1\t4\t1\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t2\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testEquiFullJoinAfterNonEquiInnerJoinKeepsUnmatchedRows() throws Exception {
+        // A non-equi INNER join becomes a context-free CROSS JOIN with a filter. It ran after the equi
+        // outer join, and its filter dropped the rows that the outer join NULL-extended.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 < a0 JOIN f3 ON a3 < b1 FULL JOIN f4 ON b4 = a1 ORDER BY a4, a0")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta3\tb3\ta4\tb4
+                            2\t3\t1\t2\t1\t1\t1\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t3\t3
+                            """);
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 < a0 RIGHT JOIN f3 ON b3 = b0 ORDER BY a3, a0")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta3\tb3
+                            null\tnull\tnull\tnull\t1\t1
+                            null\tnull\tnull\tnull\t2\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testEquiOuterJoinAfterForwardReferencingLeftJoin() throws Exception {
+        // LEFT JOIN f1 reads JOIN f2, written right after it. The optimiser left LEFT JOIN f1 unpinned, and
+        // it executed after the FULL/RIGHT join, where a NULL f1.b1 matched the NULL a2 of the unmatched f3
+        // row and filled in its f1 columns. LEFT JOIN f1 now stays pinned and JOIN f2 executes before it,
+        // so the queries return the rows of the form that writes JOIN f2 first: the unmatched f3 row comes
+        // back once, with NULL f1 columns.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            execute("INSERT INTO f1 VALUES (7, null)");
+            final String expectedFull = """
+                    a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                    2\t3\t1\t2\t2\t2\tnull\tnull
+                    1\t1\t3\t1\t1\t4\t1\t1
+                    null\tnull\tnull\tnull\tnull\tnull\t2\t9
+                    """;
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON b1 = a2 JOIN f2 ON a2 = a0 FULL JOIN f3 ON b3 = b0 ORDER BY a3, a0")
+                    .noLeakCheck()
+                    .returns(expectedFull);
+            assertQuery("SELECT a0, b0, a1, b1, a2, b2, a3, b3 FROM f0 JOIN f2 ON a2 = a0 LEFT JOIN f1 ON b1 = a2 FULL JOIN f3 ON b3 = b0 ORDER BY a3, a0")
+                    .noLeakCheck()
+                    .returns(expectedFull);
+            final String expectedRight = """
+                    a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                    1\t1\tnull\tnull\t1\t4\t1\t1
+                    null\tnull\tnull\tnull\tnull\tnull\t2\t9
+                    """;
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < a2 JOIN f2 ON a2 = a0 RIGHT JOIN f3 ON b3 = b0 ORDER BY a3, a0")
+                    .noLeakCheck()
+                    .returns(expectedRight);
+            assertQuery("SELECT a0, b0, a1, b1, a2, b2, a3, b3 FROM f0 JOIN f2 ON a2 = a0 LEFT JOIN f1 ON a1 < a2 RIGHT JOIN f3 ON b3 = b0 ORDER BY a3, a0")
+                    .noLeakCheck()
+                    .returns(expectedRight);
+        });
+    }
+
+    @Test
+    public void testEquiRightJoinAfterConstantLeftJoinNullsPrefix() throws Exception {
+        // The context-free LEFT JOIN f6 ran after the RIGHT JOIN and filled in f6 columns on the
+        // unmatched f3 row.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f6 ON a6 > 100 RIGHT JOIN f3 ON b3 = b0 ORDER BY a3, a0")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta6\tb6\ta3\tb3
+                            1\t1\t200\t1\t1\t1
+                            null\tnull\tnull\tnull\t2\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testEquiRightJoinAfterCrossJoinNullExtendsWholePrefix() throws Exception {
+        // An equi RIGHT/FULL join takes its whole prefix as master. The CROSS JOIN table ran after it,
+        // which repeated the unmatched f3 row per f2 row, or dropped it when f5 is empty.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 CROSS JOIN f2 RIGHT JOIN f3 ON b3 = b0 ORDER BY a3, a0, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta2\tb2\ta3\tb3
+                            1\t1\t1\t4\t1\t1
+                            1\t1\t2\t2\t1\t1
+                            1\t1\t4\t1\t1\t1
+                            null\tnull\tnull\tnull\t2\t9
+                            """);
+            assertQuery("SELECT * FROM f0 CROSS JOIN f2 FULL JOIN f3 ON b3 = b0 ORDER BY a3, a0, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta2\tb2\ta3\tb3
+                            2\t3\t1\t4\tnull\tnull
+                            2\t3\t2\t2\tnull\tnull
+                            2\t3\t4\t1\tnull\tnull
+                            1\t1\t1\t4\t1\t1
+                            1\t1\t2\t2\t1\t1
+                            1\t1\t4\t1\t1\t1
+                            null\tnull\tnull\tnull\t2\t9
+                            """);
+            assertQuery("SELECT * FROM f0 CROSS JOIN f5 RIGHT JOIN f3 ON b3 = b0 ORDER BY a3, a0, a5")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta5\tb5\ta3\tb3
+                            null\tnull\tnull\tnull\t1\t1
+                            null\tnull\tnull\tnull\t2\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testEquiRightJoinAfterForwardReferencingInnerJoinKeepsUnmatchedRows() throws Exception {
+        // The ON clause a1 < a2 of the INNER join reads the later CROSS JOIN table f2. Both tables precede
+        // the RIGHT/FULL join, so they and the filter must run before it.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 < a2 CROSS JOIN f2 RIGHT JOIN f3 ON b3 = b0 ORDER BY a3, a0, a1, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            1\t1\t1\t2\t2\t2\t1\t1
+                            1\t1\t1\t2\t4\t1\t1\t1
+                            1\t1\t3\t1\t4\t1\t1\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t2\t9
+                            """);
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 < a2 CROSS JOIN f2 FULL JOIN f3 ON b3 = b0 ORDER BY a3, a0, a1, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            2\t3\t1\t2\t2\t2\tnull\tnull
+                            2\t3\t1\t2\t4\t1\tnull\tnull
+                            2\t3\t3\t1\t4\t1\tnull\tnull
+                            1\t1\t1\t2\t2\t2\t1\t1
+                            1\t1\t1\t2\t4\t1\t1\t1
+                            1\t1\t3\t1\t4\t1\t1\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t2\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testForwardRefChainWithKeysSharingColumn() throws Exception {
+        // The LEFT JOIN keys share a2, so its outer join expression reads f0. Dropping the key also
+        // dropped the edge that ordered f2 after f0, and a2 = a0 failed to resolve a0.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 RIGHT JOIN f1 ON b1 = a2 AND b1 >= b0 LEFT JOIN f2 ON a2 = a0 AND a2 = b0 ORDER BY a0, a1, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2
+                            null\tnull\t1\t2\tnull\tnull
+                            1\t1\t3\t1\t1\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testForwardRefLeftJoinAcrossOuterJoinBeforeFullJoin() throws Exception {
+        // LEFT JOIN g1 reads CROSS JOIN g5, but FULL JOIN g2 and RIGHT JOIN g3 sit between them, so g5
+        // cannot execute before g1. The optimiser keeps LEFT JOIN g1 unpinned and the query fails to
+        // resolve the forward reference instead of returning rows that break JOIN g4 ON a4 = a1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
+            execute("CREATE TABLE g5 (a5 INT, b5 INT)");
+            execute("CREATE TABLE g6 (a6 INT, b6 INT)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 LEFT JOIN g1 ON a1 = a5 AND a1 <= a0 FULL JOIN g2 ON b2 = b1 AND a2 < a0 RIGHT JOIN g3 ON a3 = a2 AND a3 = b1 JOIN g4 ON a4 = a1 AND a4 = b0 AND b4 < b2 CROSS JOIN g5 FULL JOIN g6 ON b6 > b2",
+                    38,
+                    "Invalid column: a5"
+            );
+        });
+    }
+
+    @Test
+    public void testForwardRefLeftJoinBeforeFullJoin() throws Exception {
+        // LEFT JOIN g1 reads JOIN g3, which reads CROSS JOIN g2. The optimiser unpinned LEFT JOIN g1, so
+        // FULL JOIN g4 lost the edge to its prefix and the query failed with "Invalid column: a3". Now
+        // CROSS JOIN g2 and JOIN g3 execute before LEFT JOIN g1 and the query returns the rows of the
+        // form that writes them first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (null, 2), (3, null)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (3, null), (4, 2), (3, 3)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (3, null), (null, 3), (3, 3)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (4, 2), (3, 2)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
+            execute("INSERT INTO g4 VALUES (null, 2), (3, 1), (3, null)");
+            final String expected = """
+                    a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t2
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\tnull
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t1
+                    """;
+            assertQuery("SELECT a0, b0, a1, b1, a2, b2, a3, b3, a4, b4 FROM g0 CROSS JOIN g2 JOIN g3 ON a3 = b0 AND b3 > a2 LEFT JOIN g1 ON a1 < a3 FULL JOIN g4 ON a4 = a1 ORDER BY a4, b4")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT * FROM g0 LEFT JOIN g1 ON a1 < a3 CROSS JOIN g2 JOIN g3 ON a3 = b0 AND b3 > a2 FULL JOIN g4 ON a4 = a1 ORDER BY a4, b4")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testForwardRefLeftJoinReadBackBeforeFullJoin() throws Exception {
+        // LEFT JOIN g1 reads JOIN g2, whose ON clause reads g1 back: neither can execute first, so the
+        // optimiser keeps LEFT JOIN g1 unpinned and the query fails to resolve the forward reference.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 LEFT JOIN g1 ON a1 < a2 JOIN g2 ON a2 = b1 FULL JOIN g3 ON a3 < a0",
+                    38,
+                    "Invalid column: a2"
+            );
+            // the read-back may be indirect: g1 reads g2, g2 reads g3, g3 reads g1
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 LEFT JOIN g1 ON a1 < a2 JOIN g2 ON a2 = b3 JOIN g3 ON a3 = b1 FULL JOIN g4 ON a4 < a0",
+                    38,
+                    "Invalid column: a2"
+            );
+        });
+    }
+
+    @Test
+    public void testForwardRefLeftJoinWithDerivedKeyOnCrossJoin() throws Exception {
+        // LEFT JOIN g1 reads JOIN g4, written after it. The ON equalities give CROSS JOIN g2 a key on g0,
+        // and then a key on g1 that replaces it. The edge of the replaced key still let g2 execute right
+        // after g0, before g1, so its key read a1 before g1 joined, and the query failed with an
+        // InvalidColumnException that had no message. g2 now executes after g1, and the query returns the
+        // rows of the form that writes CROSS JOIN g2 and JOIN g4 before LEFT JOIN g1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (1, 10), (2, 20), (null, 30)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (1, 11), (3, 31)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (1, 12), (2, 22)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (1, 13), (2, 23)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
+            execute("INSERT INTO g4 VALUES (1, 100), (2, 200)");
+            execute("CREATE TABLE g5 (a5 INT, b5 INT)");
+            execute("INSERT INTO g5 VALUES (0, 100), (5, 999)");
+            final String expected = """
+                    a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                    1\t10\t1\t11\t1\t12\t1\t13\t1\t100\tnull\tnull
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t100
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t5\t999
+                    """;
+            assertQuery("SELECT a0, b0, a1, b1, a2, b2, a3, b3, a4, b4, a5, b5 FROM g0 CROSS JOIN g2 JOIN g4 ON a2 = a4 AND a0 = a4 LEFT JOIN g1 ON a4 <= a1 JOIN g3 ON a3 = a4 AND a1 = a3 FULL JOIN g5 ON b4 = b5 AND a1 < a5 ORDER BY a5, a0")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT * FROM g0 LEFT JOIN g1 ON a4 <= a1 CROSS JOIN g2 JOIN g3 ON a3 = a4 AND a1 = a3 JOIN g4 ON a2 = a4 AND a0 = a4 FULL JOIN g5 ON b4 = b5 AND a1 < a5 ORDER BY a5, a0")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testForwardRefLeftJoinWithDerivedKeyOnSharedColumnName() throws Exception {
+        // The shape of testForwardRefLeftJoinWithDerivedKeyOnCrossJoin over tables that share column names,
+        // with the key on h1 written on h1.k. CROSS JOIN h2 executed right after h0, before h1, and its key
+        // resolved h1.k to h0.k: the query returned a row that breaks JOIN h4 ON h2.c = h4.c and missed the
+        // row that matches.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 6; i++) {
+                execute("CREATE TABLE h" + i + " (c INT, k INT, v DOUBLE)");
+            }
+            execute("INSERT INTO h0 VALUES (1, 0, 0.0), (2, 5, 0.0)");
+            execute("INSERT INTO h1 VALUES (1, 1, 0.0), (2, 2, 0.0)");
+            execute("INSERT INTO h2 VALUES (0, 0, 0.0), (2, 0, 0.0)");
+            execute("INSERT INTO h3 VALUES (0, 0, 0.0), (2, 0, 0.0)");
+            execute("INSERT INTO h4 VALUES (1, 0, 0.0), (2, 0, 0.0)");
+            execute("INSERT INTO h5 VALUES (0, 0, 9.0)");
+            final String expected = """
+                    c\tk\tv\tc1\tk1\tv1\tc2\tk2\tv2\tc3\tk3\tv3\tc4\tk4\tv4\tc5\tk5\tv5
+                    2\t5\t0.0\t2\t2\t0.0\t2\t0\t0.0\t2\t0\t0.0\t2\t0\t0.0\tnull\tnull\tnull
+                    null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t0\t0\t9.0
+                    """;
+            assertQuery("SELECT h0.*, h1.*, h2.*, h3.*, h4.*, h5.* FROM h0 CROSS JOIN h2 JOIN h4 ON h2.c = h4.c AND h0.c = h4.c LEFT JOIN h1 ON h4.c <= h1.c JOIN h3 ON h3.c = h4.c AND h1.k = h3.c FULL JOIN h5 ON h4.v = h5.v AND h1.c < h5.c ORDER BY h5.c, h0.c")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT * FROM h0 LEFT JOIN h1 ON h4.c <= h1.c CROSS JOIN h2 JOIN h3 ON h3.c = h4.c AND h1.k = h3.c JOIN h4 ON h2.c = h4.c AND h0.c = h4.c FULL JOIN h5 ON h4.v = h5.v AND h1.c < h5.c ORDER BY h5.c, h0.c")
+                    .noLeakCheck()
+                    .returns(expected);
         });
     }
 
@@ -2437,6 +4369,232 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullJoinNonEquiChainOverRightJoinSubQuery() throws Exception {
+        // The second FULL JOIN ties a1.x and a0.k to a2.x, but that equality holds only for the rows the
+        // second FULL JOIN matches, so the first FULL JOIN must keep its non-equi ON clause and run as a
+        // nested loop. Its slave is a RIGHT JOIN sub-query with a NULL-extended row (q = (2, 2)).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, x INT)");
+            execute("CREATE TABLE t2 (k INT, x INT)");
+            execute("INSERT INTO t1 VALUES (1, 1)");
+            execute("INSERT INTO t2 VALUES (1, 1), (2, 2)");
+            final String query = """
+                    SELECT a0.k k0, a0.x x0, a1.k k1, a1.x x1, a2.k k2, a2.x x2
+                    FROM t2 a0
+                    FULL JOIN (SELECT p.k k, p.x x FROM t1 p RIGHT JOIN t2 q ON p.k = q.k) a1 ON a0.k = 1
+                    FULL JOIN t2 a2 ON a1.x = a2.x AND a0.k = a2.x
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            k0\tx0\tk1\tx1\tk2\tx2
+                            1\t1\t1\t1\t1\t1
+                            1\t1\tnull\tnull\tnull\tnull
+                            2\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t2\t2
+                            """);
+            assertQuery(query + "WHERE a0.k IS NOT NULL AND a1.k IS NOT NULL AND a2.k IS NOT NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k0\tx0\tk1\tx1\tk2\tx2
+                            1\t1\t1\t1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullJoinNonEquiOverJoinSubQuery() throws Exception {
+        // Both joined rows of the sub-query come from one y row. The non-equi FULL JOIN matches only
+        // (1, 20) and must still return (1, 10) as an unmatched slave row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT)");
+            execute("CREATE TABLE y (a INT)");
+            execute("CREATE TABLE z (b INT, c INT)");
+            execute("INSERT INTO x VALUES (1)");
+            execute("INSERT INTO y VALUES (1)");
+            execute("INSERT INTO z VALUES (1, 10), (1, 20)");
+            final String expected = """
+                    a\tya\tzc
+                    1\t1\t20
+                    null\t1\t10
+                    """;
+            assertQuery("""
+                    SELECT x.a, s.ya, s.zc
+                    FROM x
+                    FULL JOIN (SELECT y.a ya, z.c zc FROM y JOIN z ON y.a = z.b) s ON s.zc > x.a + 15
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns(expected);
+            assertQuery("""
+                    SELECT x.a, s.ya, s.zc
+                    FROM x
+                    FULL JOIN (SELECT y.a ya, z.c zc FROM y CROSS JOIN z) s ON s.zc > x.a + 15
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testFullJoinNonEquiOverOuterJoinSubQuery() throws Exception {
+        // The sub-query NULL-extends rows on its master side: (null, 2) in both queries.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT)");
+            execute("CREATE TABLE y (a INT)");
+            execute("CREATE TABLE z (a INT)");
+            execute("INSERT INTO x VALUES (1), (5)");
+            execute("INSERT INTO y VALUES (1), (3)");
+            execute("INSERT INTO z VALUES (1), (2)");
+            assertQuery("""
+                    SELECT x.a, s.ya, s.za
+                    FROM x
+                    FULL JOIN (SELECT y.a ya, z.a za FROM y RIGHT JOIN z ON y.a = z.a) s ON s.za > x.a
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            a\tya\tza
+                            1\tnull\t2
+                            5\tnull\tnull
+                            null\t1\t1
+                            """);
+            assertQuery("""
+                    SELECT x.a, s.ya, s.za
+                    FROM x
+                    FULL JOIN (SELECT y.a ya, z.a za FROM y FULL JOIN z ON y.a = z.a) s ON s.za > x.a
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            a\tya\tza
+                            1\tnull\t2
+                            5\tnull\tnull
+                            null\t1\t1
+                            null\t3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullJoinNonEquiOverUnionSubQuery() throws Exception {
+        // UNION records have no row id
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT)");
+            execute("CREATE TABLE y (a INT)");
+            execute("CREATE TABLE z (a INT)");
+            execute("INSERT INTO x VALUES (1), (5)");
+            execute("INSERT INTO y VALUES (1)");
+            execute("INSERT INTO z VALUES (1), (2)");
+            assertQuery("""
+                    SELECT x.a, s.v
+                    FROM x
+                    FULL JOIN (SELECT a v FROM y UNION ALL SELECT a v FROM z) s ON s.v > x.a
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            a\tv
+                            1\t2
+                            5\tnull
+                            null\t1
+                            null\t1
+                            """);
+            assertQuery("""
+                    SELECT x.a, s.v
+                    FROM x
+                    FULL JOIN (SELECT a v FROM y UNION SELECT a v FROM z) s ON s.v > x.a
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            a\tv
+                            1\t2
+                            5\tnull
+                            null\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullJoinOnNameSharedWithLaterTable() throws Exception {
+        // w exists in f1 and in the later f2. The ON clause of the FULL JOIN f1 sees only f0 and f1, so w
+        // means f1.w. The optimiser must keep the CROSS JOIN f3 before the FULL JOIN f2: each unmatched f2
+        // row appears once, with NULL f3 columns.
+        assertMemoryLeak(() -> {
+            createTablesForOnNameSharedWithLaterTable();
+            assertQuery("SELECT * FROM f0 FULL JOIN f1 ON b1 = b0 AND w > 1 CROSS JOIN f3 FULL JOIN f2 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta3\tb3\ta2\tb2\tw1\tv1
+                            null\tnull\tnull\t3\t2\t1\t3\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t2\t1\t1\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t2\t1\t1\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t2\t1\t3\t2\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t3\tnull\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t1\t2\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t1\tnull\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\t3\t2\tnull\tnull\tnull\tnull
+                            3\t1\t3\tnull\t1\t3\t3\tnull\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t3\tnull\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t1\t2\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t1\t2\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t1\tnull\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t1\tnull\t3\t1\t2\t3
+                            3\t1\t3\tnull\t1\t3\t3\t2\t3\t3\tnull\t1
+                            3\t1\t3\tnull\t1\t3\t3\t2\t3\t1\t2\t3
+                            null\tnull\tnull\t3\t3\t2\t3\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t3\t2\t1\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t3\t2\t1\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t3\t2\t3\t2\tnull\tnull\tnull\tnull
+                            3\t1\t3\t3\t1\t3\t3\tnull\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t3\tnull\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t1\t2\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t1\t2\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t1\tnull\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t1\tnull\t3\t1\t2\t3
+                            3\t1\t3\t3\t1\t3\t3\t2\t3\t3\tnull\t1
+                            3\t1\t3\t3\t1\t3\t3\t2\t3\t1\t2\t3
+                            2\tnull\t1\tnull\tnull\tnull\t3\tnull\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t1\t2\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t1\tnull\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\t3\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2
+                            """);
+            // an equality on w: without qualification the ordering checks reject it as ambiguous
+            assertQuery("SELECT * FROM f0 FULL JOIN f1 ON w = b0 FULL JOIN f2 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta2\tb2\tw1\tv1
+                            3\t1\t3\t3\t2\t1\t3\t3\tnull\t1
+                            3\t1\t3\t3\t2\t1\t3\t1\t2\t3
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t1\t3\tnull\tnull\tnull\tnull
+                            2\t2\t2\t3\t3\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\t3\t1\t3\tnull\tnull\tnull\tnull
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testFullJoinOnRegexPreservesBothUnmatchedSides() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x STRING)");
@@ -2481,6 +4639,35 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testHashJoinRecordNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select first(x) x, first(ts) ts from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ", false);
+    }
+
+    @Test
+    public void testImpliedKeyOverMixedTypeUnionColumn() throws Exception {
+        // getQueryColumnType() read a.f as BYTE from the union's first branch, although the union widens it to
+        // INT. isFilterEqualToKeyMatch() then accepted the implied a.f = bq2.g as a join key, and code generation
+        // failed with "join column type mismatch".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ab2 (w INT, f BYTE)");
+            execute("INSERT INTO ab2 VALUES (1, 1)");
+            execute("CREATE TABLE ai (w INT, f INT)");
+            execute("INSERT INTO ai VALUES (3, 3)");
+            execute("CREATE TABLE bq2 (g BYTE, x INT)");
+            execute("INSERT INTO bq2 VALUES (1, 2), (2, 2)");
+            execute("CREATE TABLE dq (y INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3)");
+            execute("CREATE TABLE cq2 (k BYTE)");
+            execute("INSERT INTO cq2 VALUES (1), (0)");
+            assertQuery("""
+                    SELECT a.w, a.f, bq2.g, dq.y, cq2.k ck
+                    FROM (SELECT w, f FROM ab2 UNION ALL SELECT w, f FROM ai) a
+                    JOIN bq2 ON bq2.x > 1 RIGHT JOIN dq ON dq.y = a.w JOIN cq2 ON a.f = cq2.k AND bq2.g = cq2.k
+                    WHERE a.w > 0 ORDER BY 1, 2, 3, 4, 5""")
+                    .noLeakCheck()
+                    .returns("""
+                            w\tf\tg\ty\tck
+                            1\t1\t1\t1\t1
+                            """);
+        });
     }
 
     @Test
@@ -2632,6 +4819,412 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerConjunctOnCrossJoinFiltersAfterRightJoin() throws Exception {
+        // b1 = a0 became the key of the f0/f1 join below RIGHT JOIN f2, which then null-extended the f2
+        // row (2, 1) instead of dropping it, and the query returned null/null/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            createTablesForInnerConjunctsAfterRightJoin();
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 RIGHT JOIN f2 ON a2 = a0 JOIN f3 ON b1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerConjunctOnLeftJoinedTableFiltersAfterRightJoin() throws Exception {
+        // b1 = a0 filtered LEFT JOIN f1 below RIGHT JOIN f2, which then null-extended the f2 row (2, 1)
+        // instead of dropping it, and the query returned null/null/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            createTablesForInnerConjunctsAfterRightJoin();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 = b0 RIGHT JOIN f2 ON a2 = a0 JOIN f3 ON b1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerConjunctOnPinnedLeftJoinFiltersAfterFullJoin() throws Exception {
+        // a1 = a0 filtered LEFT JOIN f1 below FULL JOIN f2, which then null-extended the f2 row (1, 3)
+        // instead of dropping it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (2, 3)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (3, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 3)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 1)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < a0 FULL JOIN f2 ON b2 = b0 JOIN f3 ON a3 = a2 AND a1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerConjunctOnPinnedLeftJoinFiltersAfterRightJoin() throws Exception {
+        // b1 = a0 filtered LEFT JOIN f1 below RIGHT JOIN f2, which then null-extended the f2 row (2, 1)
+        // instead of dropping it, and the query returned null/null/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            createTablesForInnerConjunctsAfterRightJoin();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < a0 RIGHT JOIN f2 ON a2 = a0 JOIN f3 ON b1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerConjunctOnPinnedLeftJoinFiltersAfterSecondRightJoin() throws Exception {
+        // b1 = a0 filtered LEFT JOIN f1 below both RIGHT JOINs, which then null-extended the f2 and f3 rows
+        // instead of dropping them, and the query returned null/null/null/null/2/1/2/1/1/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (2, 3)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (3, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (2, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (2, 1)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (1, 1)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < a0 RIGHT JOIN f2 ON a2 = a0 RIGHT JOIN f3 ON a3 = a2 JOIN f4 ON b1 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\n");
+        });
+    }
+
+    @Test
+    public void testInnerDerivedKeyInRightJoinFiltersInnerJoin() throws Exception {
+        // f3's keys imply a1 = a0. As a key of RIGHT JOIN f1 it null-extended the f1 row (3, 1) instead of
+        // dropping it, and the query returned the spurious row null/null/3/1/3/null/null/2. The equality
+        // now filters the INNER join f3, and the query returns the sub-query form's single row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (1, 1), (2, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (3, 1), (null, 2)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (3, null)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 2)");
+            assertQuery("SELECT * FROM f0 RIGHT JOIN f1 ON b1 = b0 CROSS JOIN f2 JOIN f3 ON a3 = a1 AND a3 = a0 AND a3 = b2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            null\tnull\tnull\t2\t3\tnull\tnull\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerDerivedKeyKeepsLeftJoinOwnKeyBeforeRightJoin() throws Exception {
+        // The INNER keys imply a2 = a1 on LEFT JOIN f2. As a key of that join it replaced f2's own key
+        // a2 = b0, so f2 matched its row (null, 3) and the second query returned b2 = 3 instead of a
+        // null-extended f2. The first query, with a later RIGHT JOIN, failed with "Invalid column: a0".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (null, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (null, 2)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 3)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 2)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (null, 1)");
+            execute("CREATE TABLE f5 (a5 INT, b5 INT)");
+            execute("INSERT INTO f5 VALUES (1, 3)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON a2 = b0 JOIN f3 ON a3 = a1 AND a2 = a0 RIGHT JOIN f4 ON a4 = a3 JOIN f5 ON a3 = a2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                            null\t1\tnull\t2\tnull\tnull\tnull\t2\tnull\t1\t1\t3
+                            """);
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON a2 = b0 JOIN f3 ON a3 = a1 AND a3 = a2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            null\t1\tnull\t2\tnull\tnull\tnull\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerImpliedKeyMergedIntoFullJoinFilters() throws Exception {
+        // f2's keys imply a1 = a0 and f3's keys imply a1 = b0. The optimiser merged a1 = b0 into the
+        // key of FULL JOIN f1, which then matched on a1 = b0 with filter a0 = b0 instead of dropping
+        // rows that fail the INNER equality, and the query returned the row null/1/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (null, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (2, null)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (2, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 1)");
+            assertQuery("SELECT * FROM f0 FULL JOIN f1 ON a1 = a0 JOIN f2 ON b1 = a0 AND a1 = a0 JOIN f3 ON a3 = a1 AND a3 = b0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerImpliedKeyMergedIntoLeftJoinFilters() throws Exception {
+        // f2's keys a2 = a0 and a2 = a1 imply a0 = a1, which must drop the f0 row that LEFT JOIN f1
+        // null-extends. The optimiser merged a0 = a1 into the LEFT join's key b0 = a1 as a matching
+        // condition, and the query returned the row 3/null/null/null/null/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (3, null)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (null, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 1)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 = b0 JOIN f2 ON b1 = b0 AND a2 = a0 AND a2 = a1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\n");
+        });
+    }
+
+    @Test
+    public void testInnerImpliedKeyMergedIntoLeftJoinFiltersThroughLaterJoin() throws Exception {
+        // Same as testInnerImpliedKeyMergedIntoLeftJoinFilters with a later INNER join on g2's key.
+        // The query returned the row 3/null/null/null/3/1/3/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (3, null)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (null, 3)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (3, 1)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (3, 1)");
+            assertQuery("SELECT * FROM g0 LEFT JOIN g1 ON a1 = b0 JOIN g2 ON b1 = b0 AND a2 = a0 AND a2 = a1 JOIN g3 ON a3 = a2 AND a3 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testInnerJoinConditionOnTimeSeriesJoinRunsAfterNonEquiOuterJoin() throws Exception {
+        // The ASOF/LT join runs ahead of the non-equi RIGHT/FULL join, which drops the designated timestamp.
+        // Each condition of JOIN d below reads td1 and no table after it, so it could run as soon as td1
+        // had joined, below the outer join: the implied td1.k = ta.k of the keys sharing d.k, the condition
+        // on td1 and ta, and the one on td1 alone. There it removed the ta row (20, 2), whose td1.k is 7,
+        // before b.y = 15 matched it, so b.y = 15 came back NULL-extended and JOIN d matched its NULL keys,
+        // or the query failed with "could not determine join order for this table". The conditions must
+        // run at JOIN d, as in the form with the tables before JOIN d in a sub-query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1), ('2024-01-01T00:00:03.000000Z', 20, 2)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (15), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1), ('2024-01-01T00:00:02.500000Z', 7)");
+            execute("CREATE TABLE d (k INT, w INT)");
+            execute("INSERT INTO d VALUES (1, 11), (2, 22), (7, 77), (null, 99)");
+            final String matchedRow = """
+                    x\tk\ty\tk1\tw
+                    10\t1\t5\t1\t11
+                    """;
+            // {condition of JOIN d, the same condition in the sub-query form, rows}
+            final String[][] conditions = {
+                    {"d.k = td1.k AND d.k = ta.k", "d.k = p.k1 AND d.k = p.k", matchedRow + "null\tnull\t100\tnull\t99\n"},
+                    {"d.k = ta.k AND td1.k < ta.k + 5", "d.k = p.k AND p.k1 < p.k + 5", matchedRow},
+                    {"d.k = ta.k AND td1.k < 5", "d.k = p.k AND p.k1 < 5", matchedRow}
+            };
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                for (String timeSeriesJoinType : new String[]{"ASOF", "LT"}) {
+                    final String prefix = "ta " + joinType + " JOIN b ON ta.x > b.y " + timeSeriesJoinType + " JOIN td1";
+                    for (String[] condition : conditions) {
+                        assertQuery("SELECT p.x, p.k, p.y, p.k1, d.w FROM (SELECT ta.x, ta.k, b.y, td1.k k1 FROM " + prefix
+                                + ") p JOIN d ON " + condition[1] + " ORDER BY p.y, p.x, d.w")
+                                .noLeakCheck()
+                                .returns(condition[2]);
+                        assertQuery("SELECT ta.x, ta.k, b.y, td1.k k1, d.w FROM " + prefix + " JOIN d ON " + condition[0]
+                                + " ORDER BY b.y, ta.x, d.w")
+                                .noLeakCheck()
+                                .returns(condition[2]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInnerJoinKeyedToNonEquiOuterJoinKeepsBothKeys() throws Exception {
+        // e has equi-keys to a and to b, and b is outer-joined with no equi-key. The optimiser
+        // moved the e-b key onto b's join, where the nested-loop outer join ignores it, so the
+        // query returned the row 2/2/30 that fails b.z = e.z.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinKeyAfterRightJoin();
+
+            final String expected = """
+                    id\tid1\teid
+                    1\t1\t10
+                    2\t2\t20
+                    """;
+            assertQuery("""
+                    SELECT a.id, b.id, e.id eid
+                    FROM a
+                    LEFT JOIN b ON a.id = b.id + 0
+                    JOIN e ON a.x = e.y AND b.z = e.z
+                    ORDER BY a.id, e.id
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("e.z=b.z")
+                    .returns(expected);
+            assertQuery("""
+                    SELECT a.id, b.id, e.id eid
+                    FROM a
+                    RIGHT JOIN b ON a.id = b.id + 0
+                    JOIN e ON a.x = e.y AND b.z = e.z
+                    ORDER BY a.id, e.id
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT a.id, b.id, e.id eid
+                    FROM a
+                    FULL JOIN b ON a.id = b.id + 0
+                    JOIN e ON a.x = e.y AND b.z = e.z
+                    ORDER BY a.id, e.id
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT a.id, b.id, e.id eid
+                    FROM a
+                    LEFT JOIN b ON a.id = b.id + 0
+                    JOIN e ON a.x = e.y
+                    WHERE b.z = e.z
+                    ORDER BY a.id, e.id
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testInnerJoinKeyedToUnnestKeepsBothKeys() throws Exception {
+        // ed has equi-keys to a and to the UNNEST output u. The optimiser moved the ed-u key
+        // onto the UNNEST join, which has no join keys, so the key was lost and every u row
+        // matched.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT)");
+            execute("INSERT INTO a VALUES (1, null), (2, 7), (3, 3)");
+            execute("CREATE TABLE ed (eid INT, y INT, z DOUBLE)");
+            execute("INSERT INTO ed VALUES (10, null, 5), (20, 7, 7), (30, 7, 99)");
+
+            assertQuery("""
+                    SELECT a.id, u.v, ed.eid
+                    FROM a, UNNEST(ARRAY[5.0, 7.0]) u(v)
+                    JOIN ed ON a.x = ed.y AND u.v = ed.z
+                    ORDER BY a.id, u.v, ed.eid
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\teid
+                            1\t5.0\t10
+                            2\t7.0\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerJoinOnAliasedSubQueryKeysSharingColumn() throws Exception {
+        // q.ax = c.y AND q.aw = c.y implies q.ax = q.aw, which the optimiser pushes into q.
+        // The push-down rewrote the shared key node q.aw to the inner name w in place, so the
+        // kept join key c.y = q.aw lost its column and code generation failed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, w INT)");
+            execute("INSERT INTO a VALUES (1, null, null), (2, 7, 7), (3, 3, null)");
+            execute("CREATE TABLE c (cid INT, y INT)");
+            execute("INSERT INTO c VALUES (100, null), (200, 7)");
+
+            assertQuery("""
+                    SELECT q.aid, c.cid
+                    FROM (SELECT a.id aid, a.x ax, a.w aw FROM a) q
+                    JOIN c ON q.ax = c.y AND q.aw = c.y
+                    ORDER BY q.aid, c.cid
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("condition: c.y=q.aw")
+                    .returns("""
+                            aid\tcid
+                            1\t100
+                            2\t200
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerJoinOnAliasedSubQueryKeysSharingColumnNonVanillaMaster() throws Exception {
+        // Same shape with a join as the master of c. The rewritten key node q.aw read the
+        // sub-query column w, which holds id, so the join silently returned no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, w INT)");
+            execute("INSERT INTO a VALUES (1, null, null), (2, 7, 7), (3, 3, null)");
+            execute("CREATE TABLE c (cid INT, y INT)");
+            execute("INSERT INTO c VALUES (100, null), (200, 7)");
+            execute("CREATE TABLE d (did INT)");
+            execute("INSERT INTO d VALUES (1), (2), (3)");
+
+            assertQuery("""
+                    SELECT q.aid, c.cid
+                    FROM (SELECT id aid, x ax, w aw, id w FROM a) q
+                    JOIN d ON q.aid = d.did
+                    JOIN c ON q.ax = c.y AND q.aw = c.y
+                    ORDER BY q.aid, c.cid
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            aid\tcid
+                            1\t100
+                            2\t200
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerJoinOnAliasedSubQueryWithJoinKeysSharingColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, w INT)");
+            execute("INSERT INTO a VALUES (1, null, null), (2, 7, 7), (3, 3, null)");
+            execute("CREATE TABLE c (cid INT, y INT)");
+            execute("INSERT INTO c VALUES (100, null), (200, 7)");
+            execute("CREATE TABLE d (did INT)");
+            execute("INSERT INTO d VALUES (1), (2), (3)");
+
+            assertQuery("""
+                    SELECT q.aid, c.cid
+                    FROM (SELECT a.id aid, a.x ax, a.w aw FROM a JOIN d ON a.id = d.did) q
+                    JOIN c ON q.ax = c.y AND q.aw = c.y
+                    ORDER BY q.aid, c.cid
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            aid\tcid
+                            1\t100
+                            2\t200
+                            """);
+        });
+    }
+
+    @Test
     public void testInnerJoinOnConjunctPushesPastNullingJoin() throws Exception {
         // An inner-join ON conjunct that references only the master (m.c = 1, m.c > 0, abs(m.c) = 1)
         // gates the inner join, which runs before the downstream RIGHT/FULL OUTER join that NULL-extends
@@ -2655,6 +5248,136 @@ public class JoinTest extends AbstractCairoTest {
                             .returns(expected);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testInnerJoinOnLeftJoinStaysAfterNonEquiOuterJoinWhenTimeSeriesJoinMovesAhead() throws Exception {
+        // The ASOF/LT join runs ahead of the non-equi RIGHT/FULL join, which drops the designated timestamp.
+        // JOIN d keys on c, so the optimiser could run LEFT JOIN c as soon as ta had joined, while the outer
+        // join still waited for the time-series join. c then ran ahead of the outer join, the unmatched b
+        // row lost its c match, and JOIN d dropped the row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (200)");
+            execute("CREATE TABLE d (k INT, w INT)");
+            execute("INSERT INTO d VALUES (1, 11), (200, 22)");
+            final String expected = """
+                    x\ty\tk\tw\tv
+                    10\t5\t1\t11\ta1
+                    null\t100\t1\t11\t
+                    """;
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                for (String timeSeriesJoinType : new String[]{"ASOF", "LT"}) {
+                    final String timeSeriesJoin = timeSeriesJoinType + " JOIN td1 ON td1.k = ta.k";
+                    // the sub-query form, with the tables before JOIN d in a sub-query
+                    assertQuery("SELECT p.x, p.y, p.k, d.w, p.v FROM (SELECT ta.x, b.y, c.k, td1.v FROM ta " + joinType
+                            + " JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 " + timeSeriesJoin + ") p JOIN d ON d.k = p.k ORDER BY p.y")
+                            .noLeakCheck()
+                            .returns(expected);
+                    assertQuery("SELECT ta.x, b.y, c.k, d.w, td1.v FROM ta " + joinType
+                            + " JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 JOIN d ON d.k = c.k " + timeSeriesJoin + " ORDER BY b.y")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInnerKeyDerivedFilterKeepsRightJoinRows() throws Exception {
+        // q's keys imply b0 = a0 on p. The filter ran after RIGHT JOIN r, dropped its null-extended row, and
+        // the query returned no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (a0 INT, b0 INT)");
+            execute("INSERT INTO p VALUES (1, 2)");
+            execute("CREATE TABLE q (a1 INT, b1 INT)");
+            execute("INSERT INTO q VALUES (1, 7)");
+            execute("CREATE TABLE r (a4 INT, b4 INT)");
+            execute("INSERT INTO r VALUES (0, 7)");
+            assertQuery("SELECT * FROM p JOIN q ON a1 = b0 AND a1 = a0 RIGHT JOIN r ON b4 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta4\tb4
+                            null\tnull\tnull\tnull\t0\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerKeyDerivedFilterSkipsLeftJoinedTableScan() throws Exception {
+        // f2's keys imply a1 = b1 on f1. The filter ran in the scan of LEFT JOIN f1, which then
+        // null-extended the f0 row instead of dropping it, and the query returned 1/0/null/null/null/0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (1, 0)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 5)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 0)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 = a0 JOIN f2 ON a2 = a1 AND a2 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\n");
+        });
+    }
+
+    @Test
+    public void testInnerOnForwardReferenceToOuterJoinSlaveFails() throws Exception {
+        // An INNER ON conjunct that reads the slave of a later RIGHT or FULL join is a forward
+        // reference with no defined meaning (PostgreSQL rejects it). Whether it filters before or
+        // after the outer join changes which null-extended rows survive, so the query must fail
+        // instead of returning the rows of either reading.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertExceptionNoLeakCheck(
+                    "SELECT a0,b0,a1,b1,a3,b3 FROM f0 JOIN f1 ON a1 = a3 RIGHT JOIN f3 ON b3 = b0",
+                    44,
+                    "Invalid column: a1"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT a0,b0,a1,b1,a3,b3 FROM f0 JOIN f1 ON a1 = a3 FULL JOIN f3 ON b3 = b0",
+                    44,
+                    "Invalid column: a1"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT a0,b0,a1,b1,a2,b2,a3,b3 FROM f0 CROSS JOIN f1 JOIN f2 ON a2 = a3 RIGHT JOIN f3 ON b3 = b0",
+                    64,
+                    "Invalid column: a2"
+            );
+        });
+    }
+
+    @Test
+    public void testInnerOnKeyAfterRightJoinDropsRowAfterNullExtension() throws Exception {
+        // f5's a3 = a2 reads tables joined before RIGHT JOIN f4. As a key of f3 it runs below the RIGHT
+        // join, which then null-extends the f4 row (5, 1) instead of dropping it, and the query returns
+        // null/null/null/null/null/null/null/null/5/1/1/3. The query failed with "Invalid column: a0"
+        // before the fix.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (null, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (5, 2)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 3)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (5, 2)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (5, 1)");
+            execute("CREATE TABLE f5 (a5 INT, b5 INT)");
+            execute("INSERT INTO f5 VALUES (1, 3)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON a2 = b0 JOIN f3 ON a3 = a1 AND a2 = a0 RIGHT JOIN f4 ON a4 = a3 JOIN f5 ON a3 = a2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5\n");
         });
     }
 
@@ -4643,6 +7366,257 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinKeepsSecondGenerationTransitiveKey() throws Exception {
+        // d.k = c.k AND d.k = a.k implies c.k = a.k. Merging that key into c's context
+        // (c.k = b.k) implies b.k = a.k and drops c.k = b.k. The optimiser never attached
+        // b.k = a.k, so b became a plain cross join and multiplied the result.
+        assertMemoryLeak(() -> {
+            createTablesForTransitiveJoinKeys();
+            execute("CREATE TABLE b (k INT, id INT)");
+            execute("INSERT INTO b VALUES (1, 10), (2, 20), (3, 30)");
+
+            assertQuery("SELECT a.id, b.id, c.id, d.id FROM a, b, c, d WHERE c.k = b.k AND d.k = c.k AND d.k = a.k ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .withPlanContaining("b.k=a.k")
+                    .returns("""
+                            id\tid1\tid2\tid3
+                            1\t10\t100\t1000
+                            """);
+            assertQuery("SELECT a.id, b.id, c.id, d.id FROM a CROSS JOIN b JOIN c ON c.k = b.k JOIN d ON d.k = c.k AND d.k = a.k ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1\tid2\tid3
+                            1\t10\t100\t1000
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeepsTableKeyedTransitivelyByLaterJoin() throws Exception {
+        // d.k = c.k AND d.k = a.k implies c.k = a.k. The optimiser attached that key to c
+        // without the a -> c join-order edge, so the join order dropped c.
+        assertMemoryLeak(() -> {
+            createTablesForTransitiveJoinKeys();
+
+            assertQuery("SELECT * FROM a CROSS JOIN c JOIN d ON d.k = c.k AND d.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t100\t1\t1000
+                            """);
+            assertQuery("SELECT count(*) FROM a CROSS JOIN c JOIN d ON d.k = c.k AND d.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            1
+                            """);
+            assertQuery("SELECT * FROM a, c, d WHERE d.k = c.k AND d.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t100\t1\t1000
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeepsTableKeyedTransitivelyByLaterJoinLongSequence() throws Exception {
+        assertQuery("SELECT * FROM long_sequence(3) a, long_sequence(3) c, long_sequence(3) d WHERE d.x = c.x AND d.x = a.x")
+                .noRandomAccess()
+                .returns("""
+                        x\tx1\tx2
+                        1\t1\t1
+                        2\t2\t2
+                        3\t3\t3
+                        """);
+    }
+
+    @Test
+    public void testJoinKeepsTableKeyedTransitivelyByLaterJoinReversedKeys() throws Exception {
+        // With d.k = a.k first, d keeps parent c and a gets no join-order edge at all.
+        assertMemoryLeak(() -> {
+            createTablesForTransitiveJoinKeys();
+
+            assertQuery("SELECT * FROM a, c, d WHERE d.k = a.k AND d.k = c.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tid\tk1\tid1\tk2\tid2
+                            1\t1\t1\t100\t1\t1000
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeyDerivedAcrossNonEquiFullJoin() throws Exception {
+        // h4's keys imply b3 = b2 across the context-free FULL JOIN h2. Keying h3 to h2 ran the FULL JOIN
+        // before h0 joined, which paired the unmatched h2 row (3, 1) with every h0 row instead of
+        // null-extending h0. constrainJoinsAfterReorderedNullingJoins keeps h0 and h1 ahead of the FULL
+        // JOIN, so the query returns the 5 rows of the sub-query form, including the null-extended
+        // null/null/null/null/3/1/9/1/8/1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE h0 (a0 INT, b0 INT)");
+            execute("INSERT INTO h0 VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE h1 (a1 INT, b1 INT)");
+            execute("INSERT INTO h1 VALUES (1, 1)");
+            execute("CREATE TABLE h2 (a2 INT, b2 INT)");
+            execute("INSERT INTO h2 VALUES (1, 2), (2, 5), (3, 1)");
+            execute("CREATE TABLE h3 (a3 INT, b3 INT)");
+            execute("INSERT INTO h3 VALUES (1, 2), (2, 5), (9, 1)");
+            execute("CREATE TABLE h4 (a4 INT, b4 INT)");
+            execute("INSERT INTO h4 VALUES (1, 2), (2, 5), (8, 1)");
+            assertQuery("SELECT * FROM h0 CROSS JOIN h1 FULL JOIN h2 ON b2 > 1 CROSS JOIN h3 JOIN h4 ON b4 = b2 AND b4 = b3 ORDER BY a0, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4
+                            null\tnull\tnull\tnull\t3\t1\t9\t1\t8\t1
+                            1\t1\t1\t1\t1\t2\t1\t2\t1\t2
+                            1\t1\t1\t1\t2\t5\t2\t5\t2\t5
+                            2\t2\t1\t1\t1\t2\t1\t2\t1\t2
+                            2\t2\t1\t1\t2\t5\t2\t5\t2\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeyDerivedBelowRightJoinFiltersInnerJoin() throws Exception {
+        // g3's keys imply a1 = a0. Keying g1 to g0 ran that key below RIGHT JOIN g2, which then
+        // null-extended the g2 row (2, 2) instead of dropping it with its unmatched g0/g1 pairs. The
+        // equality now filters the INNER join g3, and the query returns the rows of the sub-query form.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (1, 10), (5, 20)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (1, 1), (2, 2), (7, 7)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (null, 100), (1, 200)");
+            assertQuery("SELECT * FROM g0 CROSS JOIN g1 RIGHT JOIN g2 ON b2 = b0 JOIN g3 ON a3 = a1 AND a3 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            1\t1\t1\t10\t1\t1\t1\t200
+                            null\tnull\tnull\tnull\t7\t7\tnull\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeyDerivedOntoLeftJoinFiltersInnerJoin() throws Exception {
+        // f3's keys imply a0 = b2. As a key of LEFT JOIN f2 it null-extended the f0 row (3, 3) instead of
+        // dropping it. The equality now filters the INNER join f3, and the query returns only the three
+        // rows of the f0 row (null, 2), as the sub-query form does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (3, 3), (null, 2)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (3, 2), (4, 3), (1, 4)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 5)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 1), (3, 4)");
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON b2 < b1 JOIN f3 ON a3 = a0 AND a3 = b2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            null\t2\t3\t2\tnull\tnull\tnull\t1
+                            null\t2\t4\t3\tnull\tnull\tnull\t1
+                            null\t2\t1\t4\tnull\tnull\tnull\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeyMovedOntoFirstTableKeepsOrderWithoutTimeSeriesJoin() throws Exception {
+        // No join of the level reads the designated timestamp of the first table to run, so
+        // runFromModelFirst leaves the cheapest order, which starts at params, alone.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, i.lot " + KEY_MOVE_JOINS + " ORDER BY t.ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: t.sym=i.sym
+                                      symbolKeyJoin: true
+                                        Hash Join Light
+                                          condition: i.venue=v.id
+                                          symbolKeyJoin: true
+                                            Hash Join Light
+                                              condition: v.id=p.venue
+                                              symbolKeyJoin: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: params
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: venues
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: instruments
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            sym\tts\tlot
+                            A\t2024-01-01T00:00:10.000000Z\t100
+                            B\t2024-01-01T00:00:20.000000Z\t200
+                            A\t2024-01-01T00:00:30.000000Z\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testJoinKeyMovedOntoFirstTableReadsKeyColumns() throws Exception {
+        // reorderTables moves d.k = a.k from d onto a, the first table, and joins a last on that key.
+        // propagateTopDownColumns0 skipped the join keys of the first table, so the scans of a and d lacked
+        // the key columns: count(*) failed with a message-less InvalidColumnException, and a query that
+        // selects a.k failed with "Invalid column: d.k". Master fails the same way.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, j INT)");
+            execute("INSERT INTO a VALUES (1, 0), (2, 0), (3, 0)");
+            execute("CREATE TABLE b (k INT, j INT)");
+            execute("INSERT INTO b VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE c (k INT, j INT)");
+            execute("INSERT INTO c VALUES (1, 5), (2, 6)");
+            execute("CREATE TABLE d (k INT, j INT)");
+            execute("INSERT INTO d VALUES (1, 5), (2, 6), (3, 7), (1, 6)");
+            final String joins = "FROM a CROSS JOIN b JOIN c ON c.k = b.k JOIN d ON d.j = c.j AND d.k = a.k";
+            assertQuery("SELECT count(*) " + joins)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("condition: a.k=d.k")
+                    .returns("""
+                            count
+                            3
+                            """);
+            assertQuery("SELECT a.k ak, b.k bk, d.j dj " + joins + " ORDER BY ak, bk")
+                    .noLeakCheck()
+                    .returns("""
+                            ak\tbk\tdj
+                            1\t1\t5
+                            1\t2\t6
+                            2\t2\t6
+                            """);
+        });
+    }
+
+    @Test
     public void testJoinMultiLevelViewWithDifferentColumnNames() throws Exception {
         // reproducer for: InvalidColumnException when joining a table with a
         // multi-level view where the ON clause uses different column names on
@@ -5111,6 +8085,26 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnKeysSharingColumnMixedTypesFails() throws Exception {
+        // s.s1 is compared with the SYMBOL m.s1 and the VARCHAR m.v. Those key positions need
+        // different encodings, but the record copier encodes s.s1 once, so the hash join would never
+        // match: no INNER rows instead of a/a and b/b, and null-extended rows for every outer join.
+        // Each hash join type rejects the query instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (s1 SYMBOL, v VARCHAR)");
+            execute("INSERT INTO m VALUES ('a', 'a'), ('b', 'b'), ('c', 'x')");
+            execute("CREATE TABLE s (s1 SYMBOL, v VARCHAR)");
+            execute("INSERT INTO s VALUES ('a', 'a'), ('b', 'b'), ('c', 'c')");
+            for (String join : new String[]{"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"}) {
+                final String query = "SELECT m.s1, m.v, s.s1, s.v FROM m " + join + " s ON s.s1 = m.s1 AND s.v = m.v AND s.s1 = m.v";
+                assertQuery(query)
+                        .noLeakCheck()
+                        .fails(query.indexOf("s.s1 = m.s1"), "join column is compared with columns of different types");
+            }
+        });
+    }
+
+    @Test
     public void testJoinOnLong256() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
@@ -5135,6 +8129,39 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testJoinOnMixedSymbolKeysWithCrossedColumnIndexes() throws Exception {
+        // m.s (master index 0) pairs with c.str (slave index 1) and m.t (master index 1) pairs
+        // with c.s (slave index 0). The first pair compares SYMBOL as a string, the second one
+        // compares symbol ids, so each key copier must decide the encoding of its own columns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (s SYMBOL, t SYMBOL, id INT)");
+            execute("INSERT INTO m VALUES ('x', 'y', 1), ('q', 'r', 2)");
+            execute("CREATE TABLE c (s SYMBOL, str STRING, v VARCHAR, cid INT)");
+            execute("INSERT INTO c VALUES ('y', 'x', 'x', 100), ('z', 'q', 'q', 200)");
+
+            final String expected = """
+                    s\tt\tid\ts1\tstr\tv\tcid
+                    x\ty\t1\ty\tx\tx\t100
+                    """;
+            assertQuery("SELECT * FROM m JOIN c ON m.s = c.str AND m.t = c.s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM m JOIN c ON m.s = c.v AND m.t = c.s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM m LEFT JOIN c ON m.s = c.str AND m.t = c.s ORDER BY m.id")
+                    .noLeakCheck()
+                    .returns("""
+                            s\tt\tid\ts1\tstr\tv\tcid
+                            x\ty\t1\ty\tx\tx\t100
+                            q\tr\t2\t\t\t\tnull
+                            """);
         });
     }
 
@@ -5583,6 +8610,585 @@ public class JoinTest extends AbstractCairoTest {
                         4	1
                         5	1
                         """));
+    }
+
+    @Test
+    public void testKeylessJoinBeforeKeyedJoinSkipsRowsThatKeyedJoinDrops() throws Exception {
+        // A join after the non-equi RIGHT JOIN keeps the joins written before it in written order, as on
+        // master, so the LEFT JOIN to c, which has no key, runs before the keyed join to b. It skips the rows
+        // of a whose k is not in b, which the keyed join drops anyway: 1, 3 and 5. The RIGHT JOIN reads its
+        // left side once per row of d, so the ON clause of the LEFT JOIN runs 2 x 3 x 3 = 18 times instead
+        // of 36. A key of the keyed join that reads c leaves the LEFT JOIN without the check.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            final String query = "SELECT a.k, c.y, b.k bk, d.k dk, b2.k b2k FROM a LEFT JOIN c ON a.x > c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k";
+            final String expected = """
+                    k\ty\tbk\tdk\tb2k
+                    4\t1\t4\t7\t4
+                    4\t2\t4\t7\t4
+                    6\t1\t6\t7\t6
+                    6\t2\t6\t7\t6
+                    6\t3\t6\t7\t6
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b2.k=a.k
+                                    Nested Loop Right Join
+                                      filter: a.x>=d.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            Nested Loop Left Join
+                                              filter: c.y*4<a.x
+                                              joinKeyCheck: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """)
+                    .returns(expected);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .fullFatJoins()
+                    .expectSize()
+                    .returns(expected);
+            // runs the light and the full-fat hash join
+            assertJoinFilterEvaluationCount(
+                    "SELECT a.k, c.y FROM a LEFT JOIN c ON test_latched_counter() AND a.x > c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k",
+                    5,
+                    18
+            );
+            assertQuery("SELECT a.k, c.y, b.k bk, d.k dk, b2.k b2k FROM a LEFT JOIN c ON a.x > c.y * 4 JOIN b ON c.y = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanNotContaining("joinKeyCheck")
+                    .returns("""
+                            k\ty\tbk\tdk\tb2k
+                            4\t2\t2\t7\t4
+                            6\t2\t2\t7\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeylessJoinKeyCheckPricesSampleThatRanNoSlaveScan() throws Exception {
+        // Only row 1,024 of g has a key in b, so the first sample of the check ends before any scan of c has
+        // counted its rows. The check reads the size of c instead: 1,023 dropped rows that each save joining
+        // the 3 rows of c pay for the 1,024 lookups, and the check stays on. Only row 1,024 joins c: 3 ON
+        // clause evaluations per read of the left side, 6 for the two rows of d. A check that took the size
+        // as unknown would stop, and join the remaining 1,976 rows and then all 3,000 rows with c: 14,931.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE g AS (SELECT (CASE WHEN x = 1_024 THEN 2 ELSE 1 END)::INT k, 18 x FROM long_sequence(3_000))");
+            assertJoinFilterEvaluationCount(
+                    "SELECT g.k, c.y FROM g LEFT JOIN c ON test_latched_counter() AND g.x > c.y JOIN b ON g.k = b.k RIGHT JOIN d ON g.x >= d.k JOIN b b2 ON b2.k = g.k",
+                    3,
+                    6
+            );
+        });
+    }
+
+    @Test
+    public void testKeylessJoinKeyCheckStopsWhenDropsSaveLittle() throws Exception {
+        // The check costs a lookup per row of g, and a dropped row saves joining it with the 3 rows of c.
+        // The first 1,024 rows of g1 all have a key in b, so the check stops, and every row of g1 joins c:
+        // 3,000 x 3 ON clause evaluations per read of the left side, 18,000 for the two rows of d. One row
+        // in ten of g10 has no key in b, and its 3 rows of c save less than the 10 lookups cost, so the check
+        // stops too, after it skipped the 102 such rows among the first 1,024: 18,000 - 102 x 3 = 17,694.
+        // Three rows in four of g4 have no key in b, which keeps the check on: 750 x 3 per read, 4,500. The
+        // rows do not depend on the check.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE g1 AS (SELECT (CASE WHEN x <= 1_200 THEN 2 ELSE 1 END)::INT k, 18 x FROM long_sequence(3_000))");
+            execute("CREATE TABLE g10 AS (SELECT (CASE WHEN x % 10 = 0 THEN 1 ELSE 2 END)::INT k, 18 x FROM long_sequence(3_000))");
+            execute("CREATE TABLE g4 AS (SELECT (CASE WHEN x % 4 = 0 THEN 2 ELSE 1 END)::INT k, 18 x FROM long_sequence(3_000))");
+            assertJoinFilterEvaluationCount(
+                    "SELECT g1.k, c.y FROM g1 LEFT JOIN c ON test_latched_counter() AND g1.x > c.y JOIN b ON g1.k = b.k RIGHT JOIN d ON g1.x >= d.k JOIN b b2 ON b2.k = g1.k",
+                    3_600,
+                    18_000
+            );
+            assertJoinFilterEvaluationCount(
+                    "SELECT g10.k, c.y FROM g10 LEFT JOIN c ON test_latched_counter() AND g10.x > c.y JOIN b ON g10.k = b.k RIGHT JOIN d ON g10.x >= d.k JOIN b b2 ON b2.k = g10.k",
+                    8_100,
+                    17_694
+            );
+            assertJoinFilterEvaluationCount(
+                    "SELECT g4.k, c.y FROM g4 LEFT JOIN c ON test_latched_counter() AND g4.x > c.y JOIN b ON g4.k = b.k RIGHT JOIN d ON g4.x >= d.k JOIN b b2 ON b2.k = g4.k",
+                    2_250,
+                    4_500
+            );
+        });
+    }
+
+    @Test
+    public void testKeylessJoinReadsNoSlaveRowWhenCursorOpens() throws Exception {
+        // A CROSS or nested loop LEFT join must not read rows of its slave while its cursor opens: a parent
+        // may still be opening its other cursors then, such as the owner of a factory that the slave shares.
+        // Hash Join Light opens its slave before its master, and the DISTINCT of a decorrelated LATERAL
+        // subquery reads a factory that the outer query owns. DISTINCT reads every row of its input to learn
+        // its size, and the window function keeps it from becoming a GROUP BY. Check the joins with and
+        // without the key check of the INNER hash join that follows them.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            final String slave = "(SELECT DISTINCT y, count() OVER () n FROM c WHERE test_latched_counter())";
+            final String keyedTail = " JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k JOIN b b2 ON b2.k = a.k";
+            final String[] queries = {
+                    "SELECT a.k, c.y FROM a CROSS JOIN " + slave + " c",
+                    "SELECT a.k, c.y FROM a CROSS JOIN " + slave + " c" + keyedTail,
+                    "SELECT a.k, c.y FROM a LEFT JOIN " + slave + " c ON a.x > c.y * 4",
+                    "SELECT a.k, c.y FROM a LEFT JOIN " + slave + " c ON a.x > c.y * 4" + keyedTail
+            };
+            for (int i = 0; i < queries.length; i++) {
+                final String query = queries[i];
+                final boolean hasKeyCheck = (i & 1) == 1;
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    sink.clear();
+                    printSql("EXPLAIN " + query, isFullFat);
+                    final String plan = sink.toString();
+                    Assert.assertTrue(plan, plan.contains(i < 2 ? "Cross Join" : "Nested Loop Left Join"));
+                    Assert.assertTrue(plan, plan.contains("Distinct"));
+                    Assert.assertEquals(plan, hasKeyCheck, plan.contains("joinKeyCheck: true"));
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        compiler.setFullFatJoins(isFullFat);
+                        try (RecordCursorFactory factory = select(compiler, query, sqlExecutionContext)) {
+                            TestLatchedCounterFunctionFactory.reset(null);
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                Assert.assertEquals(query, 0, TestLatchedCounterFunctionFactory.getCount());
+                                while (cursor.hasNext()) {
+                                    // the rows do not matter
+                                }
+                            }
+                            // the slave is read once the rows are
+                            Assert.assertTrue(query, TestLatchedCounterFunctionFactory.getCount() > 0);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testKeylessLeftJoinAfterKeyedOuterJoinReadsNoSlaveForNullExtendedRow() throws Exception {
+        // The LEFT JOIN to c runs after the RIGHT JOIN, so it evaluates its ON clause for the two rows of the
+        // RIGHT JOIN with a match, 2 x 3 times, and returns l rows 1 and 3, which the RIGHT JOIN
+        // NULL-extends, without reading c. Run after the keyed join to b, it evaluated the clause for the
+        // three rows of a that b matches, 3 x 3 times.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertJoinFilterEvaluationCount(
+                    "SELECT a.k, c.y FROM a LEFT JOIN c ON test_latched_counter() AND a.x >= c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k",
+                    6,
+                    6
+            );
+        });
+    }
+
+    @Test
+    public void testKeylessLeftJoinAfterKeyedOuterJoinReturnsNullExtendedRowOnce() throws Exception {
+        // The LEFT JOIN to cn runs after the RIGHT or FULL join, as on master. cn row 2 has a NULL y, and
+        // a.x >= cn.y is true when both are NULL, so the ON clause matches row 2 for every row that an outer
+        // join NULL-extends: master returns row 2 with each of them, such as l rows 1 and 3. The LEFT JOIN
+        // returns such a row once, with NULL in cn, as when it runs first. On the light hash join, the FULL
+        // JOIN to lf swaps its sides, as a has fewer rows than lf, and the RIGHT JOIN to l with a filter runs
+        // on the filtered hash join.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE cn (id INT, y INT)");
+            execute("INSERT INTO cn VALUES (1, 1), (2, null), (3, 5)");
+            execute("CREATE TABLE lf (k INT)");
+            execute("INSERT INTO lf VALUES (3), (4), (5), (6), (7), (8), (9), (10)");
+            assertQuery("SELECT a.k, cn.id, cn.y, l.k lk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: a.x>=cn.y
+                                  outerJoinCheck: true
+                                    Hash Right Outer Join Light
+                                      condition: l.k=b.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cn
+                            """)
+                    .returns("""
+                            k\tid\ty\tlk
+                            2\t1\t1\t2
+                            2\t3\t5\t2
+                            4\t1\t1\t4
+                            4\t3\t5\t4
+                            null\tnull\tnull\t3
+                            null\tnull\tnull\t1
+                            """);
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("SELECT a.k, cn.id, cn.y, l.k lk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k ORDER BY lk, id")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\ty\tlk
+                                null\tnull\tnull\t1
+                                2\t1\t1\t2
+                                2\t3\t5\t2
+                                null\tnull\tnull\t3
+                                4\t1\t1\t4
+                                4\t3\t5\t4
+                                """);
+                assertQuery("SELECT a.k, cn.id, l.k lk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k FULL JOIN l ON b.k = l.k ORDER BY lk, k, id")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk
+                                6\t1\tnull
+                                6\t3\tnull
+                                null\tnull\t1
+                                2\t1\t2
+                                2\t3\t2
+                                null\tnull\t3
+                                4\t1\t4
+                                4\t3\t4
+                                """);
+                assertQuery("SELECT a.k, cn.id, lf.k lfk FROM a LEFT JOIN cn ON a.x >= cn.y FULL JOIN lf ON a.k = lf.k ORDER BY lfk, k, id")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlfk
+                                1\t1\tnull
+                                2\t1\tnull
+                                2\t3\tnull
+                                3\t1\t3
+                                3\t3\t3
+                                4\t1\t4
+                                4\t3\t4
+                                5\t1\t5
+                                5\t3\t5
+                                6\t1\t6
+                                6\t3\t6
+                                null\tnull\t7
+                                null\tnull\t8
+                                null\tnull\t9
+                                null\tnull\t10
+                                """);
+                // the FULL JOIN to f NULL-extends l and every table before it for f row 6
+                assertQuery("SELECT a.k, cn.id, l.k lk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k FULL JOIN f ON l.k = f.k ORDER BY fk, lk, id")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tfk
+                                null\tnull\t1\tnull
+                                null\tnull\t3\tnull
+                                2\t1\t2\t2
+                                2\t3\t2\t2
+                                4\t1\t4\t4
+                                4\t3\t4\t4
+                                null\tnull\tnull\t6
+                                """);
+                assertQuery("SELECT a.k, cn.id, l.k lk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k AND l.k > 2 ORDER BY lk, id")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk
+                                null\tnull\t1
+                                null\tnull\t2
+                                null\tnull\t3
+                                4\t1\t4
+                                4\t3\t4
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testKeylessLeftJoinAfterRightJoinWithFalseOnClause() throws Exception {
+        // The ON clause of the RIGHT JOIN to f is false for every row, so the join reads an empty table in place
+        // of the joins built before it, which close without opening a cursor. The LEFT JOIN to cn runs after the
+        // RIGHT JOINs and checks the one to f alone: it NULL-extends every table before it, so each f row comes
+        // once with NULL in cn, although cn rows 2 and 3 have a NULL y and a.x >= cn.y is true when both are
+        // NULL. Checking the closed RIGHT JOIN to l failed with "outer join cursor is not open".
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE cn (id INT, y INT)");
+            execute("INSERT INTO cn VALUES (1, 1), (2, null), (3, null)");
+            assertQuery("SELECT a.k, cn.id, cn.y, l.k lk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k RIGHT JOIN f ON l.k = f.k AND 1 = 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: a.x>=cn.y
+                                  outerJoinCheck: true
+                                    Hash Right Outer Join Light
+                                      condition: f.k=l.k
+                                      filter: false
+                                        Empty table
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: f
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cn
+                            """)
+                    .returns("""
+                            k\tid\ty\tlk\tfk
+                            null\tnull\tnull\tnull\t4
+                            null\tnull\tnull\tnull\t6
+                            null\tnull\tnull\tnull\t2
+                            """);
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("SELECT a.k, cn.id, l.k lk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k RIGHT JOIN f ON l.k = f.k AND 1 = 2 ORDER BY fk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tfk
+                                null\tnull\tnull\t2
+                                null\tnull\tnull\t4
+                                null\tnull\tnull\t6
+                                """);
+                // an INNER JOIN between the RIGHT JOINs
+                assertQuery("SELECT a.k, cn.id, l.k lk, b.k bk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k JOIN b ON l.k = b.k RIGHT JOIN f ON b.k = f.k AND false ORDER BY fk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tbk\tfk
+                                null\tnull\tnull\tnull\t2
+                                null\tnull\tnull\tnull\t4
+                                null\tnull\tnull\tnull\t6
+                                """);
+                // a FULL JOIN before the RIGHT JOIN to f
+                assertQuery("SELECT a.k, cn.id, l.k lk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y FULL JOIN l ON a.k = l.k RIGHT JOIN f ON l.k = f.k AND 1 = 2 ORDER BY fk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tfk
+                                null\tnull\tnull\t2
+                                null\tnull\tnull\t4
+                                null\tnull\tnull\t6
+                                """);
+                // the FULL JOIN to d runs after the RIGHT JOIN to f and NULL-extends f for its own rows
+                assertQuery("SELECT a.k, cn.id, l.k lk, f.k fk, d.k dk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k RIGHT JOIN f ON l.k = f.k AND 1 = 2 FULL JOIN d ON f.k = d.k ORDER BY fk, dk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tfk\tdk
+                                null\tnull\tnull\tnull\t7
+                                null\tnull\tnull\tnull\t100
+                                null\tnull\tnull\t2\tnull
+                                null\tnull\tnull\t4\tnull
+                                null\tnull\tnull\t6\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testKeylessLeftJoinRunsAfterKeyedOuterJoin() throws Exception {
+        // A RIGHT or FULL join with a key NULL-extends a, and the LEFT JOIN to c written before it, for the
+        // rows of l without a match: 1 and 3. The LEFT JOIN runs after the outer join, as on master, and
+        // returns such a row once with NULL in c, without evaluating its ON clause: a.x IS NULL OR ... is
+        // true for it, and master returns every row of c with l rows 1 and 3 for that clause. The rows stay
+        // those of the LEFT JOIN run first, for an ON clause that is false for NULL, one that is true for it,
+        // and one that reads a BYTE column, which the outer join fills with 0.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE ab (k INT, x BYTE)");
+            execute("INSERT INTO ab VALUES (1, 3), (2, 6), (3, 9), (4, 12), (5, 15), (6, 18)");
+            final String rightJoinRows = """
+                    k\ty\tbk\tlk
+                    2\t1\t2\t2
+                    4\t1\t4\t4
+                    4\t2\t4\t4
+                    null\tnull\tnull\t3
+                    null\tnull\tnull\t1
+                    """;
+            assertQuery("SELECT a.k, c.y, b.k bk, l.k lk FROM a LEFT JOIN c ON a.x > c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: c.y*4<a.x
+                                  outerJoinCheck: true
+                                    Hash Right Outer Join Light
+                                      condition: l.k=b.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                            """)
+                    .returns(rightJoinRows);
+            assertQuery("SELECT a.k, c.y, b.k bk, l.k lk FROM a LEFT JOIN c ON a.x > c.y * 4 JOIN b ON a.k = b.k FULL JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: c.y*4<a.x
+                                  outerJoinCheck: true
+                                    Hash Full Outer Join Light
+                                      condition: l.k=b.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                            """)
+                    .returns("""
+                            k\ty\tbk\tlk
+                            2\t1\t2\t2
+                            4\t1\t4\t4
+                            4\t2\t4\t4
+                            6\t1\t6\tnull
+                            6\t2\t6\tnull
+                            6\t3\t6\tnull
+                            null\tnull\tnull\t3
+                            null\tnull\tnull\t1
+                            """);
+            assertQuery("SELECT a.k, c.y, b.k bk, l.k lk FROM a LEFT JOIN c ON a.x IS NULL OR a.x > c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: (a.x=null or c.y*4<a.x)
+                                  outerJoinCheck: true
+                                    Hash Right Outer Join Light
+                                      condition: l.k=b.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                            """)
+                    .returns(rightJoinRows);
+            assertQuery("SELECT a.k, c.y, b.k bk, l.k lk FROM a LEFT JOIN c ON a.x >= c.y * 4 JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: a.x>=c.y*4
+                                  outerJoinCheck: true
+                                    Hash Right Outer Join Light
+                                      condition: l.k=b.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                            """)
+                    .returns("""
+                            k\ty\tbk\tlk
+                            2\t1\t2\t2
+                            4\t1\t4\t4
+                            4\t2\t4\t4
+                            4\t3\t4\t4
+                            null\tnull\tnull\t3
+                            null\tnull\tnull\t1
+                            """);
+            assertQuery("SELECT ab.k, c.y, b.k bk, l.k lk FROM ab LEFT JOIN c ON ab.x > c.y * 4 JOIN b ON ab.k = b.k RIGHT JOIN l ON b.k = l.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: c.y*4<ab.x
+                                  outerJoinCheck: true
+                                    Hash Right Outer Join Light
+                                      condition: l.k=b.k
+                                        Hash Join Light
+                                          condition: b.k=ab.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: ab
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                            """)
+                    .returns(rightJoinRows);
+        });
     }
 
     @Test
@@ -6589,6 +10195,138 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinEvaluatesMasterOnlyFilterOncePerMasterRow() throws Exception {
+        // A LEFT JOIN filter that reads no slave column has one value per master row, so the hash join
+        // evaluates it once per master row that finds a hash chain. Evaluated once per chain entry, it
+        // made a master row that fails it walk its whole chain. pa rows 1, 2, 3 and 5 find chains of 3,
+        // 3, 1 and 2 pb rows, and pa row 4 finds none: 4 evaluations instead of 9. A random filter and
+        // a filter that reads a slave column still run once per chain entry.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pa (id INT, x INT, y INT)");
+            execute("INSERT INTO pa VALUES (1, 1, 1), (2, 2, 1), (3, null, null), (4, 3, 3), (5, 2, 2)");
+            execute("CREATE TABLE pb (k INT, v INT)");
+            execute("INSERT INTO pb VALUES (1, 10), (1, 11), (1, 12), (2, 20), (2, 21), (null, 30)");
+
+            // The keys imply the filter pa.x = pa.y. It drops pa row 2 from the chain of key 1, and it
+            // keeps pa row 3, whose null x and y are equal, with the chain of the null key.
+            final String query = "SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pa.id, pb.v";
+            final String expected = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\tnull
+                    3\t30
+                    4\tnull
+                    5\t20
+                    5\t21
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: pb.k=pa.y", "filter: pa.x=pa.y")
+                    .returns(expected);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns(expected);
+
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter()", 10, 4);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id > 0", 10, 4);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id > 3", 6, 4);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id + rnd_int(0, 1, 0) > 0", 10, 9);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pb.v + pa.id > 0", 10, 9);
+            // A function with three or more parameters keeps them in args rather than lhs and rhs. A
+            // master-only IN list runs once per master row; an IN list, CASE or coalesce that reads a
+            // slave column runs once per chain entry.
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pa.id IN (1, 2, 5)", 10, 4);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pb.v IN (pa.id * 10, 11, 21)", 6, 9);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND CASE WHEN pb.v > 11 THEN false ELSE true END", 7, 9);
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND coalesce(pb.v, pa.id, 0) > 11", 6, 9);
+            // BETWEEN is a SET_OPERATION node, which never counts as master-only
+            assertJoinFilterEvaluationCount("SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND test_latched_counter() AND pb.v NOT BETWEEN pa.id * 10 AND 11", 5, 9);
+
+            final String inListQuery = "SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND pb.v IN (pa.id * 10, 11, 21) ORDER BY pa.id, pb.v";
+            final String inListExpected = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    2\t11
+                    3\t30
+                    4\tnull
+                    5\t21
+                    """;
+            assertQuery(inListQuery)
+                    .noLeakCheck()
+                    .returns(inListExpected);
+            assertQuery(inListQuery)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns(inListExpected);
+
+            final String caseQuery = "SELECT pa.id, pb.v FROM pa LEFT JOIN pb ON pa.y = pb.k AND CASE WHEN pb.v > 11 THEN false ELSE true END ORDER BY pa.id, pb.v";
+            final String caseExpected = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    2\t10
+                    2\t11
+                    3\tnull
+                    4\tnull
+                    5\tnull
+                    """;
+            assertQuery(caseQuery)
+                    .noLeakCheck()
+                    .returns(caseExpected);
+            assertQuery(caseQuery)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns(caseExpected);
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnAmbiguousNameAfterCrossJoins() throws Exception {
+        // x exists in both B and C. The ON clause of the LEFT JOIN D resolves it against the tables that
+        // run before D, so the optimiser must not reorder the CROSS JOIN tables.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE A (a INT)");
+            execute("INSERT INTO A VALUES (1), (2)");
+            execute("CREATE TABLE B (x INT, v INT)");
+            execute("INSERT INTO B VALUES (1, 10), (5, 20)");
+            execute("CREATE TABLE C (x INT, k INT)");
+            execute("INSERT INTO C VALUES (3, 1), (4, 2)");
+            execute("CREATE TABLE D (dk INT, w INT)");
+            execute("INSERT INTO D VALUES (1, 2), (2, 9)");
+            execute("CREATE TABLE E (ew INT)");
+            execute("INSERT INTO E VALUES (15), (25)");
+            assertQuery("""
+                    SELECT * FROM A
+                    CROSS JOIN B
+                    CROSS JOIN C
+                    LEFT JOIN D ON D.dk = C.k AND D.w > x
+                    LEFT JOIN E ON E.ew > B.v
+                    ORDER BY a, B.x, C.x, dk, ew
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tx\tv\tx1\tk\tdk\tw\tew
+                            1\t1\t10\t3\t1\tnull\tnull\t15
+                            1\t1\t10\t3\t1\tnull\tnull\t25
+                            1\t1\t10\t4\t2\t2\t9\t15
+                            1\t1\t10\t4\t2\t2\t9\t25
+                            1\t5\t20\t3\t1\tnull\tnull\t25
+                            1\t5\t20\t4\t2\t2\t9\t25
+                            2\t1\t10\t3\t1\tnull\tnull\t15
+                            2\t1\t10\t3\t1\tnull\tnull\t25
+                            2\t1\t10\t4\t2\t2\t9\t15
+                            2\t1\t10\t4\t2\t2\t9\t25
+                            2\t5\t20\t3\t1\tnull\tnull\t25
+                            2\t5\t20\t4\t2\t2\t9\t25
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftJoinOnFunctionCondition0() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (i int);");
@@ -7035,6 +10773,58 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinOnKeysSharingColumnAcrossTables() throws Exception {
+        // a.x = b.k AND c.y = b.k implies c.y = a.x, but only for rows that match b. Turning
+        // that implied equality into an INNER key of the a-c join dropped a/c rows that the
+        // LEFT JOIN must keep with a null b side.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 1, 1), (2, 1, 2), (3, 3, 3)");
+            execute("CREATE TABLE b (id INT, k INT)");
+            execute("INSERT INTO b VALUES (10, 1), (20, 5)");
+            execute("CREATE TABLE c (id INT, y INT)");
+            execute("INSERT INTO c VALUES (1, 1), (2, 2), (3, 3)");
+
+            assertQuery("SELECT a.id, c.id, b.id FROM a JOIN c ON a.id = c.id LEFT JOIN b ON a.x = b.k AND c.y = b.k ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1\tid2
+                            1\t1\t10
+                            2\t2\tnull
+                            3\t3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnNameSharedWithLaterTable() throws Exception {
+        // w exists in f1 and in the later f2. The ON clause of the LEFT JOIN f1 sees only f0 and f1, so w
+        // means f1.w. A name that two tables in scope share stays ambiguous.
+        assertMemoryLeak(() -> {
+            createTablesForOnNameSharedWithLaterTable();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON w = b0 FULL JOIN f2 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tv\ta1\tb1\tw\ta2\tb2\tw1\tv1
+                            2\tnull\t1\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                            3\t1\t3\t3\t2\t1\t3\t3\tnull\t1
+                            3\t1\t3\t3\t2\t1\t3\t1\t2\t3
+                            2\t2\t2\t3\t3\t2\tnull\tnull\tnull\tnull
+                            2\t2\t2\t2\t2\t2\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t3\t3\t3
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t2\t2\t1
+                            null\tnull\tnull\tnull\tnull\tnull\t1\tnull\t3\t2
+                            """);
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM f1 a LEFT JOIN f1 b ON b.a1 = a.a1 AND w > 1 CROSS JOIN f3 FULL JOIN f4 ON a4 = a.a1",
+                    53,
+                    "Invalid column: w"
+            );
+        });
+    }
+
+    @Test
     public void testLeftJoinOnPredicateMasterOnly() throws Exception {
         // Same-table equality on the master side (x.a = x.b) inside a LEFT/RIGHT/FULL OUTER ON
         // clause must be honoured: rows where x.a != x.b cannot match any slave row.
@@ -7105,6 +10895,119 @@ public class JoinTest extends AbstractCairoTest {
                             1\t1\t1\t1
                             2\tnull\tnull\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnPrefixKeyStaysAfterNonEquiOuterJoinWhenTimeSeriesJoinMovesAhead() throws Exception {
+        // The ASOF/LT join runs ahead of the non-equi RIGHT/FULL join, which drops the designated timestamp.
+        // LEFT JOIN c, written between them, must run after the outer join: INT NULL = NULL matches c's NULL
+        // key for the unmatched b row, whose ta.k is NULL. The key on ta let the optimiser run c as soon as
+        // ta had joined, while the outer join still waited for the time-series join, so c ran ahead of the
+        // outer join and the unmatched b row came back with w = null.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT, w INT)");
+            execute("INSERT INTO c VALUES (1, 11), (200, 22), (null, 33)");
+            final String expected = """
+                    x\ty\tk\tw\tv
+                    10\t5\t1\t11\ta1
+                    null\t100\tnull\t33\t
+                    """;
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                for (String timeSeriesJoinType : new String[]{"ASOF", "LT"}) {
+                    final String timeSeriesJoin = timeSeriesJoinType + " JOIN td1 ON td1.k = ta.k";
+                    // the time-series join in a sub-query that the outer join reads
+                    assertQuery("SELECT p.x, b.y, c.k, c.w, p.v FROM (SELECT ta.x, ta.k, td1.v FROM ta " + timeSeriesJoin + ") p "
+                            + joinType + " JOIN b ON p.x > b.y LEFT JOIN c ON c.k = p.k ORDER BY b.y")
+                            .noLeakCheck()
+                            .returns(expected);
+                    assertQuery("SELECT ta.x, b.y, c.k, c.w, td1.v FROM ta " + joinType
+                            + " JOIN b ON ta.x > b.y LEFT JOIN c ON c.k = ta.k " + timeSeriesJoin + " ORDER BY b.y")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLeftJoinStaysAfterNonEquiOuterJoinWhenTimeSeriesJoinMovesAhead() throws Exception {
+        // The ASOF/LT join runs ahead of the non-equi RIGHT/FULL join, which drops the designated timestamp,
+        // while LEFT JOIN c, written between them, must still run after the outer join: it matches the
+        // unmatched b row too. A later RIGHT/FULL join pins the tables before it, and the optimiser then ran
+        // LEFT JOIN c ahead of the outer join as well. On c.k < 100, the unmatched b row lost its c match;
+        // on c.k < b.y, the query failed to resolve b.y. Each query must return the rows of its form with
+        // the tables before the last join in a sub-query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (200)");
+            execute("CREATE TABLE e (y INT, z INT)");
+            execute("INSERT INTO e VALUES (5, 50), (100, 1000), (7, 70)");
+            final String expected = """
+                    x\ty\tk\tv\tz
+                    null\tnull\tnull\t\t70
+                    10\t5\t1\ta1\t50
+                    null\t100\t1\t\t1000
+                    """;
+            // the sub-query form of the queries below
+            assertQuery("SELECT p.x, p.y, p.k, p.v, e.z FROM (SELECT ta.x, b.y, c.k, td1.v FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 ASOF JOIN td1 ON (k)) p FULL JOIN e ON e.y = p.y ORDER BY p.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v, e.z FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 ASOF JOIN td1 ON (k) FULL JOIN e ON e.y = b.y ORDER BY b.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v, e.z FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 LT JOIN td1 ON (k) FULL JOIN e ON e.y = b.y ORDER BY b.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v, e.z FROM ta FULL JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 ASOF JOIN td1 ON (k) RIGHT JOIN e ON e.y = b.y ORDER BY b.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v, e.z FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < b.y ASOF JOIN td1 ON (k) FULL JOIN e ON e.y = b.y ORDER BY b.y, e.z")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testLeftJoinWhereEqualityReadsCrossJoinedTable() throws Exception {
+        // The WHERE equality reads the LEFT JOIN slave and a table joined before it without
+        // an equi-key. That table runs after the LEFT JOIN, so the filter must sit above both.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, id INT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE c (k INT, id INT)");
+            execute("INSERT INTO c VALUES (1, 10), (3, 30)");
+            execute("CREATE TABLE d (k INT, id INT)");
+            execute("INSERT INTO d VALUES (1, 100), (2, 200), (3, 300)");
+
+            final String expected = """
+                    k\tid\tk1\tid1\tk2\tid2
+                    1\t1\t1\t10\t1\t100
+                    """;
+            assertQuery("SELECT * FROM a CROSS JOIN c LEFT JOIN d ON d.k = a.k WHERE d.k = c.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM a, c LEFT JOIN d ON d.k = a.k WHERE d.k = c.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM a JOIN c ON c.id > a.id LEFT JOIN d ON d.k = a.k WHERE d.k = c.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
         });
     }
 
@@ -7274,6 +11177,72 @@ public class JoinTest extends AbstractCairoTest {
                                                     Row forward scan
                                                     Frame forward scan on: dim_apTemperature
                             """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinWithoutKeyBeforeRightJoinRunsAfterKeyedJoin() throws Exception {
+        // A LEFT JOIN without a key gets an ordering edge from the RIGHT JOIN that pins it ahead of it, like a
+        // CROSS JOIN, and it runs after the keyed join written after it, as on master.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            assertQuery("SELECT a.k, b.k bk, e.k ek, d.k dk FROM a LEFT JOIN e ON e.k > a.k JOIN b ON a.k = b.k RIGHT JOIN d ON a.x >= d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Right Join
+                                  filter: a.x>=d.k
+                                    Nested Loop Left Join
+                                      filter: a.k<e.k
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: e
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: d
+                            """)
+                    .returns("""
+                            k\tbk\tek\tdk
+                            4\t4\t5\t7
+                            4\t4\t6\t7
+                            6\t6\tnull\t7
+                            null\tnull\tnull\t100
+                            """);
+        });
+    }
+
+    @Test(timeout = 10_000)
+    public void testLongRightJoinChainWithForwardReferencesCompiles() throws Exception {
+        // Every INNER JOIN reads the next table, and the last one reads the final table, so each RIGHT JOIN
+        // leaves the INNER JOIN tables unpinned. constrainRightAndFullJoinsAfterPrefix() resolved every
+        // prefix ON clause again for each RIGHT JOIN and unpinned one table per pass: compiling these 320
+        // joins took 21 seconds.
+        assertMemoryLeak(() -> {
+            final int joinCount = 320;
+            final int innerJoinCount = joinCount / 2;
+            final StringBuilder sql = new StringBuilder("SELECT * FROM (SELECT x c0 FROM long_sequence(2)) t0");
+            for (int i = 1; i <= joinCount; i++) {
+                final boolean isInner = i <= innerJoinCount;
+                sql.append(isInner ? " JOIN" : " RIGHT JOIN").append(" (SELECT x c").append(i).append(" FROM long_sequence(2)) t").append(i).append(" ON c");
+                if (isInner) {
+                    sql.append(i).append(" = c").append(i < innerJoinCount ? i + 1 : joinCount);
+                } else {
+                    sql.append(i - 1).append(" = c").append(i);
+                }
+            }
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertEquals(joinCount + 1, factory.getMetadata().getColumnCount());
+            }
         });
     }
 
@@ -7463,6 +11432,187 @@ public class JoinTest extends AbstractCairoTest {
                 ORDER BY order_ts + usec_offs
                 """;
         assertSkipToAndCalculateSize(sql, 1000);
+    }
+
+    @Test
+    public void testMarkoutHintBeforeRightJoinKeepsUnhintedJoinOrder() throws Exception {
+        // The markout_horizon hint does not change the join order of a level with a RIGHT/FULL join. The
+        // key-less first table waits behind the keyed join, as it does without the hint, so no markout join
+        // forms below the outer join. With no keyed join to wait behind, the tables keep their written order
+        // and SqlCodeGenerator still builds the markout join of the tables that the hint names.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, k INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 1, '1970-01-01T00:00:01.000000Z'),
+                    (2, 5, '1970-01-01T00:00:10.000000Z'),
+                    (3, 9, '1970-01-01T00:00:20.000000Z')
+                    """);
+            execute("CREATE TABLE bb (k LONG)");
+            execute("INSERT INTO bb VALUES (0), (2_000_000)");
+            execute("CREATE TABLE dd (k INT)");
+            execute("INSERT INTO dd VALUES (4), (100)");
+            final String keyedQuery = """
+                    WITH offsets AS (SELECT 1_000_000 * (x - 1) usec_offs FROM long_sequence(3))
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs ts, dd.k
+                    FROM orders CROSS JOIN offsets JOIN bb ON bb.k = offsets.usec_offs #OUTER# JOIN dd ON orders.k >= dd.k
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertQuery(keyedQuery.replace("#OUTER#", "RIGHT"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [id,order_ts+usec_offs,k]
+                                    SelectedRecord
+                                        Nested Loop Right Join
+                                          filter: orders.k>=dd.k
+                                            Cross Join
+                                                Hash Join Light
+                                                  condition: bb.k=offsets.usec_offs
+                                                    VirtualRecord
+                                                      functions: [1000000*x-1]
+                                                        long_sequence count: 3
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: bb
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: orders
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: dd
+                            """)
+                    .returns("""
+                            id\tts\tk
+                            null\t\t100
+                            2\t1970-01-01T00:00:10.000000Z\t4
+                            2\t1970-01-01T00:00:12.000000Z\t4
+                            3\t1970-01-01T00:00:20.000000Z\t4
+                            3\t1970-01-01T00:00:22.000000Z\t4
+                            """);
+            assertQuery(keyedQuery.replace("#OUTER#", "FULL"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanNotContaining("Markout Horizon Join")
+                    .returns("""
+                            id\tts\tk
+                            null\t\t100
+                            1\t1970-01-01T00:00:01.000000Z\tnull
+                            1\t1970-01-01T00:00:03.000000Z\tnull
+                            2\t1970-01-01T00:00:10.000000Z\t4
+                            2\t1970-01-01T00:00:12.000000Z\t4
+                            3\t1970-01-01T00:00:20.000000Z\t4
+                            3\t1970-01-01T00:00:22.000000Z\t4
+                            """);
+            final String query = """
+                    WITH offsets AS (SELECT 1_000_000 * (x - 1) usec_offs FROM long_sequence(3))
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs ts, dd.k
+                    FROM orders CROSS JOIN offsets #OUTER# JOIN dd ON orders.k >= dd.k
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertQuery(query.replace("#OUTER#", "RIGHT"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Markout Horizon Join")
+                    .returns("""
+                            id\tts\tk
+                            null\t\t100
+                            2\t1970-01-01T00:00:10.000000Z\t4
+                            2\t1970-01-01T00:00:11.000000Z\t4
+                            2\t1970-01-01T00:00:12.000000Z\t4
+                            3\t1970-01-01T00:00:20.000000Z\t4
+                            3\t1970-01-01T00:00:21.000000Z\t4
+                            3\t1970-01-01T00:00:22.000000Z\t4
+                            """);
+            assertQuery(query.replace("#OUTER#", "FULL"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Markout Horizon Join")
+                    .returns("""
+                            id\tts\tk
+                            null\t\t100
+                            1\t1970-01-01T00:00:01.000000Z\tnull
+                            1\t1970-01-01T00:00:02.000000Z\tnull
+                            1\t1970-01-01T00:00:03.000000Z\tnull
+                            2\t1970-01-01T00:00:10.000000Z\t4
+                            2\t1970-01-01T00:00:11.000000Z\t4
+                            2\t1970-01-01T00:00:12.000000Z\t4
+                            3\t1970-01-01T00:00:20.000000Z\t4
+                            3\t1970-01-01T00:00:21.000000Z\t4
+                            3\t1970-01-01T00:00:22.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testMarkoutHintBeforeRightJoinWithTimeSeriesJoin() throws Exception {
+        // A markout_horizon hint kept the CROSS JOIN that it names ahead of the ASOF or LT join written after
+        // it. SqlCodeGenerator then built a markout join as the master of the time-series join, and the query
+        // failed with "left side of time series join has no timestamp". The hint no longer changes the join
+        // order, so the time-series join runs first, as it does without the hint.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, k INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 1, '1970-01-01T00:00:00.000000Z'),
+                    (2, 5, '1970-01-01T00:00:10.000000Z'),
+                    (3, 9, '1970-01-01T00:00:20.000000Z')
+                    """);
+            execute("CREATE TABLE prices (k INT, p DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO prices VALUES
+                    (1, 1.5, '1970-01-01T00:00:00.000000Z'),
+                    (5, 2.5, '1970-01-01T00:00:05.000000Z'),
+                    (5, 3.5, '1970-01-01T00:00:15.000000Z')
+                    """);
+            execute("CREATE TABLE dd (k INT)");
+            execute("INSERT INTO dd VALUES (4), (100)");
+            execute("CREATE TABLE ee (k INT)");
+            execute("INSERT INTO ee VALUES (5), (100)");
+            assertQuery("""
+                    WITH offsets AS (SELECT 1_000_000 * (x - 1) usec_offs FROM long_sequence(3))
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs ts, p, dd.k
+                    FROM orders CROSS JOIN offsets ASOF JOIN prices ON orders.k = prices.k RIGHT JOIN dd ON orders.k >= dd.k
+                    ORDER BY order_ts + usec_offs
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tp\tk
+                            null\t\tnull\t100
+                            2\t1970-01-01T00:00:10.000000Z\t2.5\t4
+                            2\t1970-01-01T00:00:11.000000Z\t2.5\t4
+                            2\t1970-01-01T00:00:12.000000Z\t2.5\t4
+                            3\t1970-01-01T00:00:20.000000Z\tnull\t4
+                            3\t1970-01-01T00:00:21.000000Z\tnull\t4
+                            3\t1970-01-01T00:00:22.000000Z\tnull\t4
+                            """);
+            assertQuery("""
+                    WITH offsets AS (SELECT 1_000_000 * (x - 1) usec_offs FROM long_sequence(3))
+                    SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs ts, p, ee.k
+                    FROM orders CROSS JOIN offsets LT JOIN prices ON orders.k = prices.k FULL JOIN ee ON orders.k = ee.k
+                    ORDER BY order_ts + usec_offs
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tp\tk
+                            null\t\tnull\t100
+                            1\t1970-01-01T00:00:00.000000Z\tnull\tnull
+                            1\t1970-01-01T00:00:01.000000Z\tnull\tnull
+                            1\t1970-01-01T00:00:02.000000Z\tnull\tnull
+                            2\t1970-01-01T00:00:10.000000Z\t2.5\t5
+                            2\t1970-01-01T00:00:11.000000Z\t2.5\t5
+                            2\t1970-01-01T00:00:12.000000Z\t2.5\t5
+                            3\t1970-01-01T00:00:20.000000Z\tnull\tnull
+                            3\t1970-01-01T00:00:21.000000Z\tnull\tnull
+                            3\t1970-01-01T00:00:22.000000Z\tnull\tnull
+                            """);
+        });
     }
 
     @Test
@@ -7703,6 +11853,70 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiConjunctOnPinnedLeftJoinFiltersAfterRightJoin() throws Exception {
+        // b1 > a0 filtered LEFT JOIN f1 below RIGHT JOIN f2, which then null-extended the f2 row (2, 1)
+        // instead of dropping it, and the query returned null/null/null/null/2/1/1/1.
+        assertMemoryLeak(() -> {
+            createTablesForInnerConjunctsAfterRightJoin();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < a0 RIGHT JOIN f2 ON a2 = a0 JOIN f3 ON b1 > a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\n");
+        });
+    }
+
+    @Test
+    public void testNonEquiFullJoinThenNonEquiRightJoinResolvesPrefixColumns() throws Exception {
+        // The non-equi RIGHT JOIN sa homogenizes to a CROSS variant, so it is no consumer that pins the
+        // prefix of the non-equi FULL JOIN sb. doReorderTables used to run the FULL join before sc, and
+        // its ON clause sb.y <= sc.k failed with "Invalid column: sc.k".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sc (k INT)");
+            execute("INSERT INTO sc VALUES (2)");
+            execute("CREATE TABLE sd (k INT)");
+            execute("INSERT INTO sd VALUES (3)");
+            execute("CREATE TABLE sb (y INT)");
+            execute("INSERT INTO sb VALUES (1), (4)");
+            execute("CREATE TABLE sa (x INT)");
+            execute("INSERT INTO sa VALUES (1), (2)");
+            assertQuery("SELECT sc.k, sd.k, sb.y, sa.x FROM sc CROSS JOIN sd FULL JOIN sb ON sb.y <= sc.k RIGHT JOIN sa ON sa.x >= sb.y ORDER BY sa.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tk1\ty\tx
+                            2\t3\t1\t1
+                            2\t3\t1\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonEquiJoinedTableKeepsEveryMovedKey() throws Exception {
+        // reorderTables moves a2 = a1 from f2 and then a3 = a1 from f3 onto f1, which has no equi-key.
+        // The second move created a new join context for f1 and dropped the first key. The query failed
+        // with InvalidColumnException, and before the join reorder rework it lost b3 = b2 and returned
+        // the extra row 2/5/1/0/1/6/1/5/5/0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (2, 5), (1, 10)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (1, 0), (3, 0)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (1, 5), (1, 6), (4, 5)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (1, 5), (1, 6), (7, 5)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (5, 0)");
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 < a0 JOIN f2 ON a2 = a1 JOIN f3 ON b3 = b2 AND a3 = a1 JOIN f4 ON a4 = b3 AND a4 = b0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4
+                            2\t5\t1\t0\t1\t5\t1\t5\t5\t0
+                            """);
+        });
+    }
+
+    @Test
     public void testNonEquiOuterJoinMasterFilterStaysPostJoin() throws Exception {
         // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no JoinContext, so
         // homogenizeCrossJoins (which runs before assignFilters) rewrites it to
@@ -7800,6 +12014,65 @@ public class JoinTest extends AbstractCairoTest {
                                 null\t100\t8\t
                                 """);
             }
+        });
+    }
+
+    @Test
+    public void testNonEquiOuterJoinThenAsOfJoinChain() throws Exception {
+        // A chain of time-series joins moves ahead of the non-equi RIGHT/FULL OUTER join link by link:
+        // td2 reads td1, which reads only the prefix ta. A time-series join that reads a model after the
+        // outer join, such as td2 keyed on the LEFT-joined x, keeps the outer join in its old order, and
+        // a LEFT join between two time-series joins keeps its place.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE td2 (ts TIMESTAMP, k INT, w SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td2 VALUES ('2024-01-01T00:00:01.500000Z', 1, 'b1')");
+            execute("CREATE TABLE td3 (ts TIMESTAMP, k INT, z SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td3 VALUES ('2024-01-01T00:00:01.700000Z', 1, 'c1')");
+            execute("CREATE TABLE x (k INT, u SYMBOL)");
+            execute("INSERT INTO x VALUES (1, 'x1')");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (200)");
+
+            final String expected = """
+                    x\ty\tv\tw
+                    10\t5\ta1\tb1
+                    null\t100\t\t
+                    """;
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                assertQuery("SELECT ta.x, b.y, td1.v, td2.w FROM ta " + joinType + " JOIN b ON ta.x > b.y ASOF JOIN td1 ON td1.k = ta.k ASOF JOIN td2 ON td2.k = td1.k ORDER BY b.y")
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+            assertQuery("SELECT ta.x, b.y, td1.v, td2.w FROM ta RIGHT JOIN b ON ta.x > b.y LT JOIN td1 ON td1.k = ta.k LT JOIN td2 ON td2.k = td1.k ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT ta.x, b.y, td1.v, td2.w, td3.z FROM ta RIGHT JOIN b ON ta.x > b.y ASOF JOIN td1 ON td1.k = ta.k ASOF JOIN td2 ON td2.k = td1.k ASOF JOIN td3 ON td3.k = td2.k ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty\tv\tw\tz
+                            10\t5\ta1\tb1\tc1
+                            null\t100\t\t\t
+                            """);
+            assertQuery("SELECT ta.x, b.y, td1.v, c.k, td2.w FROM ta RIGHT JOIN b ON ta.x > b.y ASOF JOIN td1 LEFT JOIN c ON c.k < 100 ASOF JOIN td2 ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty\tv\tk\tw
+                            10\t5\ta1\t1\tb1
+                            null\t100\t\t1\t
+                            """);
+            assertQuery("SELECT ta.x, b.y, x.u, td2.w FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN x ON x.k = ta.k ASOF JOIN td2 ON td2.k = x.k ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty\tu\tw
+                            10\t5\tx1\tb1
+                            null\t100\t\t
+                            """);
         });
     }
 
@@ -7908,6 +12181,56 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonEquiOuterJoinThenInnerJoinThenSpliceJoinFails() throws Exception {
+        // SPLICE emits slave rows without a master row, so it commutes neither with the non-equi
+        // RIGHT/FULL OUTER join nor with the INNER join on t2 written after it. A SPLICE that reads
+        // only t1 must not move ahead of them: that plan dropped the slave-only rows t3 = 1@0s and
+        // t3 = 3@4s. Written after the outer join, the SPLICE has no designated timestamp to read.
+        // The redundant key t3.id = t2.id, implied by the INNER key t1.id = t2.id, must not change
+        // that. ASOF keeps exactly one row per master row, so it still moves ahead and returns rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:01.000000Z'),
+                    (2, '2024-01-01T00:00:02.000000Z'),
+                    (3, '2024-01-01T00:00:03.000000Z')
+                    """);
+            execute("CREATE TABLE t2 (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t2 VALUES (1, '2024-01-01T00:00:01.000000Z'), (2, '2024-01-01T00:00:02.000000Z')");
+            execute("CREATE TABLE t3 (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (3, '2024-01-01T00:00:04.000000Z'),
+                    (2, '2024-01-01T00:00:05.000000Z')
+                    """);
+            execute("CREATE TABLE t4 (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t4 VALUES (4, '2024-01-01T00:00:01.000000Z')");
+
+            for (String outerJoin : new String[]{"FULL JOIN t4 ON t4.id > t1.id", "RIGHT JOIN t4 ON t4.id > 1"}) {
+                final String prefix = "SELECT t1.id, t2.id, t3.id, t4.id FROM t1 " + outerJoin + " JOIN t2 ON t1.id = t2.id ";
+                for (String splice : new String[]{
+                        "SPLICE JOIN t3 ON t3.id = t2.id AND t3.id = t1.id",
+                        "SPLICE JOIN t3 ON t3.id = t1.id",
+                        "SPLICE JOIN t3"
+                }) {
+                    final String sql = prefix + splice;
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("SPLICE"), "left side of time series join has no timestamp");
+                }
+                assertQuery(prefix + "ASOF JOIN t3 ON t3.id = t2.id AND t3.id = t1.id")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                id\tid1\tid2\tid3
+                                1\t1\t1\t4
+                                2\t2\tnull\t4
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testNonEquiOuterJoinThenInnerJoinWithColumnEqColumnFilter() throws Exception {
         // Filter variant of testNonEquiOuterJoinThenInnerJoinDropsNullExtendedRows. The INNER join on
         // c.k = a.k drops the outer join's NULL-master row for b.y = 100 before WHERE runs, so only the
@@ -7972,6 +12295,111 @@ public class JoinTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns(expectedFull);
             }
+        });
+    }
+
+    @Test
+    public void testNonEquiRightJoinAfterImpliedKeyFilterRunsAfterPrefix() throws Exception {
+        // f4's keys imply a1 = a0 on f1, which has no join context. The optimiser turns that key into a
+        // filter of the INNER join f4. The non-equi RIGHT JOIN f5 runs after its whole prefix and before
+        // LEFT JOIN f6, so the query returns the rows of its sub-query form: f4 drops every prefix row,
+        // and each f5 row comes back NULL-extended.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (null, null), (1, 2), (null, 1), (2, 3)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (null, 2), (2, null), (3, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (3, 3), (3, null), (null, 3), (2, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 2), (1, 1), (3, 3)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (null, 1), (2, 1), (3, 3), (1, null), (1, 2)");
+            execute("CREATE TABLE f5 (a5 INT, b5 INT)");
+            execute("INSERT INTO f5 VALUES (3, null), (3, 2), (2, null), (1, 3)");
+            execute("CREATE TABLE f6 (a6 INT, b6 INT)");
+            execute("INSERT INTO f6 VALUES (1, 1), (null, 2), (3, 2)");
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 < a0 LEFT JOIN f2 ON a2 > b1 FULL JOIN f3 ON b3 > 1 JOIN f4 ON b4 = a1 AND b4 < a1 AND b4 = a0 RIGHT JOIN f5 ON a5 < a3 LEFT JOIN f6 ON a6 = a2 ORDER BY a5, b5")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5\ta6\tb6
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t1\t3\tnull\t2
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t2\tnull\tnull\t2
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\tnull\tnull\t2
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t3\t2\tnull\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonEquiRightJoinThenLeftJoinBeforeAsOfJoin() throws Exception {
+        // LEFT JOIN c gives the non-equi RIGHT JOIN b a dependency, so doReorderTables used to run it
+        // ahead of the ASOF join, which then failed with "left side of time series join has no
+        // timestamp". The ASOF join reads only the prefix ta and runs ahead of the outer join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (200)");
+            assertQuery("SELECT ta.x, b.y, c.k, td1.v FROM ta RIGHT JOIN b ON ta.x > b.y LEFT JOIN c ON c.k < 100 ASOF JOIN td1 ON (k) ORDER BY b.y")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty\tk\tv
+                            10\t5\t1\ta1
+                            null\t100\t1\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonEquiRightJoinThenLeftJoinMatchesNullKey() throws Exception {
+        // LEFT JOIN c2 ON c2.k = b.y consumes the RIGHT join's NULL-extended b rows, and INT NULL = NULL
+        // matches c2's NULL key, as in the sub-query form. doReorderTables used to run the LEFT join
+        // before the outer join, which then NULL-extended c2 as well and returned v = null.
+        assertMemoryLeak(() -> {
+            createTablesForNonEquiRightJoinThenLeftJoin();
+            assertQuery("SELECT b.y, a.x, c2.v FROM d CROSS JOIN b RIGHT JOIN a ON a.x < b.k LEFT JOIN c2 ON c2.k = b.y ORDER BY a.x")
+                    .noLeakCheck()
+                    .returns("""
+                            y\tx\tv
+                            null\t1\t7
+                            null\t2\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testNonEquiRightJoinThenLeftJoinRunsAfterPrefix() throws Exception {
+        // The non-key ON clause of LEFT JOIN c gives the non-equi RIGHT JOIN a a dependency, which made
+        // it an ordering root that doReorderTables used to run before d. No b row matches a.x < b.k, so
+        // the RIGHT join must return each a row once, NULL-extended; running it before d returned 12
+        // rows, and running it before the INNER JOIN b returned none. FULL returns the 18 unmatched d x b
+        // rows plus the 2 a rows.
+        assertMemoryLeak(() -> {
+            createTablesForNonEquiRightJoinThenLeftJoin();
+            final String expected = """
+                    k\ty\tx\tk1
+                    null\tnull\t1\tnull
+                    null\tnull\t2\tnull
+                    """;
+            assertQuery("SELECT d.k, b.y, a.x, c.k FROM d CROSS JOIN b RIGHT JOIN a ON a.x < b.k LEFT JOIN c ON c.k > 100 ORDER BY a.x")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT d.k, b.y, a.x, c.k FROM d JOIN b ON b.y >= d.k RIGHT JOIN a ON a.x < b.k LEFT JOIN c ON c.k < b.y ORDER BY a.x")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT count() FROM d CROSS JOIN b FULL JOIN a ON a.x < b.k LEFT JOIN c ON c.k > 100")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            20
+                            """);
         });
     }
 
@@ -8141,6 +12569,516 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinFailsWhenForwardReferenceRunsPrefixTableAfterIt() throws Exception {
+        // An ON clause that reads a later table leaves the tables written before a RIGHT/FULL join
+        // unpinned, and the optimiser could run one of them after the join. The unmatched rows of the join
+        // then came back once per row of that table, or with its columns filled in, so these queries fail.
+        assertMemoryLeak(() -> {
+            createTablesForPrefixOrder(0, 2, 3, 4, 5, 7, 8, 9, 10, 11);
+            // LEFT JOIN t8 reads the later t4, t10 reads t8, and t7 reads t10: t7 ran after the RIGHT JOIN,
+            // and the unmatched t2 row came back once per t7 row, with the t7 columns filled in
+            assertExceptionNoLeakCheck(
+                    "select * from t5 a0 join t10 a1 on v8 = a1.v10 left join t8 a2 on a5.v4 = v8 join t7 a3 on c10 = a4.c9 asof join t9 a4 cross join t4 a5 right join t2 a6 on a1.c10 = a6.c2",
+                    147,
+                    "could not determine join order for this table"
+            );
+            // without the RIGHT JOIN, the same tables fail too
+            assertExceptionNoLeakCheck(
+                    "select * from t5 a0 join t10 a1 on v8 = a1.v10 left join t8 a2 on a5.v4 = v8 join t7 a3 on c10 = a4.c9 asof join t9 a4 cross join t4 a5",
+                    66,
+                    "Invalid column: a5.v4"
+            );
+            // an INNER JOIN whose ON clause reads the table of the later FULL JOIN
+            assertExceptionNoLeakCheck(
+                    "select * from t3 a0 join t9 a1 on v11 < a1.c9 full join t11 a2 on c3 = c11",
+                    56,
+                    "could not determine join order for this table"
+            );
+            // a non-equi RIGHT JOIN whose ON clause reads the table of the later FULL JOIN
+            assertExceptionNoLeakCheck(
+                    "select * from t9 a0 right join t0 a1 on v5 < a1.v0 full join t5 a2 on c9 = c5 full join t4 a3 on c9 = c4",
+                    61,
+                    "could not determine join order for this table"
+            );
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyMergeKeysEarlierOuterJoinOnlyIfNullRejected() throws Exception {
+        // WHERE b.u > 2 drops the rows that LEFT JOIN b NULL-extends, so b keys on c's implied key
+        // a.w = b.k. Merged with b's own key b.k = d.y, it implies a.w = d.y. As a key of LEFT JOIN d,
+        // that equality would NULL-extend the a rows that only it fails, which WHERE keeps, so it filters
+        // after d. Keyed on it, d NULL-extended the row (5, 2), which then matched b's row (2, 2, 3)
+        // and returned an extra row. With d.v > 0, WHERE drops such rows, and d keys on it too.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKeyNullRejection();
+            final String expected = """
+                    ax\taw\tdy\tdv\tbx\tbk\tbu\tck
+                    4\t1\t1\t2\t0\t1\t3\t1
+                    4\t1\t1\t2\t1\t1\t3\t1
+                    """;
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, d.y dy, d.v dv, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    LEFT JOIN d ON a.x > d.v
+                    LEFT JOIN b ON b.k = d.y AND a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE b.u > 2
+                    ORDER BY ax, aw, dy, dv, bx, bk, bu, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: b.k=a.w", "Filter filter: d.y=a.w", "Nested Loop Left Join")
+                    .returns(expected);
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, d.y dy, d.v dv, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    LEFT JOIN d ON a.x > d.v
+                    LEFT JOIN b ON b.k = d.y AND a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE b.u > 2 AND d.v > 0
+                    ORDER BY ax, aw, dy, dv, bx, bk, bu, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("condition: b.k=a.w", "condition: d.y=a.w")
+                    .withPlanNotContaining("Nested Loop")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyMergesAsInnerKey() throws Exception {
+        // The INNER join implies sd.w = sa.k, and WHERE sa.bt > 0 drops the NULL-extended rows of the
+        // LEFT JOIN sa, so the key lands on that join and merges with its own key sb.k = sa.k. The
+        // equalities that merge derives hold only because the join keeps no NULL-extended row, so they
+        // must not become keys of the earlier LEFT JOIN sd: that join would NULL-extend a matched row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sa (k INT, bt BYTE)");
+            execute("INSERT INTO sa VALUES (null, 2), (2, 0), (2, 1)");
+            execute("CREATE TABLE sb (k INT)");
+            execute("INSERT INTO sb VALUES (3), (2), (0), (null), (0), (0), (3), (null)");
+            execute("CREATE TABLE sc (k INT)");
+            execute("INSERT INTO sc VALUES (2), (0), (3), (null)");
+            execute("CREATE TABLE sd (k INT, w INT)");
+            execute("INSERT INTO sd VALUES (3, null), (3, 3), (2, 1), (0, 0), (3, null), (0, 3), (0, 1)");
+            assertQuery("""
+                    SELECT sb.k bk, sd.k dk, sd.w dw, sa.k ak, sa.bt abt, sc.k ck
+                    FROM sb
+                    LEFT JOIN sd ON sd.k = sb.k
+                    LEFT JOIN sa ON sb.k = sa.k
+                    JOIN sc ON sd.w = sc.k AND sa.k = sc.k
+                    WHERE sa.bt > 0
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            bk\tdk\tdw\tak\tabt\tck
+                            null\tnull\tnull\tnull\t2\tnull
+                            null\tnull\tnull\tnull\t2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnInnerJoinBeforeNullRejectedRightJoin() throws Exception {
+        // c's keys imply a.w = b.k. As a key of the INNER join b, which runs before RIGHT JOIN d, it would
+        // drop a/b pairs that d matches, and d would NULL-extend its rows instead. WHERE a.x > 0 drops the
+        // rows that RIGHT JOIN d NULL-extends, so b hashes on the key instead of running as a CROSS join.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKeyNullRejection();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, d.y dy, c.k ck
+                    FROM a
+                    JOIN b ON b.x > 1
+                    RIGHT JOIN d ON d.y = a.x
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE a.x > 0
+                    ORDER BY ax, aw, bx, bk, dy, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Join Light", "condition: b.k=a.w")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tdy\tck
+                            2\t1\t5\t1\t2\t1
+                            2\t2\t2\t2\t2\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedFullJoin() throws Exception {
+        // The INNER join implies a.w = b.k. WHERE a.x > 0 drops the rows that FULL JOIN b NULL-extends on
+        // the side of a, and b.u > 2 those on the side of b, so the FULL JOIN returns the rows of an INNER
+        // join and runs as a hash join on that key.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKeyNullRejection();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    FULL JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE a.x > 0 AND b.u > 2
+                    ORDER BY ax, aw, bx, bk, bu, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: b.k=a.w")
+                    .withPlanNotContaining("Nested Loop")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tck
+                            2\t1\t5\t1\t4\t1
+                            2\t2\t2\t2\t3\t2
+                            4\t1\t5\t1\t4\t1
+                            5\t2\t2\t2\t3\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedLeftJoin() throws Exception {
+        // The INNER join implies a.w = b.k, and b.u > 2 drops the NULL-extended rows of the LEFT JOIN, so
+        // the LEFT JOIN returns the rows of an INNER join and runs as a hash join on that key.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k AND b.u > 2
+                    ORDER BY 1, 2, 3, 4, 5
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: b.k=a.w")
+                    .withPlanNotContaining("Nested Loop")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck
+                            5\t1\t1\t3\t1
+                            7\t3\t3\t4\t3
+                            9\tnull\tnull\t6\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedLeftJoinAcrossRightJoin() throws Exception {
+        // RIGHT JOIN d runs between LEFT JOIN b and the INNER join c, whose keys imply a.w = b.k. As a key
+        // of b, the equality would NULL-extend a rows that d then matches, and d would NULL-extend its
+        // rows instead. WHERE b.u > 2 drops the rows that b NULL-extends, and those that d NULL-extends,
+        // in which b is NULL too, so b hashes on the key.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKeyNullRejection();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, d.y dy, c.k ck
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    RIGHT JOIN d ON d.y = b.k
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE b.u > 2
+                    ORDER BY ax, aw, bx, bk, bu, dy, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: b.k=a.w", "Hash Right Outer Join Light")
+                    .withPlanNotContaining("Nested Loop")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tdy\tck
+                            4\t1\t0\t1\t3\t1\t1
+                            4\t1\t1\t1\t3\t1\t1
+                            5\t2\t2\t2\t3\t2\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedLeftJoinBeforeRightJoin() throws Exception {
+        // A later RIGHT JOIN NULL-extends the master rows of the LEFT JOIN, but WHERE b.u > 2 runs after it
+        // and drops those rows too, because b is NULL in each of them. The rows that the key a.w = b.k
+        // changes may make the RIGHT JOIN match a d row that it would otherwise NULL-extend, and WHERE drops
+        // both forms of that row, so the LEFT JOIN hashes on the key.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.k bk, b.u bu, c.k ck, d.v dv
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    RIGHT JOIN d ON d.v > 10
+                    WHERE b.u > 2
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: b.k=a.w")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck\tdv
+                            5\t1\t1\t3\t1\t20
+                            5\t1\t1\t3\t1\t30
+                            7\t3\t3\t4\t3\t20
+                            7\t3\t3\t4\t3\t30
+                            9\tnull\tnull\t6\tnull\t20
+                            9\tnull\tnull\t6\tnull\t30
+                            """);
+            // a SPLICE JOIN after the LEFT JOIN needs a master with random access, which no join provides
+            assertQuery("""
+                    SELECT * FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    SPLICE JOIN d
+                    WHERE b.u > 2
+                    """)
+                    .noLeakCheck()
+                    .fails(75, "left side of splice join doesn't support random access");
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyOnNullRejectedRightJoin() throws Exception {
+        // The INNER join implies a.w = b.k, and WHERE a.x > 0 drops the NULL-extended rows of the RIGHT
+        // JOIN, so the RIGHT JOIN returns the rows of an INNER join and runs as a hash join on that key.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, c.k ck
+                    FROM a
+                    RIGHT JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE a.x > 0
+                    ORDER BY 1, 2, 3, 4, 5
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: b.k=a.w")
+                    .withPlanNotContaining("Nested Loop")
+                    .returns("""
+                            ax\taw\tbx\tbk\tck
+                            5\t1\t2\t1\t1
+                            7\t3\t3\t3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterBeforeTimeSeriesJoin() throws Exception {
+        // The LT JOIN moves ahead of the non-equi RIGHT JOIN to read the timestamp of a. As a key of the
+        // RIGHT JOIN, a.w = b.k would keep the LT JOIN behind it, where the RIGHT JOIN output has no
+        // designated timestamp, so the RIGHT JOIN keeps the equality as a filter.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, c.k ck, d.v dv
+                    FROM a
+                    RIGHT JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    LT JOIN d
+                    WHERE a.x > 0
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Right Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tck\tdv
+                            5\t1\t2\t1\t1\tnull
+                            7\t3\t3\t3\t3\t30
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterOfMixedTypes() throws Exception {
+        // An INT = LONG key would fail with a join column type mismatch, so the LEFT JOIN keeps the
+        // INNER-derived a.w = bl.k as a filter even though bl.u > 2 rejects NULL bl rows.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, bl.k bk, bl.u bu, cl.k ck
+                    FROM a
+                    LEFT JOIN bl ON a.x > bl.u
+                    JOIN cl ON a.w = cl.k AND bl.k = cl.k AND bl.u > 2
+                    ORDER BY 1, 2, 3, 4, 5
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck
+                            5\t1\t1\t3\t1
+                            7\t3\t3\t4\t3
+                            9\tnull\tnull\t6\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterWhenNullExtendedRowsSurvive() throws Exception {
+        // c's keys imply a.w = b.k. Unless a later conjunct drops the rows that the outer join b
+        // NULL-extends, the key would change them, so b keeps matching without it: with no such conjunct,
+        // with a conjunct on the side that b preserves, with one on only one side of a FULL JOIN, with
+        // b.f = false, which the NULL-extended BOOLEAN false passes, and with a conjunct of an INNER join
+        // that runs before RIGHT JOIN b. In the last query, c2's keys imply a.w = b.k across RIGHT JOIN d,
+        // which runs between b and c2, and the conjunct b.u > 2 runs before d, so it keeps the rows that d
+        // NULL-extends. Keyed on a.w = b.k, each query returns other rows.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKeyNullRejection();
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    RIGHT JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    ORDER BY ax, aw, bx, bk, bu, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Right Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tck
+                            0\t1\t5\t1\t4\t1
+                            2\t1\t5\t1\t4\t1
+                            2\t2\t2\t2\t3\t2
+                            4\t1\t5\t1\t4\t1
+                            5\t2\t2\t2\t3\t2
+                            """);
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE a.x > 0
+                    ORDER BY ax, aw, bx, bk, bu, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tck
+                            2\t1\t-1\t1\t1\t1
+                            4\t1\t-1\t1\t1\t1
+                            4\t1\t0\t1\t3\t1
+                            4\t1\t1\t1\t3\t1
+                            5\t2\t2\t2\t3\t2
+                            """);
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    FULL JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE a.x > 0
+                    ORDER BY ax, aw, bx, bk, bu, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tck
+                            2\t1\t5\t1\t4\t1
+                            2\t2\t2\t2\t3\t2
+                            4\t1\t5\t1\t4\t1
+                            5\t2\t2\t2\t3\t2
+                            """);
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE b.f = false
+                    ORDER BY ax, aw, bx, bk, bu, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tck
+                            -1\tnull\tnull\tnull\tnull\tnull
+                            4\t1\t1\t1\t3\t1
+                            """);
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    JOIN d ON d.y = a.w AND a.x > 0
+                    RIGHT JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    ORDER BY ax, aw, bx, bk, bu, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Right Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tck
+                            2\t1\t5\t1\t4\t1
+                            2\t2\t2\t2\t3\t2
+                            4\t1\t5\t1\t4\t1
+                            5\t2\t2\t2\t3\t2
+                            """);
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, d.y dy, c2.k ck
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON c.k > 0 AND b.u > 2
+                    RIGHT JOIN d ON d.y = a.x
+                    JOIN c c2 ON a.w = c2.k AND b.k = c2.k
+                    ORDER BY ax, aw, bx, bk, bu, dy, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tdy\tck
+                            null\tnull\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\t0\tnull
+                            null\tnull\tnull\tnull\tnull\t1\tnull
+                            null\tnull\tnull\tnull\tnull\t2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterWithoutNullRejection() throws Exception {
+        // Without a conjunct that drops the NULL-extended rows of the LEFT JOIN, the INNER-derived
+        // a.w = b.k must not decide its matching: a row of a would come back NULL-extended. The LEFT JOIN
+        // keeps the equality as a filter and runs as a nested loop. b.u IS NULL keeps NULL b rows.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinInnerDerivedKey();
+            final String query = """
+                    SELECT a.x ax, a.w aw, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    LEFT JOIN b ON a.x > b.u
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    """;
+            assertQuery(query + "ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("""
+                            ax\taw\tbk\tbu\tck
+                            5\t1\t1\t3\t1
+                            7\t3\t3\t4\t3
+                            9\tnull\tnull\t6\tnull
+                            """);
+            assertQuery(query + "WHERE b.u IS NULL ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Left Join")
+                    .returns("ax\taw\tbk\tbu\tck\n");
+        });
+    }
+
+    @Test
+    public void testOuterJoinInnerDerivedKeyStaysFilterOnRightJoinWithSlaveOnlyRejection() throws Exception {
+        // WHERE b.u > 0 rejects only the RIGHT join's preserved slave, so it drops no NULL-master row.
+        // The INNER-derived a.w = b.k must stay a filter: as a key, it would NULL-extend b (2, null, 5)
+        // and the INNER join would match that row to c.k = NULL, adding a spurious row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, w INT)");
+            execute("INSERT INTO a VALUES (5, 1), (7, 3)");
+            execute("CREATE TABLE b (x INT, k INT, u INT)");
+            execute("INSERT INTO b VALUES (2, 1, 3), (2, null, 5), (0, null, 6)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (null)");
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    RIGHT JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE b.u > 0
+                    ORDER BY 1, 2, 3, 4, 5, 6
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Right Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tck
+                            null\tnull\t0\tnull\t6\tnull
+                            5\t1\t2\t1\t3\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testOuterJoinMasterFilterKeepsMatchedRow() throws Exception {
         // Companion to testOuterJoinMasterFilterStaysPostJoin: that test proves the NULL-master
         // rows are removed; this one proves a genuine master match survives, so the post-join
@@ -8206,6 +13144,1701 @@ public class JoinTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 bindVariableService.setStr("sym", "s2");
                 assertQuery(bind).noLeakCheck().noRandomAccess().returns(empty);
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeyImpliedByInnerJoinKey() throws Exception {
+        // The ON keys t3.id = t2.id AND t3.id = t1.id imply t2.id = t1.id, which the INNER join
+        // key t1.id = t2.id already enforces. The optimiser drops the implied equality instead of
+        // adding it as an outer join filter or a second key, which slowed the join down.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnImpliedKey();
+
+            final String expectedFull = """
+                    id\tid1\tid2
+                    null\tnull\tnull
+                    null\tnull\t3
+                    null\tnull\t5
+                    1\t1\t1
+                    1\t1\t1
+                    2\t2\tnull
+                    """;
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.id=t1.id")
+                    .withPlanNotContaining("filter: t2.id=t1.id")
+                    .returns(expectedFull);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns(expectedFull);
+            // ON keys in the same order as the INNER join key: the implied equality t1.id = t2.id
+            // matches that key in its forward orientation.
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.id = t1.id AND t3.id = t2.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.id=t2.id")
+                    .withPlanNotContaining("filter: t1.id=t2.id")
+                    .returns(expectedFull);
+
+            final String expectedRight = """
+                    id\tid1\tid2
+                    null\tnull\tnull
+                    null\tnull\t3
+                    null\tnull\t5
+                    1\t1\t1
+                    1\t1\t1
+                    """;
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.id=t1.id")
+                    .withPlanNotContaining("filter: t2.id=t1.id")
+                    .returns(expectedRight);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns(expectedRight);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.id = t1.id AND t3.id = t2.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.id=t2.id")
+                    .withPlanNotContaining("filter: t1.id=t2.id")
+                    .returns(expectedRight);
+
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id LEFT JOIN t3 ON t3.id = t1.id AND t3.id = t2.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: t3.id=t2.id")
+                    .withPlanNotContaining("filter: t1.id=t2.id")
+                    .returns("""
+                            id\tid1\tid2
+                            null\tnull\tnull
+                            1\t1\t1
+                            1\t1\t1
+                            2\t2\tnull
+                            """);
+
+            final String expectedLt = """
+                    id\tid1\tid2
+                    null\tnull\tnull
+                    1\t1\t1
+                    2\t2\tnull
+                    """;
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Lt Join", "condition: t3.id=t1.id")
+                    .withPlanNotContaining("t3.id=t2.id")
+                    .returns(expectedLt);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .returns(expectedLt);
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.id = t1.id AND t3.id = t2.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Lt Join", "condition: t3.id=t2.id")
+                    .withPlanNotContaining("t3.id=t1.id")
+                    .returns(expectedLt);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeyNotImpliedByInnerJoinKey() throws Exception {
+        // The implied equality t2.id = t1.id stays a condition of the outer join when no INNER join
+        // key enforces it: after a CROSS JOIN, or when a RIGHT JOIN between the INNER join and the
+        // FULL JOIN can null both columns. A FULL JOIN keeps both of its keys for it, and a LEFT
+        // JOIN filters on it. The implied equality t1.a = t2.b joins the same two tables as the
+        // INNER join key t1.id = t2.id, but on other columns, so it stays too, in either conjunct
+        // order: t3.x = t1.a AND t3.x = t2.b implies t1.a = t2.b, while t3.x = t2.b AND
+        // t3.x = t1.a implies t2.b = t1.a, which names the tables in reverse. A RIGHT JOIN drops
+        // unmatched master rows, so there t1.a = t2.b keys the INNER join instead, unless a LEFT
+        // JOIN joins t2 or a RIGHT JOIN runs between the INNER join and the RIGHT JOIN, where the
+        // RIGHT JOIN keeps both keys. A same-table equality filters the scan of its table below the
+        // RIGHT JOIN, also when the table comes first.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnImpliedKey();
+
+            assertQuery("SELECT t1.id, t2.id, t3.id FROM t1 CROSS JOIN t2 FULL JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.id=t1.id and t3.id=t2.id")
+                    .returns("""
+                            id\tid1\tid2
+                            null\tnull\tnull
+                            null\tnull\t3
+                            null\tnull\t5
+                            null\t1\tnull
+                            null\t2\tnull
+                            null\t4\tnull
+                            1\tnull\tnull
+                            1\t1\t1
+                            1\t1\t1
+                            1\t2\tnull
+                            1\t4\tnull
+                            2\tnull\tnull
+                            2\t1\tnull
+                            2\t2\tnull
+                            2\t4\tnull
+                            3\tnull\tnull
+                            3\t1\tnull
+                            3\t2\tnull
+                            3\t4\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t2.id, t4.id, t3.id FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t4 ON t4.id = t2.id FULL JOIN t3 ON t3.id = t2.id AND t3.id = t1.id ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.id=t1.id and t3.id=t2.id")
+                    .returns("""
+                            id\tid1\tid2\tid3
+                            null\tnull\tnull\t3
+                            null\tnull\tnull\t5
+                            null\tnull\t4\tnull
+                            1\t1\t1\t1
+                            1\t1\t1\t1
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LEFT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: t3.x=t2.b", "filter: t1.a=t2.b")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.x=t2.b and t3.x=t1.a")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Lt Join", "condition: t3.x=t2.b and t3.x=t1.a")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LEFT JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light", "condition: t3.x=t1.a", "filter: t2.b=t1.a")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id FULL JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: t3.x=t1.a and t3.x=t2.b")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t1.a", "Hash Join Light", "condition: t2.b=t1.a and t2.id=t1.id")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t2.b", "Hash Join Light", "condition: t2.b=t1.a and t2.id=t1.id")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            """);
+
+            // the LEFT JOIN may null-extend t2, so t1.a = t2.b must not key it
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 LEFT JOIN t2 ON t1.id = t2.id RIGHT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t2.b and t3.x=t1.a")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\t99
+                            1\t10\t1\t10\t10
+                            1\t10\t1\t10\t10
+                            """);
+
+            // the RIGHT JOIN t4 may null-extend t1 and t2 after the INNER join, so t1.a = t2.b
+            // must not key it: the INNER join would drop (2, 20, 2, 99), t4 would emit (2) with
+            // null t1.a and t2.b, and that row would match the null t3.x
+            execute("INSERT INTO t4 VALUES (2, '2024-01-01T00:00:03')");
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t4.id, t3.x FROM t1 JOIN t2 ON t1.id = t2.id RIGHT JOIN t4 ON t4.id = t2.id RIGHT JOIN t3 ON t3.x = t1.a AND t3.x = t2.b ORDER BY 1, 2, 3, 4, 5, 6")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: t3.x=t2.b and t3.x=t1.a", "Hash Join Light", "condition: t2.id=t1.id")
+                    .returns("""
+                            id\ta\tid1\tb\tid2\tx
+                            null\tnull\tnull\tnull\tnull\t20
+                            null\tnull\tnull\tnull\tnull\t99
+                            null\tnull\tnull\tnull\t4\tnull
+                            1\t10\t1\t10\t1\t10
+                            1\t10\t1\t10\t1\t10
+                            """);
+
+            assertQuery("SELECT t1.id, t1.a, t2.id, t2.b, t3.x FROM t1 JOIN t2 ON t1.id = t2.id LT JOIN t3 ON t3.x = t2.b AND t3.x = t1.a ORDER BY 1, 2, 3, 4, 5")
+                    .noLeakCheck()
+                    .withPlanContaining("Lt Join", "condition: t3.x=t1.a and t3.x=t2.b")
+                    .returns("""
+                            id\ta\tid1\tb\tx
+                            null\tnull\tnull\tnull\tnull
+                            1\t10\t1\t10\t10
+                            2\t20\t2\t99\tnull
+                            """);
+
+            // p1.a = p1.id filters the scan of p1 below the RIGHT JOIN. As a WHERE on p1 it would run
+            // above the RIGHT JOIN, after p3 matched p1 on p3.x = p1.id, and drop the p3 row that
+            // the RIGHT JOIN must keep with a null p1 side.
+            execute("CREATE TABLE p1 (id INT, a INT)");
+            execute("INSERT INTO p1 VALUES (5, 7)");
+            execute("CREATE TABLE p2 (id INT)");
+            execute("INSERT INTO p2 VALUES (5)");
+            execute("CREATE TABLE p3 (x INT)");
+            execute("INSERT INTO p3 VALUES (5)");
+            assertQuery("SELECT p1.id, p1.a, p2.id, p3.x FROM p1 JOIN p2 ON p1.id = p2.id RIGHT JOIN p3 ON p3.x = p1.a AND p3.x = p1.id")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: p3.x=p1.id
+                                    Hash Join Light
+                                      condition: p2.id=p1.id
+                                        Async JIT Filter workers: 1
+                                          filter: a=id
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: p1
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: p2
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: p3
+                            """)
+                    .returns("""
+                            id\ta\tid1\tx
+                            null\tnull\tnull\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumn() throws Exception {
+        // Two ON keys that share a column (a.x = b.k AND a.k = b.k) imply a.x = a.k, but only
+        // for rows that match. The optimiser pushed that implied equality into the scan of the
+        // preserved side, which dropped rows the outer join must keep with a null other side.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 1, 1), (2, 1, 2), (3, 3, 3)");
+            execute("CREATE TABLE b (id INT, k INT, m INT)");
+            execute("INSERT INTO b VALUES (10, 1, 1), (20, 5, 6)");
+
+            assertQuery("SELECT a.id, b.id FROM a LEFT JOIN b ON a.x = b.k AND a.k = b.k ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            2\tnull
+                            3\tnull
+                            """);
+            assertQuery("SELECT a.id, b.id FROM a RIGHT JOIN b ON a.k = b.k AND a.k = b.m ORDER BY b.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            null\t20
+                            """);
+            final String expectedFull = """
+                    id\tid1
+                    null\t20
+                    1\t10
+                    2\tnull
+                    3\tnull
+                    """;
+            assertQuery("SELECT a.id, b.id FROM a FULL JOIN b ON a.x = b.k AND a.k = b.k ORDER BY a.id, b.id")
+                    .noLeakCheck()
+                    .returns(expectedFull);
+            assertQuery("SELECT a.id, b.id FROM a FULL JOIN b ON a.k = b.k AND a.k = b.m ORDER BY a.id, b.id")
+                    .noLeakCheck()
+                    .returns(expectedFull);
+
+            // The implied equality references only the LEFT JOIN slave, so it still filters b's scan.
+            assertQuery("SELECT a.id, b.id FROM a LEFT JOIN b ON a.k = b.k AND a.k = b.m ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: k=m")
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            2\tnull
+                            3\tnull
+                            """);
+            // An INNER join still pushes the implied equality into a's scan.
+            assertQuery("SELECT a.id, b.id FROM a JOIN b ON a.x = b.k AND a.k = b.k ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: x=k")
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnAfterForwardReferencingLeftJoin() throws Exception {
+        // LEFT JOIN g2 reads the later CROSS JOIN g3. The optimiser unpinned LEFT JOIN g2, which left the
+        // non-equi RIGHT/FULL join without the ordering edges that keep it after its prefix, so these
+        // queries failed to resolve the outer join filter's column. LEFT JOIN g2 now stays pinned, CROSS
+        // JOIN g3 executes before it, and the queries return the rows of the form that writes CROSS JOIN
+        // g3 before LEFT JOIN g2.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT)");
+            execute("INSERT INTO g0 VALUES (3, 4), (null, 1), (3, 2)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (4, 3), (1, 2)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (1, 3)");
+            execute("CREATE TABLE g3 (a3 INT, b3 INT)");
+            execute("INSERT INTO g3 VALUES (null, 3), (4, null), (null, 2)");
+            execute("CREATE TABLE g4 (a4 INT, b4 INT)");
+            execute("INSERT INTO g4 VALUES (4, null)");
+            execute("CREATE TABLE g5 (a5 INT, b5 INT)");
+            execute("INSERT INTO g5 VALUES (3, null), (null, 2), (2, 4)");
+            assertQuery("SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON a2 = a3 CROSS JOIN g3 RIGHT JOIN g4 ON a4 <= a0 LEFT JOIN g5 ON a5 = b0 AND a5 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t4\tnull\tnull\t2
+                            """);
+            // keyed on a5 = b0, LEFT JOIN g5 keeps its order after RIGHT JOIN g4
+            assertQuery("SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON a2 = a3 CROSS JOIN g3 RIGHT JOIN g4 ON a4 <= a0 LEFT JOIN g5 ON a5 = b1 AND a5 = b0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t4\tnull\tnull\t2
+                            """);
+            assertQuery("SELECT * FROM g0 CROSS JOIN g1 LEFT JOIN g2 ON b2 <= b3 CROSS JOIN g3 RIGHT JOIN g4 ON b4 <= b0 AND b4 < b1 LEFT JOIN g5 ON b5 = b0 AND b5 = b3 AND a5 <= b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                            null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\t4\tnull\tnull\tnull
+                            """);
+            // the unpinned FULL JOIN g4 follows the outer join that reads the forward-referenced g2
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM g0 RIGHT JOIN g1 ON b1 >= a0 JOIN g2 ON b2 <= a5 LEFT JOIN g3 ON a3 = a2 AND a3 = a0 FULL JOIN g4 ON a4 > a0 CROSS JOIN g5",
+                    84,
+                    "Invalid column: a2"
+            );
+            // keyed on a1 = b0, LEFT JOIN g1 stays a LEFT JOIN rather than a cross-left join, and stays
+            // pinned the same way: CROSS JOIN g3 executes before it
+            final String expected = """
+                    a0\tb0\ta1\tb1\ta3\tb3\ta4\tb4\ta5\tb5
+                    3\t4\tnull\tnull\tnull\t3\t4\tnull\tnull\tnull
+                    3\t4\tnull\tnull\t4\tnull\t4\tnull\tnull\tnull
+                    3\t4\tnull\tnull\tnull\t2\t4\tnull\tnull\tnull
+                    null\t1\t1\t2\tnull\t3\tnull\tnull\tnull\tnull
+                    null\t1\tnull\tnull\t4\tnull\tnull\tnull\tnull\tnull
+                    null\t1\tnull\tnull\tnull\t2\tnull\tnull\tnull\tnull
+                    3\t2\tnull\tnull\tnull\t3\t4\tnull\tnull\tnull
+                    3\t2\tnull\tnull\t4\tnull\t4\tnull\tnull\tnull
+                    3\t2\tnull\tnull\tnull\t2\t4\tnull\tnull\tnull
+                    """;
+            assertQuery("SELECT a0, b0, a1, b1, a3, b3, a4, b4, a5, b5 FROM (SELECT * FROM (SELECT * FROM g0 CROSS JOIN g3 LEFT JOIN g1 ON a1 = b0 AND b1 < b3) FULL JOIN g4 ON a4 > a0) LEFT JOIN g5 ON a5 = b0 AND a5 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM g0 LEFT JOIN g1 ON a1 = b0 AND b1 < b3 CROSS JOIN g3 FULL JOIN g4 ON a4 > a0 LEFT JOIN g5 ON a5 = b0 AND a5 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnAfterNonEquiFullJoin() throws Exception {
+        // The ON keys a3 = a2 AND a3 = a0 imply a2 = a0, which becomes the outer join filter of LEFT JOIN t3.
+        // Only the filter reads t2, and the non-equi joins give t2 no other ordering edge, so the optimiser
+        // appended t2 after t3 and the query failed with "Invalid column: a2". Both conjunct orders return
+        // the rows of the sub-query form, with and without the WHERE clause that master answered correctly.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnKeysAfterNonEquiFullJoin();
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 LEFT JOIN t2 ON a2 >= a0 LEFT JOIN t3 ON a3 = a2 AND a3 = a0 WHERE a2 = a0 AND a2 != NULL ORDER BY a0, a1, a2, a3")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2
+                            """);
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 LEFT JOIN t2 ON a2 >= a0 LEFT JOIN t3 ON a3 = a0 AND a3 = a2 WHERE a2 = a0 AND a2 != NULL ORDER BY a0, a1, a2, a3")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2
+                            """);
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 LEFT JOIN t2 ON a2 >= a0 LEFT JOIN t3 ON a3 = a2 AND a3 = a0 ORDER BY a0, a1, a2, a3")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3
+                            null\tnull\tnull\t5\t5\tnull\tnull\tnull\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1
+                            1\t1\t1\t0\t0\t2\t20\t2\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2
+                            2\t2\t2\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            3\t3\t3\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 LEFT JOIN t2 ON a2 >= a0 LEFT JOIN t3 ON a3 = a0 AND a3 = a2 ORDER BY a0, a1, a2, a3")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3
+                            null\tnull\tnull\t5\t5\tnull\tnull\tnull\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1
+                            1\t1\t1\t0\t0\t2\t20\t2\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2
+                            2\t2\t2\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            3\t3\t3\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnAfterNonEquiFullJoinAndCrossJoin() throws Exception {
+        // The implied outer join filter a2 = a0 is the only predicate that reads the CROSS JOIN t2.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnKeysAfterNonEquiFullJoin();
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 CROSS JOIN t2 LEFT JOIN t3 ON a3 = a2 AND a3 = a0 ORDER BY a0, a1, a2, a3")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3
+                            null\tnull\tnull\t5\t5\t1\t10\t1\tnull\tnull\tnull
+                            null\tnull\tnull\t5\t5\t2\t20\t2\tnull\tnull\tnull
+                            null\tnull\tnull\t5\t5\t9\t90\t9\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1
+                            1\t1\t1\t0\t0\t2\t20\t2\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            2\t2\t2\t0\t0\t1\t10\t1\tnull\tnull\tnull
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2
+                            2\t2\t2\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            3\t3\t3\t0\t0\t1\t10\t1\tnull\tnull\tnull
+                            3\t3\t3\t0\t0\t2\t20\t2\tnull\tnull\tnull
+                            3\t3\t3\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnAfterNonEquiLeftJoin() throws Exception {
+        // The outer join expression that replaces a dropped shared-column key reads the key's table.
+        // Without the key's ordering edge that table ran after the outer join, and the expression failed
+        // to resolve its column.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON b1 < b0 LEFT JOIN f2 ON b2 = a1 AND b2 = a0 ORDER BY a0, a1, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2
+                            1\t1\tnull\tnull\tnull\tnull
+                            2\t3\t1\t2\tnull\tnull
+                            2\t3\t3\t1\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON b1 < b0 FULL JOIN f2 ON b2 = a1 AND b2 = a0 ORDER BY a0, a1, a2")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2
+                            null\tnull\tnull\tnull\t1\t4
+                            null\tnull\tnull\tnull\t2\t2
+                            null\tnull\tnull\tnull\t4\t1
+                            1\t1\tnull\tnull\tnull\tnull
+                            2\t3\t1\t2\tnull\tnull
+                            2\t3\t3\t1\tnull\tnull
+                            """);
+            assertQuery("""
+                    SELECT * FROM f0
+                    RIGHT JOIN f1 ON b1 > 1
+                    RIGHT JOIN f2 ON a2 = b1 AND a2 = b0
+                    CROSS JOIN f3
+                    ORDER BY a0, a1, a2, a3
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3
+                            null\tnull\tnull\tnull\t1\t4\t1\t1
+                            null\tnull\tnull\tnull\t1\t4\t2\t9
+                            null\tnull\tnull\tnull\t2\t2\t1\t1
+                            null\tnull\tnull\tnull\t2\t2\t2\t9
+                            null\tnull\tnull\tnull\t4\t1\t1\t1
+                            null\tnull\tnull\tnull\t4\t1\t2\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnAfterNonEquiRightJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnKeysAfterNonEquiFullJoin();
+            assertQuery("SELECT * FROM t0 RIGHT JOIN t1 ON b1 < a0 LEFT JOIN t2 ON a2 >= a0 LEFT JOIN t3 ON a3 = a2 AND a3 = a0 ORDER BY a0, a1, a2, a3")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3
+                            null\tnull\tnull\t5\t5\tnull\tnull\tnull\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1
+                            1\t1\t1\t0\t0\t2\t20\t2\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2
+                            2\t2\t2\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            3\t3\t3\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnAfterUnorderedFullJoin() throws Exception {
+        // The context-free non-equi FULL JOIN f2 is not ordered before the later tables, so the optimiser
+        // restores only the ordering edges of LEFT JOIN f6 whose model nothing else orders. Whichever key
+        // f6 keeps, the non-equi LEFT JOIN f1 or the CROSS JOIN f4 that only its implied filter b4 = b1
+        // reads gets the edge back, and both conjunct orders return the 16 rows of the sub-query form.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < b0 FULL JOIN f2 ON b2 >= b0 AND a2 < a0 CROSS JOIN f3 CROSS JOIN f4 LEFT JOIN f6 ON a6 = b4 AND a6 = b1 ORDER BY a0, b0, a1, b1, a2, b2, a3, b3, a4, b4, a6, b6")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta6\tb6
+                            null\tnull\tnull\tnull\t2\t2\t1\t1\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\t2\t2\t1\t1\t3\t3\tnull\tnull
+                            null\tnull\tnull\tnull\t2\t2\t2\t9\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\t2\t2\t2\t9\t3\t3\tnull\tnull
+                            null\tnull\tnull\tnull\t4\t1\t1\t1\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\t4\t1\t1\t1\t3\t3\tnull\tnull
+                            null\tnull\tnull\tnull\t4\t1\t2\t9\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\t4\t1\t2\t9\t3\t3\tnull\tnull
+                            1\t1\tnull\tnull\tnull\tnull\t1\t1\t1\t1\tnull\tnull
+                            1\t1\tnull\tnull\tnull\tnull\t1\t1\t3\t3\tnull\tnull
+                            1\t1\tnull\tnull\tnull\tnull\t2\t9\t1\t1\tnull\tnull
+                            1\t1\tnull\tnull\tnull\tnull\t2\t9\t3\t3\tnull\tnull
+                            2\t3\t1\t2\t1\t4\t1\t1\t1\t1\tnull\tnull
+                            2\t3\t1\t2\t1\t4\t1\t1\t3\t3\tnull\tnull
+                            2\t3\t1\t2\t1\t4\t2\t9\t1\t1\tnull\tnull
+                            2\t3\t1\t2\t1\t4\t2\t9\t3\t3\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 < b0 FULL JOIN f2 ON b2 >= b0 AND a2 < a0 CROSS JOIN f3 CROSS JOIN f4 LEFT JOIN f6 ON a6 = b1 AND a6 = b4 ORDER BY a0, b0, a1, b1, a2, b2, a3, b3, a4, b4, a6, b6")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta6\tb6
+                            null\tnull\tnull\tnull\t2\t2\t1\t1\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\t2\t2\t1\t1\t3\t3\tnull\tnull
+                            null\tnull\tnull\tnull\t2\t2\t2\t9\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\t2\t2\t2\t9\t3\t3\tnull\tnull
+                            null\tnull\tnull\tnull\t4\t1\t1\t1\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\t4\t1\t1\t1\t3\t3\tnull\tnull
+                            null\tnull\tnull\tnull\t4\t1\t2\t9\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\t4\t1\t2\t9\t3\t3\tnull\tnull
+                            1\t1\tnull\tnull\tnull\tnull\t1\t1\t1\t1\tnull\tnull
+                            1\t1\tnull\tnull\tnull\tnull\t1\t1\t3\t3\tnull\tnull
+                            1\t1\tnull\tnull\tnull\tnull\t2\t9\t1\t1\tnull\tnull
+                            1\t1\tnull\tnull\tnull\tnull\t2\t9\t3\t3\tnull\tnull
+                            2\t3\t1\t2\t1\t4\t1\t1\t1\t1\tnull\tnull
+                            2\t3\t1\t2\t1\t4\t1\t1\t3\t3\tnull\tnull
+                            2\t3\t1\t2\t1\t4\t2\t9\t1\t1\tnull\tnull
+                            2\t3\t1\t2\t1\t4\t2\t9\t3\t3\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnBeforeNonEquiFullJoin() throws Exception {
+        // The context-free non-equi FULL JOIN f4 must run before the later INNER join f6, which matches
+        // no row. Run after f6, the FULL JOIN would null-extend the unmatched f4 rows (1, 1) and (3, 3)
+        // into two wrong rows. constrainJoinsAfterReorderedNullingJoins keeps the FULL JOIN ahead of f6,
+        // and LEFT JOIN f2 still reads f0 and f1, so the query returns the empty result of the sub-query
+        // form.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 JOIN f1 ON a1 >= b0 LEFT JOIN f2 ON b2 = b1 AND b2 = b0 CROSS JOIN f3 FULL JOIN f4 ON a4 < a0 JOIN f6 ON a6 = b0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta6\tb6\n");
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnDerivesFilterOnTimeSeriesJoinMovedAhead() throws Exception {
+        // The keys of RIGHT JOIN e imply d.k = b.y, which becomes a key of JOIN d, and with d.k = td1.k
+        // they imply td1.k = b.y. As a key of the ASOF/LT join, td1.k = b.y would decide its matching, so
+        // the optimiser turns it into a filter, but it kept the ordering edge of the key, which made td1
+        // wait for b. The time-series join then could not run ahead of the non-equi RIGHT/FULL join, and
+        // the query failed with "left side of time series join has no timestamp". Each query must return
+        // the rows of its form with the tables before the last join in a sub-query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (1), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE d (k INT, w INT)");
+            execute("INSERT INTO d VALUES (1, 11), (5, 55), (null, 99)");
+            execute("CREATE TABLE e (y INT, z INT)");
+            execute("INSERT INTO e VALUES (1, 1000), (100, 2000), (7, 70)");
+            final String expected = """
+                    x\ty\tv\tw\tz
+                    null\tnull\t\tnull\t70
+                    10\t1\ta1\t11\t1000
+                    null\tnull\t\tnull\t2000
+                    """;
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                for (String timeSeriesJoinType : new String[]{"ASOF", "LT"}) {
+                    final String prefix = "ta " + joinType + " JOIN b ON ta.x > b.y " + timeSeriesJoinType
+                            + " JOIN td1 ON td1.k = ta.k JOIN d ON d.k = td1.k";
+                    // the sub-query form
+                    assertQuery("SELECT p.x, p.y, p.v, p.w, e.z FROM (SELECT ta.x, b.y, td1.v, d.k, d.w FROM " + prefix
+                            + ") p RIGHT JOIN e ON e.y = p.y AND e.y = p.k ORDER BY e.z")
+                            .noLeakCheck()
+                            .returns(expected);
+                    assertQuery("SELECT ta.x, b.y, td1.v, d.w, e.z FROM " + prefix + " RIGHT JOIN e ON e.y = b.y AND e.y = d.k ORDER BY e.z")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnKeepsBothKeys() throws Exception {
+        // ON pa.x = pb.k AND pa.y = pb.k implies pa.x = pa.y. A RIGHT or FULL JOIN that cannot filter a
+        // scan on it keeps both keys, so a row that fails the equality misses the hash map. As an outer
+        // join filter, the equality ran once per entry of the hash chain of each such row. The join
+        // keeps both keys only where the filter keeps the rows that the keys match: DOUBLE keys, which
+        // tell 0.0 from -0.0, and columns of two types keep the outer join filter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pa (id INT, x INT, y INT)");
+            execute("INSERT INTO pa VALUES (1, 1, 1), (2, 2, 1), (3, null, null), (4, 3, 3), (5, 2, 2)");
+            execute("CREATE TABLE pb (k INT, v INT)");
+            execute("INSERT INTO pb VALUES (1, 10), (1, 11), (1, 12), (2, 20), (2, 21), (null, 30), (7, 70)");
+            execute("CREATE TABLE ps (id INT, x SYMBOL, y SYMBOL)");
+            execute("INSERT INTO ps VALUES (1, 'a', 'a'), (2, 'b', 'a'), (3, null, null), (4, 'c', 'c'), (5, 'b', 'b')");
+            execute("CREATE TABLE pt (k SYMBOL, v INT)");
+            execute("INSERT INTO pt VALUES ('a', 10), ('a', 11), ('a', 12), ('b', 20), ('b', 21), (null, 30), ('g', 70)");
+            execute("CREATE TABLE pv (k VARCHAR, v INT)");
+            execute("INSERT INTO pv VALUES ('a', 10), ('a', 11), ('a', 12), ('b', 20), ('b', 21), (null, 30), ('g', 70)");
+            execute("CREATE TABLE pd (id INT, x DOUBLE, y DOUBLE)");
+            execute("INSERT INTO pd VALUES (1, 1.0, 1.0), (2, 2.0, 1.0), (3, null, null), (4, 3.0, 3.0), (5, 2.0, 2.0)");
+            execute("CREATE TABLE pe (k DOUBLE, v INT)");
+            execute("INSERT INTO pe VALUES (1.0, 10), (1.0, 11), (1.0, 12), (2.0, 20), (2.0, 21), (null, 30), (7.0, 70)");
+            execute("CREATE TABLE pm (id INT, x LONG, y INT)");
+            execute("INSERT INTO pm VALUES (1, 1, 1), (2, 2, 1), (3, null, null), (4, 3, 3), (5, 2, 2)");
+
+            // Row 2 fails the equality, row 3 matches the null key, row 4 finds no key and the key 7
+            // finds no row. Each table pair holds the same rows, so every join returns them.
+            final String expectedPreserved = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\tnull
+                    3\t30
+                    4\tnull
+                    5\t20
+                    5\t21
+                    """;
+            final String expectedFull = """
+                    id\tv
+                    null\t70
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\tnull
+                    3\t30
+                    4\tnull
+                    5\t20
+                    5\t21
+                    """;
+            final String fullJoin = "SELECT pa.id, pb.v FROM pa FULL JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pa.id, pb.v";
+            assertQuery(fullJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pb.k=pa.y and pb.k=pa.x")
+                    .withPlanNotContaining("filter:")
+                    .returns(expectedFull);
+            // the slave-side equality pa.x = pa.y
+            final String slaveRightJoin = "SELECT pa.id, pb.v FROM pb RIGHT JOIN pa ON pb.k = pa.x AND pb.k = pa.y ORDER BY pa.id, pb.v";
+            assertQuery(slaveRightJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: pa.y=pb.k and pa.x=pb.k")
+                    .withPlanNotContaining("filter:")
+                    .returns(expectedPreserved);
+            final String slaveFullJoin = "SELECT pa.id, pb.v FROM pb FULL JOIN pa ON pb.k = pa.x AND pb.k = pa.y ORDER BY pa.id, pb.v";
+            assertQuery(slaveFullJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pa.y=pb.k and pa.x=pb.k")
+                    .withPlanNotContaining("filter:")
+                    .returns(expectedFull);
+            // SYMBOL keys that share pt.k or pv.k compare as strings
+            final String symbolJoin = "SELECT ps.id, pt.v FROM ps FULL JOIN pt ON ps.x = pt.k AND ps.y = pt.k ORDER BY ps.id, pt.v";
+            assertQuery(symbolJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pt.k=ps.y and pt.k=ps.x")
+                    .returns(expectedFull);
+            final String symbolVarcharJoin = "SELECT ps.id, pv.v FROM ps FULL JOIN pv ON ps.x = pv.k AND ps.y = pv.k ORDER BY ps.id, pv.v";
+            assertQuery(symbolVarcharJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pv.k=ps.y and pv.k=ps.x")
+                    .returns(expectedFull);
+            final String doubleJoin = "SELECT pd.id, pe.v FROM pd FULL JOIN pe ON pd.x = pe.k AND pd.y = pe.k ORDER BY pd.id, pe.v";
+            assertQuery(doubleJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pe.k=pd.y", "filter: pd.x=pd.y")
+                    .returns(expectedFull);
+            // a LONG key cannot pair with the INT key pb.k
+            final String mixedTypeJoin = "SELECT pm.id, pb.v FROM pm FULL JOIN pb ON pm.x = pb.k AND pm.y = pb.k ORDER BY pm.id, pb.v";
+            assertQuery(mixedTypeJoin)
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pb.k=pm.y", "filter: pm.x=pm.y")
+                    .returns(expectedFull);
+
+            // the full-fat hash joins return the same rows
+            for (String query : new String[]{fullJoin, slaveFullJoin, symbolJoin, symbolVarcharJoin, doubleJoin, mixedTypeJoin}) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .returns(expectedFull);
+            }
+            assertQuery(slaveRightJoin)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .returns(expectedPreserved);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnOfCrossJoinsAfterNonEquiFullJoin() throws Exception {
+        // The LEFT JOIN t4 keeps one key and moves the implied a2 = a3 into its filter. Whichever key it
+        // keeps, the CROSS JOIN t2 or t3 that only the filter reads has no other ordering edge.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnKeysAfterNonEquiFullJoin();
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 CROSS JOIN t2 CROSS JOIN t3 LEFT JOIN t4 ON a4 = a2 AND a4 = a3 ORDER BY a0, a1, a2, a3, a4")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3\ta4\tb4
+                            null\tnull\tnull\t5\t5\t1\t10\t1\t1\t100\t1\t1\t7
+                            null\tnull\tnull\t5\t5\t1\t10\t1\t2\t200\t2\tnull\tnull
+                            null\tnull\tnull\t5\t5\t2\t20\t2\t1\t100\t1\tnull\tnull
+                            null\tnull\tnull\t5\t5\t2\t20\t2\t2\t200\t2\t2\t8
+                            null\tnull\tnull\t5\t5\t9\t90\t9\t1\t100\t1\tnull\tnull
+                            null\tnull\tnull\t5\t5\t9\t90\t9\t2\t200\t2\tnull\tnull
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7
+                            1\t1\t1\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull
+                            1\t1\t1\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull
+                            1\t1\t1\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8
+                            1\t1\t1\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull
+                            1\t1\t1\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull
+                            2\t2\t2\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7
+                            2\t2\t2\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull
+                            2\t2\t2\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8
+                            2\t2\t2\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull
+                            2\t2\t2\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull
+                            3\t3\t3\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7
+                            3\t3\t3\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull
+                            3\t3\t3\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull
+                            3\t3\t3\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8
+                            3\t3\t3\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull
+                            3\t3\t3\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 CROSS JOIN t2 CROSS JOIN t3 LEFT JOIN t4 ON a4 = a3 AND a4 = a2 ORDER BY a0, a1, a2, a3, a4")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3\ta4\tb4
+                            null\tnull\tnull\t5\t5\t1\t10\t1\t1\t100\t1\t1\t7
+                            null\tnull\tnull\t5\t5\t1\t10\t1\t2\t200\t2\tnull\tnull
+                            null\tnull\tnull\t5\t5\t2\t20\t2\t1\t100\t1\tnull\tnull
+                            null\tnull\tnull\t5\t5\t2\t20\t2\t2\t200\t2\t2\t8
+                            null\tnull\tnull\t5\t5\t9\t90\t9\t1\t100\t1\tnull\tnull
+                            null\tnull\tnull\t5\t5\t9\t90\t9\t2\t200\t2\tnull\tnull
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7
+                            1\t1\t1\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull
+                            1\t1\t1\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull
+                            1\t1\t1\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8
+                            1\t1\t1\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull
+                            1\t1\t1\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull
+                            2\t2\t2\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7
+                            2\t2\t2\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull
+                            2\t2\t2\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8
+                            2\t2\t2\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull
+                            2\t2\t2\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull
+                            3\t3\t3\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7
+                            3\t3\t3\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull
+                            3\t3\t3\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull
+                            3\t3\t3\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8
+                            3\t3\t3\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull
+                            3\t3\t3\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull
+                            """);
+        });
+    }
+
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnOfCrossJoinsOrderedByLaterJoin() throws Exception {
+        // The later JOIN t5 ON a5 = a3 orders t3, so keeping the key a4 = a2 works in either conjunct order.
+        // Choosing the kept key while merging the ON clause of t4 cannot know about t5.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnKeysAfterNonEquiFullJoin();
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 CROSS JOIN t2 CROSS JOIN t3 LEFT JOIN t4 ON a4 = a3 AND a4 = a2 JOIN t5 ON a5 = a3 ORDER BY a0, a1, a2, a3, a4, a5")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3\ta4\tb4\ta5\tb5
+                            null\tnull\tnull\t5\t5\t1\t10\t1\t1\t100\t1\t1\t7\t1\t70
+                            null\tnull\tnull\t5\t5\t1\t10\t1\t2\t200\t2\tnull\tnull\t2\t80
+                            null\tnull\tnull\t5\t5\t2\t20\t2\t1\t100\t1\tnull\tnull\t1\t70
+                            null\tnull\tnull\t5\t5\t2\t20\t2\t2\t200\t2\t2\t8\t2\t80
+                            null\tnull\tnull\t5\t5\t9\t90\t9\t1\t100\t1\tnull\tnull\t1\t70
+                            null\tnull\tnull\t5\t5\t9\t90\t9\t2\t200\t2\tnull\tnull\t2\t80
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7\t1\t70
+                            1\t1\t1\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull\t2\t80
+                            1\t1\t1\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull\t1\t70
+                            1\t1\t1\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8\t2\t80
+                            1\t1\t1\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull\t1\t70
+                            1\t1\t1\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull\t2\t80
+                            2\t2\t2\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7\t1\t70
+                            2\t2\t2\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull\t2\t80
+                            2\t2\t2\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull\t1\t70
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8\t2\t80
+                            2\t2\t2\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull\t1\t70
+                            2\t2\t2\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull\t2\t80
+                            3\t3\t3\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7\t1\t70
+                            3\t3\t3\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull\t2\t80
+                            3\t3\t3\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull\t1\t70
+                            3\t3\t3\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8\t2\t80
+                            3\t3\t3\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull\t1\t70
+                            3\t3\t3\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull\t2\t80
+                            """);
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 CROSS JOIN t2 CROSS JOIN t3 LEFT JOIN t4 ON a4 = a2 AND a4 = a3 JOIN t5 ON a5 = a3 ORDER BY a0, a1, a2, a3, a4, a5")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3\ta4\tb4\ta5\tb5
+                            null\tnull\tnull\t5\t5\t1\t10\t1\t1\t100\t1\t1\t7\t1\t70
+                            null\tnull\tnull\t5\t5\t1\t10\t1\t2\t200\t2\tnull\tnull\t2\t80
+                            null\tnull\tnull\t5\t5\t2\t20\t2\t1\t100\t1\tnull\tnull\t1\t70
+                            null\tnull\tnull\t5\t5\t2\t20\t2\t2\t200\t2\t2\t8\t2\t80
+                            null\tnull\tnull\t5\t5\t9\t90\t9\t1\t100\t1\tnull\tnull\t1\t70
+                            null\tnull\tnull\t5\t5\t9\t90\t9\t2\t200\t2\tnull\tnull\t2\t80
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7\t1\t70
+                            1\t1\t1\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull\t2\t80
+                            1\t1\t1\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull\t1\t70
+                            1\t1\t1\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8\t2\t80
+                            1\t1\t1\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull\t1\t70
+                            1\t1\t1\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull\t2\t80
+                            2\t2\t2\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7\t1\t70
+                            2\t2\t2\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull\t2\t80
+                            2\t2\t2\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull\t1\t70
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8\t2\t80
+                            2\t2\t2\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull\t1\t70
+                            2\t2\t2\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull\t2\t80
+                            3\t3\t3\t0\t0\t1\t10\t1\t1\t100\t1\t1\t7\t1\t70
+                            3\t3\t3\t0\t0\t1\t10\t1\t2\t200\t2\tnull\tnull\t2\t80
+                            3\t3\t3\t0\t0\t2\t20\t2\t1\t100\t1\tnull\tnull\t1\t70
+                            3\t3\t3\t0\t0\t2\t20\t2\t2\t200\t2\t2\t8\t2\t80
+                            3\t3\t3\t0\t0\t9\t90\t9\t1\t100\t1\tnull\tnull\t1\t70
+                            3\t3\t3\t0\t0\t9\t90\t9\t2\t200\t2\tnull\tnull\t2\t80
+                            """);
+        });
+    }
+
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnOfMixedTypes() throws Exception {
+        // The hash join rejects an INT key paired with a LONG key, so LEFT JOIN t3 must keep the INT key
+        // i3 = i and filter on the implied t2.l = t0.i.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinOnKeysAfterNonEquiFullJoin();
+            assertQuery("SELECT * FROM t0 LEFT JOIN t2 ON a2 >= a0 LEFT JOIN t3 ON i3 = l AND i3 = i ORDER BY a0, a2, a3")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: i3=i")
+                    .returns("""
+                            a0\tb0\ti\ta2\tb2\tl\ta3\tb3\ti3
+                            1\t1\t1\t1\t10\t1\t1\t100\t1
+                            1\t1\t1\t2\t20\t2\tnull\tnull\tnull
+                            1\t1\t1\t9\t90\t9\tnull\tnull\tnull
+                            2\t2\t2\t2\t20\t2\t2\t200\t2
+                            2\t2\t2\t9\t90\t9\tnull\tnull\tnull
+                            3\t3\t3\t9\t90\t9\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM t0 FULL JOIN t1 ON b1 < a0 LEFT JOIN t2 ON a2 >= a0 LEFT JOIN t3 ON i3 = l AND i3 = i ORDER BY a0, a1, a2, a3")
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ti\ta1\tb1\ta2\tb2\tl\ta3\tb3\ti3
+                            null\tnull\tnull\t5\t5\tnull\tnull\tnull\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t1\t10\t1\t1\t100\t1
+                            1\t1\t1\t0\t0\t2\t20\t2\tnull\tnull\tnull
+                            1\t1\t1\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            2\t2\t2\t0\t0\t2\t20\t2\t2\t200\t2
+                            2\t2\t2\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            3\t3\t3\t0\t0\t9\t90\t9\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnOfSubQuery() throws Exception {
+        // The ON keys b.k2 = a.m AND b.kk = a.m imply b.k2 = b.kk. On INT columns the RIGHT and FULL
+        // JOINs keep both keys. On DOUBLE columns, whose keys tell 0.0 from -0.0, b.k2 = b.kk becomes
+        // the outer join filter. The WHERE constant a.m = 1 implies b.kk = 1, and pushing it into the
+        // sub-query renames the key node kk to the inner name k in place. The outer join filter shared
+        // that node, so it read a.k or failed to resolve k.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, m INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 1, 100), (2, 7, 200), (3, 1, 1)");
+            execute("CREATE TABLE b (id INT, k INT, k2 INT)");
+            execute("INSERT INTO b VALUES (11, 1, 1), (12, 7, 1), (13, 1, 5)");
+            execute("CREATE TABLE ad (id INT, m DOUBLE, k DOUBLE)");
+            execute("INSERT INTO ad VALUES (1, 1.0, 100.0), (2, 7.0, 200.0), (3, 1.0, 1.0)");
+            execute("CREATE TABLE bd (id INT, k DOUBLE, k2 DOUBLE)");
+            execute("INSERT INTO bd VALUES (11, 1.0, 1.0), (12, 7.0, 1.0), (13, 1.0, 5.0)");
+            execute("CREATE TABLE a2 (id INT, k INT)");
+            execute("INSERT INTO a2 VALUES (1, 1), (2, 7)");
+
+            final String expectedRenamed = """
+                    id\tid1
+                    1\t11
+                    3\t11
+                    """;
+            assertQuery("SELECT a.id, b.id FROM a RIGHT JOIN (SELECT id, k2, k AS kk FROM b WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: k=a.m and k2=a.m")
+                    .returns(expectedRenamed);
+            assertQuery("SELECT a.id, b.id FROM a FULL JOIN (SELECT id, k2, k AS kk FROM b WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns(expectedRenamed);
+            assertQuery("SELECT a.id, b.id FROM ad a RIGHT JOIN (SELECT id, k2, k AS kk FROM bd WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: k=a.m", "filter: b.k2=b.kk")
+                    .returns(expectedRenamed);
+            assertQuery("SELECT a.id, b.id FROM ad a FULL JOIN (SELECT id, k2, k AS kk FROM bd WHERE id > 0) b ON b.k2 = a.m AND b.kk = a.m WHERE a.m = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: k=a.m", "filter: b.k2=b.kk")
+                    .returns(expectedRenamed);
+
+            final String expectedSameName = """
+                    id\tid1
+                    1\t11
+                    """;
+            assertQuery("SELECT a.id, b.id FROM a2 a RIGHT JOIN (SELECT * FROM b WHERE id > 0) b ON b.k2 = a.k AND b.k = a.k WHERE a.k = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns(expectedSameName);
+            assertQuery("SELECT a.id, b.id FROM a2 a FULL JOIN (SELECT * FROM b WHERE id > 0) b ON b.k2 = a.k AND b.k = a.k WHERE a.k = 1 ORDER BY a.id")
+                    .noLeakCheck()
+                    .returns(expectedSameName);
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnWhenTimeSeriesJoinMovesAhead() throws Exception {
+        // The keys of RIGHT JOIN e imply c.k = b.y, which the optimiser attaches to CROSS JOIN c. A level
+        // that only such a clause makes orderable fails unless each non-equi RIGHT/FULL join runs right
+        // after the models it waits for. That check expected only the models written before the outer
+        // join, not the ASOF/LT join that runs ahead of it, so these queries failed with "could not
+        // determine join order for this table". Each must return the rows of its form with the tables
+        // before the last join in a sub-query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+            execute("CREATE TABLE b (y INT)");
+            execute("INSERT INTO b VALUES (5), (100)");
+            execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+            execute("CREATE TABLE c (k INT, w INT)");
+            execute("INSERT INTO c VALUES (5, 11), (100, 22), (7, 33)");
+            execute("CREATE TABLE e (y INT, z INT)");
+            execute("INSERT INTO e VALUES (5, 50), (100, 1000), (7, 70)");
+            final String expected = """
+                    x\ty\tv\tw\tz
+                    10\t5\ta1\t11\t50
+                    null\tnull\t\tnull\t70
+                    null\t100\t\t22\t1000
+                    """;
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                for (String timeSeriesJoinType : new String[]{"ASOF", "LT"}) {
+                    final String prefix = "ta " + joinType + " JOIN b ON ta.x > b.y " + timeSeriesJoinType + " JOIN td1 ON td1.k = ta.k CROSS JOIN c";
+                    // the sub-query form
+                    assertQuery("SELECT p.x, p.y, p.v, p.w, e.z FROM (SELECT ta.x, b.y, td1.v, c.k, c.w FROM " + prefix
+                            + ") p RIGHT JOIN e ON e.y = p.k AND e.y = p.y ORDER BY e.z")
+                            .noLeakCheck()
+                            .returns(expected);
+                    assertQuery("SELECT ta.x, b.y, td1.v, c.w, e.z FROM " + prefix + " RIGHT JOIN e ON e.y = c.k AND e.y = b.y ORDER BY e.z")
+                            .noLeakCheck()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnKeysSharingColumnWithInnerKeyMovedToOuterJoin() throws Exception {
+        // The INNER join f6 keys share b6, and the implied equality b4 = b1 as a key of LEFT JOIN f4 would
+        // not filter its preserved rows. The equality filters the INNER join f6 instead, and the query
+        // returns no rows, as the sub-query form does.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("SELECT * FROM f0 CROSS JOIN f1 LEFT JOIN f2 ON a2 >= a0 LEFT JOIN f3 ON b3 >= a1 AND b3 = b2 LEFT JOIN f4 ON b4 < a3 AND b4 = a0 JOIN f6 ON b6 = b4 AND b6 = b1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta6\tb6\n");
+        });
+    }
+
+    @Test
+    public void testOuterJoinOnNameSharedInScopeAndWithLaterTable() throws Exception {
+        // w exists in both f1 aliases, which are in scope of the ON clause, and in the later f2. The name
+        // is ambiguous within the scope of the ON clause, so the optimiser must not qualify it with
+        // either alias, and the query fails.
+        assertMemoryLeak(() -> {
+            createTablesForOnNameSharedWithLaterTable();
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM f1 a FULL JOIN f1 b ON b.a1 = a.a1 AND w > 1 CROSS JOIN f2",
+                    53,
+                    "Invalid column: w"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM f1 a LEFT JOIN f1 b ON w = a.b1 CROSS JOIN f2",
+                    37,
+                    "Ambiguous column [name=w]"
+            );
+        });
+    }
+
+    @Test
+    public void testOuterJoinPrefixKeepsNullExtensionWithEveryJoinType() throws Exception {
+        // However a table joins the tables before a RIGHT/FULL join, it executes before that join: each
+        // unmatched row of the outer join comes back once, with every earlier column NULL. NULL keys match
+        // each other. Each query returns the rows of its form with the prefix in a sub-query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p0 (a INT, k INT)");
+            execute("INSERT INTO p0 VALUES (1, 1), (2, 2), (3, null)");
+            execute("CREATE TABLE p1 (b INT, k INT)");
+            execute("INSERT INTO p1 VALUES (1, 1), (null, 2), (4, null)");
+            execute("CREATE TABLE p2 (c INT)");
+            execute("INSERT INTO p2 VALUES (1), (null)");
+            execute("CREATE TABLE r (d INT, k INT)");
+            execute("INSERT INTO r VALUES (1, 1), (2, null), (9, 9)");
+            // LEFT JOIN on NULL keys and a CROSS JOIN before the RIGHT JOIN
+            assertQuery("SELECT * FROM p0 LEFT JOIN p1 ON p1.k = p0.k CROSS JOIN p2 RIGHT JOIN r ON r.k = p0.k ORDER BY d, a, b, c")
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tb\tk1\tc\td\tk2
+                            1\t1\t1\t1\tnull\t1\t1
+                            1\t1\t1\t1\t1\t1\t1
+                            3\tnull\t4\tnull\tnull\t2\tnull
+                            3\tnull\t4\tnull\t1\t2\tnull
+                            null\tnull\tnull\tnull\tnull\t9\t9
+                            """);
+            // non-equi INNER JOIN before the FULL JOIN
+            assertQuery("SELECT * FROM p0 JOIN p1 ON p1.b < p0.a + 1 FULL JOIN r ON r.d = p1.b ORDER BY d, a, b")
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tb\tk1\td\tk2
+                            1\t1\t1\t1\t1\t1
+                            2\t2\t1\t1\t1\t1
+                            3\tnull\t1\t1\t1\t1
+                            null\tnull\tnull\tnull\t2\tnull
+                            null\tnull\tnull\tnull\t9\t9
+                            """);
+            // non-equi LEFT JOIN, whose table the RIGHT JOIN reads
+            assertQuery("SELECT * FROM p0 LEFT JOIN p1 ON p1.b > p0.a RIGHT JOIN r ON r.k = p1.k ORDER BY d, a, b")
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tb\tk1\td\tk2
+                            null\tnull\tnull\tnull\t1\t1
+                            1\t1\t4\tnull\t2\tnull
+                            2\t2\t4\tnull\t2\tnull
+                            3\tnull\t4\tnull\t2\tnull
+                            null\tnull\tnull\tnull\t9\t9
+                            """);
+            // RIGHT JOIN before a FULL JOIN
+            assertQuery("SELECT * FROM p0 RIGHT JOIN p1 ON p1.k = p0.k FULL JOIN r ON r.k = p1.k ORDER BY d, a, b")
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tb\tk1\td\tk2
+                            2\t2\tnull\t2\tnull\tnull
+                            1\t1\t1\t1\t1\t1
+                            3\tnull\t4\tnull\t2\tnull
+                            null\tnull\tnull\tnull\t9\t9
+                            """);
+            // ASOF JOIN before the RIGHT JOIN
+            execute("CREATE TABLE ta (ts TIMESTAMP, k INT, a INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO ta VALUES ('2024-01-01T00:00:01', 1, 10), ('2024-01-01T00:00:03', 2, 20), ('2024-01-01T00:00:05', null, 30)");
+            execute("CREATE TABLE tb (ts TIMESTAMP, k INT, b INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tb VALUES ('2024-01-01T00:00:00', 1, 100), ('2024-01-01T00:00:04', 2, 200), ('2024-01-01T00:00:04', null, 300)");
+            execute("CREATE TABLE r2 (k INT, d INT)");
+            execute("INSERT INTO r2 VALUES (1, 1), (null, 2), (7, 7)");
+            assertQuery("SELECT * FROM ta ASOF JOIN tb ON (k) RIGHT JOIN r2 ON r2.k = ta.k ORDER BY d, a")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tk\ta\tts1\tk1\tb\tk2\td
+                            2024-01-01T00:00:01.000000Z\t1\t10\t2024-01-01T00:00:00.000000Z\t1\t100\t1\t1
+                            2024-01-01T00:00:05.000000Z\tnull\t30\t2024-01-01T00:00:04.000000Z\tnull\t300\tnull\t2
+                            \tnull\tnull\t\tnull\tnull\t7\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testReorderedFirstJoinReadsPlainColumnName() throws Exception {
+        // The optimiser joins t0 a2 to the sub-query a0 first and t2 a1 last. That first join looked up
+        // the key a0.k by its qualified name, which matched the sub-query column named "a0.k" (t0.x)
+        // instead of column k, and the query returned no rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (x INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 10), (3, 20)");
+            execute("CREATE TABLE t2 (x INT, k INT)");
+            execute("INSERT INTO t2 VALUES (5, 1), (6, 3)");
+            assertQuery("SELECT * FROM (SELECT x AS \"a0.k\", k FROM t0) a0 CROSS JOIN t2 a1 JOIN t0 a2 ON a1.k = a2.x AND a0.k = a2.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0.k\tk\tx\tk1\tx1\tk2
+                            1\t10\t5\t1\t1\t10
+                            2\t10\t5\t1\t1\t10
+                            3\t20\t6\t3\t3\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinAfterInnerOverMixedTypeUnion() throws Exception {
+        // getQueryColumnType() read a.x as BYTE from the union's first branch, although the union widens it to
+        // INT. a.x != 0 then looked NULL-rejecting, the INNER join keyed on the derived a.w = bq.k, and that key
+        // dropped the (3, 8) pairs, so the RIGHT JOIN NULL-extended dq 8 and the row matched cq's NULL row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ab (w INT, x BYTE)");
+            execute("INSERT INTO ab VALUES (1, 5)");
+            execute("CREATE TABLE abs (w INT, x SHORT)");
+            execute("INSERT INTO abs VALUES (1, 5)");
+            execute("CREATE TABLE ab8 (w INT, x BYTE)");
+            execute("INSERT INTO ab8 VALUES (3, 8)");
+            execute("CREATE TABLE ai (w INT, x INT)");
+            execute("INSERT INTO ai VALUES (3, 8)");
+            execute("CREATE TABLE bq (k INT, x INT)");
+            execute("INSERT INTO bq VALUES (1, 2), (2, 2)");
+            execute("CREATE TABLE dq (y INT)");
+            execute("INSERT INTO dq VALUES (5), (8)");
+            execute("CREATE TABLE cq (k INT)");
+            execute("INSERT INTO cq VALUES (1), (null)");
+            execute("CREATE VIEW av AS (SELECT w, x FROM ab UNION ALL SELECT w, x FROM ai)");
+
+            final String head = "SELECT a.w, a.x, bq.k, dq.y, cq.k ck FROM ";
+            final String tail = """
+                     a JOIN bq ON bq.x > 1 RIGHT JOIN dq ON dq.y = a.x JOIN cq ON a.w = cq.k AND bq.k = cq.k
+                    WHERE a.x != 0 ORDER BY 1, 2, 3, 4, 5""";
+            final String expected = """
+                    w\tx\tk\ty\tck
+                    1\t5\t1\t5\t1
+                    """;
+            for (String source : new String[]{
+                    "(SELECT w, x FROM ab UNION ALL SELECT w, x FROM ai)",
+                    "av",
+                    "(SELECT w, x FROM abs UNION ALL SELECT w, x FROM ai)"
+            }) {
+                assertQuery(head + source + tail).noLeakCheck().returns(expected);
+            }
+            assertQuery(head + "(SELECT w, x FROM ab UNION ALL SELECT w, x FROM ab UNION ALL SELECT w, x FROM ai)" + tail)
+                    .noLeakCheck()
+                    .returns("""
+                            w\tx\tk\ty\tck
+                            1\t5\t1\t5\t1
+                            1\t5\t1\t5\t1
+                            """);
+            // a union whose branches share the BYTE type keeps the derived key
+            execute("CREATE TABLE dqb (y BYTE)");
+            execute("INSERT INTO dqb VALUES (5), (8)");
+            assertQuery("""
+                    SELECT a.w, a.x, bq.k, dqb.y, cq.k ck
+                    FROM (SELECT w, x FROM ab UNION ALL SELECT w, x FROM ab8) a
+                    JOIN bq ON bq.x > 1 RIGHT JOIN dqb ON dqb.y = a.x JOIN cq ON a.w = cq.k AND bq.k = cq.k
+                    WHERE a.x != 0 ORDER BY 1, 2, 3, 4, 5""")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: bq.k=a.w")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testRightJoinAfterOuterJoinOnKeysSharingColumn() throws Exception {
+        // The LEFT JOIN f5 keys share b5, so its outer join expression reads f2. Without the ordering edge
+        // of the dropped key the optimiser misordered the chain, and the unmatched f3 rows lost their
+        // CROSS JOIN rows of f4.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinChains();
+            assertQuery("""
+                    SELECT * FROM f0
+                    JOIN f1 ON b1 = a0 AND a1 < b0
+                    LEFT JOIN f2 ON a2 = a1 AND a2 < a0
+                    RIGHT JOIN f3 ON b3 >= b0 AND a3 >= b0
+                    CROSS JOIN f4
+                    LEFT JOIN f5 ON b5 = b0 AND b5 = b2
+                    ORDER BY a0, a1, a2, a3, a4
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t1\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t1\t1\t3\t3\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t2\t9\t1\t1\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull\t2\t9\t3\t3\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinOnKeysSharingColumnFiltersAfterLatestOn() throws Exception {
+        // ON pa.x = pb.k AND pa.y = pb.k implies pa.x = pa.y. LATEST ON picks the latest pa row of each s
+        // before the RIGHT JOIN, so the equality filters the rows that LATEST ON picked. As a filter on
+        // the scan of pa it ran before LATEST ON, which then picked rows 1 and 4: older rows of s = 'a'
+        // and s = 'c' that pass the equality, where rows 2 and 5 are the latest ones.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pa (id INT, x INT, y INT, z INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO pa VALUES
+                    (1, 1, 1, 1, 'a', '2024-01-01T00:00:00.000000Z'),
+                    (2, 7, 8, 7, 'a', '2024-01-01T01:00:00.000000Z'),
+                    (3, 2, 2, 2, 'b', '2024-01-01T02:00:00.000000Z'),
+                    (4, 5, 5, 5, 'c', '2024-01-01T03:00:00.000000Z'),
+                    (5, null, 6, null, 'c', '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE pb (k INT, v INT)");
+            execute("INSERT INTO pb VALUES (1, 10), (2, 20), (5, 50), (7, 70), (null, 90)");
+            execute("CREATE TABLE q (qid INT)");
+            execute("INSERT INTO q VALUES (1), (2)");
+
+            final String expected = """
+                    id\tv
+                    null\t10
+                    3\t20
+                    null\t50
+                    null\t70
+                    null\t90
+                    """;
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k LATEST ON ts PARTITION BY s ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y
+                                        Filter filter: x=y
+                                            LatestByDeferredListValuesFiltered
+                                                Frame backward scan on: pa
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns(expected);
+            // the deprecated LATEST BY syntax puts LATEST ON on pa as well
+            assertQuery("SELECT pa.id, pb.v FROM pa LATEST BY s RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: x=y")
+                    .returns(expected);
+            // equivalent ON clauses and LATEST ON in a sub-query return the same rows
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.y = pb.k AND pa.x = pa.y LATEST ON ts PARTITION BY s ORDER BY pb.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT pa.id, pb.v FROM (SELECT * FROM pa LATEST ON ts PARTITION BY s) pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            // three keys share pb.k, so pa gets two equalities
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k AND pa.z = pb.k LATEST ON ts PARTITION BY s ORDER BY pb.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            // pa still comes first when a CROSS JOIN follows it
+            assertQuery("SELECT pa.id, q.qid, pb.v FROM pa CROSS JOIN q RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k LATEST ON ts PARTITION BY s ORDER BY pb.v, q.qid")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: x=y")
+                    .returns("""
+                            id\tqid\tv
+                            null\tnull\t10
+                            3\t1\t20
+                            3\t2\t20
+                            null\tnull\t50
+                            null\tnull\t70
+                            null\tnull\t90
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinOnKeysSharingColumnFiltersMasterTable() throws Exception {
+        // ON pa.x = pb.k AND pa.y = pb.k implies pa.x = pa.y. A pa row that fails it matches no pb row,
+        // and the RIGHT JOIN drops such rows, so the equality filters the scan of pa when pa joins by
+        // INNER or CROSS join, and when pa is the first table. As an outer join filter it ran once per
+        // hash chain entry, so the join cost grew with the pa rows times the chain length. Where a scan
+        // filter would change the rows, the RIGHT JOIN keeps both keys instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE z (id INT)");
+            execute("INSERT INTO z VALUES (1), (2), (3), (4)");
+            execute("CREATE TABLE pa (id INT, x INT, y INT)");
+            execute("INSERT INTO pa VALUES (1, 1, 1), (2, 2, 1), (3, null, null), (4, 2, 2)");
+            execute("CREATE TABLE pb (k INT, v INT)");
+            execute("INSERT INTO pb VALUES (1, 10), (1, 11), (2, 20), (null, 30), (5, 50)");
+            execute("CREATE TABLE q (id INT)");
+            execute("INSERT INTO q VALUES (2), (6)");
+
+            final String expected = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    4\t20
+                    3\t30
+                    null\t50
+                    """;
+            assertQuery("SELECT pa.id, pb.v FROM z JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y
+                                        Hash Join Light
+                                          condition: pa.id=z.id
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: z
+                                            Hash
+                                                Async JIT Filter workers: 1
+                                                  filter: x=y
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: pa
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT z.id, pa.id, pb.v FROM z CROSS JOIN pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v, z.id")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: x=y")
+                    .returns("""
+                            id\tid1\tv
+                            1\t1\t10
+                            2\t1\t10
+                            3\t1\t10
+                            4\t1\t10
+                            1\t1\t11
+                            2\t1\t11
+                            3\t1\t11
+                            4\t1\t11
+                            1\t4\t20
+                            2\t4\t20
+                            3\t4\t20
+                            4\t4\t20
+                            1\t3\t30
+                            2\t3\t30
+                            3\t3\t30
+                            4\t3\t30
+                            null\tnull\t50
+                            """);
+            assertQuery("SELECT pa.id, pb.v FROM pa RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y
+                                        Async JIT Filter workers: 1
+                                          filter: x=y
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pa
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns(expected);
+
+            // The LEFT JOIN keeps z row 2 with pa row 2, which fails the equality. A filter on the scan
+            // of pa would NULL-extend z row 2, and its null pa.x and pa.y would match pb.k = null, so
+            // the RIGHT JOIN keeps both keys.
+            assertQuery("SELECT z.id, pa.id, pb.v FROM z LEFT JOIN pa ON z.id = pa.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v, z.id")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v, id]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y and pb.k=pa.x
+                                        Hash Left Outer Join Light
+                                          condition: pa.id=z.id
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: z
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: pa
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id\tid1\tv
+                            1\t1\t10
+                            1\t1\t11
+                            4\t4\t20
+                            3\t3\t30
+                            null\tnull\t50
+                            """);
+            // The RIGHT JOIN q keeps q row 2 with pa row 2, which fails the equality. A filter on the scan
+            // of pa would NULL-extend q row 2, which would then match pb.k = null like q row 6, so the
+            // RIGHT JOIN pb keeps both keys.
+            assertQuery("SELECT pa.id, q.id, pb.v FROM z JOIN pa ON z.id = pa.id RIGHT JOIN q ON pa.id = q.id RIGHT JOIN pb ON pa.x = pb.k AND pa.y = pb.k ORDER BY pb.v, q.id")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v, id1]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pa.y and pb.k=pa.x
+                                        Hash Right Outer Join Light
+                                          condition: q.id=pa.id
+                                            Hash Join Light
+                                              condition: pa.id=z.id
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: z
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: pa
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: q
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns("""
+                            id\tid1\tv
+                            null\tnull\t10
+                            null\tnull\t11
+                            null\tnull\t20
+                            null\t6\t30
+                            null\tnull\t50
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinOnNameSharedWithLaterTableBeforeCrossJoin() throws Exception {
+        // x exists in g0 and in the later g3. The ON clause of the RIGHT JOIN g1 sees only g0 and g1, so x
+        // means g0.x, and the ordering checks for the RIGHT JOIN must not reject it as ambiguous.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g0 (a0 INT, b0 INT, x INT)");
+            execute("INSERT INTO g0 VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3)");
+            execute("CREATE TABLE g1 (a1 INT, b1 INT)");
+            execute("INSERT INTO g1 VALUES (1, 1), (2, 2), (4, 4)");
+            execute("CREATE TABLE g2 (a2 INT, b2 INT)");
+            execute("INSERT INTO g2 VALUES (1, 1), (2, 2)");
+            execute("CREATE TABLE g3 (a3 INT, x INT)");
+            execute("INSERT INTO g3 VALUES (1, 5), (2, 6)");
+            assertQuery("SELECT * FROM g0 RIGHT JOIN g1 ON x >= 2 JOIN g2 ON b2 = b1 AND b2 = b0 CROSS JOIN g3")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a0\tb0\tx\ta1\tb1\ta2\tb2\ta3\tx1
+                            2\t2\t2\t2\t2\t2\t2\t1\t5
+                            2\t2\t2\t2\t2\t2\t2\t2\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinPrefixPinWithOnNameSharedWithLaterTable() throws Exception {
+        // w exists in both t1 and t2. The ON clause of the LEFT JOIN t1 sees only t0 and t1, so w means t1.w,
+        // and the optimiser pins t0, t1 and t2 before the RIGHT JOIN t3: the unmatched t3 row appears once,
+        // with NULL columns for every earlier table. When t2 comes before the LEFT JOIN t1, w is ambiguous
+        // within the scope of the ON clause. SqlCodeGenerator resolves it against the tables that run before
+        // the join, so the optimiser does not pin the prefix of a RIGHT/FULL join on such a level. t2 then
+        // executed after the RIGHT JOIN t3 and repeated an unmatched t3 row once per t2 row, so the query
+        // fails instead. Qualified as t1.w, the name resolves, and the unmatched row comes back once.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (k INT, id INT)");
+            execute("INSERT INTO t0 VALUES (1, 1), (2, 2), (3, 3)");
+            execute("CREATE TABLE t1 (k INT, w INT)");
+            execute("INSERT INTO t1 VALUES (1, 5), (2, -5)");
+            execute("CREATE TABLE t2 (k INT, w INT)");
+            execute("INSERT INTO t2 VALUES (1, -1), (2, 7), (4, 9)");
+            execute("CREATE TABLE t3 (k INT, z INT)");
+            execute("INSERT INTO t3 VALUES (1, 10), (2, 20)");
+            assertExceptionNoLeakCheck(
+                    """
+                            SELECT * FROM t0
+                            CROSS JOIN t2
+                            RIGHT JOIN t3 ON t3.k = t0.k
+                            LEFT JOIN t1 ON t1.k = t0.k AND w > 0
+                            ORDER BY t0.k, t2.k
+                            """,
+                    42,
+                    "could not determine join order for this table"
+            );
+            assertQuery("SELECT * FROM t0 LEFT JOIN t1 ON t1.k = t0.k AND w > 0 RIGHT JOIN t2 ON t2.k = t0.k ORDER BY t2.k, t0.id")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tw\tk2\tw1
+                            1\t1\t1\t5\t1\t-1
+                            2\t2\tnull\tnull\t2\t7
+                            null\tnull\tnull\tnull\t4\t9
+                            """);
+            execute("INSERT INTO t3 VALUES (5, 50)");
+            assertQuery("SELECT * FROM t0 CROSS JOIN t2 RIGHT JOIN t3 ON t3.k = t0.k LEFT JOIN t1 ON t1.k = t0.k AND t1.w > 0 ORDER BY t3.k, t0.k, t2.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tw\tk2\tz\tk3\tw1
+                            1\t1\t1\t-1\t1\t10\t1\t5
+                            1\t1\t2\t7\t1\t10\t1\t5
+                            1\t1\t4\t9\t1\t10\t1\t5
+                            2\t2\t1\t-1\t2\t20\tnull\tnull
+                            2\t2\t2\t7\t2\t20\tnull\tnull
+                            2\t2\t4\t9\t2\t20\tnull\tnull
+                            null\tnull\tnull\tnull\t5\t50\tnull\tnull
+                            """);
+            assertQuery("SELECT * FROM t0 LEFT JOIN t1 ON w > 0 CROSS JOIN t2 RIGHT JOIN t3 ON t3.k = t0.k ORDER BY t0.k, t2.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tid\tk1\tw\tk2\tw1\tk3\tz
+                            null\tnull\tnull\tnull\tnull\tnull\t5\t50
+                            1\t1\t1\t5\t1\t-1\t1\t10
+                            1\t1\t1\t5\t2\t7\t1\t10
+                            1\t1\t1\t5\t4\t9\t1\t10
+                            2\t2\t1\t5\t1\t-1\t2\t20
+                            2\t2\t1\t5\t2\t7\t2\t20
+                            2\t2\t1\t5\t4\t9\t2\t20
+                            """);
+        });
+    }
+
+    @Test
+    public void testSecondGenerationKeyNotAttachedToLeftJoin() throws Exception {
+        // Attaching the implied a2 = a0 merges it with a2 = a1 and implies a1 = a0. Attaching that
+        // second-generation clause made it the key of LEFT JOIN f1, which null-extends instead of
+        // filtering, and the query returned null/1/null/null/null/3/null/2/1/2.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+            execute("INSERT INTO f0 VALUES (2, 3), (null, 1)");
+            execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+            execute("INSERT INTO f1 VALUES (2, null), (3, 3)");
+            execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+            execute("INSERT INTO f2 VALUES (null, 3), (2, 1)");
+            execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+            execute("INSERT INTO f3 VALUES (null, 2)");
+            execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+            execute("INSERT INTO f4 VALUES (1, 2)");
+            assertQuery("SELECT * FROM f0 LEFT JOIN f1 ON a1 > 1 JOIN f2 ON a1 = a0 JOIN f3 ON a3 = a2 AND a3 = a1 JOIN f4 ON a2 = a0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\n");
+        });
+    }
+
+    @Test
+    public void testSecondTableJoinedAfterSelfJoinKeepsMovedKey() throws Exception {
+        // Same shape as testSecondTableJoinedAfterSelfJoinResolvesKeyByAlias, plus t1 a3 keyed to a0 and
+        // a2. The a0.x = a3.k key keeps a0.x in the self-join, so every projection failed with
+        // InvalidColumnException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (x INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 10), (3, 20)");
+            execute("CREATE TABLE t1 (x INT, k INT)");
+            execute("INSERT INTO t1 VALUES (10, 1), (10, 3), (20, 2), (20, 3)");
+            execute("CREATE TABLE t2 (x INT, k INT)");
+            execute("INSERT INTO t2 VALUES (5, 1), (6, 3)");
+            final String from = " FROM t0 a0 CROSS JOIN t2 a1 JOIN t0 a2 ON a1.k = a2.x AND a0.k = a2.k JOIN t1 a3 ON a0.x = a3.k AND a2.k = a3.x";
+            assertQuery("SELECT *" + from)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tk\tx1\tk1\tx2\tk2\tx3\tk3
+                            1\t10\t5\t1\t1\t10\t10\t1
+                            3\t20\t6\t3\t3\t20\t20\t3
+                            """);
+            assertQuery("SELECT count(*)" + from)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testSecondTableJoinedAfterSelfJoinResolvesKeyByAlias() throws Exception {
+        // The optimiser joins t0 a2 to t0 a0 first and t2 a1 last, on a1.k = a2.x. Code generation looked
+        // up that key by the plain name x, as if t2 a1 joined t0 a0 alone. The joined a0 and a2 both
+        // have x, so the query failed with InvalidColumnException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (x INT, k INT)");
+            execute("INSERT INTO t0 VALUES (1, 10), (2, 10), (3, 20)");
+            execute("CREATE TABLE t2 (x INT, k INT)");
+            execute("INSERT INTO t2 VALUES (5, 1), (6, 3)");
+            final String expected = """
+                    x\tk\tx1\tk1\tx2\tk2
+                    1\t10\t5\t1\t1\t10
+                    2\t10\t5\t1\t1\t10
+                    3\t20\t6\t3\t3\t20
+                    """;
+            for (String query : new String[]{
+                    "SELECT * FROM t0 a0 CROSS JOIN t2 a1 JOIN t0 a2 ON a1.k = a2.x AND a0.k = a2.k",
+                    "SELECT * FROM t0 a0, t2 a1, t0 a2 WHERE a1.k = a2.x AND a0.k = a2.k"
+            }) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(expected);
             }
         });
     }
@@ -9266,6 +15899,41 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinOnKeysSharingColumn() throws Exception {
+        // SPLICE preserves both sides, so an equality implied by two ON keys that share a column
+        // must not filter either side's scan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO a VALUES (1, 1, 1, 10::TIMESTAMP), (2, 1, 2, 20::TIMESTAMP), (3, 3, 3, 30::TIMESTAMP)");
+            execute("CREATE TABLE b (id INT, k INT, m INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO b VALUES (10, 1, 1, 1::TIMESTAMP), (20, 5, 6, 2::TIMESTAMP)");
+
+            assertQuery("SELECT a.id, b.id FROM a SPLICE JOIN b ON a.x = b.k AND a.k = b.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tid1
+                            null\t10
+                            null\t20
+                            1\t10
+                            2\tnull
+                            3\tnull
+                            """);
+            assertQuery("SELECT a.id, b.id FROM a SPLICE JOIN b ON a.k = b.k AND a.k = b.m")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            id\tid1
+                            null\t10
+                            null\t20
+                            1\t10
+                            2\tnull
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testSpliceJoinRecordNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx splice join crj on xx.x = crj.x ", false);
     }
@@ -9667,6 +16335,732 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeSeriesJoinAfterKeyMoveDerivesConflictingKey() throws Exception {
+        // reorderTables moves a4.k = a0.k onto a0. runFromModelFirst places a0, a4, a3, a1 and a2 in that
+        // order and gives a2 both a2.s = a1.s and a2.s = a3.v. SqlCodeGenerator encodes them as STRING
+        // and VARCHAR keys and rejects a join that encodes one column in two types, so a2 keeps
+        // a2.s = a3.v, and a1 joins on a1.s = a3.v, which both keys imply. The derived key keeps the join
+        // on a1 as selective as in the query written in that order.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinKeyClash();
+            assertQuery("""
+                    SELECT a0.k, a0.ts, a1.s, q.bid
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN desks a2 ON a2.s = a1.s
+                    JOIN routes a3 ON a3.l = a1.l AND a3.v = a2.s
+                    JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k
+                    LT JOIN quotes q
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: a1.l=a3.l and a1.s=a3.v", "condition: a2.s=a3.v")
+                    .withPlanNotContaining("Filter", "Cross Join")
+                    .returns("""
+                            k\tts\ts\tbid
+                            1\t2024-01-01T00:00:10.000000Z\tS1\t9.5
+                            2\t2024-01-01T00:00:20.000000Z\tS2\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveDerivesKeyOfUnknownType() throws Exception {
+        // As above, but a3.v is a computed column, whose type SqlOptimiser cannot read. The keys on
+        // a2.s may differ in type, so runFromModelFirst derives a1.s = a3.v for them too. Before it
+        // did, the query failed with "join column is compared with columns of different types".
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinKeyClash();
+            assertQuery("""
+                    SELECT a0.k, a0.ts, a1.s, q.bid
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN desks a2 ON a2.s = a1.s
+                    JOIN (SELECT s, v::VARCHAR v, l, ts FROM routes) a3 ON a3.l = a1.l AND a3.v = a2.s
+                    JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k
+                    LT JOIN quotes q
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: a1.l=a3.l and a1.s=a3.v", "condition: a2.s=a3.v")
+                    .returns("""
+                            k\tts\ts\tbid
+                            1\t2024-01-01T00:00:10.000000Z\tS1\t9.5
+                            2\t2024-01-01T00:00:20.000000Z\tS2\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveFiltersTimestampKeyOfTwoPrecisions() throws Exception {
+        // As in testTimeSeriesJoinAfterKeyMoveDerivesConflictingKey, a2 gets two keys on one column:
+        // a2.t = a1.t on microsecond timestamps and a2.t = a3.tn on a microsecond and a nanosecond one.
+        // The record copier turns a NULL microsecond timestamp into nanosecond 0, so a1.t = a3.tn would
+        // not agree with them, and a2.t = a1.t filters the join instead. The NULL and epoch rows of the
+        // third trade match nothing either way.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE accts (k INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE routes (s SYMBOL, tn TIMESTAMP_NS, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE books (t TIMESTAMP, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE desks (t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:00:10.000000Z'),
+                    (2, '2024-01-01T00:00:20.000000Z'),
+                    (3, '2024-01-01T00:00:30.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.0, '2024-01-01T00:00:00.000000Z'),
+                    (9.5, '2024-01-01T00:00:09.000000Z'),
+                    (19.5, '2024-01-01T00:00:19.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO accts VALUES
+                    (1, 'S1', '2023-12-01T00:00:00.000000Z'),
+                    (2, 'S2', '2023-12-01T00:00:01.000000Z'),
+                    (3, 'S3', '2023-12-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO routes VALUES
+                    ('S1', '2020-01-01T00:00:00.000000000Z', 1, '2023-12-01T00:00:00.000000Z'),
+                    ('S2', '2020-01-02T00:00:00.000000000Z', 2, '2023-12-01T00:00:01.000000Z'),
+                    ('S3', NULL, 3, '2023-12-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO books VALUES
+                    ('2020-01-01T00:00:00.000000Z', 1, '2023-12-01T00:00:00.000000Z'),
+                    ('2020-01-02T00:00:00.000000Z', 2, '2023-12-01T00:00:01.000000Z'),
+                    (NULL, 3, '2023-12-01T00:00:02.000000Z'),
+                    ('1970-01-01T00:00:00.000000Z', 3, '2023-12-01T00:00:03.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO desks VALUES
+                    ('2020-01-01T00:00:00.000000Z', '2023-12-01T00:00:00.000000Z'),
+                    ('2020-01-02T00:00:00.000000Z', '2023-12-01T00:00:01.000000Z'),
+                    (NULL, '2023-12-01T00:00:02.000000Z'),
+                    ('1970-01-01T00:00:00.000000Z', '2023-12-01T00:00:03.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT a0.k, a0.ts, a1.t, q.bid
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN desks a2 ON a2.t = a1.t
+                    JOIN routes a3 ON a3.l = a1.l AND a3.tn = a2.t
+                    JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k
+                    LT JOIN quotes q
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("Filter filter: a1.t=a2.t", "condition: a2.t=a3.tn")
+                    .returns("""
+                            k\tts\tt\tbid
+                            1\t2024-01-01T00:00:10.000000Z\t2020-01-01T00:00:00.000000Z\t9.5
+                            2\t2024-01-01T00:00:20.000000Z\t2020-01-02T00:00:00.000000Z\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveFromSubQuery() throws Exception {
+        // the sub-query keeps the designated timestamp of trades without selecting it
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("""
+                    SELECT t.sym, q.bid
+                    FROM (SELECT sym FROM trades) t
+                    CROSS JOIN params p
+                    JOIN venues v ON v.id = p.venue
+                    JOIN instruments i ON i.venue = v.id AND i.sym = t.sym
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sym\tbid
+                            A\t9.5
+                            B\t19.5
+                            A\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .fullFatJoins()
+                    .returns(KEY_MOVE_ROWS);
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " LT JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .fullFatJoins()
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveIgnoresOtherTableTimestamps() throws Exception {
+        // the time-series join read params.ts when params ran first, so the quotes it matched moved with
+        // the timestamps of params
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            execute("TRUNCATE TABLE params");
+            execute("INSERT INTO params VALUES ('X', '2024-01-01T00:00:25.000000Z'), ('Y', '2024-01-01T00:00:35.000000Z')");
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveInCte() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("WITH x AS (SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)) SELECT sym, ts, bid FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveInSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT * FROM (SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)) WHERE bid > 9.0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveKeepsSelectiveKeys() throws Exception {
+        // runFromModelFirst places trades, routes, books and desks in that order, as the query lists
+        // books before desks, and desks joins on both d.l = r.l and d.sym = b.sym. Reversing the order
+        // that reorderTables kept would put books last instead, and join desks on d.l = r.l only.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE routes (k INT, name SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE desks (sym SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE books (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES ('A', 1, '2024-01-01T00:00:10.000000Z'), ('B', 2, '2024-01-01T00:00:20.000000Z')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 19.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 9.5, '2024-01-01T00:00:09.000000Z'),
+                    ('B', 19.5, '2024-01-01T00:00:19.000000Z')
+                    """);
+            execute("INSERT INTO routes VALUES (1, 'X', 7, '2023-12-01T00:00:00.000000Z'), (2, 'Y', 8, '2023-12-01T00:00:01.000000Z')");
+            execute("""
+                    INSERT INTO desks VALUES
+                    ('X', 7, '2023-12-01T00:00:00.000000Z'),
+                    ('Y', 7, '2023-12-01T00:00:01.000000Z'),
+                    ('Y', 8, '2023-12-01T00:00:02.000000Z')
+                    """);
+            execute("INSERT INTO books VALUES ('X', '2023-12-01T00:00:00.000000Z'), ('Y', '2023-12-01T00:00:01.000000Z')");
+            assertQuery("""
+                    SELECT t.sym, t.ts, b.sym book, q.bid
+                    FROM trades t
+                    CROSS JOIN books b
+                    JOIN desks d ON d.sym = b.sym
+                    JOIN routes r ON r.name = b.sym AND r.k = t.k AND r.l = d.l
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: d.l=r.l and d.sym=b.sym", "condition: b.sym=r.name", "condition: r.k=t.k")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            sym\tts\tbook\tbid
+                            A\t2024-01-01T00:00:10.000000Z\tX\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\tY\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveKeylessAsOf() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.sym qsym, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tqsym\tbid
+                            A\t2024-01-01T00:00:10.000000Z\tA\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\tB\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\tA\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, v2.name, q.bid " + KEY_MOVE_JOINS
+                    + " LEFT JOIN venues v2 ON v2.id = i.venue AND v2.name = 'ychg' ASOF JOIN quotes q ON (q.sym = t.sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tname\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\tychg\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\t\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveLongChain() throws Exception {
+        // reorderTables moves pos.sym = t.sym onto trades and starts the cheapest order at books.
+        // runFromModelFirst runs trades first and joins the chain back to books on the same keys.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE books (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE desks (id INT, book INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE teams (id INT, desk INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE traders (id INT, team INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE accounts (id INT, trader INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE positions (account INT, sym SYMBOL, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('A', 10.0, '2024-01-01T00:00:10.000000Z'),
+                    ('B', 20.0, '2024-01-01T00:00:20.000000Z'),
+                    ('A', 11.0, '2024-01-01T00:00:30.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 19.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 9.5, '2024-01-01T00:00:09.000000Z'),
+                    ('B', 19.5, '2024-01-01T00:00:19.000000Z'),
+                    ('A', 10.5, '2024-01-01T00:00:25.000000Z')
+                    """);
+            execute("INSERT INTO books VALUES (1, '2024-01-01T00:00:01.000000Z'), (2, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO desks VALUES (10, 1, '2024-01-01T00:00:01.000000Z'), (20, 2, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO teams VALUES (100, 10, '2024-01-01T00:00:01.000000Z'), (200, 20, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO traders VALUES (1000, 100, '2024-01-01T00:00:01.000000Z'), (2000, 200, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO accounts VALUES (7, 1000, '2024-01-01T00:00:01.000000Z'), (8, 2000, '2024-01-01T00:00:02.000000Z')");
+            execute("INSERT INTO positions VALUES (7, 'A', 5, '2024-01-01T00:00:01.000000Z'), (8, 'B', 6, '2024-01-01T00:00:02.000000Z')");
+            assertQuery("""
+                    SELECT t.sym, t.ts, pos.qty, q.bid
+                    FROM trades t
+                    CROSS JOIN books b
+                    JOIN desks d ON d.book = b.id
+                    JOIN teams tm ON tm.desk = d.id
+                    JOIN traders tr ON tr.team = tm.id
+                    JOIN accounts a ON a.trader = tr.id
+                    JOIN positions pos ON pos.account = a.id AND pos.sym = t.sym
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Fast
+                                  condition: q.sym=t.sym
+                                    Hash Join Light
+                                      condition: b.id=d.book
+                                        Hash Join Light
+                                          condition: d.id=tm.desk
+                                            Hash Join Light
+                                              condition: tm.id=tr.team
+                                                Hash Join Light
+                                                  condition: tr.id=a.trader
+                                                    Hash Join Light
+                                                      condition: a.id=pos.account
+                                                        Hash Join Light
+                                                          condition: pos.sym=t.sym
+                                                          symbolKeyJoin: true
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: trades
+                                                            Hash
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: positions
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: accounts
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: traders
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: teams
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: desks
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: books
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: quotes
+                            """)
+                    .returns("""
+                            sym\tts\tqty\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t5\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\t6\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\t5\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveLtJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " LT JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveOnRekeyedTable() throws Exception {
+        // the ASOF key reads instruments, which joins after trades again
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (q.sym = i.sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.ts, sum(q.bid) bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym) SAMPLE BY 20s")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tbid
+                            2024-01-01T00:00:00.000000Z\t9.5
+                            2024-01-01T00:00:20.000000Z\t30.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSelectStar() throws Exception {
+        // SELECT * reads every key column, so this query ran on master too, with the timestamps of params
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT * " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tpx\tts\tvenue\tts1\tid\tname\tts2\tsym1\tvenue1\tlot\tts3\tsym2\tbid\tts4
+                            A\t10.0\t2024-01-01T00:00:10.000000Z\tX\t2024-01-01T00:00:01.000000Z\tX\txchg\t2024-01-01T00:00:01.500000Z\tA\tX\t100\t2024-01-01T00:00:02.000000Z\tA\t9.5\t2024-01-01T00:00:09.000000Z
+                            B\t20.0\t2024-01-01T00:00:20.000000Z\tY\t2024-01-01T00:00:02.000000Z\tY\tychg\t2024-01-01T00:00:01.600000Z\tB\tY\t200\t2024-01-01T00:00:03.000000Z\tB\t19.5\t2024-01-01T00:00:19.000000Z
+                            A\t11.0\t2024-01-01T00:00:30.000000Z\tX\t2024-01-01T00:00:01.000000Z\tX\txchg\t2024-01-01T00:00:01.500000Z\tA\tX\t100\t2024-01-01T00:00:02.000000Z\tA\t10.5\t2024-01-01T00:00:25.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSelfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, t2.ts ts2, q.bid " + KEY_MOVE_JOINS
+                    + " JOIN trades t2 ON t2.sym = i.sym AND t2.px = t.px ASOF JOIN quotes q ON (q.sym = t.sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tts2\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t2024-01-01T00:00:10.000000Z\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\t2024-01-01T00:00:20.000000Z\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\t2024-01-01T00:00:30.000000Z\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSubQueryTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("""
+                    SELECT t.sym, t.ts, q.bid
+                    FROM trades t
+                    CROSS JOIN (SELECT venue, ts FROM params WHERE venue IN ('X', 'Y')) p
+                    JOIN venues v ON v.id = p.venue
+                    JOIN instruments i ON i.venue = v.id AND i.sym = t.sym
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveTolerance() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym) TOLERANCE 5s")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveTrailingInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid, i2.lot " + KEY_MOVE_JOINS
+                    + " ASOF JOIN quotes q ON (sym) JOIN instruments i2 ON i2.sym = q.sym AND i2.venue = v.id")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tbid\tlot
+                            A\t2024-01-01T00:00:10.000000Z\t9.5\t100
+                            B\t2024-01-01T00:00:20.000000Z\t19.5\t200
+                            A\t2024-01-01T00:00:30.000000Z\t10.5\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveTwoTimeSeriesJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, q.bid, q2.bid bid2 " + KEY_MOVE_JOINS
+                    + " ASOF JOIN quotes q ON (sym) LT JOIN quotes q2 ON (q2.sym = t.sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tbid\tbid2
+                            A\t2024-01-01T00:00:10.000000Z\t9.5\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\t19.5\t19.5
+                            A\t2024-01-01T00:00:30.000000Z\t10.5\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveWhereClauseKeys() throws Exception {
+        // the keys come from WHERE instead of ON, and reorderTables moves i.sym = t.sym onto trades the same way
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            final String where = " WHERE v.id = p.venue AND i.venue = v.id AND i.sym = t.sym";
+            assertQuery("SELECT t.sym, t.ts, q.bid FROM trades t, params p, venues v, instruments i ASOF JOIN quotes q ON (q.sym = t.sym)" + where)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+            assertQuery("SELECT t.sym, t.ts, q.bid FROM trades t, params p, venues v, instruments i LT JOIN quotes q ON (q.sym = t.sym)" + where)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveWhereFilters() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            final String expected = """
+                    sym\tts\tbid
+                    B\t2024-01-01T00:00:20.000000Z\t19.5
+                    A\t2024-01-01T00:00:30.000000Z\t10.5
+                    """;
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym) WHERE t.px > 10.5")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym) WHERE t.ts IN '2024-01-01T00:00:15;20s'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveWindowJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("SELECT t.sym, t.ts, avg(q.bid) bid " + KEY_MOVE_JOINS
+                    + " WINDOW JOIN quotes q ON (q.sym = t.sym) RANGE BETWEEN 2 SECONDS PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tts\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t9.25
+                            B\t2024-01-01T00:00:20.000000Z\t19.25
+                            A\t2024-01-01T00:00:30.000000Z\t10.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinReadsFromTableTimestampAfterKeyMove() throws Exception {
+        // reorderTables moves i.sym = t.sym onto trades, the table that the query selects from, and its
+        // cheapest order then started at params. The ASOF join read the timestamp of that first table
+        // and matched each trade with the quotes at params.ts: 9.0 and 19.0 instead of 9.5 and 19.5.
+        // runFromModelFirst runs trades first again, and every join keeps its key.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE params (venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE venues (id SYMBOL, name VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (sym SYMBOL, venue SYMBOL, lot INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES ('A', 10.0, '2024-01-01T00:00:10.000000Z'), ('B', 20.0, '2024-01-01T00:00:20.000000Z')");
+            execute("INSERT INTO params VALUES ('X', '2024-01-01T00:00:01.000000Z')");
+            execute("INSERT INTO venues VALUES ('X', 'xchg', '2024-01-01T00:00:01.500000Z')");
+            execute("INSERT INTO instruments VALUES ('A', 'X', 100, '2024-01-01T00:00:02.000000Z'), ('B', 'X', 200, '2024-01-01T00:00:03.000000Z')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 19.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 9.5, '2024-01-01T00:00:09.000000Z'),
+                    ('B', 19.5, '2024-01-01T00:00:19.000000Z')
+                    """);
+            assertQuery("SELECT t.sym, t.ts, q.bid " + KEY_MOVE_JOINS + " ASOF JOIN quotes q ON (sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Fast
+                                  condition: q.sym=t.sym
+                                    Hash Join Light
+                                      condition: p.venue=v.id
+                                      symbolKeyJoin: true
+                                        Hash Join Light
+                                          condition: v.id=i.venue
+                                          symbolKeyJoin: true
+                                            Hash Join Light
+                                              condition: i.sym=t.sym
+                                              symbolKeyJoin: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: instruments
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: venues
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: params
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: quotes
+                            """)
+                    .returns("""
+                            sym\tts\tbid
+                            A\t2024-01-01T00:00:10.000000Z\t9.5
+                            B\t2024-01-01T00:00:20.000000Z\t19.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinWrittenFromTableFirstKeepsPlan() throws Exception {
+        // the trades-first form already runs trades first, so runFromModelFirst leaves its order alone
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMove();
+            assertQuery("""
+                    SELECT t.sym, t.ts, q.bid
+                    FROM trades t
+                    JOIN instruments i ON i.sym = t.sym
+                    JOIN venues v ON v.id = i.venue
+                    JOIN params p ON p.venue = v.id
+                    ASOF JOIN quotes q ON (sym)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join Fast
+                                  condition: q.sym=t.sym
+                                    Hash Join Light
+                                      condition: p.venue=v.id
+                                      symbolKeyJoin: true
+                                        Hash Join Light
+                                          condition: v.id=i.venue
+                                          symbolKeyJoin: true
+                                            Hash Join Light
+                                              condition: i.sym=t.sym
+                                              symbolKeyJoin: true
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: instruments
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: venues
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: params
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: quotes
+                            """)
+                    .returns(KEY_MOVE_ROWS);
+        });
+    }
+
+    @Test
     public void testTypeMismatch() throws Exception {
         testTypeMismatch0(false);
     }
@@ -9875,6 +17269,27 @@ public class JoinTest extends AbstractCairoTest {
         assertHashJoinSql(query, expected, null, false, true);
     }
 
+    // Runs the query once on the light and once on the full-fat hash join, and asserts the row count and
+    // how many times test_latched_counter() in the join filter ran.
+    private void assertJoinFilterEvaluationCount(String query, int expectedRowCount, int expectedEvaluationCount) throws SqlException {
+        for (boolean isFullFat : new boolean[]{false, true}) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(isFullFat);
+                try (RecordCursorFactory factory = select(compiler, query, sqlExecutionContext)) {
+                    TestLatchedCounterFunctionFactory.reset(null);
+                    int rowCount = 0;
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                            rowCount++;
+                        }
+                    }
+                    Assert.assertEquals(query, expectedRowCount, rowCount);
+                    Assert.assertEquals(query, expectedEvaluationCount, TestLatchedCounterFunctionFactory.getCount());
+                }
+            }
+        }
+    }
+
     private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws Exception {
         assertQuery(query.replace("#JOIN_TYPE#", left))
                 .noLeakCheck()
@@ -9921,6 +17336,307 @@ public class JoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private void createTablesForCrossJoinBeforeRightJoin() throws SqlException {
+        execute("CREATE TABLE a (k INT, x INT)");
+        execute("INSERT INTO a VALUES (1, 3), (2, 6), (3, 9), (4, 12), (5, 15), (6, 18)");
+        execute("CREATE TABLE b (k INT)");
+        execute("INSERT INTO b VALUES (2), (4), (6), (8)");
+        execute("CREATE TABLE c (y INT)");
+        execute("INSERT INTO c VALUES (1), (2), (3)");
+        execute("CREATE TABLE d (k INT)");
+        execute("INSERT INTO d VALUES (7), (100)");
+        execute("CREATE TABLE e (k INT, z INT)");
+        execute("INSERT INTO e VALUES (null, 1), (2, 2), (3, 3), (4, 0), (5, 1), (6, 2)");
+        execute("CREATE TABLE f (k INT)");
+        execute("INSERT INTO f VALUES (2), (4), (6)");
+        execute("CREATE TABLE l (k INT)");
+        execute("INSERT INTO l VALUES (1), (2), (3), (4)");
+    }
+
+    private void createTablesForCrossJoinBeforeRightJoinWithTimeSeriesJoin() throws SqlException {
+        execute("CREATE TABLE a (k INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO a VALUES
+                (1, 3, '1970-01-01T00:00:00.000000Z'),
+                (2, 6, '1970-01-01T00:00:01.000000Z'),
+                (3, 9, '1970-01-01T00:00:02.000000Z'),
+                (4, 12, '1970-01-01T00:00:03.000000Z'),
+                (5, 15, '1970-01-01T00:00:04.000000Z'),
+                (6, 18, '1970-01-01T00:00:05.000000Z')
+                """);
+        execute("CREATE TABLE b (k INT)");
+        execute("INSERT INTO b VALUES (2), (4), (6), (8)");
+        execute("CREATE TABLE c (y INT)");
+        execute("INSERT INTO c VALUES (1), (2), (3)");
+        execute("CREATE TABLE d (k INT)");
+        execute("INSERT INTO d VALUES (7), (100)");
+        execute("CREATE TABLE q (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO q VALUES
+                (1, 1, '1970-01-01T00:00:00.500000Z'),
+                (2, 2, '1970-01-01T00:00:01.500000Z'),
+                (0, 3, '1970-01-01T00:00:02.500000Z'),
+                (1, 4, '1970-01-01T00:00:03.500000Z'),
+                (2, 5, '1970-01-01T00:00:04.500000Z'),
+                (0, 6, '1970-01-01T00:00:05.500000Z'),
+                (1, 7, '1970-01-01T00:00:06.500000Z'),
+                (2, 8, '1970-01-01T00:00:07.500000Z')
+                """);
+    }
+
+    private void createTablesForCrossJoinKeyAfterRightJoin() throws SqlException {
+        execute("CREATE TABLE a (id INT, x INT)");
+        execute("INSERT INTO a VALUES (1, null), (2, 7), (3, 3)");
+        execute("CREATE TABLE b (id INT, z INT)");
+        execute("INSERT INTO b VALUES (1, 5), (2, 7), (3, null)");
+        execute("CREATE TABLE c (id INT)");
+        execute("INSERT INTO c VALUES (1), (2), (3)");
+        execute("CREATE TABLE e (id INT, y INT, z INT)");
+        execute("INSERT INTO e VALUES (10, null, 5), (20, 7, 7), (30, 7, 99)");
+        execute("CREATE TABLE f (id INT)");
+        execute("INSERT INTO f VALUES (10), (20), (40)");
+        execute("CREATE TABLE x (id INT)");
+        execute("INSERT INTO x VALUES (10), (20), (40)");
+        execute("CREATE TABLE x2 (id INT, z INT)");
+        execute("INSERT INTO x2 VALUES (10, 5), (20, 7), (40, null), (20, 8)");
+    }
+
+    private void createTablesForCrossJoinSubQueryOuterWhere() throws SqlException {
+        execute("CREATE TABLE a (k INT, j INT)");
+        execute("INSERT INTO a VALUES (1, 0), (2, 0), (3, 0)");
+        execute("CREATE TABLE b (k INT, j INT)");
+        execute("INSERT INTO b VALUES (1, 10), (2, 20)");
+        execute("CREATE TABLE c (k INT, j INT)");
+        execute("INSERT INTO c VALUES (1, 5), (2, 6)");
+    }
+
+    private void createTablesForInnerConjunctsAfterRightJoin() throws SqlException {
+        execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+        execute("INSERT INTO f0 VALUES (2, 3)");
+        execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+        execute("INSERT INTO f1 VALUES (3, 3)");
+        execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+        execute("INSERT INTO f2 VALUES (2, 1)");
+        execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+        execute("INSERT INTO f3 VALUES (1, 1)");
+    }
+
+    private void createTablesForNonEquiRightJoinThenLeftJoin() throws SqlException {
+        execute("CREATE TABLE a (x INT, y INT)");
+        execute("INSERT INTO a VALUES (1, 3), (2, 2)");
+        execute("CREATE TABLE b (y INT, k INT)");
+        execute("INSERT INTO b VALUES (1, 1), (4, 1), (1, 1)");
+        execute("CREATE TABLE c (k INT, v INT)");
+        execute("INSERT INTO c VALUES (2, 1), (2, 4), (2, 4)");
+        execute("CREATE TABLE c2 (k INT, v INT)");
+        execute("INSERT INTO c2 VALUES (null, 7), (50, 8)");
+        execute("CREATE TABLE d (k INT, v INT)");
+        execute("INSERT INTO d VALUES (3, 1), (2, 4), (3, 3), (2, 2), (3, 1), (1, 4)");
+    }
+
+    private void createTablesForOnNameSharedWithLaterTable() throws SqlException {
+        // w exists in f1 and f2
+        execute("CREATE TABLE f0 (a0 INT, b0 INT, v INT)");
+        execute("INSERT INTO f0 VALUES (2, null, 1), (3, 1, 3), (2, 2, 2)");
+        execute("CREATE TABLE f1 (a1 INT, b1 INT, w INT)");
+        execute("INSERT INTO f1 VALUES (3, 2, 1), (2, 2, 2), (null, 1, 3), (3, 3, 2), (3, 1, 3)");
+        execute("CREATE TABLE f2 (a2 INT, b2 INT, w INT, v INT)");
+        execute("INSERT INTO f2 VALUES (3, 1, 2, 3), (1, null, 3, 2), (3, 3, null, 1), (1, 2, 2, 1), (1, 3, 3, 3)");
+        execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+        execute("INSERT INTO f3 VALUES (3, null), (1, 2), (1, null), (3, 2)");
+        execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+        execute("INSERT INTO f4 VALUES (3, null), (1, 3), (1, 3)");
+    }
+
+    private void createTablesForOuterJoinChains() throws SqlException {
+        execute("CREATE TABLE f0 (a0 INT, b0 INT)");
+        execute("INSERT INTO f0 VALUES (1, 1), (2, 3)");
+        execute("CREATE TABLE f1 (a1 INT, b1 INT)");
+        execute("INSERT INTO f1 VALUES (1, 2), (3, 1)");
+        execute("CREATE TABLE f2 (a2 INT, b2 INT)");
+        execute("INSERT INTO f2 VALUES (1, 4), (2, 2), (4, 1)");
+        execute("CREATE TABLE f3 (a3 INT, b3 INT)");
+        execute("INSERT INTO f3 VALUES (1, 1), (2, 9)");
+        execute("CREATE TABLE f4 (a4 INT, b4 INT)");
+        execute("INSERT INTO f4 VALUES (1, 1), (3, 3)");
+        execute("CREATE TABLE f5 (a5 INT, b5 INT)");
+        execute("CREATE TABLE f6 (a6 INT, b6 INT)");
+        execute("INSERT INTO f6 VALUES (200, 1), (5, 5)");
+    }
+
+    private void createTablesForOuterJoinInnerDerivedKey() throws SqlException {
+        execute("CREATE TABLE a (x INT, w INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO a VALUES
+                (5, 1, '2024-01-01T00:00:01'),
+                (5, null, '2024-01-01T00:00:02'),
+                (0, 2, '2024-01-01T00:00:03'),
+                (7, 3, '2024-01-01T00:00:04'),
+                (9, null, '2024-01-01T00:00:05')
+                """);
+        execute("CREATE TABLE b (x INT, k INT, u INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO b VALUES
+                (2, 1, 3, '2024-01-01T00:00:01'),
+                (3, 3, 4, '2024-01-01T00:00:02'),
+                (0, null, 6, '2024-01-01T00:00:03')
+                """);
+        execute("CREATE TABLE bl (x INT, k LONG, u INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO bl SELECT * FROM b");
+        execute("CREATE TABLE c (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO c VALUES
+                (1, '2024-01-01T00:00:01'),
+                (null, '2024-01-01T00:00:02'),
+                (3, '2024-01-01T00:00:03')
+                """);
+        execute("CREATE TABLE cl (k LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO cl SELECT * FROM c");
+        execute("CREATE TABLE d (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO d VALUES
+                (10, '2024-01-01T00:00:01'),
+                (20, '2024-01-01T00:00:02'),
+                (30, '2024-01-01T00:00:03')
+                """);
+    }
+
+    private void createTablesForOuterJoinInnerDerivedKeyNullRejection() throws SqlException {
+        execute("CREATE TABLE a (x INT, w INT)");
+        execute("INSERT INTO a VALUES (0, 1), (-1, null), (2, 2), (4, 1), (2, 1), (1, 3), (5, 2), (6, 9)");
+        execute("CREATE TABLE b (x INT, k INT, u INT, f BOOLEAN)");
+        execute("""
+                INSERT INTO b VALUES
+                (5, 1, 4, true), (1, 1, 3, false), (0, 1, 3, true), (-1, 1, 1, true),
+                (3, 0, 3, false), (5, 0, 0, true), (2, 2, 3, true)
+                """);
+        execute("CREATE TABLE c (k INT)");
+        execute("INSERT INTO c VALUES (1), (2), (null)");
+        execute("CREATE TABLE d (y INT, v INT)");
+        execute("INSERT INTO d VALUES (1, 2), (2, null), (0, 4), (null, 1), (6, 0)");
+    }
+
+    private void createTablesForOuterJoinOnImpliedKey() throws SqlException {
+        execute("CREATE TABLE t1 (id INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t1 VALUES
+                (1, 10, '2024-01-01T00:00:01'),
+                (2, 20, '2024-01-01T00:00:02'),
+                (3, 30, '2024-01-01T00:00:03'),
+                (null, null, '2024-01-01T00:00:04')
+                """);
+        execute("CREATE TABLE t2 (id INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t2 VALUES
+                (1, 10, '2024-01-01T00:00:01'),
+                (2, 99, '2024-01-01T00:00:02'),
+                (4, 40, '2024-01-01T00:00:03'),
+                (null, null, '2024-01-01T00:00:04')
+                """);
+        execute("CREATE TABLE t3 (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t3 VALUES
+                (1, 10, '2024-01-01T00:00:00'),
+                (3, 99, '2024-01-01T00:00:01'),
+                (5, 20, '2024-01-01T00:00:02'),
+                (null, null, '2024-01-01T00:00:03'),
+                (1, 10, '2024-01-01T00:00:05')
+                """);
+        execute("CREATE TABLE t4 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t4 VALUES
+                (1, '2024-01-01T00:00:01'),
+                (4, '2024-01-01T00:00:02')
+                """);
+    }
+
+    private void createTablesForOuterJoinOnKeysAfterNonEquiFullJoin() throws SqlException {
+        execute("CREATE TABLE t0 (a0 INT, b0 INT, i INT)");
+        execute("INSERT INTO t0 VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3)");
+        execute("CREATE TABLE t1 (a1 INT, b1 INT)");
+        execute("INSERT INTO t1 VALUES (0, 0), (5, 5)");
+        execute("CREATE TABLE t2 (a2 INT, b2 INT, l LONG)");
+        execute("INSERT INTO t2 VALUES (1, 10, 1), (2, 20, 2), (9, 90, 9)");
+        execute("CREATE TABLE t3 (a3 INT, b3 INT, i3 INT)");
+        execute("INSERT INTO t3 VALUES (1, 100, 1), (2, 200, 2)");
+        execute("CREATE TABLE t4 (a4 INT, b4 INT)");
+        execute("INSERT INTO t4 VALUES (1, 7), (2, 8)");
+        execute("CREATE TABLE t5 (a5 INT, b5 INT)");
+        execute("INSERT INTO t5 VALUES (1, 70), (2, 80), (9, 90)");
+    }
+
+    private void createTablesForPrefixOrder(int... tables) throws SqlException {
+        for (int t : tables) {
+            execute("CREATE TABLE t" + t + " (c" + t + " INT, k INT, v" + t + " DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t" + t + " SELECT (x + " + t + ") % 4, x % 3, x * 1.5, timestamp_sequence(" + (t * 1000) + ", 1000000) FROM long_sequence(4)");
+        }
+    }
+
+    // reorderTables moves i.sym = t.sym of KEY_MOVE_JOINS onto trades and starts at params, whose rows
+    // are earlier than most quotes: a time-series join that reads params.ts matches 9.0 and 19.0
+    private void createTablesForTimeSeriesJoinAfterKeyMove() throws SqlException {
+        execute("CREATE TABLE trades (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE params (venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE venues (id SYMBOL, name VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE instruments (sym SYMBOL, venue SYMBOL, lot INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        // trade C has no instrument, so the INNER joins drop it
+        execute("""
+                INSERT INTO trades VALUES
+                ('A', 10.0, '2024-01-01T00:00:10.000000Z'),
+                ('B', 20.0, '2024-01-01T00:00:20.000000Z'),
+                ('A', 11.0, '2024-01-01T00:00:30.000000Z'),
+                ('C', 30.0, '2024-01-01T00:00:40.000000Z')
+                """);
+        execute("INSERT INTO params VALUES ('X', '2024-01-01T00:00:01.000000Z'), ('Y', '2024-01-01T00:00:02.000000Z')");
+        execute("INSERT INTO venues VALUES ('X', 'xchg', '2024-01-01T00:00:01.500000Z'), ('Y', 'ychg', '2024-01-01T00:00:01.600000Z')");
+        execute("INSERT INTO instruments VALUES ('A', 'X', 100, '2024-01-01T00:00:02.000000Z'), ('B', 'Y', 200, '2024-01-01T00:00:03.000000Z')");
+        execute("""
+                INSERT INTO quotes VALUES
+                ('A', 9.0, '2024-01-01T00:00:00.000000Z'),
+                ('B', 19.0, '2024-01-01T00:00:00.000000Z'),
+                ('A', 9.5, '2024-01-01T00:00:09.000000Z'),
+                ('B', 19.5, '2024-01-01T00:00:19.000000Z'),
+                ('A', 10.5, '2024-01-01T00:00:25.000000Z'),
+                ('C', 29.0, '2024-01-01T00:00:35.000000Z')
+                """);
+    }
+
+    // a key clash after reorderTables moves a4.k = a0.k onto a0, see testTimeSeriesJoinAfterKeyMoveDerivesConflictingKey()
+    private void createTablesForTimeSeriesJoinKeyClash() throws SqlException {
+        execute("CREATE TABLE trades (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE accts (k INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE routes (s SYMBOL, v VARCHAR, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE books (s SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE desks (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO trades VALUES (1, '2024-01-01T00:00:10.000000Z'), (2, '2024-01-01T00:00:20.000000Z')");
+        execute("""
+                INSERT INTO quotes VALUES
+                (9.0, '2024-01-01T00:00:00.000000Z'),
+                (9.5, '2024-01-01T00:00:09.000000Z'),
+                (19.5, '2024-01-01T00:00:19.000000Z')
+                """);
+        execute("INSERT INTO accts VALUES (1, 'S1', '2023-12-01T00:00:00.000000Z'), (2, 'S2', '2023-12-01T00:00:01.000000Z')");
+        execute("INSERT INTO routes VALUES ('S1', 'S1', 1, '2023-12-01T00:00:00.000000Z'), ('S2', 'S2', 2, '2023-12-01T00:00:01.000000Z')");
+        execute("""
+                INSERT INTO books VALUES
+                ('S1', 1, '2023-12-01T00:00:00.000000Z'),
+                ('S2', 2, '2023-12-01T00:00:01.000000Z'),
+                ('S1', 2, '2023-12-01T00:00:02.000000Z')
+                """);
+        execute("INSERT INTO desks VALUES ('S1', '2023-12-01T00:00:00.000000Z'), ('S2', '2023-12-01T00:00:01.000000Z')");
+    }
+
+    private void createTablesForTransitiveJoinKeys() throws SqlException {
+        execute("CREATE TABLE a (k INT, id INT)");
+        execute("INSERT INTO a VALUES (1, 1), (2, 2)");
+        execute("CREATE TABLE c (k INT, id INT)");
+        execute("INSERT INTO c VALUES (1, 100), (3, 300)");
+        execute("CREATE TABLE d (k INT, id INT)");
+        execute("INSERT INTO d VALUES (1, 1000), (2, 2000), (3, 3000)");
     }
 
     private void testAsOfJoin0(boolean fullFatJoin) throws Exception {

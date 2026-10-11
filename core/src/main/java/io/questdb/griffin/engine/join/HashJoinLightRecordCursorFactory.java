@@ -192,7 +192,14 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    private class HashJoinRecordCursor extends AbstractJoinCursor {
+    // The hash table that a CROSS or nested loop LEFT join reading the master side of every key consults,
+    // see SqlCodeGenerator.generateJoins(). Such a master does not support random access, so the cursor
+    // does not swap the sides, and the table holds the slave keys.
+    public JoinKeyFilter getJoinKeyFilter() {
+        return cursor;
+    }
+
+    private class HashJoinRecordCursor extends AbstractJoinCursor implements JoinKeyFilter {
         private final Map joinKeyMap;
         private final JoinRecord record;
         private final LongChain slaveChain;
@@ -266,6 +273,17 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 RecordCursor cursor = swapped ? masterCursor : slaveCursor;
                 return cursor.getSymbolTable(columnIndex - columnSplit);
             }
+        }
+
+        @Override
+        public boolean hasMatch(Record record) {
+            // hasNext() builds the table before it reads the master; a swapped cursor holds the master keys
+            if (!isMapBuilt || swapped) {
+                return true;
+            }
+            final MapKey key = joinKeyMap.withKey();
+            key.put(record, masterCursorSink);
+            return key.findValue() != null;
         }
 
         @Override

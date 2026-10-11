@@ -58,10 +58,12 @@ import org.jetbrains.annotations.Nullable;
  * Same as HashOuterJoinLightRecordCursorFactory but with added filtering (for non-equality
  * or complex join conditions that use functions).
  */
-public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinRecordCursorFactory implements OuterJoinRecordSource {
 
     private final int columnSplit;
     private final JoinSymbolTableSource filterSymbolTableSource;
+    // the filter reads no slave column, so the LEFT JOIN cursor evaluates it once per master row
+    private final boolean isMasterOnlyFilter;
     private final int joinType;
     private final RecordSink masterKeySink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
@@ -85,12 +87,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             RecordSink slaveKeySink,
             int columnSplit,
             @NotNull Function filter,
+            boolean isMasterOnlyFilter,
             JoinContext joinContext,
             int joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.isMasterOnlyFilter = isMasterOnlyFilter;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
@@ -197,6 +201,12 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             Misc.free(cursor);
             throw e;
         }
+    }
+
+    // The record of the RIGHT or FULL join's cursor, see OuterJoinNullCheck.
+    @Override
+    public @Nullable Record getOuterJoinRecord() {
+        return cursor != null ? cursor.getRecord() : null;
     }
 
     @Override
@@ -317,7 +327,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
-                    if (record.hasMaster()) {
+                    if (hasMaster()) {
                         if (filter.getBool(record)) {
                             MapKey keys = matchIdsMap.withKey();
                             keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
@@ -399,6 +409,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             if (!isMapBuilt) {
                 matchIdsMap.clear();
             }
+        }
+
+        // Reads the flag hasMaster(boolean) sets: when swapped, the record's slave side holds master rows.
+        private boolean hasMaster() {
+            return swapped ? record.hasSlave() : record.hasMaster();
         }
 
         private void hasMaster(boolean value) {
@@ -492,7 +507,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 record.hasSlave(true);
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
-                    if (filter.getBool(record)) {
+                    // a master-only filter passed for this master row before the chain walk began
+                    if (isMasterOnlyFilter || filter.getBool(record)) {
                         return true;
                     }
                 }
@@ -503,12 +519,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
-                if (value != null) {
+                // A filter that reads master columns only has one value per master row, so one
+                // evaluation decides the whole chain: skip it or return every entry unfiltered.
+                if (value != null && (!isMasterOnlyFilter || isFilterTrueForMasterRow())) {
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));
                     record.hasSlave(true);
                     while (slaveChainCursor.hasNext()) {
                         slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
-                        if (filter.getBool(record)) {
+                        if (isMasterOnlyFilter || filter.getBool(record)) {
                             return true;
                         }
                     }
@@ -525,6 +543,12 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         public void toTop() {
             super.toTop();
             filter.toTop();
+        }
+
+        private boolean isFilterTrueForMasterRow() {
+            // the filter reads no slave column, so the null slave side cannot change its value
+            record.hasSlave(false);
+            return filter.getBool(record);
         }
 
         @Override

@@ -86,6 +86,9 @@ public interface PlanSink {
 
     PlanSink putColumnName(int columnIdx);
 
+    // Names the columns of the functions that the factory renders next, when they read a record
+    // other than the one of the factory. A child factory, such as the scalar sub-query of one of
+    // those functions, names its own columns. Pass null to stop.
     void setMetadata(RecordMetadata metadata);
 
     PlanSink type(CharSequence type);

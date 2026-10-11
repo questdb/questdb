@@ -202,6 +202,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void addLateralCountTemplate(QueryColumn template);
 
+    void addLateralNullCheck(ExpressionNode check, int columnType);
+
     void addLatestBy(ExpressionNode latestBy);
 
     boolean addModelAliasIndex(ExpressionNode node, int index);
@@ -317,6 +319,18 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int getJoinType();
 
     ObjList<QueryColumn> getLateralCountTemplates();
+
+    // The type of the column that each of getLateralNullChecks() reads
+    IntList getLateralNullCheckTypes();
+
+    // Filter conjuncts that read NULL_REJECTING_PROBE_COLUMN instead of a column, which the code
+    // generator evaluates once per execution on the NULL of the column type, failing the query when
+    // one is true; see LateralJoinRewriter.runtimeNullCheckOperand()
+    ObjList<ExpressionNode> getLateralNullChecks();
+
+    // The filter conjuncts of a RIGHT or FULL join model whose null rejection the code generator
+    // decides, or null; see LateralJoinRewriter.deferNullRejection()
+    LateralNullRejection getLateralNullRejection();
 
     ObjList<ExpressionNode> getLatestBy();
 
@@ -501,6 +515,11 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
      */
     ExpressionNode getLateralCountCoalesceGuard();
 
+    // True for a LEFT join without join keys that may run after the RIGHT and FULL joins with join keys
+    // written after it, see SqlOptimiser.constrainRightAndFullJoinsAfterPrefix(). Run there, it returns a
+    // row that such a join NULL-extends once, with NULL in its own columns, see OuterJoinNullCheck.
+    boolean isMovableAfterOuterJoins();
+
     boolean isNestedModelIsSubQuery();
 
     boolean isOptimisable();
@@ -613,6 +632,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired);
 
+    void setLateralNullRejection(LateralNullRejection lateralNullRejection);
+
     void setLatestByType(int latestByType);
 
     void setLimit(ExpressionNode lo, ExpressionNode hi);
@@ -626,6 +647,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setModelPosition(int modelPosition);
 
     void setModelType(int modelType);
+
+    void setMovableAfterOuterJoins(boolean movableAfterOuterJoins);
 
     void setNestedModel(IQueryModel nestedModel);
 
