@@ -4635,6 +4635,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (cast != null) {
                                     fillValues.setQuick(fillIdx, cast);
                                     fillFunc = cast;
+                                } else {
+                                    throw SqlException.$(fillExpr.position,
+                                                    "fill value of type ").put(ColumnType.nameOf(fillType))
+                                            .put(" cannot be cast to column of type ")
+                                            .put(ColumnType.nameOf(targetColType));
                                 }
                             }
                             if (fillFunc.isNonDeterministic()) {
