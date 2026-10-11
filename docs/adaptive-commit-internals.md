@@ -632,6 +632,14 @@ change reads as unverified, never as torn, and a released binary ignores the new
 - **Version 2 sequencer log.** Each 60-byte record carries a checksum of its first 52 bytes in its 8 reserved
   bytes. A stored 0 reads unverified; a mismatch fails the read with `torn sequencer txnlog record [txn=...,
   ...]`. A new log's header also carries a capability marker at offset 24, which nothing reads yet.
+- **Version 2 sequencer log: the torn tail (`adaptive` only).** The header keeps, at offset 40, the first transaction
+  a completed flush may not have covered. Only an `adaptive` node that keeps the log durable itself moves it, after a
+  flush of the part and the header, so every record at or above it was written by this release with a checksum. An
+  `adaptive` open scans from it (no lower than the last part's first transaction) to `maxTxn` and cuts before the
+  first record whose checksum is 0 or does not match (`dropping torn sequencer txnlog tail [...]`); a record below it
+  is never cut. The open also zeroes the part past the tail (`TableTransactionLogV2.recoverTail`, `zeroPastTail`).
+  A field of 0 trusts every record: an older log, a log another mode wrote, or one a replica's downloader appends to
+  (Enterprise clears the field when its downloader advances `maxTxn`, and a replica's first open clears it too).
 - **Version 1 sequencer log: the zero tail.** A V1 log has no room for a checksum. Instead, an open scans the records
   after a hint kept in the header (offset 40: the first transaction a completed flush may not have covered) and cuts
   the tail at the first record that cannot be whole (zero WAL id, zero timestamp, a gap in the structure version): it
