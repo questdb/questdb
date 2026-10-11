@@ -732,9 +732,17 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         private final AtomicInteger flushCount = new AtomicInteger();
         private final IntList firstFlushOfEachPath = new IntList();
         private final HashSet<String> paths = new HashSet<>();
+        private volatile long errnoThreadId = -1;
         private volatile int failAt = -1;
         private volatile Throwable injection;
         private volatile boolean isCounting;
+
+        @Override
+        public int errno() {
+            // An injected failure returned -1 without a syscall, so the thread's errno is stale: report EIO, never
+            // a transient code a caller would retry or skip.
+            return Thread.currentThread().threadId() == errnoThreadId ? EIO : super.errno();
+        }
 
         @Override
         public void fdatasync(long fd) {
@@ -773,6 +781,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public int sync() {
             if (shouldFail()) {
+                errnoThreadId = Thread.currentThread().threadId();
                 return -1;
             }
             return super.sync();
@@ -781,6 +790,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public int syncFileRange(long fd, long offset, long nbytes, int flags) {
             if (shouldFail()) {
+                errnoThreadId = Thread.currentThread().threadId();
                 return -1;
             }
             return super.syncFileRange(fd, offset, nbytes, flags);
@@ -795,6 +805,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         }
 
         void arm(int failAt) {
+            errnoThreadId = -1;
             flushCount.set(0);
             firstFlushOfEachPath.clear();
             paths.clear();
@@ -804,6 +815,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         }
 
         void disarm() {
+            errnoThreadId = -1;
             isCounting = false;
         }
 
