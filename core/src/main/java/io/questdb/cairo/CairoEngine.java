@@ -4397,8 +4397,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                             configuration,
                                             tableToken,
                                             timestampType,
-                                            struct.getPartitionBy(),
-                                            configuration.getMicrosecondClock().getTicks() / 1000L
+                                            struct.getPartitionBy()
                                     );
                                 } catch (Throwable e) {
                                     if (CairoException.isDataSyncFailure(e)) {

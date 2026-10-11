@@ -3990,14 +3990,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // This path takes no scoreboard pin. The only anchor an unenrolled table can have at its live cut is the
         // creation baseline at txn 0, which references no partitions; every other caller already holds a pin
         // (recovery's, or one this writer published) or is releasing it (the exit).
-        if (adaptiveBaselineValidAtLiveCut()) {
+        if (isAdaptiveBaselineValidAtLiveCut()) {
             return;
         }
         // Enrolment establishes the anchor, so the replica and demotion cadence gate must not suppress it:
         // otherwise a checkpoint restore or a metadata publication could leave an adaptive table without a
         // save point on the next restart.
         advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L, true);
-        if (!adaptiveBaselineValidAtLiveCut()) {
+        if (!isAdaptiveBaselineValidAtLiveCut()) {
             throw CairoException.critical(0)
                     .put("could not publish adaptive enrollment baseline [table=").put(tableToken.getTableName())
                     .put(", seqTxn=").put(getSeqTxn()).put(", txn=").put(getTxn()).put(']');
@@ -4009,7 +4009,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * and a binding manifest that validates against the live column and metadata versions. A publish flushes
      * the materialized state before it records itself, so true means the state at the live cut is durable.
      */
-    private boolean adaptiveBaselineValidAtLiveCut() {
+    private boolean isAdaptiveBaselineValidAtLiveCut() {
         final long expectedSeqTxn = getSeqTxn();
         final long expectedTxn = getTxn();
         boolean valid = false;
@@ -4051,7 +4051,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void reapplyColumnCommitMode(int commitMode) {
         final boolean adaptive = commitMode == CommitMode.ADAPTIVE;
-        final boolean applyLazy = !appliesColumnSync(commitMode);
+        final boolean applyLazy = !CommitMode.appliesColumnSync(commitMode);
         txWriter.setCommitMode(commitMode);
         if (columnVersionWriter != null) {
             columnVersionWriter.setCommitMode(commitMode);
@@ -6271,7 +6271,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Under ADAPTIVE the partition columns are a cache of the WAL that the epoch and recovery make durable,
         // so their append-page-release msync is skipped (lazy apply). The other modes keep applyLazy false.
-        final boolean applyLazyColumns = !appliesColumnSync(effectiveCommitMode);
+        final boolean applyLazyColumns = !CommitMode.appliesColumnSync(effectiveCommitMode);
         if (type > 0) {
             dataMem = Vm.getPMARInstance(configuration);
             dataMem.setApplyLazy(applyLazyColumns);
@@ -12998,12 +12998,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, parquetFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
-            if (cleanupError != null) {
-                if (cleanupError instanceof Error) {
-                    throw (Error) cleanupError;
-                }
-                throw (RuntimeException) cleanupError;
-            }
+            CairoException.rethrowCleanupFailure(cleanupError);
         }
         return parquetRowCount;
     }
@@ -16085,17 +16080,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * The apply-path column-sync gate: an alias for {@link CommitMode#appliesColumnSync(int)}, which
-     * {@code O3CopyJob}'s destination-column sync shares. True only for SYNC and ASYNC: ADAPTIVE applies
-     * lazily, and the epoch and recovery make the columns durable.
-     */
-    private static boolean appliesColumnSync(int commitMode) {
-        return CommitMode.appliesColumnSync(commitMode);
-    }
-
-    /**
      * The commit mode for an apply-path column-data sync: the writer's mode when
-     * {@link #appliesColumnSync(int)} is true, otherwise {@link CommitMode#NOSYNC}. The partition split
+     * {@link #CommitMode.appliesColumnSync(int)} is true, otherwise {@link CommitMode#NOSYNC}. The partition split
      * and squash sites pass it to {@link io.questdb.cairo.frm.FrameAlgebra#append}, so those column writes
      * skip their msync and fsync under ADAPTIVE (lazy apply), as the O3 path does, while the structural
      * effects of the split or squash, recorded in {@code _txn} and {@code _cv}, stay as durable as the
@@ -16105,7 +16091,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // This writer's own grade, not the raw global mode: a table held at SYNC pending adaptive
         // enrolment must flush its split/squash column writes even though the instance runs ADAPTIVE.
         final int commitMode = effectiveCommitMode;
-        return appliesColumnSync(commitMode) ? commitMode : CommitMode.NOSYNC;
+        return CommitMode.appliesColumnSync(commitMode) ? commitMode : CommitMode.NOSYNC;
     }
 
     private void syncColumns() {
@@ -16130,8 +16116,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         // ADAPTIVE skips this block: the WAL is durable, so the partition columns are a cache that
-        // recovery rebuilds, and the apply side needs no flush. See appliesColumnSync().
-        if (appliesColumnSync(commitMode)) {
+        // recovery rebuilds, and the apply side needs no flush. See CommitMode.appliesColumnSync().
+        if (CommitMode.appliesColumnSync(commitMode)) {
             // Per-file sync(async) for SYNC and ASYNC commits. The batched kick, drain and syncfs
             // passes (syncColumnsBatchedSync()) serve only the adaptive durable epoch, which flushes
             // the whole filesystem whatever the commit mode (see fsyncMaterializedState()).
@@ -16167,12 +16153,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * The Linux batched column and symbol flush of the adaptive durable epoch ({@link #fsyncMaterializedState()}).
-     * Three passes over the same data-before-aux traversal (columns first, then symbol writers):
+     * Four steps over the same data-before-aux traversal (columns first, then symbol writers):
      * <ol>
-     *   <li>kick: msync(MS_ASYNC) every dirty mem's written range, which pushes mmap-dirty pages to the page
-     *       cache, where the following sync_file_range sees them. No device flush, no watermark advance.</li>
-     *   <li>drain: sync_file_range(WRITE | WAIT_AFTER) every mem, which writes the dirty range back to the
-     *       device cache and waits, so the content is there before the syncfs flushes it.</li>
+     *   <li>kick: sync_file_range(WRITE) every mem's written range, which starts its writeback and returns. No
+     *       device flush, no watermark advance.</li>
+     *   <li>drain: sync_file_range(WRITE | WAIT_AFTER) every mem, which waits for that writeback and throws a
+     *       writeback error as a data-sync failure.</li>
      *   <li>syncfs: one syncfs(fd) over the table's filesystem, the single device flush that makes every drained
      *       column durable and journals each column inode's pending ext4 unwritten-to-written extent conversions
      *       and size in the same journal commit. A device flush through _cv's msync(MS_SYNC) persists the column
@@ -16181,12 +16167,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *   <li>finish-if-extended: watermark bookkeeping only. syncfs journaled every column's size and extents, so
      *       each mem advances its lastSynced* watermark to the durable size without an fdatasync.</li>
      * </ol>
-     * The passes let kernel writeback proceed in parallel across files between the kicks and the waits; kicks
-     * and drains are order-free. The caller then makes _cv and then _txn durable, so the visibility pointer
-     * becomes durable only after everything it exposes.
+     * Every file's writeback is started before the first wait, so the writebacks overlap; kicks and drains are
+     * order-free. They are never the barrier: the syncfs alone writes back and flushes every dirty page of the
+     * filesystem. The caller then makes _cv and then _txn durable, so the visibility pointer becomes durable
+     * only after everything it exposes.
      */
     private void syncColumnsBatchedSync() {
-        // Pass 1: kick all columns (data before aux), then all symbol writers.
+        // Pass 1: start writeback of all columns (data before aux), then all symbol writers.
         for (int i = 0; i < columnCount; i++) {
             final MemoryMA m1 = columns.getQuick(i * 2);
             m1.syncFlushKick();
@@ -16198,7 +16185,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
             denseSymbolMapWriters.getQuick(i).syncFlushKick();
         }
-        // Pass 2: drain all (writeback to the device cache, then wait). Order-free.
+        // Pass 2: wait for all of it to reach the device cache. Order-free.
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).syncFlushDrain();
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);

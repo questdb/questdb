@@ -143,7 +143,7 @@ public class WalMultiWriterCommitBenchmark {
     @Param({"0"})
     public long groupWindowUs;
 
-    // ---- Benchmark-scope shared state (ONE engine, WRITER_COUNT tables) ----
+    // Benchmark-scope shared state: one engine, WRITER_COUNT tables.
     private String dbRoot;
     private CairoEngine engine;
     private int symbolColIndex;

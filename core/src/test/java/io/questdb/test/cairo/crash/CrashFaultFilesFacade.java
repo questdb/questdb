@@ -34,8 +34,10 @@ import java.util.stream.Stream;
  * <h3>Content and device-flush model</h3>
  * Alongside the size model, a content model tracks, per file:
  * <ul>
- *   <li>{@code pteFlushed}: whether the file's mmap-dirty pages have been pushed to the page cache via msync
- *       since it became mappable, so {@code sync_file_range} can see them;</li>
+ *   <li>{@code pteFlushed}: whether the model has seen an msync of the file since it became mappable. The model
+ *       lets {@code sync_file_range} write back only such a file. Linux tracks mmap-dirty pages from the write
+ *       fault and writes them back without an msync, so this under-states {@code sync_file_range}, which is safe:
+ *       the product never relies on it for durability;</li>
  *   <li>{@code deviceCacheContent}: the bytes written back to the device's volatile cache, pending a device
  *       flush. A whole-file sync ({@code fsync}, {@code fdatasync}, {@code syncfs}) writes back the whole current
  *       image; a ranged one ({@code msync(MS_SYNC)}, {@code sync_file_range}) only its range, so a page dirtied
@@ -124,8 +126,8 @@ import java.util.stream.Stream;
  * <ul>
  *   <li>{@code write}/{@code append} are intercepted only to advance {@code writtenDataEnd}; they do not clear
  *       {@code pteFlushed}, so a write after an msync does not re-mark the mapping un-flushed. The batched flush
- *       never writes between its msync and its {@code sync_file_range}, and the self-tests exercise the
- *       un-msync'd path on fresh files only. mmap stores (the tests' {@code Unsafe.setMemory}) are not
+ *       issues no msync of its own before its {@code sync_file_range}, so the model often treats it as a no-op,
+ *       and the self-tests exercise the un-msync'd path on fresh files only. mmap stores (the tests' {@code Unsafe.setMemory}) are not
  *       {@code write} calls, so msync normally declares a mapping's written end. syncfs snapshots the full current
  *       image, because it writes dirty pages back even after their mapping is gone. A whole-file
  *       {@code fsync}/{@code fdatasync} also counts non-zero bytes past the declared end as written: it writes
@@ -732,9 +734,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         String p = pathForAddr(addr);
         if (p != null) {
             track(p);
-            // msync pushes this mapping's dirty pages to the page cache, where sync_file_range can see them, and
-            // declares the msync'd range written. Paged memory (MemoryPMARImpl) msyncs a page-relative len at a
-            // non-zero file offset, so the file-absolute written end is mapFileOffset(addr)+len.
+            // msync marks the file pteFlushed (see the class comment) and declares the msync'd range written. Paged
+            // memory (MemoryPMARImpl) msyncs a page-relative len at a non-zero file offset, so the file-absolute
+            // written end is mapFileOffset(addr)+len.
             final long fileEnd = mapFileOffset(addr) + len;
             pteFlushed.put(p, Boolean.TRUE);
             advanceWrittenDataEnd(p, fileEnd);
@@ -772,8 +774,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 advanceWrittenDataEnd(p, offset + nbytes);
                 advanceSyncedDataEnd(p, offset + nbytes);
             }
-            // Not pteFlushed: no-op. sync_file_range cannot see mmap-dirty pages the kernel does not yet track as dirty
-            // in the page cache (never msync'd or written with write()).
+            // Not pteFlushed: no-op, a deliberate under-statement (see the class comment): Linux would write the
+            // mmap-dirty pages back, but the product never relies on sync_file_range for durability.
         }
         return rc;
     }

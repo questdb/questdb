@@ -101,7 +101,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp(
                     "create table osq as (" +
                             "select cast(x as int) i," +
-                            " timestamp_sequence('2024-02-01T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " timestamp_sequence('2024-02-01T00', 60 * 1_000_000L)::#TIMESTAMP ts" +
                             " from long_sequence(600)" +
                             ") timestamp (ts) partition by DAY WAL",
                     timestampType.getTypeName()
@@ -110,7 +110,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             // A later day, so the squash target is never the last partition.
             executeWithRewriteTimestamp(
                     "insert into osq select cast(x as int) i," +
-                            " timestamp_sequence('2024-02-02T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " timestamp_sequence('2024-02-02T00', 60 * 1_000_000L)::#TIMESTAMP ts" +
                             " from long_sequence(60)",
                     timestampType.getTypeName()
             );
@@ -120,7 +120,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             for (int round = 0; round < 3; round++) {
                 executeWithRewriteTimestamp(
                         "insert into osq select cast(9000 + x as int) i," +
-                                " timestamp_sequence('2024-02-01T05:00', 1000000L)::#TIMESTAMP ts" +
+                                " timestamp_sequence('2024-02-01T05:00', 1_000_000L)::#TIMESTAMP ts" +
                                 " from long_sequence(50)",
                         timestampType.getTypeName()
                 );

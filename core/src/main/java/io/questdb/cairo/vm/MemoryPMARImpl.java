@@ -98,15 +98,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
                 closeError = th;
             }
         }
-        if (closeError != null) {
-            if (closeError instanceof Error) {
-                throw (Error) closeError;
-            }
-            if (closeError instanceof RuntimeException) {
-                throw (RuntimeException) closeError;
-            }
-            throw new CairoException().put("could not close memory [msg=").put(closeError.getMessage()).put(']');
-        }
+        CairoException.rethrowCleanupFailure(closeError);
     }
 
     @Override
@@ -212,34 +204,11 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void syncFlushKick() {
-        // Batched flush, stage 1: msync(MS_ASYNC) the dirty bytes of the mapped page into the page cache, so
-        // the following sync_file_range sees them. The range selection matches sync(); no fdatasync.
-        if (pageAddress != 0) {
-            if (appendOnly) {
-                final long inPageWritten = inPageWritten();
-                if (inPageWritten > 0) {
-                    ff.msync(pageAddress, inPageWritten, true);
-                }
-            } else {
-                ff.msync(pageAddress, getPageSize(), true);
-            }
-        }
-    }
-
-    @Override
     public void syncFlushDrain() {
-        // Batched flush, stage 2: sync_file_range(WRITE | WAIT_AFTER) writes the dirty bytes of the current
-        // page back to the device cache and waits; no device flush. The page sits at file offset
-        // pageOffset(mappedPage), so the range is [pageStart, pageStart + dirtyLen). WAIT_AFTER is required,
-        // as in MemoryCMARWImpl.
-        if (pageAddress != 0) {
-            final long pageStart = pageOffset(mappedPage);
-            final long dirtyLen = appendOnly ? inPageWritten() : getPageSize();
-            if (dirtyLen > 0 && ff.syncFileRange(fd, pageStart, dirtyLen, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER) != 0) {
-                throw CairoException.dataSyncFailure(ff.errno(), "sync_file_range").put("could not sync_file_range [fd=").put(fd).put(']');
-            }
-        }
+        // Batched flush, stage 2: sync_file_range(WRITE | WAIT_AFTER) waits for the writeback stage 1 started
+        // and writes back anything it left; no device flush. Waiting reports a writeback error, as in
+        // MemoryCMARWImpl.
+        syncFlushRange(Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
     }
 
     @Override
@@ -249,6 +218,13 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         // in one device flush. Unlike MemoryCMARWImpl there is no watermark to advance: sync() recomputes the
         // dirty range from the live append offset and never skips. A skip fast path would need a watermark
         // advanced here, never in syncFlushKick() or syncFlushDrain().
+    }
+
+    @Override
+    public void syncFlushKick() {
+        // Batched flush, stage 1: sync_file_range(WRITE) starts writeback of the current page's dirty bytes and
+        // returns, so every file's writeback runs at once before stage 2 waits. No device flush.
+        syncFlushRange(Files.SYNC_FILE_RANGE_WRITE);
     }
 
     @Override
@@ -283,6 +259,18 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
         final long pageSize = getPageSize();
         return inPageWritten > pageSize ? pageSize : inPageWritten;
+    }
+
+    // The page sits at file offset pageOffset(mappedPage), so the range is [pageStart, pageStart + dirtyLen),
+    // the bytes sync() selects.
+    private void syncFlushRange(int flags) {
+        if (pageAddress != 0) {
+            final long pageStart = pageOffset(mappedPage);
+            final long dirtyLen = appendOnly ? inPageWritten() : getPageSize();
+            if (dirtyLen > 0 && ff.syncFileRange(fd, pageStart, dirtyLen, flags) != 0) {
+                throw CairoException.dataSyncFailure(ff.errno(), "sync_file_range").put("could not sync_file_range [fd=").put(fd).put(']');
+            }
+        }
     }
 
     @Override

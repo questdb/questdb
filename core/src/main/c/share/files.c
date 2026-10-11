@@ -358,9 +358,9 @@ extern int sync_file_range(int fd, off_t offset, off_t nbytes, unsigned int flag
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
 #if defined(__linux__)
-    /* Starts writeback of the page cache over [offset, offset+nbytes) to the device's cache, without a
-     * device flush; durability needs a following device flush. It acts only on pages the kernel knows are
-     * dirty, so mmap-dirtied pages must be msynced (or written with write()) first. */
+    /* Starts, and with SYNC_FILE_RANGE_WAIT_AFTER waits for, writeback of the page cache over
+     * [offset, offset+nbytes) to the device's cache, without a device flush; durability needs a following
+     * device flush. Pages dirtied through a shared mapping count without an msync first. */
     return sync_file_range((int) fd, offset, nbytes, (unsigned) flags);
 #else
     /* No equivalent primitive: a no-op returning 0. Callers must not rely on it for durability. */

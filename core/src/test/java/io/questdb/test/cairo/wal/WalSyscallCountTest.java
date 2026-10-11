@@ -165,7 +165,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         final CountingFacade ff = new CountingFacade();
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x VALUES (1000000, 1)");
+            execute("INSERT INTO x VALUES (1_000_000, 1)");
             drainWalQueue();
             for (int i = 0; i < WARMUP + MEASURED; i++) {
                 ff.start(i >= WARMUP);
@@ -212,7 +212,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             engine.releaseInactive();
             engine.getTableSequencerAPI().releaseAll();
             // Reopen the sequencer and a WAL writer: a file written only on open must show up too.
-            execute("INSERT INTO x (ts, v) VALUES (5000000, 4)");
+            execute("INSERT INTO x (ts, v) VALUES (5_000_000, 4)");
             drainWalQueue();
             engine.releaseInactive();
             engine.getTableSequencerAPI().releaseAll();
@@ -245,7 +245,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x VALUES (1000000, 1)");
+            execute("INSERT INTO x VALUES (1_000_000, 1)");
             drainWalQueue();
             try (TableWriter writer = getWriter("x")) {
                 // A writer's first save point also flushes every partition; the test counts the next one.

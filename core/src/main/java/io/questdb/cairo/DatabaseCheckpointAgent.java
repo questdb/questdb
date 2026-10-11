@@ -1038,10 +1038,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    boolean hasRecoveredCheckpoint() {
-        return recoveredCheckpoint;
-    }
-
     void completeRecovery() {
         if (!recoveredCheckpoint || recoveredCheckpointDir == null) {
             return;

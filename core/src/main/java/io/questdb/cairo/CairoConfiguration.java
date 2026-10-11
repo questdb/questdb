@@ -1269,7 +1269,7 @@ public interface CairoConfiguration {
     int getWriterTickRowsCountMod();
 
     /**
-     * Whether the adaptive durable epoch batches its column flushes (start writeback of every column, drain
+     * Whether the adaptive durable epoch batches its column flushes (start writeback of every column, wait for
      * it, then one {@code syncfs}) instead of flushing each file with {@code msync(MS_SYNC)}, which is slower
      * but durable on every filesystem. Controlled by {@code cairo.adaptive.epoch.column.sync.batched}.
      *
@@ -1289,10 +1289,10 @@ public interface CairoConfiguration {
     /**
      * Whether an ADAPTIVE WAL commit drains writeback across its whole segment before taking barriers.
      * <p>
-     * The commit msyncs every column and {@code _event} file to the page cache and then {@code fdatasync}s
-     * each one, and each fdatasync does writeback and a journal force serially. One
-     * {@code sync_file_range(WRITE|WAIT_AFTER)} pass between the two lets the device write all files back
-     * concurrently, which leaves the fdatasyncs little more than the journal force.
+     * The commit {@code fdatasync}s every column and {@code _event} file, and each fdatasync does writeback and
+     * a journal force serially. Starting every file's writeback first ({@code sync_file_range(WRITE)}) and then
+     * waiting on each ({@code WRITE|WAIT_AFTER}) lets the device write all files back concurrently, which leaves
+     * the fdatasyncs little more than the journal force.
      * <p>
      * The pass is advisory: {@code sync_file_range} journals no metadata, so it is never the barrier. Every
      * file still gets its own {@code fdatasync}, which journals the extent conversions of an

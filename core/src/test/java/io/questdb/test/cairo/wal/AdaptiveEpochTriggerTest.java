@@ -51,13 +51,13 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 500);
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into x select timestamp_sequence(0, 1000000L), x from long_sequence(10)");
+            execute("insert into x select timestamp_sequence(0, 1_000_000L), x from long_sequence(10)");
             drainWalQueue();
             long floorAfterFirst = durableEpoch("x");
             Assert.assertTrue("first-batch epoch should advance the floor", floorAfterFirst > 0);
 
             // 600 rows (> cap 500) with an effectively infinite interval -> only the cap can fire.
-            execute("insert into x select timestamp_sequence(100000000000L, 1000000L), x from long_sequence(600)");
+            execute("insert into x select timestamp_sequence(100_000_000_000L, 1_000_000L), x from long_sequence(600)");
             drainWalQueue();
             long floorAfterCap = durableEpoch("x");
             Assert.assertTrue(
@@ -75,11 +75,11 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0); // cap disabled
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into x select timestamp_sequence(0, 1000000L), x from long_sequence(10)");
+            execute("insert into x select timestamp_sequence(0, 1_000_000L), x from long_sequence(10)");
             drainWalQueue();
             long floorAfterFirst = durableEpoch("x");
 
-            execute("insert into x select timestamp_sequence(100000000000L, 1000000L), x from long_sequence(600)");
+            execute("insert into x select timestamp_sequence(100_000_000_000L, 1_000_000L), x from long_sequence(600)");
             drainWalQueue();
             long floorAfterBacklog = durableEpoch("x");
             Assert.assertEquals(
@@ -96,23 +96,23 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 500);
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into x select timestamp_sequence(0, 1000000L), x from long_sequence(10)");
+            execute("insert into x select timestamp_sequence(0, 1_000_000L), x from long_sequence(10)");
             drainWalQueue();
             long floor1 = durableEpoch("x");
 
-            execute("insert into x select timestamp_sequence(100000000000L, 1000000L), x from long_sequence(600)");
+            execute("insert into x select timestamp_sequence(100_000_000_000L, 1_000_000L), x from long_sequence(600)");
             drainWalQueue();
             long floor2 = durableEpoch("x");
             Assert.assertTrue("cap should fire epoch #2", floor2 > floor1);
 
             // 300 < cap, counter reset after epoch #2 -> no epoch (else cumulative 600+300 would fire).
-            execute("insert into x select timestamp_sequence(200000000000L, 1000000L), x from long_sequence(300)");
+            execute("insert into x select timestamp_sequence(200_000_000_000L, 1_000_000L), x from long_sequence(300)");
             drainWalQueue();
             long floor3 = durableEpoch("x");
             Assert.assertEquals("counter reset: 300 < cap must not fire", floor2, floor3);
 
             // 300 more -> 600 since epoch #2 >= cap -> epoch #3.
-            execute("insert into x select timestamp_sequence(300000000000L, 1000000L), x from long_sequence(300)");
+            execute("insert into x select timestamp_sequence(300_000_000_000L, 1_000_000L), x from long_sequence(300)");
             drainWalQueue();
             long floor4 = durableEpoch("x");
             Assert.assertTrue("crossing the cap again should fire epoch #3", floor4 > floor2);
@@ -126,11 +126,11 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1_000_000_000L); // cap never hit
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into x select timestamp_sequence(0, 1000000L), x from long_sequence(10)");
+            execute("insert into x select timestamp_sequence(0, 1_000_000L), x from long_sequence(10)");
             drainWalQueue();
             long floor1 = durableEpoch("x");
 
-            execute("insert into x select timestamp_sequence(100000000000L, 1000000L), x from long_sequence(10)");
+            execute("insert into x select timestamp_sequence(100_000_000_000L, 1_000_000L), x from long_sequence(10)");
             drainWalQueue();
             long floor2 = durableEpoch("x");
             Assert.assertTrue("interval=0 must still epoch every batch (time path intact)", floor2 > floor1);
@@ -148,12 +148,12 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);                // no cap-based re-fire
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into x select timestamp_sequence(0, 1000000L), x from long_sequence(10)");
+            execute("insert into x select timestamp_sequence(0, 1_000_000L), x from long_sequence(10)");
             drainWalQueue();
             Assert.assertTrue("first-batch epoch should advance the floor", durableEpoch("x") > 0);
 
             // A second applied batch with no time/cap trigger leaves a committed-but-un-epoched tail.
-            execute("insert into x select timestamp_sequence(100000000000L, 1000000L), x from long_sequence(10)");
+            execute("insert into x select timestamp_sequence(100_000_000_000L, 1_000_000L), x from long_sequence(10)");
             drainWalQueue();
             final long frontier = committedSeqTxn("x");
             Assert.assertTrue(
@@ -182,12 +182,12 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into x select timestamp_sequence(0, 1000000L), x from long_sequence(10)");
+            execute("insert into x select timestamp_sequence(0, 1_000_000L), x from long_sequence(10)");
             drainWalQueue();
             final long floorAfterFirst = durableEpoch("x");
             Assert.assertTrue("first-batch epoch should advance the floor", floorAfterFirst > 0);
 
-            execute("insert into x select timestamp_sequence(100000000000L, 1000000L), x from long_sequence(10)");
+            execute("insert into x select timestamp_sequence(100_000_000_000L, 1_000_000L), x from long_sequence(10)");
             drainWalQueue();
             final long frontier = committedSeqTxn("x");
             Assert.assertTrue("precondition: an un-epoched tail must exist", durableEpoch("x") < frontier);

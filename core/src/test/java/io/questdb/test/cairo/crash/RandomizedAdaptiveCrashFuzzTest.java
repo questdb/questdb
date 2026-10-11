@@ -306,7 +306,6 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             if (n > hardLimit) {
                 LOG.info().$("[seed] REJECTED seed ").$(s0).$("L, ").$(s1)
                         .$("L: N=").$(n).$(" > hard limit ").$(hardLimit).$(" — redrawing").I$();
-                System.out.printf("[seed] REJECTED %dL, %dL: N=%d > hardLimit=%d — redrawing%n", s0, s1, n, hardLimit);
                 return null;
             }
             final int cap = Math.max(capFloor, n);
@@ -553,7 +552,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                 // replace-range insert over a Parquet partition, which is unsupported), not a durability defect.
                 // Redraw rather than sweep it: every crash point would fail on that condition. Logged, so a generator
                 // that starts producing these constantly is visible.
-                System.out.printf("[seed] REJECTED %dL, %dL: %s%n", seed[0], seed[1], notTestable.getMessage());
+                final String reason = notTestable.getMessage();
+                LOG.info().$("[seed] REJECTED seed ").$(seed[0]).$("L, ").$(seed[1]).$("L: ").$(reason).I$();
                 Assert.assertNotNull("a PINNED seed produced a workload that cannot be crash-tested; fix the "
                                 + "seed or the fuzz probabilities rather than redrawing: " + notTestable.getMessage(),
                         redraw);
@@ -566,8 +566,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         }
         Assert.assertNotNull("no seed under the N<=" + SWEEP_CAP_HARD_LIMIT + " hard limit after "
                 + SEED_DRAW_ATTEMPTS + " draws — the op library got much heavier; re-check the limit", r);
-        System.out.printf("[seed] PASSED with seeds %dL, %dL (N=%d, swept=%d)%n",
-                seed[0], seed[1], r.n, r.sweptPoints);
+        LOG.info().$("[seed] PASSED with seeds ").$(seed[0]).$("L, ").$(seed[1]).$("L (N=").$(r.n)
+                .$(", swept=").$(r.sweptPoints).I$();
     }
 
     @FunctionalInterface

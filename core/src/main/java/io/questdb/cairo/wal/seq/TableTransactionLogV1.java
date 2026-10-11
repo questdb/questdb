@@ -378,8 +378,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private void sync0() {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
-            // With a group window, ADAPTIVE pushes the header to the page cache with MS_ASYNC and leaves the
-            // device flush to the batched flush (fdatasyncTxnLog). Other modes keep their own grade.
+            // With a group window, ADAPTIVE msyncs the header with MS_ASYNC, which flushes nothing, and leaves
+            // the device flush to the batched flush (fdatasyncTxnLog). Other modes keep their own grade.
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
             txnMem.sync(commitMode == CommitMode.ASYNC || deferDeviceFlush);

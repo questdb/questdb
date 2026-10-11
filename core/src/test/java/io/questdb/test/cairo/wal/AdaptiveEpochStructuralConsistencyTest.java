@@ -42,7 +42,7 @@ import org.junit.Test;
  * A durable epoch must never be published from a writer that is part-way through a structural change. Recovery
  * restores the save point's copies of {@code _meta} and {@code _txn} together, so their symbol columns must agree.
  * {@code TableWriter.changeColumnType} to SYMBOL creates the new map writer before it publishes the column to
- * {@code _meta}; an epoch cut in that window would pass {@code RecoveryCoordinator.epochCopiesValid} and restore a
+ * {@code _meta}; an epoch cut in that window would pass {@code RecoveryCoordinator.areEpochCopiesValid} and restore a
  * table that WAL apply rejects. The test converts a column of a parquet partition to SYMBOL and checks the
  * published save point directly. The cut is best-effort, so the assertion applies only when an epoch exists.
  */

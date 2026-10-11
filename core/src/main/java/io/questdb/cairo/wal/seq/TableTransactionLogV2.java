@@ -366,7 +366,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             // sync can leave maxTxn=N pointing at a zeroed or partial record. ASYNC promises nothing across a
             // power loss, and its MS_ASYNC orders nothing, so it syncs the header alone.
             //
-            // With a group window, ADAPTIVE pushes the files to the page cache with MS_ASYNC and leaves the
+            // With a group window, ADAPTIVE msyncs the files with MS_ASYNC, which flushes nothing, and leaves the
             // device flush to the batched flush (fdatasyncTxnLog). localDurableSeqTxn advances only after that
             // flush, so a durably acknowledged txn is on the device. Other modes keep their own grade.
             final boolean deferDeviceFlush = isDeviceFlushDeferred();
@@ -388,8 +388,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public void fdatasyncTxnLog() {
-        // The batched device flush of adaptive group commit, part file before the header as in sync0(). The
-        // msync in sync0() has already pushed the bytes to the page cache.
+        // The batched device flush of adaptive group commit, part file before the header as in sync0().
         if (txnPartMem.isOpen()) {
             ff.fdatasync(txnPartMem.getFd());
         }
