@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.WalUtils;
@@ -38,8 +38,6 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.griffin.SqlException;
-import io.questdb.log.Log;
-import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -116,17 +114,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
 
     @Test
     public void testFailedDeviceFlushStopsTheEngine() throws Exception {
-        assertFailedFlushStopsTheEngine(DropFailure.NONE);
-    }
-
-    @Test
-    public void testFailedDeviceFlushStopsTheEngineWhenTheTableDirectoryIsNotRemoved() throws Exception {
-        assertFailedFlushStopsTheEngine(DropFailure.DIRECTORY_NOT_REMOVED);
-    }
-
-    @Test
-    public void testFailedDeviceFlushStopsTheEngineWhenTheTableIsInUse() throws Exception {
-        assertFailedFlushStopsTheEngine(DropFailure.TABLE_IN_USE);
+        assertFailedFlushStopsTheEngine();
     }
 
     @Test
@@ -319,7 +307,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                     frozen.set(false);
                     freezeAt.set(-1);
                     txnWrittenBack.set(variant == 1);
-                    startRound(k > -1);
+                    startRound(k > -1, true);
                     final int powerLossAfter = k;
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
                         importer.of("t", "t.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -364,30 +352,22 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         });
     }
 
-    private void assertFailedFlushStopsTheEngine(DropFailure dropFailure) throws Exception {
+    private void assertFailedFlushStopsTheEngine() throws Exception {
         // syncfs reports a write-back error of any file on the filesystem, so a failed device flush may belong to
         // another table: in SYNC, and in ADAPTIVE for a WAL table, the engine must stop, whichever flush that makes
-        // the imported partitions live and durable fails. The drop of a created table, or the truncate of an existing
-        // one, is a best effort before the stop: the engine must stop whether the drop succeeds or fails.
+        // the imported partitions live and durable fails. It stops at the flush, before the importer can clean up
+        // (a server halts there), so the table keeps what the failed COPY left until the guide's manual step clears it.
         if ("adaptive".equals(commitMode)) {
             Assume.assumeTrue("a non-WAL table in adaptive commit mode is flushed nowhere", walTable);
             Assume.assumeTrue("an existing table is flushed by the writer's save point, which stops the engine itself", newTable);
         } else {
             Assume.assumeTrue("the import flushes nothing in nosync and async", "sync".equals(commitMode));
         }
-        Assume.assumeTrue("an existing table is not dropped", newTable || dropFailure == DropFailure.NONE);
         assumeCrashHarnessSupported();
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, Boolean.toString(walTable));
-        inputRoot = temp.newFolder().getAbsolutePath();
-        inputWorkRoot = temp.newFolder().getAbsolutePath();
-        Files.writeString(java.nio.file.Path.of(inputRoot, "t.csv"), CSV, StandardCharsets.UTF_8);
         final AtomicBoolean attaching = new AtomicBoolean();
         final AtomicInteger failAt = new AtomicInteger();
         final AtomicInteger flushes = new AtomicInteger();
-        final AtomicBoolean flushFailed = new AtomicBoolean();
         final StringSink failedFlush = new StringSink();
-        final AtomicReference<TableReader> heldReader = new AtomicReference<>();
         crashFf = new CrashFaultFilesFacade() {
             @Override
             public void barrierFsync(long fd) {
@@ -441,17 +421,8 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                 super.syncfs(fd);
             }
 
-            @Override
-            public boolean unlinkOrRemove(Path path, Log log) {
-                if (dropFailure == DropFailure.DIRECTORY_NOT_REMOVED && flushFailed.get()) {
-                    return false;
-                }
-                return super.unlinkOrRemove(path, log);
-            }
-
             private void failIfDue(String operation, long fd) {
                 if (attaching.get() && failAt.get() > 0 && flushes.incrementAndGet() == failAt.get()) {
-                    flushFailed.set(true);
                     failedFlush.clear();
                     failedFlush.put(operation).put(' ').put(fd > -1 ? pathOf(fd) : "");
                     throw CairoException.dataSyncFailure(this, 5, operation, "injected [operation=" + operation + ']');
@@ -460,16 +431,11 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         };
         crashFf.setDbRoot(root);
         assertMemoryLeak(crashFf, () -> {
-            execute("CREATE TABLE other (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            drainWalQueue();
-            if (!newTable) {
-                createTable();
-            }
+            startRound(false, false);
             // Fail the first device flush from the attach on, then the second, and so on, until an import completes
             // without reaching the failing one.
             for (int i = 1; ; i++) {
                 attaching.set(false);
-                flushFailed.set(false);
                 flushes.set(0);
                 failAt.set(i);
                 Throwable failure = null;
@@ -477,20 +443,14 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                     importer.of("t", "t.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                     importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
                         if (phase == CopyImportTask.PHASE_ATTACH_PARTITIONS && status == CopyImportTask.STATUS_STARTED) {
-                            if (dropFailure == DropFailure.TABLE_IN_USE) {
-                                heldReader.set(engine.getReader("t"));
-                            }
                             attaching.set(true);
                         }
                     });
                     importer.process(AllowAllSecurityContext.INSTANCE);
                 } catch (Throwable th) {
                     failure = th;
-                } finally {
-                    Misc.free(heldReader.getAndSet(null));
                 }
                 failAt.set(0);
-                flushFailed.set(false);
                 if (flushes.get() < i) {
                     Assert.assertNull("round " + i, failure);
                     Assert.assertTrue("no device flush from the attach on", i > 1);
@@ -507,24 +467,17 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                 } finally {
                     engine.resetDurabilityFailure();
                 }
-                if (!newTable) {
-                    // The engine stops at the failed flush, before the importer's cleanup can truncate the existing
-                    // table (production halts there), so the table can keep rows of the failed COPY until it is
-                    // truncated.
-                    final String left = rows(engine);
-                    for (String line : left.split("\n")) {
-                        Assert.assertTrue(context + ": unexpected row " + line, IMPORTED.contains(line));
-                    }
+                if (newTable) {
+                    clearCreatedTableAfterRestart(context);
+                    startRound(true, false);
+                } else {
+                    // The table can keep rows of the failed COPY until it is truncated.
+                    assertOnlyImportedRows(context, rows(engine));
                     execute("TRUNCATE TABLE t");
                     drainWalQueue();
                     // A failed attach leaves imported partitions next to the table's own as .attachable directories;
                     // a retry fails to move its partitions onto them until they are removed.
                     removeLeftoverAttachables();
-                } else if (dropFailure == DropFailure.NONE) {
-                    Assert.assertEquals(context + ": the created table is dropped", "", rows(engine));
-                } else {
-                    Assert.assertNotEquals(context + ": the drop failed and left the table", "", rows(engine));
-                    execute("DROP TABLE t");
                 }
             }
         });
@@ -552,6 +505,51 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         }
     }
 
+    private void assertOnlyImportedRows(String context, String rows) {
+        for (String line : rows.split("\n")) {
+            Assert.assertTrue(context + ": unexpected row " + line, IMPORTED.contains(line));
+        }
+    }
+
+    private void clearCreatedTableAfterRestart(String context) throws Exception {
+        // A server halts inside the failed flush, so the created table keeps what the failed COPY left. A test engine
+        // runs on after the stop, and where the failure reaches the importer without its flush flag, its clean-up
+        // drops the table; either way the restart must find nothing but imported rows. The guide's step for a non-WAL
+        // table is DROP TABLE. A WAL table the COPY created has no sequencer after a restart, so no SQL step works on
+        // it: its directory is deleted while the server is stopped, and the table is created before the COPY runs
+        // again.
+        releaseEngineHandles();
+        // The registry lock is the server's: the next round's setUp() takes it again.
+        engine.closeNameRegistry();
+        String walTableDir = null;
+        try (CairoEngine restarted = new CairoEngine(configuration)) {
+            final TableToken token = restarted.getTableTokenIfExists("t");
+            if (token != null) {
+                assertOnlyImportedRows(context, rows(restarted));
+                if (walTable) {
+                    walTableDir = token.getDirName();
+                } else {
+                    restarted.execute("DROP TABLE t");
+                }
+            }
+        }
+        if (walTableDir != null) {
+            deleteRecursively(java.nio.file.Path.of(root, walTableDir));
+        }
+        try (CairoEngine restarted = new CairoEngine(configuration)) {
+            Assert.assertNull(context + ": the manual step removes the table", restarted.getTableTokenIfExists("t"));
+            if (walTable) {
+                restarted.execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(restarted, 1)) {
+                importer.of("t", "t.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            TestUtils.drainWalQueue(restarted);
+            Assert.assertEquals(context + ": the COPY runs again", IMPORTED, rows(restarted));
+        }
+    }
+
     private void createTable() throws SqlException {
         execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY" + (walTable ? " WAL" : " BYPASS WAL"));
         drainWalQueue();
@@ -561,11 +559,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         final java.nio.file.Path tableDir = java.nio.file.Path.of(root, engine.verifyTableName("t").getDirName());
         try (Stream<java.nio.file.Path> dirs = Files.list(tableDir)) {
             for (java.nio.file.Path dir : dirs.filter(d -> d.getFileName().toString().endsWith(".attachable")).toList()) {
-                try (Stream<java.nio.file.Path> files = Files.walk(dir)) {
-                    for (java.nio.file.Path file : files.sorted(Comparator.reverseOrder()).toList()) {
-                        Files.delete(file);
-                    }
-                }
+                deleteRecursively(dir);
             }
         }
     }
@@ -602,7 +596,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         return redone;
     }
 
-    private void startRound(boolean restart) throws Exception {
+    private void startRound(boolean restart, boolean powerLoss) throws Exception {
         if (restart) {
             tearDown(true);
             TestUtils.removeTestPath(root);
@@ -613,15 +607,23 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         }
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, Boolean.toString(walTable));
-        // A power loss takes no close-time save point.
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        if (powerLoss) {
+            // A power loss takes no close-time save point.
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        } else {
+            // A stopped engine refuses a write to this table.
+            execute("CREATE TABLE other (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+        }
         inputRoot = temp.newFolder().getAbsolutePath();
         inputWorkRoot = temp.newFolder().getAbsolutePath();
         Files.writeString(java.nio.file.Path.of(inputRoot, "t.csv"), CSV, StandardCharsets.UTF_8);
         if (!newTable) {
             createTable();
         }
-        markDurableBaseline();
+        if (powerLoss) {
+            markDurableBaseline();
+        }
     }
 
     private void writeBackMetadata(String txnPath) {
@@ -643,6 +645,14 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
         }
     }
 
+    private static void deleteRecursively(java.nio.file.Path dir) throws IOException {
+        try (Stream<java.nio.file.Path> files = Files.walk(dir)) {
+            for (java.nio.file.Path file : files.sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(file);
+            }
+        }
+    }
+
     private static String rows(CairoEngine e) {
         final StringSink sink = new StringSink();
         try {
@@ -652,9 +662,5 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
             return "";
         }
         return sink.toString();
-    }
-
-    private enum DropFailure {
-        DIRECTORY_NOT_REMOVED, NONE, TABLE_IN_USE
     }
 }
