@@ -290,6 +290,18 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFillBucketAliasFollowsGroupByKeyRename() throws SqlException {
+        // The emitted sum(a) aggregate claims the alias "sum" before the bucket key
+        // arrives, so the group-by model renames the bucket to sum1; the recorded
+        // alias must follow the rename for generateFill to find the bucket.
+        assertQuery(
+                "select-virtual sum * 2 v, sum1 from (select-group-by [sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) sum1] sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) sum1 from (select [a, timestamp] from x timestamp (timestamp) fill(null) stride 1h bucket sum1)) order by v",
+                "select sum(a) * 2 v, timestamp sum from x sample by 1h fill(null) order by v",
+                model()
+        );
+    }
+
+    @Test
     public void testFillBucketAliasMatchesSelectedTimestamp() throws SqlException {
         assertQuery(
                 "select-group-by timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp, sum(a) sum from (select [timestamp, a] from x timestamp (timestamp) fill(null) stride 1h bucket timestamp) order by timestamp",

@@ -1010,6 +1010,18 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // ensureAliasUniqueness renames a group-by key whose alias an earlier column already
+    // claimed, e.g. the bucket in SELECT sum(a) * 2 v, ts sum ... SAMPLE BY, where the
+    // emitted sum(a) aggregate takes "sum" first. When the renamed key is the SAMPLE BY
+    // bucket, the alias that rewriteSampleBy recorded follows the rename, so that
+    // SqlCodeGenerator.generateFill still finds the bucket.
+    private static void renameFillBucketAlias(IQueryModel baseModel, CharSequence oldAlias, CharSequence newAlias) {
+        final CharSequence bucketAlias = baseModel.getFillBucketAlias();
+        if (bucketAlias != null && Chars.equalsIgnoreCase(bucketAlias, oldAlias)) {
+            baseModel.setFillBucketAlias(newAlias);
+        }
+    }
+
     /**
      * Recurse down expression node tree looking for an alias.
      */
@@ -12394,7 +12406,11 @@ public class SqlOptimiser implements Mutable {
 
             // sample-by queries will still require innerVirtualModel
             if ((((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) && sampleBy == null)) {
+                final CharSequence selectAlias = qc.getAlias();
                 qc = ensureAliasUniqueness(groupByModel, qc);
+                if (qc.getAlias() != selectAlias) {
+                    renameFillBucketAlias(baseModel, selectAlias, qc.getAlias());
+                }
                 groupByModel.addBottomUpColumn(qc);
                 // group-by column references might be needed when we have
                 // outer model supporting arithmetic such as:
