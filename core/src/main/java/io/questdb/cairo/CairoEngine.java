@@ -594,16 +594,28 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Tells every live engine whose files facade is {@code ff} about a failed flush the moment
-     * {@link CairoException#dataSyncFailure} creates it; each decides by its own commit mode
-     * ({@link #isDataSyncFailureFatal(Throwable)}). An engine is scoped by its facade, so a primary and a replica in
-     * one JVM on different facades hear only their own failures. In production the stop halts the process here,
+     * Tells the engine that owns a failed flush the moment {@link CairoException#dataSyncFailure} creates it; it
+     * decides by its own commit mode ({@link #isDataSyncFailureFatal(Throwable)}). The owner is an engine whose files
+     * facade is {@code ff} and whose roots hold {@code path}, so engines that share one facade object (a primary and
+     * a replica in one JVM) hear only their own failures. When the path is not known, or no such engine holds it,
+     * every engine on {@code ff} is told, so a stop is never lost. In production the stop halts the process here,
      * before any caller can retry the flush or lose the error.
      */
-    static void recordDataSyncFailure(FilesFacade ff, CairoException failure) {
-        // The snapshot iterator allocates, on a failure only.
+    static void recordDataSyncFailure(FilesFacade ff, @Nullable CharSequence path, CairoException failure) {
+        // The snapshot iterators and the root lookups allocate, on a failure only.
+        boolean isOwned = false;
+        if (path != null) {
+            for (CairoEngine engine : LIVE_ENGINES) {
+                if (engine.configuration.getFilesFacade() == ff && engine.holdsPath(path)) {
+                    isOwned = true;
+                    break;
+                }
+            }
+        }
         for (CairoEngine engine : LIVE_ENGINES) {
-            if (engine.configuration.getFilesFacade() == ff && engine.isDataSyncFailureFatal(failure)) {
+            if (engine.configuration.getFilesFacade() == ff
+                    && (!isOwned || engine.holdsPath(path))
+                    && engine.isDataSyncFailureFatal(failure)) {
                 engine.poisonEngine(failure);
             }
         }
@@ -1322,50 +1334,54 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public void close() {
-        if (timerShards != null) {
-            assert closing || timerShards.size() == 0
-                    : "close() reached with parked continuations but without a prior signalClose(); they will be stranded";
-            timerShards.halt();
+        try {
+            if (timerShards != null) {
+                assert closing || timerShards.size() == 0
+                        : "close() reached with parked continuations but without a prior signalClose(); they will be stranded";
+                timerShards.halt();
+            }
+            // Return any base-table readers pinned by an in-flight seed sweep to the
+            // reader pool before it is freed below, so the pool teardown does not report
+            // a still-borrowed reader as left behind. Safe here: close() runs after the
+            // refresh workers have stopped, so no sweep turn is reading from them.
+            // Same for a localized out-of-order repair that yielded between refresh
+            // turns: it holds a pinned base reader, a live-view WAL writer carrying an
+            // uncommitted replacement, and a staged temporary data segment, none of
+            // which can outlive the pools below.
+            liveViewRegistry.discardSuspendedRepairs();
+            liveViewRegistry.freeSeedBaseReaders();
+            // Free the live-view state ABOVE the pools rather than below them. Every pooled handle a
+            // live view can hold - base readers, live-view WAL writers - is returned by this free, so
+            // ordering it here makes the teardown correct by construction instead of resting on the
+            // hand-maintained pre-release calls above. clear() already sequences it this way; adding
+            // one pooled handle to LiveViewInstance would otherwise turn the old order into a
+            // use-after-free that no test catches.
+            Misc.free(liveViewRegistry);
+            Misc.free(liveViewStateStore);
+            Misc.free(sqlCompilerPool);
+            Misc.free(writerPool);
+            Misc.free(readerPool);
+            Misc.free(sequencerMetadataPool);
+            Misc.free(tableMetadataPool);
+            Misc.free(walWriterPool);
+            Misc.free(viewWalWriterPool);
+            Misc.free(tableIdGenerator);
+            Misc.free(messageBus);
+            Misc.free(tableSequencerAPI);
+            Misc.freeObjList(telemetries);
+            Misc.free(tableNameRegistry);
+            Misc.free(checkpointAgent);
+            Misc.free(metadataCache);
+            Misc.free(scoreboardPool);
+            Misc.free(matViewStateStore);
+            Misc.free(settingsStore);
+            Misc.free(frameFactory);
+            Misc.free(walLocker);
+            Misc.free(memoryTrackerProvider);
+        } finally {
+            // also when a free above throws, so a closed engine never hears a failure
+            LIVE_ENGINES.remove(this);
         }
-        // Return any base-table readers pinned by an in-flight seed sweep to the
-        // reader pool before it is freed below, so the pool teardown does not report
-        // a still-borrowed reader as left behind. Safe here: close() runs after the
-        // refresh workers have stopped, so no sweep turn is reading from them.
-        // Same for a localized out-of-order repair that yielded between refresh
-        // turns: it holds a pinned base reader, a live-view WAL writer carrying an
-        // uncommitted replacement, and a staged temporary data segment, none of
-        // which can outlive the pools below.
-        liveViewRegistry.discardSuspendedRepairs();
-        liveViewRegistry.freeSeedBaseReaders();
-        // Free the live-view state ABOVE the pools rather than below them. Every pooled handle a
-        // live view can hold - base readers, live-view WAL writers - is returned by this free, so
-        // ordering it here makes the teardown correct by construction instead of resting on the
-        // hand-maintained pre-release calls above. clear() already sequences it this way; adding
-        // one pooled handle to LiveViewInstance would otherwise turn the old order into a
-        // use-after-free that no test catches.
-        Misc.free(liveViewRegistry);
-        Misc.free(liveViewStateStore);
-        Misc.free(sqlCompilerPool);
-        Misc.free(writerPool);
-        Misc.free(readerPool);
-        Misc.free(sequencerMetadataPool);
-        Misc.free(tableMetadataPool);
-        Misc.free(walWriterPool);
-        Misc.free(viewWalWriterPool);
-        Misc.free(tableIdGenerator);
-        Misc.free(messageBus);
-        Misc.free(tableSequencerAPI);
-        Misc.freeObjList(telemetries);
-        Misc.free(tableNameRegistry);
-        Misc.free(checkpointAgent);
-        Misc.free(metadataCache);
-        Misc.free(scoreboardPool);
-        Misc.free(matViewStateStore);
-        Misc.free(settingsStore);
-        Misc.free(frameFactory);
-        Misc.free(walLocker);
-        Misc.free(memoryTrackerProvider);
-        LIVE_ENGINES.remove(this);
     }
 
     @TestOnly
@@ -4088,6 +4104,22 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    private static boolean isUnderRoot(CharSequence path, @Nullable CharSequence root) {
+        if (root == null || root.isEmpty()) {
+            return false;
+        }
+        // The OS names a file by its real path; the configured root may go through a link.
+        String dir;
+        try {
+            dir = java.nio.file.Path.of(root.toString()).toRealPath().toString();
+        } catch (Throwable th) {
+            dir = root.toString();
+        }
+        final int len = dir.length() > 1 && dir.charAt(dir.length() - 1) == Files.SEPARATOR ? dir.length() - 1 : dir.length();
+        return Chars.startsWith(path, dir.substring(0, len))
+                && (path.length() == len || path.charAt(len) == Files.SEPARATOR);
+    }
+
     /**
      * Pass 2 of the ANCHOR EXPRESSION validator — the function-property half applied to
      * the post-constant-fold
@@ -4580,6 +4612,13 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    private boolean holdsPath(CharSequence path) {
+        return isUnderRoot(path, configuration.getDbRoot())
+                || isUnderRoot(path, configuration.getCheckpointRoot())
+                || isUnderRoot(path, configuration.getLegacyCheckpointRoot())
+                || isUnderRoot(path, configuration.getSqlCopyInputWorkRoot());
+    }
+
     private void invalidateLiveViewsForBaseTable0(
             TableToken baseTableToken,
             String reason,
@@ -4872,7 +4911,9 @@ public class CairoEngine implements Closeable, WriterSource {
                 syncFailure.getFlyweightMessage().toString()
         );
         if (durabilityFailure.compareAndSet(null, detail)) {
-            LOG.critical().$("fatal durability barrier failure [").$(detail.toString()).$(']').$();
+            // the message names the failed file: built before the LOG chain
+            final String detailText = detail.toString();
+            LOG.critical().$("fatal durability barrier failure [").$(detailText).$(']').$();
             durabilityFailureHandler.onFailure(detail);
         }
         // A handler further up gets the stop error a handler below threw: keep it, with what it carries

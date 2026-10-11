@@ -565,19 +565,26 @@ and report it.
 ### 11.2 The server stops after a failed flush
 
 In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs`, `sync_file_range` or synchronous `msync` stops
-the server at once, wherever it happens (a table, its WAL, a checkpoint, a COPY's work directory), because the data it
-was flushing, or other data on the same disk, may not be on the disk. So does a failed flush of a conversion to
-non-WAL, in every mode. The server stops at the failed flush itself, before any clean-up, so a parallel COPY never
+the server at once, wherever it happens (a table, its WAL, a checkpoint), because the data it was flushing, or other
+data on the same disk, may not be on the disk. So does a failed flush of a conversion to non-WAL, in every mode. A
+parallel COPY's work files count as table data: a failed flush of its index chunks or of the staging tables that
+become the table's partitions stops the server too, also when `cairo.sql.copy.work.root` is on another disk, and a
+restart clears it. The server stops at the failed flush itself, before any clean-up, so a parallel COPY never
 reports an import done that is not on the disk, and section 11.6 says what it can leave behind. An Enterprise replica
-follows `nosync` here (the object store holds the durable copy): it reports the error and keeps running. In `nosync`
-and `async` a failed flush fails only the operation that ran it; during the start (a table that leaves `adaptive`, or
-a checkpoint restore) that stops the start, with the flush error in the message and exit code 55: fix the cause and
+decides by the mode it runs in: in `adaptive` it follows `nosync` (the object store holds the durable copy), so it
+reports the error and keeps running; in `sync` it stops as `sync` does. Until its replica role has started (the
+recovery and checkpoint restore at its start), an `adaptive` replica stops as `adaptive` does. In `nosync` and `async`
+a failed flush fails only the operation that ran it; during the start (a table that leaves `adaptive`, or a
+checkpoint restore) that stops the start, with the flush error in the message and exit code 55: fix the cause and
 start again.
 
 ```
-fatal durability barrier failure [operation=..., errno=..., message=...]
+fatal durability barrier failure [operation=..., errno=..., message=could not fsync [fd=...] [path=...]]
 QuestDB fatal durability failure; hard-halting without writer cleanup [...]
 ```
+
+The message names the file that failed to flush where the operating system can tell (Linux), so the disk at fault is
+known.
 
 The process exits with code 55. No acknowledgement was sent for anything the failed flush covered. Fix the cause
 (a full disk, a failing device, an I/O error in the system log), then start again: recovery puts every table back

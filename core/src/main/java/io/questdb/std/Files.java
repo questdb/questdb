@@ -185,6 +185,51 @@ public final class Files {
 
     public native static int findNext(long findPtr);
 
+    /**
+     * The path of the file {@code fd} is open on, or null where the OS cannot tell (Linux only). It reads
+     * {@code /proc} and allocates, so it is for failure paths.
+     */
+    public static @Nullable String findPathOfFd(long fd) {
+        if (!Os.isLinux()) {
+            return null;
+        }
+        try {
+            return stripDeleted(java.nio.file.Files.readSymbolicLink(java.nio.file.Path.of("/proc/self/fd/" + toOsFd(fd))).toString());
+        } catch (Throwable th) {
+            return null;
+        }
+    }
+
+    /**
+     * The path of the file mapped at {@code address}, or null where the OS cannot tell (Linux only). It reads
+     * {@code /proc} and allocates, so it is for failure paths.
+     */
+    public static @Nullable String findPathOfMapping(long address) {
+        if (!Os.isLinux()) {
+            return null;
+        }
+        try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(java.nio.file.Path.of("/proc/self/maps"))) {
+            // start-end perms offset dev inode path
+            String line;
+            while ((line = reader.readLine()) != null) {
+                final int dash = line.indexOf('-');
+                final int space = line.indexOf(' ', dash);
+                final int slash = line.indexOf('/', space);
+                if (dash < 0 || space < 0 || slash < 0) {
+                    continue;
+                }
+                final long lo = Long.parseUnsignedLong(line, 0, dash, 16);
+                final long hi = Long.parseUnsignedLong(line, dash + 1, space, 16);
+                if (Long.compareUnsigned(address, lo) >= 0 && Long.compareUnsigned(address, hi) < 0) {
+                    return stripDeleted(line.substring(slash));
+                }
+            }
+        } catch (Throwable th) {
+            return null;
+        }
+        return null;
+    }
+
     public native static int findType(long findPtr);
 
     public static long floorPageSize(long size) {
@@ -864,6 +909,10 @@ public final class Files {
     }
 
     private native static boolean setLastModified(long lpszName, long millis);
+
+    private static String stripDeleted(String path) {
+        return path.endsWith(" (deleted)") ? path.substring(0, path.length() - " (deleted)".length()) : path;
+    }
 
     private native static boolean truncate(int fd, long size);
 

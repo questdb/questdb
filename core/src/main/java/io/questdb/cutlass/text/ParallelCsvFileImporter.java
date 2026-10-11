@@ -667,17 +667,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     flushImportedTable();
                     updateImportStatus(CopyImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
                 } catch (Throwable t) {
-                    // A failed device flush may report a write-back error of another table's files: stop the
-                    // engine, as every other flush in SYNC and ADAPTIVE does. The cleanup before the stop is a best
-                    // effort.
+                    // A failed flush in SYNC and ADAPTIVE stopped the engine where it failed (a server halts
+                    // there), so there is no clean-up: what is left is what a crash during the import leaves.
                     if (cairoEngine.isDataSyncFailureFatal(t)) {
-                        try {
-                            cleanUp();
-                        } catch (Throwable cleanupFailure) {
-                            LOG.critical().$("could not clean up after a failed data sync [table=").$(tableToken)
-                                    .$(", error=").$(cleanupFailure)
-                                    .I$();
-                        }
                         throw cairoEngine.poisonOnDataSyncFailure(t);
                     }
                     cleanUp();

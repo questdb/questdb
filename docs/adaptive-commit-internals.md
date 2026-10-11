@@ -396,11 +396,17 @@ root (COPY staging) never marks a table safe. `nosync`, `async` and non-WAL tabl
 **The engine stop.** In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs`, `sync_file_range` or
 synchronous `msync` is fatal, because the data it covered may not be on the disk and the next commit would build on
 it. The failure is decided where it is created: `CairoException.dataSyncFailure(ff, ...)`, the one Java factory of a
-flush failure, tells every live engine whose files facade is `ff` at once, so a path that later drops, counts or
-wraps the exception (a task's error counter, a job's top-level catch, a wrapper without the cause) cannot lose the
-stop. Each engine decides by `CairoEngine.isDataSyncFailureFatal`: the flag, and the commit mode
-`LocalDurabilityPolicy.resolveCommitMode` resolves for its role, so an Enterprise replica, which resolves `adaptive` to
-`nosync` (the object store holds the durable copy), reports the error and keeps running as on the base release. A
+flush failure (with the forms `dataSyncFailureOfFd` and `dataSyncFailureOfMapping` that name the file), tells the
+engine that owns the file at once, so a path that later drops, counts or wraps the exception (a task's error counter,
+a job's top-level catch, a wrapper without the cause) cannot lose the stop. The owner is a live engine whose files
+facade is `ff` and whose database, checkpoint or COPY work root holds the failed file, which the factory looks up on a
+failure only (Linux: `/proc/self/fd`, `/proc/self/maps`); so two engines on one facade object, a primary and a replica
+in one test JVM, hear only their own failures. Without a path (other systems, a test facade that gives none) or when
+no engine holds it, every engine on `ff` hears it, so a stop is never lost. A closed engine, or one whose construction
+failed, is unregistered. Each engine decides by `CairoEngine.isDataSyncFailureFatal`: the flag, and the commit mode
+`LocalDurabilityPolicy.resolveCommitMode` resolves for its role, so an Enterprise replica in `adaptive`, which resolves
+to `nosync` (the object store holds the durable copy), reports the error and keeps running as on the base release,
+and a replica in `sync` stops. A
 fatal failure logs `fatal durability barrier failure [operation=..., errno=..., message=...]`, fences writers,
 acknowledgements and the WAL purge, and `ServerMain` halts the process with exit code 55 there, without closing
 writers or running any clean-up (closing them would flush and publish state built on the failed flush). The

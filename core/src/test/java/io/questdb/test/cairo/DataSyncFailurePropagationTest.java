@@ -25,11 +25,16 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -37,6 +42,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
@@ -49,7 +55,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * the writer thread, in an O3 or column task, in the WAL apply job, behind a wrapper or an error counter. Each
  * test runs a workload once to record its flushes, then once per distinct flush path with that flush failing, and
  * checks the engine stopped every time. A flush whose failure is dropped on its way to the handler fails the test
- * with the stack of the flush that was failed.
+ * with the stack of the flush that was failed. A second engine in {@code sync} on the same facade object (a primary
+ * and a replica in one JVM) runs nothing and must never stop: the stop reaches only the engine that owns the file.
  */
 @RunWith(Parameterized.class)
 public class DataSyncFailurePropagationTest extends AbstractCairoTest {
@@ -456,6 +463,20 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         );
     }
 
+    private static CairoConfiguration bystanderConfiguration(String root, FilesFacade ff) {
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public int getCommitMode() {
+                return CommitMode.SYNC;
+            }
+
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+    }
+
     private static void createNonWalTable(String table) throws Exception {
         execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         insertDays(table, "2024-01-01", 3);
@@ -479,46 +500,62 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     private void assertEveryFlushFailureStopsEngine(Workload setup, Workload action) throws Exception {
         assertMemoryLeak(ff, () -> {
-            setup.run("dry_run");
-            ff.arm(-1);
-            action.run("dry_run");
-            ff.disarm();
-            // A workload may take no flush in a mode (a non-WAL O3 commit in adaptive), which leaves nothing to fail.
-            // Flushes reached through the same stack take the same path to a handler, so only the first is failed.
-            final int flushCount = ff.getFlushCount();
-            final IntList firstOfEachPath = new IntList();
-            firstOfEachPath.addAll(ff.getFirstFlushOfEachPath());
-
-            final StringBuilder failures = new StringBuilder();
-            int injectedCount = 0;
-            for (int i = 0, n = firstOfEachPath.size(); i < n; i++) {
-                final int failAt = firstOfEachPath.getQuick(i);
-                final String table = "t_" + failAt;
-                setup.run(table);
-                ff.arm(failAt);
-                try {
-                    action.run(table);
-                } catch (Throwable ignore) {
-                    // the statement or the apply fails; the check is on the engine
-                } finally {
-                    ff.disarm();
-                }
-                final Throwable injection = ff.getInjection();
-                if (injection != null) {
-                    injectedCount++;
-                }
-                if (injection != null && !engine.isDurabilityFailed()) {
-                    failures.append("flush ").append(failAt).append(" of ").append(flushCount)
-                            .append(" failed without stopping the engine, at:\n").append(stackOf(injection));
-                }
-                engine.resetDurabilityFailure();
-                engine.releaseInactive();
+            // its own install root, so it shares no checkpoint or COPY directory with the engine under test
+            final File bystanderRoot = new File(temp.newFolder(), "db");
+            Assert.assertTrue(bystanderRoot.mkdir());
+            try (CairoEngine bystander = new CairoEngine(bystanderConfiguration(bystanderRoot.getAbsolutePath(), ff))) {
+                assertEveryFlushFailureStopsEngine(setup, action, bystander);
             }
-            if (!failures.isEmpty()) {
-                Assert.fail("[mode=" + commitMode + "]\n" + failures);
-            }
-            Assert.assertTrue("most flushes of the dry run were not reached again", injectedCount * 2 >= firstOfEachPath.size());
         });
+    }
+
+    private void assertEveryFlushFailureStopsEngine(Workload setup, Workload action, CairoEngine bystander) throws Exception {
+        setup.run("dry_run");
+        ff.arm(-1);
+        action.run("dry_run");
+        ff.disarm();
+        // A workload may take no flush in a mode (a non-WAL O3 commit in adaptive), which leaves nothing to fail.
+        // Flushes reached through the same stack take the same path to a handler, so only the first is failed.
+        final int flushCount = ff.getFlushCount();
+        final IntList firstOfEachPath = new IntList();
+        firstOfEachPath.addAll(ff.getFirstFlushOfEachPath());
+
+        final StringBuilder failures = new StringBuilder();
+        int injectedCount = 0;
+        for (int i = 0, n = firstOfEachPath.size(); i < n; i++) {
+            final int failAt = firstOfEachPath.getQuick(i);
+            final String table = "t_" + failAt;
+            setup.run(table);
+            ff.arm(failAt);
+            try {
+                action.run(table);
+            } catch (Throwable ignore) {
+                // the statement or the apply fails; the check is on the engine
+            } finally {
+                ff.disarm();
+            }
+            final Throwable injection = ff.getInjection();
+            if (injection != null) {
+                injectedCount++;
+            }
+            if (injection != null && !engine.isDurabilityFailed()) {
+                failures.append("flush ").append(failAt).append(" of ").append(flushCount)
+                        .append(" failed without stopping the engine, at:\n").append(stackOf(injection));
+            }
+            // The owner is found by the failed file's path, which only Linux tells.
+            if (injection != null && bystander.isDurabilityFailed() && Os.isLinux()) {
+                failures.append("flush ").append(failAt).append(" of ").append(flushCount)
+                        .append(" stopped an engine that does not own the file [failure=")
+                        .append(bystander.getDurabilityFailure()).append("], at:\n").append(stackOf(injection));
+            }
+            bystander.resetDurabilityFailure();
+            engine.resetDurabilityFailure();
+            engine.releaseInactive();
+        }
+        if (!failures.isEmpty()) {
+            Assert.fail("[mode=" + commitMode + "]\n" + failures);
+        }
+        Assert.assertTrue("most flushes of the dry run were not reached again", injectedCount * 2 >= firstOfEachPath.size());
     }
 
     private static void renameDetachedToAttachable(String table, String partition) throws Exception {
@@ -556,7 +593,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public void fdatasync(long fd) {
             if (shouldFail()) {
-                throw CairoException.dataSyncFailure(this, EIO, "fdatasync", "injected fdatasync failure");
+                throw CairoException.dataSyncFailureOfFd(this, fd, EIO, "fdatasync", "injected fdatasync failure");
             }
             super.fdatasync(fd);
         }
@@ -564,7 +601,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public void fsync(long fd) {
             if (shouldFail()) {
-                throw CairoException.dataSyncFailure(this, EIO, "fsync", "injected fsync failure");
+                throw CairoException.dataSyncFailureOfFd(this, fd, EIO, "fsync", "injected fsync failure");
             }
             super.fsync(fd);
         }
@@ -572,8 +609,9 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public void fsyncAndClose(long fd) {
             if (shouldFail()) {
+                final String path = io.questdb.std.Files.findPathOfFd(fd);
                 super.close(fd);
-                throw CairoException.dataSyncFailure(this, EIO, "fsyncAndClose", "injected fsync failure");
+                throw CairoException.dataSyncFailure(this, path, EIO, "fsyncAndClose", "injected fsync failure");
             }
             super.fsyncAndClose(fd);
         }
@@ -581,7 +619,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public void msync(long addr, long len, boolean async) {
             if (!async && shouldFail()) {
-                throw CairoException.dataSyncFailure(this, EIO, "msync", "injected msync failure");
+                throw CairoException.dataSyncFailureOfMapping(this, addr, EIO, "msync", "injected msync failure");
             }
             super.msync(addr, len, async);
         }
@@ -605,7 +643,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public void syncfs(long fd) {
             if (shouldFail()) {
-                throw CairoException.dataSyncFailure(this, EIO, "syncfs", "injected syncfs failure");
+                throw CairoException.dataSyncFailureOfFd(this, fd, EIO, "syncfs", "injected syncfs failure");
             }
             super.syncfs(fd);
         }

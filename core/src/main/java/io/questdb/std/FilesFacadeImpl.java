@@ -212,14 +212,14 @@ public class FilesFacadeImpl implements FilesFacade {
                 return;
             }
             final int errno = errno();
-            throw CairoException.dataSyncFailure(this, errno, "barrierFsync", "could not barrierFsync [fd=" + fd + ']');
+            throw CairoException.dataSyncFailureOfFd(this, fd, errno, "barrierFsync", "could not barrierFsync");
         }
         int res = Files.fdatasync(fd);
         if (res == 0) {
             return;
         }
         final int errno = errno();
-        throw CairoException.dataSyncFailure(this, errno, "fdatasync", "could not fdatasync [fd=" + fd + ']');
+        throw CairoException.dataSyncFailureOfFd(this, fd, errno, "fdatasync", "could not fdatasync");
     }
 
     @Override
@@ -229,7 +229,7 @@ public class FilesFacadeImpl implements FilesFacade {
             return;
         }
         final int errno = errno();
-        throw CairoException.dataSyncFailure(this, errno, "syncfs", "could not syncfs [fd=" + fd + ']');
+        throw CairoException.dataSyncFailureOfFd(this, fd, errno, "syncfs", "could not syncfs");
     }
 
     @Override
@@ -242,14 +242,14 @@ public class FilesFacadeImpl implements FilesFacade {
                 return;
             }
             final int errno = errno();
-            throw CairoException.dataSyncFailure(this, errno, "fsyncDurable", "could not fsyncDurable [fd=" + fd + ']');
+            throw CairoException.dataSyncFailureOfFd(this, fd, errno, "fsyncDurable", "could not fsyncDurable");
         }
         int res = Files.fsync(fd);
         if (res == 0) {
             return;
         }
         final int errno = errno();
-        throw CairoException.dataSyncFailure(this, errno, "fsync", "could not fsync [fd=" + fd + ']');
+        throw CairoException.dataSyncFailureOfFd(this, fd, errno, "fsync", "could not fsync");
     }
 
     @Override
@@ -301,8 +301,10 @@ public class FilesFacadeImpl implements FilesFacade {
             return;
         }
         final int errno = errno();
+        // the path is looked up while the descriptor still names the file
+        final String path = Files.findPathOfFd(fd);
         close(fd);
-        throw CairoException.dataSyncFailure(this, errno, "fsyncAndClose", "could not fsync [fd=" + fd + ']');
+        throw CairoException.dataSyncFailure(this, path, errno, "fsyncAndClose", "could not fsync [fd=" + fd + ']');
     }
 
     @Override
@@ -471,7 +473,7 @@ public class FilesFacadeImpl implements FilesFacade {
         }
         final int errno = errno();
         if (!async) {
-            throw CairoException.dataSyncFailure(this, errno, "msync", "could not msync");
+            throw CairoException.dataSyncFailureOfMapping(this, addr, errno, "msync", "could not msync");
         }
         throw CairoException.critical(errno).put("could not msync");
     }

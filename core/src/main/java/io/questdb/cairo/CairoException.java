@@ -146,8 +146,20 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
      * its commit mode requires it, so a path that later drops, counts or wraps the exception cannot lose the stop.
      */
     public static CairoException dataSyncFailure(FilesFacade ff, int errno, String operation, CharSequence message) {
+        return dataSyncFailure(ff, null, errno, operation, message);
+    }
+
+    /**
+     * {@link #dataSyncFailure(FilesFacade, int, String, CharSequence)} for a flush of the file or directory at
+     * {@code path}, or null when it is not known. The path names the file in the message and, when engines share
+     * {@code ff}, picks the engine whose roots hold it.
+     */
+    public static CairoException dataSyncFailure(FilesFacade ff, @Nullable CharSequence path, int errno, String operation, CharSequence message) {
         final CairoException exception = dataSyncFailureCarry(errno, operation).put(message);
-        CairoEngine.recordDataSyncFailure(ff, exception);
+        if (path != null) {
+            exception.put(" [path=").put(path).put(']');
+        }
+        CairoEngine.recordDataSyncFailure(ff, path, exception);
         return exception;
     }
 
@@ -161,6 +173,21 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         exception.dataSyncOperation = operation;
         exception.flags |= FLAG_DATA_SYNC_FAILURE;
         return exception;
+    }
+
+    /**
+     * A failed flush of {@code fd}: the message names the descriptor and, where the OS can tell, the file.
+     */
+    public static CairoException dataSyncFailureOfFd(FilesFacade ff, long fd, int errno, String operation, CharSequence message) {
+        return dataSyncFailure(ff, Files.findPathOfFd(fd), errno, operation, message + " [fd=" + fd + ']');
+    }
+
+    /**
+     * A failed flush ({@code msync}) of the memory mapped at {@code address}: the message names the file where the
+     * OS can tell.
+     */
+    public static CairoException dataSyncFailureOfMapping(FilesFacade ff, long address, int errno, String operation, CharSequence message) {
+        return dataSyncFailure(ff, Files.findPathOfMapping(address), errno, operation, message);
     }
 
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {

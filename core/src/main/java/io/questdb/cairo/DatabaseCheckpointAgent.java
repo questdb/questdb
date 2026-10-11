@@ -242,7 +242,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
         if (ff.sync() != 0) {
             final int errno = ff.errno();
-            throw CairoException.dataSyncFailure(ff, errno, "sync", "sync() failed during checkpoint recovery [errno=" + errno + ']');
+            // dir is the restored root: it names the engine that owns the failure
+            throw CairoException.dataSyncFailure(ff, dir.toString(), errno, "sync", "sync() failed during checkpoint recovery [errno=" + errno + ']');
         }
     }
 
