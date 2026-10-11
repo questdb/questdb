@@ -582,7 +582,16 @@ bytes.
 - **The uploader waits for the durable frontier.** In `adaptive` and `sync` mode the uploader ships a sequencer
   record only once the local durable frontier covers it, for V1 and V2 logs alike, so a power loss can never make
   the primary reuse a transaction number the object store already holds. While it waits it logs `holding uploads
-  past the local durable frontier [...]` once.
+  past the local durable frontier [...]` once. The frontier is read through an up-call on the uploader's thread,
+  and an answer that cannot be proven holds the table: a live table the start flush left unproven (its scan skipped
+  the table, or its cover failed on an error that is not a flush failure) is proven at its first upload by the same
+  flush the start makes (`WalUploader.coverTable`), and if that fails too the table stays held, with a log line
+  naming the table and the error, and is asked again after the uploader's retry window. The up-call answers
+  "nothing to hold" only for a table that is purged or whose drop is marked after its log was flushed. A table an
+  earlier run dropped whose sequencer `_meta` is torn (a crash between the drop's log append and the `_meta`
+  update) ships its drop after one flush of the filesystem (`syncfs` on Linux, `sync` elsewhere), with a critical
+  line where the filesystem cannot be flushed as a whole; holding it would resurrect an acknowledged DROP on a
+  fail-over.
 - **The uploader start flush** (`WalUploader.coverEarlierRecords`). At boot and at promotion, in `adaptive` and `sync`
   mode, the uploader makes every table's sequencer log durable before its first upload, then moves each table's
   durable frontier over the records the flush covered: one `syncfs` of the database root and of each linked volume on
@@ -593,7 +602,10 @@ bytes.
   `PrimaryRoleState.openLoops` before the uploader is installed as the WAL listener: a commit notified during the
   flush could ship the older records of a table the flush has not reached; a commit made meanwhile is shipped by the
   startup scan (`triggerUploadMissed`) right after the install. A dropped table's log is flushed the same way, from
-  part 0 where `syncfs` is not filesystem-wide. A data sync failure stops the engine. On Linux, 1,000 tables take
+  part 0 where `syncfs` is not filesystem-wide, and the table then reads as dropped at its first upload, with no
+  sequencer open. On Linux the `syncfs` also runs when the scan skipped a live table (it logs a critical line with
+  the cause), so that table's older V2 parts are durable before its first upload proves the open one. A data sync
+  failure stops the engine; any other failure leaves the table to its first upload, above. On Linux, 1,000 tables take
   37-109 ms in `adaptive` and 21-23 ms in `sync` when every table has one new commit (the `syncfs` is 90-98% of it),
   2-8 ms when none has. The step reads each table's last transaction through `TableSequencerAPI.lastTxn`, which opens
   the log: on the first such start after a `nosync` or `async` run that open also reads and flushes each V1 log once

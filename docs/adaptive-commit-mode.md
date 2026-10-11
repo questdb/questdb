@@ -418,8 +418,11 @@ More detail:
   `adaptive` and 21-23 ms in `sync` when every table has one new commit, 2-8 ms when none has. Elsewhere each table
   flushes its log with every version 2 log part it still keeps: one more flush per kept closed part (5,000
   transactions each by default), about +50% on the start flush in the typical case (1,000 busy tables: 10.0 s
-  against 6.6 s, measured on Linux with that path forced). A table that kept a long backlog it could not upload pays
-  one flush per 5,000 kept transactions at that start. The role switch and the restore add flushes too:
+  against 6.6 s, measured on Linux with that path forced), and the log of each table an earlier run dropped is
+  flushed the same way at that start. A table that kept a long backlog it could not upload pays
+  one flush per 5,000 kept transactions at that start. A table the start could not flush (a transient error that is
+  not a flush failure) is flushed at its first upload instead, and held until then. The role switch and the restore
+  add flushes too:
   - a demotion opens the writer of each enrolled table (when none is pooled) and flushes the table before it removes
     its save point: one `syncfs` and two `fsync` per table on Linux, about 19 ms per table, so about 19 s for 1,000
     enrolled tables before the instance starts replicating;
