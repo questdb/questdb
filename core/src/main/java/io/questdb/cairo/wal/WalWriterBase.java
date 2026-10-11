@@ -181,12 +181,15 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     /**
-     * The one call a WAL writer makes to sequence its last record. It first makes every record the writer has
-     * appended and not flushed durable, in the modes that promise it, so no write path can get a sequencer record
-     * ahead of the _event entry it names.
+     * The one call a WAL writer makes to sequence its last record. It first makes the files the record relies on
+     * durable, in the modes that promise it: every record the writer has appended and not flushed, and the
+     * segment's own files ({@link #syncSegmentFilesBeforeSequencing(int)}). So no write path can get a sequencer
+     * record ahead of a file it names.
      */
     long nextSeqTxn(long structureVersion, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
-        events.syncBeforeSequencing(configuration.getCommitMode());
+        final int commitMode = configuration.getCommitMode();
+        events.syncBeforeSequencing(commitMode);
+        syncSegmentFilesBeforeSequencing(commitMode);
         return sequencer.nextTxn(tableToken, walId, structureVersion, segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
     }
 
@@ -214,4 +217,11 @@ abstract class WalWriterBase implements AutoCloseable {
         walLocker.unlockWriter(tableToken, walId);
         LOG.debug().$("released WAL lock [walId=").$(walId).I$();
     }
+
+    /**
+     * Makes the writer's per-segment files other than the event files durable before {@link #nextSeqTxn} sequences a
+     * record in the segment, in the modes that promise durability across a power loss, and does nothing for a file
+     * that has not changed since its last flush.
+     */
+    abstract void syncSegmentFilesBeforeSequencing(int commitMode);
 }

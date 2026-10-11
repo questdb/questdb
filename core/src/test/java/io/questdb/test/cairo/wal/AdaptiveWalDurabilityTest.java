@@ -705,20 +705,23 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      * {@code _event} files), per commit mode and group window. ADAPTIVE drains writeback at every window,
      * W=0 included: each file gets {@code msync(MS_ASYNC)}, two {@code sync_file_range} calls (start the
      * writeback, then wait for it) and its own barrier, and never a blocking {@code msync(MS_SYNC)}. NOSYNC,
-     * ASYNC and SYNC run neither the drain nor a barrier. The filesystem probe is pinned on, so the drain runs
+     * ASYNC and SYNC run neither the drain nor a barrier. The first commit in a segment also flushes the
+     * segment {@code _meta}, once, in SYNC and ADAPTIVE. The filesystem probe is pinned on, so the drain runs
      * on every platform.
      */
     @Test
     public void testWalCommitSegmentFileSyncsPerMode() throws Exception {
-        final String perFile = "_event: %1$s; _event.i: %1$s; ts.d: %1$s; v.d: %1$s";
-        final String drained = String.format(perFile, "barrierFsync=1 msyncAsync=1 syncFileRange=2");
-        // commit mode, group window in microseconds, the sync calls of one commit on the segment files.
+        final String perFile = "_event: %1$s; _event.i: %1$s;%2$s ts.d: %1$s; v.d: %1$s";
+        final String drained = "barrierFsync=1 msyncAsync=1 syncFileRange=2";
+        final String adaptiveMeta = " _meta: barrierFsync=1 msyncAsync=1;";
+        // commit mode, group window in microseconds, the sync calls of the first commit and of a later one on the
+        // segment files.
         final String[][] cases = {
-                {"adaptive", "50000", drained},
-                {"nosync", "0", ""},
-                {"async", "0", String.format(perFile, "msyncAsync=1")},
-                {"sync", "0", String.format(perFile, "msyncSync=1")},
-                {"adaptive", "0", drained}
+                {"adaptive", "50000", String.format(perFile, drained, adaptiveMeta), String.format(perFile, drained, "")},
+                {"nosync", "0", "", ""},
+                {"async", "0", String.format(perFile, "msyncAsync=1", ""), String.format(perFile, "msyncAsync=1", "")},
+                {"sync", "0", String.format(perFile, "msyncSync=1", " _meta: msyncSync=1;"), String.format(perFile, "msyncSync=1", "")},
+                {"adaptive", "0", String.format(perFile, drained, adaptiveMeta), String.format(perFile, drained, "")}
         };
         final WritebackDrainFacade ff = new WritebackDrainFacade();
         assertMemoryLeak(ff, () -> {
@@ -738,7 +741,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                         writer.commit();
                         Assert.assertEquals(
                                 "mode=" + mode[0] + ", window=" + mode[1] + "us, commit " + i,
-                                mode[2],
+                                i == 0 ? mode[2] : mode[3],
                                 ff.segmentSyncSummary()
                         );
                     }
@@ -989,6 +992,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     @Test
     public void testWritebackErrorFailsTheCommit() throws Exception {
         final String[] files = {"_event", "_event.i", "s.d", "ts.d", "txt.d", "txt.i", "v.d"};
+        final String[] firstCommitFiles = {"_event", "_event.i", "_meta", "s.d", "ts.d", "txt.d", "txt.i", "v.d"};
         final WritebackDrainFacade ff = new WritebackDrainFacade();
         assertMemoryLeak(ff, () -> {
             final List<String> acknowledged = new ArrayList<>();
@@ -1008,7 +1012,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                             appendRow(writer, 0);
                             ff.segmentSyncs.clear();
                             writer.commit();
-                            Assert.assertEquals("the files a commit barriers", Arrays.toString(files), ff.barrieredFiles());
+                            // The writer's first commit also flushes the _meta of the segment it opened.
+                            Assert.assertEquals("the files a commit barriers", Arrays.toString(firstCommitFiles), ff.barrieredFiles());
                         }
                         // Closing the writer flushes the pending sequencer record at W > 0.
                         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName(name));

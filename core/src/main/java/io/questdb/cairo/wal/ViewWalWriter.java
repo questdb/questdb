@@ -129,6 +129,11 @@ public class ViewWalWriter extends WalWriterBase {
                 '}';
     }
 
+    @Override
+    void syncSegmentFilesBeforeSequencing(int commitMode) {
+        // A view segment holds the event files only.
+    }
+
     private boolean breachedRolloverSizeThreshold() {
         final long threshold = configuration.getWalSegmentRolloverSize();
         if (threshold == 0) {
