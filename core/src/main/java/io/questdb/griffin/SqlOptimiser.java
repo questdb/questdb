@@ -10808,6 +10808,10 @@ public class SqlOptimiser implements Mutable {
                 nested.setFillTo(hasSubDayTimezoneWrap && sampleByTo != null
                         ? createToUtcCall(sampleByTo, sampleByTimezoneName) : sampleByTo);
                 nested.setFillStride(sampleBy);
+                // SqlCodeGenerator.generateFill locates the bucket key through this alias
+                // instead of guessing from column names: a user column such as
+                // first(ts) AS ts carries the timestamp's name but is not the bucket (#7838).
+                nested.setFillBucketAlias(timestampAlias);
                 nested.setFillTimezoneName(hasFillFastPathTz ? sampleByTimezoneName : null);
                 nested.setFillValues(sampleByFill);
                 // Propagate offset to the fill cursor only when the sampler grid

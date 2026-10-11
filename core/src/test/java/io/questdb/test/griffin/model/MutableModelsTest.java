@@ -295,6 +295,7 @@ public class MutableModelsTest {
         model.setFillTo(newExpressionNode());
         model.setFillFrom(newExpressionNode());
         model.setFillStride(newExpressionNode());
+        model.setFillBucketAlias("ts1");
         model.setAllowPropagationOfOrderByAdvice(false);
         model.getAliasSequenceMap().put("foobar", 1);
         // Setup HorizonJoinContext

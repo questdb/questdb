@@ -134,6 +134,9 @@ public class QueryModel implements IQueryModel {
     private JoinContext context;
     private boolean distinct = false;
     private boolean explicitTimestamp;
+    // Alias of the timestamp_floor_utc bucket key that SqlOptimiser.rewriteSampleBy
+    // creates; SqlCodeGenerator.generateFill locates the bucket column through it.
+    private CharSequence fillBucketAlias;
     private ExpressionNode fillFrom;
     private ExpressionNode fillOffset;
     private ExpressionNode fillStride;
@@ -486,6 +489,7 @@ public class QueryModel implements IQueryModel {
         sampleByOffset = ZERO_OFFSET;
         sampleByTo = null;
         sampleByFrom = null;
+        fillBucketAlias = null;
         fillFrom = null;
         fillOffset = null;
         fillTo = null;
@@ -764,6 +768,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
+    }
+
+    @Override
+    public CharSequence getFillBucketAlias() {
+        return fillBucketAlias;
     }
 
     @Override
@@ -1541,6 +1550,7 @@ public class QueryModel implements IQueryModel {
         // and clears sampleBy in the same block, so the gate `sampleBy != null` at the caller
         // (SqlOptimiser.rewriteSelectClause0) is mutually exclusive with fill* being set.
         assert model.getFillStride() == null
+                && model.getFillBucketAlias() == null
                 && model.getFillOffset() == null
                 && model.getFillTimezoneName() == null
                 && model.getFillFrom() == null
@@ -1720,6 +1730,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
         this.explicitTimestamp = explicitTimestamp;
+    }
+
+    @Override
+    public void setFillBucketAlias(CharSequence fillBucketAlias) {
+        this.fillBucketAlias = fillBucketAlias;
     }
 
     @Override
@@ -2455,6 +2470,11 @@ public class QueryModel implements IQueryModel {
         if (fillStride != null) {
             sink.putAscii(" stride ");
             sink.put(fillStride);
+        }
+
+        if (fillBucketAlias != null) {
+            sink.putAscii(" bucket ");
+            sink.put(fillBucketAlias);
         }
 
         if (fillTimezoneName != null) {
