@@ -94,6 +94,72 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullBucketBeforeQualifiedFloorKey() throws Exception {
+        // The table-qualified user floor stays a second TIMESTAMP group-by key after the
+        // bucket; the fill must key on the bucket and keep the 02:00 gap row.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT ts, timestamp_floor('1d', t.ts) AS d, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\td\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketCastToLongUnderTimestampName() throws Exception {
+        // rewriteSampleBy moves the cast to a wrapper above the group-by; the LONG column
+        // named ts must not be taken for the bucket.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT ts::LONG AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tv
+                            1704067200000000\t1.0
+                            1704070800000000\t2.0
+                            1704074400000000\tnull
+                            1704078000000000\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenTimestampNamedLikeAggregate() throws Exception {
+        // The designated timestamp is named max, so max(v) carries the same token and
+        // rewriteSampleBy puts its bucket on the explicit GROUP BY list. The aggregate
+        // column surfaces as max1 because of the pre-existing alias de-duplication; the
+        // test pins the gap row, not that name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (v DOUBLE, max TIMESTAMP) TIMESTAMP(max) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1.0, '2024-01-01T00:00:00.000000Z'),
+                        (2.0, '2024-01-01T01:15:00.000000Z'),
+                        (3.0, '2024-01-01T03:00:00.000000Z')
+                    """);
+            assertQuery("SELECT max, max(v) FROM m SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("max")
+                    .returns("""
+                            max\tmax1
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testFillNullBucketWhenFirstTimestampAliasedAsTimestamp() throws Exception {
         // first(ts) AS ts takes the timestamp's name, so rewriteSampleBy names the bucket key
         // ts1. generateFill must fill by the recorded bucket, not by the TIMESTAMP column
@@ -104,48 +170,49 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            ts	v
-                            2024-01-01T00:00:00.000000Z	1.0
-                            2024-01-01T01:15:00.000000Z	2.0
-                            	null
-                            2024-01-01T03:00:00.000000Z	3.5
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.5
                             """);
         });
     }
 
     @Test
     public void testFillNullBucketWhenOtherTimestampAliasedAsTimestamp() throws Exception {
-        // Master silently returned a 9-row cross product here even with assertions enabled.
+        // generateFill used to take first(ets) AS ts for the bucket and emit a 9-row cross
+        // product, even with assertions enabled (#7838).
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT first(ets) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            ts	v
-                            2024-01-01T05:00:00.000000Z	1.0
-                            2024-01-01T04:00:00.000000Z	2.0
-                            	null
-                            2024-01-01T03:00:00.000000Z	3.5
+                            ts\tv
+                            2024-01-01T05:00:00.000000Z\t1.0
+                            2024-01-01T04:00:00.000000Z\t2.0
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.5
                             """);
         });
     }
 
     @Test
     public void testFillNullBucketWhenQualifiedFloorAliasedAsTimestamp() throws Exception {
-        // The table-qualified user floor stays a second group-by key named ts; master took
-        // it for the bucket and dropped the 02:00 gap row.
+        // The table-qualified user floor stays a second group-by key named ts; generateFill
+        // used to take it for the bucket and drop the 02:00 gap row (#7838).
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT timestamp_floor('1d', t.ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            ts	v
-                            2024-01-01T00:00:00.000000Z	1.0
-                            2024-01-01T00:00:00.000000Z	2.0
-                            2024-01-01T00:00:00.000000Z	null
-                            2024-01-01T00:00:00.000000Z	3.5
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:00:00.000000Z\t2.0
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\t3.5
                             """);
         });
     }
@@ -162,11 +229,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(NULL) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v	avg1
-                            2.0	2024-01-01T00:00:00.000000Z
-                            4.0	2024-01-01T01:00:00.000000Z
-                            7.0	2024-01-01T03:00:00.000000Z
-                            null	2024-01-01T02:00:00.000000Z
+                            v\tavg1
+                            2.0\t2024-01-01T00:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z
+                            7.0\t2024-01-01T03:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z
                             """);
         });
     }
@@ -180,13 +247,13 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            ts	v
-                            2024-01-01T00:00:00.000000Z	1.0
-                            2024-01-01T01:15:00.000000Z	2.0
-                            	null
-                            2024-01-01T03:00:00.000000Z	3.5
-                            	null
-                            	null
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.5
+                            \tnull
+                            \tnull
                             """);
         });
     }
@@ -200,11 +267,11 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            ts	v
-                            2024-01-01T00:00:00.000000Z	1.0
-                            2024-01-01T01:15:00.000000Z	2.0
-                            	null
-                            2024-01-01T03:00:00.000000Z	3.5
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            \tnull
+                            2024-01-01T03:00:00.000000Z\t3.5
                             """);
         });
     }
@@ -218,15 +285,15 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            ts	k	v
-                            2024-01-01T00:00:00.000000Z	a	1.0
-                            	b	null
-                            2024-01-01T01:15:00.000000Z	b	2.0
-                            	a	null
-                            	a	null
-                            	b	null
-                            2024-01-01T03:00:00.000000Z	a	3.0
-                            2024-01-01T03:30:00.000000Z	b	4.0
+                            ts\tk\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            \tb\tnull
+                            2024-01-01T01:15:00.000000Z\tb\t2.0
+                            \ta\tnull
+                            \ta\tnull
+                            \tb\tnull
+                            2024-01-01T03:00:00.000000Z\ta\t3.0
+                            2024-01-01T03:30:00.000000Z\tb\t4.0
                             """);
         });
     }

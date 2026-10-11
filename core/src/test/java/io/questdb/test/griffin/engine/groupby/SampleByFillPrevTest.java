@@ -148,11 +148,11 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            ts	v
-                            2024-01-01T00:00:00.000000Z	1.0
-                            2024-01-01T01:15:00.000000Z	2.0
-                            2024-01-01T01:15:00.000000Z	2.0
-                            2024-01-01T03:30:00.000000Z	3.5
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            2024-01-01T01:15:00.000000Z\t2.0
+                            2024-01-01T03:30:00.000000Z\t3.5
                             """);
         });
     }
@@ -168,15 +168,43 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             assertQuery("SELECT k, avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(PREV) ORDER BY k, v")
                     .noLeakCheck()
                     .returns("""
-                            k	v	avg1
-                            a	2.0	2024-01-01T00:00:00.000000Z
-                            a	2.0	2024-01-01T01:00:00.000000Z
-                            a	2.0	2024-01-01T02:00:00.000000Z
-                            a	6.0	2024-01-01T03:00:00.000000Z
-                            b	4.0	2024-01-01T01:00:00.000000Z
-                            b	4.0	2024-01-01T02:00:00.000000Z
-                            b	8.0	2024-01-01T03:00:00.000000Z
-                            b	null	2024-01-01T00:00:00.000000Z
+                            k\tv\tavg1
+                            a\t2.0\t2024-01-01T00:00:00.000000Z
+                            a\t2.0\t2024-01-01T01:00:00.000000Z
+                            a\t2.0\t2024-01-01T02:00:00.000000Z
+                            a\t6.0\t2024-01-01T03:00:00.000000Z
+                            b\t4.0\t2024-01-01T01:00:00.000000Z
+                            b\t4.0\t2024-01-01T02:00:00.000000Z
+                            b\t8.0\t2024-01-01T03:00:00.000000Z
+                            b\tnull\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevBucketWhenTimestampNamedLikeAggregate() throws Exception {
+        // The designated timestamp is named max, so max(v) carries the same token and
+        // rewriteSampleBy puts its bucket on the explicit GROUP BY list. The aggregate
+        // column surfaces as max1 because of the pre-existing alias de-duplication; the
+        // test pins the filled gap row, not that name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (v DOUBLE, max TIMESTAMP) TIMESTAMP(max) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1.0, '2024-01-01T00:00:00.000000Z'),
+                        (2.0, '2024-01-01T01:15:00.000000Z'),
+                        (3.0, '2024-01-01T03:00:00.000000Z')
+                    """);
+            assertQuery("SELECT max, max(v) FROM m SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("max")
+                    .returns("""
+                            max\tmax1
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t3.0
                             """);
         });
     }

@@ -12832,6 +12832,13 @@ public class SqlOptimiser implements Mutable {
                     groupByModel.addBottomUpColumn(qc);
                     groupByNodes.add(deepClone(expressionNodePool, node));
                     groupByAliases.add(qc.getAlias());
+                    // rewriteSampleBy puts its bucket on the GROUP BY list when every projected
+                    // column carries the timestamp's token, e.g. a designated timestamp named max
+                    // next to max(v). This loop keys the bucket under a fresh alias; record it, so
+                    // that SqlCodeGenerator.generateFill still finds the bucket.
+                    if (baseModel.getFillBucketAlias() != null && SqlUtil.isSampleByBucketFloor(node)) {
+                        baseModel.setFillBucketAlias(qc.getAlias());
+                    }
                     emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false, false, false);
                 } else {
                     // The constant is redundant when at least one other group by column will remain.

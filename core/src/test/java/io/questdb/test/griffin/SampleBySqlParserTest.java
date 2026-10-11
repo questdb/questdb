@@ -290,6 +290,20 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFillBucketAliasFollowsExplicitGroupByKey() throws SqlException {
+        // max(v) carries the same token as the timestamp column max, so rewriteSampleBy puts
+        // its bucket on the explicit GROUP BY list, and rewriteSelectClause0 keys it as
+        // timestamp_floor_utc; the recorded alias must follow that key.
+        assertQuery(
+                "select-virtual timestamp_floor_utc max, max1 from (select-group-by [timestamp_floor_utc('1h', max, null, '00:00', null) timestamp_floor_utc, max(v) max1] timestamp_floor_utc('1h', max, null, '00:00', null) timestamp_floor_utc, max(v) max1 from (select [max, v] from m timestamp (max) fill(NULL) stride 1h bucket timestamp_floor_utc)) order by max",
+                "SELECT max, max(v) FROM m SAMPLE BY 1h FILL(NULL)",
+                modelOf("m")
+                        .col("v", ColumnType.DOUBLE)
+                        .timestamp("max")
+        );
+    }
+
+    @Test
     public void testFillBucketAliasFollowsGroupByKeyRename() throws SqlException {
         // The emitted sum(a) aggregate claims the alias "sum" before the bucket key
         // arrives, so the group-by model renames the bucket to sum1; the recorded

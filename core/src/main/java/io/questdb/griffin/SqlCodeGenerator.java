@@ -155,7 +155,6 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
-import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.griffin.engine.functions.memoization.ArrayFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
@@ -1688,18 +1687,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * @param horizonJoinIndex the index of the HORIZON JOIN model
      * @return the HorizonJoinContext or null if not found
      */
-    private static HorizonJoinContext findHorizonOffsetContext(IQueryModel model, int horizonJoinIndex) {
-        final ObjList<IQueryModel> joinModels = model.getJoinModels();
-        // Look for the synthetic offset model before the HORIZON JOIN model
-        for (int i = horizonJoinIndex - 1; i >= 0; i--) {
-            IQueryModel jm = joinModels.getQuick(i);
-            if (isHorizonOffsetModel(jm)) {
-                return jm.getHorizonJoinContext();
-            }
-        }
-        return null;
-    }
-
     /**
      * Returns the index of the SAMPLE BY bucket key in the group-by output, or -1 when
      * the output does not carry it. SqlOptimiser.rewriteSampleBy records the bucket's
@@ -1721,12 +1708,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (column == null) {
             return -1;
         }
-        final ExpressionNode ast = column.getAst();
-        return ast.type == ExpressionNode.FUNCTION
-                && ast.paramCount == 5
-                && Chars.equalsIgnoreCase(TimestampFloorFromOffsetUtcFunctionFactory.NAME, ast.token)
-                ? index
-                : -1;
+        return SqlUtil.isSampleByBucketFloor(column.getAst()) ? index : -1;
+    }
+
+    private static HorizonJoinContext findHorizonOffsetContext(IQueryModel model, int horizonJoinIndex) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        // Look for the synthetic offset model before the HORIZON JOIN model
+        for (int i = horizonJoinIndex - 1; i >= 0; i--) {
+            IQueryModel jm = joinModels.getQuick(i);
+            if (isHorizonOffsetModel(jm)) {
+                return jm.getHorizonJoinContext();
+            }
+        }
+        return null;
     }
 
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
@@ -4247,7 +4241,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 CairoException.rethrowCleanupFailure(cleanupFailure);
                 return groupByFactory;
             }
-
 
             final RecordMetadata baseMeta = groupByFactory.getMetadata();
             final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);

@@ -135,7 +135,9 @@ public class QueryModel implements IQueryModel {
     private boolean distinct = false;
     private boolean explicitTimestamp;
     // Alias of the timestamp_floor_utc bucket key that SqlOptimiser.rewriteSampleBy
-    // creates; SqlCodeGenerator.generateFill locates the bucket column through it.
+    // creates. SqlOptimiser.rewriteSelectClause0 (explicit GROUP BY arm) and
+    // renameFillBucketAlias move it when the group-by model re-keys the bucket;
+    // SqlCodeGenerator.generateFill locates the bucket column through it.
     private CharSequence fillBucketAlias;
     private ExpressionNode fillFrom;
     private ExpressionNode fillOffset;
