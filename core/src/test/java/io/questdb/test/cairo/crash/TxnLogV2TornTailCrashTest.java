@@ -49,8 +49,9 @@ import java.util.Collection;
  * schema, the table must apply without suspending, and it must take new rows and schema changes.
  * <p>
  * Each case commits records that are not applied yet, loses power with some of them torn in the part file (zeroed,
- * as a page that never reached the disk, or on one side of a sector boundary), and restarts. A record damaged after
- * it reached the disk is not a tear and must not be dropped: {@code TableTransactionLogV2CrcTest} covers that.
+ * as a page that never reached the disk, on one side of a sector boundary, or past the fields a writeback caught
+ * stored), and restarts. A record damaged after it reached the disk is not a tear and must not be dropped:
+ * {@code TableTransactionLogV2CrcTest} and {@code TableTransactionLogV2TornTailTest} cover that.
  */
 @RunWith(Parameterized.class)
 public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
@@ -82,6 +83,7 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
                 {"a record before the last", 5, 2, 6, 0, RECORD_SIZE},
                 {"the last record without its second sector", 8, 1, 9, sectorSplit, RECORD_SIZE - sectorSplit},
                 {"the last record without its first sector", 8, 1, 9, 0, sectorSplit},
+                {"the last record half-stored", 5, 1, 6, 12, RECORD_SIZE - 12},
                 {"the first record of a new part", PART_TXN_COUNT, 1, PART_TXN_COUNT + 1, 0, RECORD_SIZE}
         });
     }
