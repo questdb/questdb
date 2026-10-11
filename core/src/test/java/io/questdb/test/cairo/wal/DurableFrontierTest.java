@@ -667,15 +667,15 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                 Assert.assertEquals("the frontier must stay at the contiguous durable prefix (the baseline)",
                         baselineTxn, tracker.getLocalDurableSeqTxn());
 
-                crashFf.powerLoss();
-                a.simulatePowerLossDropPending();
-                b.simulatePowerLossDropPending();
-                crashFf.crash(engine.getConfiguration().getDbRoot());
+                powerLossDroppingPending(a, b);
             } finally {
                 a.close();
                 b.close();
             }
+            // Every handle from before the power loss is released before the rollback: the mark keeps the
+            // close-time flushes out of the durable state, and the rollback refuses a mutation after it.
             releaseAll();
+            crashFf.crash(engine.getConfiguration().getDbRoot());
             recoverAndApply(tt);
 
             // The unacked tail may be gone or surface loudly; a surviving row is never wrong.
@@ -716,14 +716,14 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                 unflushedSeqTxn = tracker.getSeqTxn();
                 Assert.assertEquals(frontierAfterFirst + 1, unflushedSeqTxn);
                 Assert.assertTrue(tracker.getLocalDurableSeqTxn() < unflushedSeqTxn);
-                // Power loss: drop the pending batch without a flush, then roll every file back to its durable content.
-                crashFf.powerLoss();
-                w.simulatePowerLossDropPending();
-                crashFf.crash(engine.getConfiguration().getDbRoot());
+                // Power loss: drop the pending batch without a flush. The handles are released before the rollback
+                // puts every file back to its durable content.
+                powerLossDroppingPending(w);
             } finally {
                 w.close();
             }
             releaseAll();
+            crashFf.crash(engine.getConfiguration().getDbRoot());
 
             Assert.assertEquals("the unflushed commit is lost: the durable log ends at the first commit",
                     frontierAfterFirst, engine.getTableSequencerAPI().lastTxn(tt));

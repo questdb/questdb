@@ -21,6 +21,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 /**
@@ -219,6 +220,15 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private String killRoot;
     private int syncfsCount = 0; // number of syncfs(2) calls observed (filesystem-wide flushes)
     private String dbRootPrefix; // set via setDbRoot(); scopes cached-fd reclamation to per-table files
+    // Handles open under a table directory of the root when crash() rolled it back. A mutation through one after
+    // the rollback changes the files recovery reads, outside the frozen window, and is refused (see crash()). close
+    // and munmap stay allowed. Cleared by the next markDurableBaseline, powerLoss or reset.
+    private final Set<Long> staleFds = new HashSet<>();
+    private final Set<Long> staleMappings = new HashSet<>(); // mapping base addresses
+    // The negative control of the sweeps: while set, a durability op whose first io.questdb.cairo frame matches
+    // returns before the model update (as a removed flush would) and is counted in neuteredOps, not as an op.
+    private Predicate<StackWalker.StackFrame> neuterPredicate;
+    private int neuteredOps = 0;
 
     /**
      * Ordered list of file paths as they were fsync'd/fsyncAndClose'd (for sync-order assertions).
@@ -240,6 +250,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -250,6 +261,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -260,6 +272,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -270,6 +283,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -281,6 +295,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             noCacheOpenFds.add(fd);
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -292,6 +307,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             noCacheOpenFds.add(fd);
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -301,11 +317,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         countKillPoint();
         fdToPath.remove(fd);
         noCacheOpenFds.remove(fd);
+        staleFds.remove(fd); // fd reclamation, no durability: allowed on a stale handle
         return super.close(fd);
     }
 
     @Override
     public long write(long fd, long address, long len, long offset) {
+        assertNotStale(fd, "write");
         long n = super.write(fd, address, len, offset);
         String p = fdToPath.get(fd);
         if (p != null && n > 0) {
@@ -319,6 +337,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public long append(long fd, long buf, long len) {
+        assertNotStale(fd, "append");
         final long before = fdToPath.containsKey(fd) ? super.length(fd) : -1L;
         long n = super.append(fd, buf, len);
         String p = fdToPath.get(fd);
@@ -401,6 +420,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         // its mapping (unmap, then crash), as in the size model.
         mmapAddrRange.remove(address);
         mmapAddrToPath.remove(address);
+        staleMappings.remove(address); // releasing a stale mapping is allowed, as close is
         super.munmap(address, size, memoryTag);
     }
 
@@ -423,6 +443,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     @Override
     public void fdatasync(long fd) {
         assertNotForceClosed(fd, "fdatasync");
+        assertNotStale(fd, "fdatasync");
+        if (isNeutered()) {
+            return;
+        }
         super.fdatasync(fd);
         String p = fdToPath.get(fd);
         if (p != null) {
@@ -445,6 +469,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void syncfs(long fd) {
+        assertNotStale(fd, "syncfs");
+        if (isNeutered()) {
+            return;
+        }
         super.syncfs(fd);
         syncfsCount++;
         for (String root : namespaceRoots) {
@@ -475,6 +503,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     @Override
     public void fsync(long fd) {
         assertNotForceClosed(fd, "fsync");
+        assertNotStale(fd, "fsync");
+        if (isNeutered()) {
+            return;
+        }
         super.fsync(fd);
         String p = fdToPath.get(fd);
         final boolean directory = p != null && Files.isDirectory(Paths.get(p));
@@ -502,6 +534,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void fsyncAndClose(long fd) {
+        assertNotStale(fd, "fsyncAndClose");
+        if (isNeutered()) {
+            close(fd); // the flush is removed, the fd is still released
+            return;
+        }
         final String p = fdToPath.get(fd);
         final boolean directory = p != null && Files.isDirectory(Paths.get(p));
         final long size = p != null && !directory ? super.length(fd) : -1L;
@@ -758,6 +795,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void msync(long addr, long len, boolean async) {
+        assertMappingNotStale(addr, async ? "msync-async" : "msync");
+        if (!async && isNeutered()) {
+            return;
+        }
         super.msync(addr, len, async);
         String p = pathForAddr(addr);
         if (p != null) {
@@ -787,6 +828,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public int syncFileRange(long fd, long offset, long nbytes, int flags) {
+        assertNotStale(fd, "syncFileRange");
         int rc = super.syncFileRange(fd, offset, nbytes, flags);
         String p = fdToPath.get(fd);
         if (p != null) {
@@ -810,6 +852,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public boolean allocate(long fd, long size) {
+        assertNotStale(fd, "allocate");
         final long lengthBefore = trackedLength(fd);
         final boolean ok = super.allocate(fd, size);
         shrinkAfterAllocate(fd, lengthBefore);
@@ -818,6 +861,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public boolean allocateRange(long fd, long offset, long size) {
+        assertNotStale(fd, "allocateRange");
         final long lengthBefore = trackedLength(fd);
         final boolean ok = super.allocateRange(fd, offset, size);
         shrinkAfterAllocate(fd, lengthBefore);
@@ -826,6 +870,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public boolean truncate(long fd, long size) {
+        assertNotStale(fd, "truncate");
         countKillPoint();
         final boolean ok = super.truncate(fd, size);
         final String p = fdToPath.get(fd);
@@ -869,7 +914,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         killPoints = 0;
         killRoot = null;
         clearPowerLoss();
-        // modelSharedJournal is a configured policy, not per-cycle state, so it is not reset here.
+        clearStaleHandles();
+        neuteredOps = 0;
+        // modelSharedJournal and the neuter predicate are configured policies, not per-cycle state, so they are not
+        // reset here.
     }
 
     /**
@@ -878,6 +926,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      */
     public void markDurableBaseline(CharSequence dbRoot) {
         clearPowerLoss();
+        clearStaleHandles();
         final Path root = Paths.get(dbRoot.toString()).toAbsolutePath();
         namespaceRoots.add(root.toString());
         snapshotNamespaceTree(root);
@@ -945,6 +994,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      * no-op, so a helper can mark unconditionally after an armed crash fired.
      */
     public void powerLoss() {
+        // A new power loss starts a new cycle: whatever a handle from the last rollback does after this mark is
+        // rolled back by the next crash() and needs no fence.
+        clearStaleHandles();
         if (powerLossMarked) {
             return;
         }
@@ -990,6 +1042,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (killImageTaken) {
             clearPowerLoss();
             restoreKillImage();
+            // A path the kill rollback deleted starts empty if the engine creates it again, as after a power loss:
+            // its durable bytes must not come back at a later power loss in the same facade lifetime. The page cache
+            // survives a kill, so the pre-kill durable state of what stays is the right durable state and no new
+            // baseline is taken.
+            evictMissingDurability(killRoot);
             return;
         }
         if (!powerLossMarked) {
@@ -1059,6 +1116,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         // A rebooted machine reads back exactly the durable bytes: no page-cache or device-cache content survives,
         // so a later flush cannot promote bytes this power loss destroyed.
         markDurableBaseline(dbRoot);
+        // A rebooted machine has no handle from before the power loss either. Every fd and mapping still open under a
+        // table directory of this root is stale from here: a mutation through it would change files recovery reads,
+        // and the baseline above has already counted it as durable. Engine-root files (tables.d, the id generator)
+        // are held by singletons that outlive the simulated restart and are exempt, as in noCacheOpenFdsSnapshot().
+        markStaleHandles(root.toString());
     }
 
     /**
@@ -1137,6 +1199,32 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
+     * True while a neuter predicate is set ({@link #neuterFlushesAt}).
+     */
+    public boolean isNeutering() {
+        return neuterPredicate != null;
+    }
+
+    /**
+     * The negative control of a sweep: while {@code predicate} is set, a durability op ({@code fdatasync},
+     * {@code fsync}, {@code fsyncAndClose}, {@code syncfs}, {@code msync(MS_SYNC)}) whose first
+     * {@code io.questdb.cairo} frame matches returns before it touches the model, exactly as a removed flush would:
+     * no device-cache, journal or durable promotion, no crash point, no real syscall. It is counted in
+     * {@link #neuteredOpCount()} instead, so a workload in which the class takes no flush is visible. {@code null}
+     * turns the control off. The stack is walked only while a predicate is set.
+     */
+    public void neuterFlushesAt(Predicate<StackWalker.StackFrame> predicate) {
+        this.neuterPredicate = predicate;
+    }
+
+    /**
+     * Number of durability ops {@link #neuterFlushesAt} has removed so far.
+     */
+    public int neuteredOpCount() {
+        return neuteredOps;
+    }
+
+    /**
      * Snapshot of the non-cached fds ({@code openRWNoCache}/{@code openRONoCache}) currently open. They bypass the
      * path-keyed durability tracking, so they are recorded here, not in {@code fdToPath}. The sweep driver uses this
      * to model process-death fd reclamation: a simulated crash on a live JVM leaves a non-cached fd open where a
@@ -1208,6 +1296,102 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             fdToPath.remove(fd);
         }
         forceClosedFds.put(fd, path == null ? "<unknown path>" : path);
+    }
+
+    /**
+     * Refuses a mutation through an fd that was open under a table directory when {@link #crash} rolled the root
+     * back. The rollback is the reboot: the engine's handles from before the power loss do not exist on the rebooted
+     * machine, and a flush, write or truncate through one here changes the files recovery reads after the baseline
+     * counted them as durable. The test must release its writers before {@code crash()} (see
+     * {@code AbstractCrashConsistencyTest.powerLossDroppingPending}); {@code close} and {@code munmap} stay allowed.
+     */
+    private void assertNotStale(long fd, String op) {
+        if (!staleFds.isEmpty() && staleFds.contains(fd)) {
+            throw new IllegalStateException("a handle opened before the power loss mutates "
+                    + relativePath(fdToPath.get(fd)) + " after it [op=" + op + ", fd=" + fd
+                    + "]: release writers before crash()");
+        }
+    }
+
+    /**
+     * {@link #assertNotStale(long, String)} for a mapping: the base of the mapping {@code addr} falls in.
+     */
+    private void assertMappingNotStale(long addr, String op) {
+        if (staleMappings.isEmpty()) {
+            return;
+        }
+        final long base = mappingBaseOf(addr);
+        if (base != 0 && staleMappings.contains(base)) {
+            throw new IllegalStateException("a handle opened before the power loss mutates "
+                    + relativePath(mmapAddrToPath.get(base)) + " after it [op=" + op + ", addr=" + addr
+                    + "]: release writers before crash()");
+        }
+    }
+
+    private void clearStaleHandles() {
+        staleFds.clear();
+        staleMappings.clear();
+    }
+
+    /**
+     * True, and counted, when a neuter predicate is set and matches the first {@code io.questdb.cairo} frame of the
+     * caller: the durability op is removed.
+     */
+    private boolean isNeutered() {
+        final Predicate<StackWalker.StackFrame> predicate = neuterPredicate;
+        if (predicate == null) {
+            return false;
+        }
+        final StackWalker.StackFrame frame = StackWalker.getInstance().walk(frames -> frames
+                .filter(f -> f.getClassName().startsWith("io.questdb.cairo."))
+                .findFirst()
+                .orElse(null));
+        if (frame != null && predicate.test(frame)) {
+            neuteredOps++;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Base address of the live mapping {@code addr} falls in, or 0.
+     */
+    private long mappingBaseOf(long addr) {
+        if (mmapAddrRange.containsKey(addr)) {
+            return addr;
+        }
+        for (Map.Entry<Long, long[]> e : mmapAddrRange.entrySet()) {
+            final long base = e.getKey();
+            if (addr >= base && addr < e.getValue()[0]) {
+                return base;
+            }
+        }
+        return 0L;
+    }
+
+    /**
+     * Records every open fd and live mapping under a table directory of {@code rootKey} as stale (see
+     * {@link #assertNotStale}). A file directly under the root, such as {@code tables.d}, is exempt; a directory fd
+     * of a table directory is not.
+     */
+    private void markStaleHandles(String rootKey) {
+        final String prefix = rootKey + File.separator;
+        for (Map.Entry<Long, String> e : fdToPath.entrySet()) {
+            if (isUnderTableDirectory(e.getValue(), prefix)) {
+                staleFds.add(e.getKey());
+            }
+        }
+        for (Map.Entry<Long, String> e : mmapAddrToPath.entrySet()) {
+            if (isUnderTableDirectory(e.getValue(), prefix)) {
+                staleMappings.add(e.getKey());
+            }
+        }
+    }
+
+    private static boolean isUnderTableDirectory(String path, String rootPrefix) {
+        return path != null
+                && path.startsWith(rootPrefix)
+                && (path.indexOf(File.separatorChar, rootPrefix.length()) >= 0 || Files.isDirectory(Paths.get(path)));
     }
 
     /**
@@ -1633,6 +1817,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             mmapAddrToPath.put(addr, p);
             track(p);
         }
+        if (staleFds.contains(fd)) {
+            staleMappings.add(addr);
+        }
     }
 
     private void remapMoved(long oldAddr, long newAddr, long newSize, long fileOffset, long fd) {
@@ -1648,6 +1835,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             mmapAddrRange.put(newAddr, new long[]{newAddr + newSize, fileOffset});
             mmapAddrToPath.put(newAddr, p);
             track(p);
+        }
+        if (staleMappings.remove(oldAddr) || staleFds.contains(fd)) {
+            staleMappings.add(newAddr);
         }
     }
 

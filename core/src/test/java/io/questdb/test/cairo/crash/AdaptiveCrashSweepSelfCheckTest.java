@@ -122,6 +122,25 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
+     * The negative control of the control: with the WAL writer's own flushes removed, the W0 sweep must go red.
+     * The sweeps crash at every durability op, so a removed flush shrinks N instead of failing anything;
+     * {@link #assertSweepGoesRedWithNeuteredFlushes} is what makes a removed flush visible, and this is the one
+     * case that proves it can. Reverting the facade hook makes the sweep pass vacuously, which the inverted verdict
+     * reports.
+     */
+    @Test
+    public void testNeuteredWalWriterFlushTurnsTheSweepRed() throws Exception {
+        withAdaptiveW0(() -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
+            assertSweepGoesRedWithNeuteredFlushes(
+                    new IdentityWorkload(),
+                    "the WAL writer's flushes",
+                    frame -> frame.getClassName().startsWith("io.questdb.cairo.wal.WalWriter")
+            );
+        }));
+    }
+
+    /**
      * The same sweep over WAL ingest that releases column pages before its commit and rolls a segment:
      * one-OS-page WAL column pages, three commits of {@link #PAGED_ROWS_PER_COMMIT} rows, a segment roll after
      * the second. At every crash point every row the durable frontier covered when the power failed must read
