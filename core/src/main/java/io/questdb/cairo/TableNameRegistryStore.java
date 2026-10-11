@@ -225,23 +225,28 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
 
         tableNameMemory.close(false);
         tableNameMemory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-        tableNameMemory.putLong(0L);
+        final long newAppendOffset;
+        try {
+            tableNameMemory.putLong(0L);
 
-        // Save tables not fully deleted yet to complete the deletion.
-        for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
-            if (reverseMapItem.isDropped()) {
-                writeEntry(reverseMapItem.getToken(), OPERATION_ADD);
-                writeEntry(reverseMapItem.getToken(), OPERATION_REMOVE);
+            // Save tables not fully deleted yet to complete the deletion.
+            for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
+                if (reverseMapItem.isDropped()) {
+                    writeEntry(reverseMapItem.getToken(), OPERATION_ADD);
+                    writeEntry(reverseMapItem.getToken(), OPERATION_REMOVE);
+                }
             }
-        }
 
-        for (TableToken token : nameTableTokenMap.values()) {
-            writeEntry(token, OPERATION_ADD);
-        }
+            for (TableToken token : nameTableTokenMap.values()) {
+                writeEntry(token, OPERATION_ADD);
+            }
 
-        tableNameMemory.sync(false);
-        long newAppendOffset = tableNameMemory.getAppendOffset();
-        tableNameMemory.close();
+            tableNameMemory.sync(false);
+            newAppendOffset = tableNameMemory.getAppendOffset();
+        } finally {
+            // A failed flush must not leave the temporary file open, nor the registry appending to it.
+            tableNameMemory.close();
+        }
 
         // rename tmp to next version file, everyone will automatically switch to new file
         LPSZ path2 = Path.getThreadLocal2(configuration.getDbRoot())

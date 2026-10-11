@@ -28,7 +28,12 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
@@ -121,6 +126,8 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("CREATE VIEW v_" + table + " AS (SELECT ts, s FROM " + table + " WHERE i > 2)");
+                    drainWalAndViewQueues();
+                    execute("ALTER VIEW v_" + table + " AS (SELECT ts, i FROM " + table + ")");
                     drainWalAndViewQueues();
                     execute("DROP VIEW v_" + table);
                     drainWalAndViewQueues();
@@ -322,6 +329,28 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("ALTER TABLE " + table + " ADD COLUMN c LONG");
+                    drainWalQueue();
+                }
+        );
+    }
+
+    @Test
+    public void testWalAddColumnRollsUncommittedRows() throws Exception {
+        assertEveryFlushFailureStopsEngine(
+                DataSyncFailurePropagationTest::createWalTable,
+                table -> {
+                    // A column added while the writer holds uncommitted rows moves them into a new segment.
+                    try (WalWriter writer = engine.getWalWriter(engine.verifyTableName(table))) {
+                        TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor("2024-01-04"));
+                        row.putInt(1, 1);
+                        row.append();
+                        writer.commit();
+                        row = writer.newRow(MicrosTimestampDriver.floor("2024-01-04T01"));
+                        row.putInt(1, 2);
+                        row.append();
+                        writer.addColumn("c", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
+                        writer.commit();
+                    }
                     drainWalQueue();
                 }
         );
@@ -580,9 +609,12 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
         final StringBuilder failures = new StringBuilder();
         int injectedCount = 0;
+        releasePools();
         for (int i = 0, n = firstOfEachPath.size(); i < n; i++) {
             final int failAt = firstOfEachPath.getQuick(i);
             final String table = "t_" + failAt;
+            final HashSet<String> openFilesBefore = openFiles();
+            final long openOsFilesBefore = io.questdb.std.Files.getOpenFileCount();
             setup.run(table);
             ff.arm(failAt);
             try {
@@ -608,7 +640,24 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
             }
             bystander.resetDurabilityFailure();
             engine.resetDurabilityFailure();
-            engine.releaseInactive();
+            releasePools();
+            // Whatever the failed flush interrupted, its files are closed by the time the pools let go of the table,
+            // not by the next statement that reuses the object holding them.
+            if (injection != null) {
+                final StringBuilder leaked = new StringBuilder();
+                for (String fd : openFiles()) {
+                    if (!openFilesBefore.contains(fd)) {
+                        leaked.append(' ').append(fd.indexOf('=') > 0 ? fd : fd + '=' + io.questdb.std.Files.findPathOfFd(Long.parseLong(fd)));
+                    }
+                }
+                // A no-cache fd is counted, not listed.
+                final long leakedOsFiles = io.questdb.std.Files.getOpenFileCount() - openOsFilesBefore;
+                if (!leaked.isEmpty() || leakedOsFiles > 0) {
+                    failures.append("flush ").append(failAt).append(" of ").append(flushCount)
+                            .append(" left ").append(leakedOsFiles).append(" file(s) open:").append(leaked)
+                            .append(", at:\n").append(stackOf(injection));
+                }
+            }
         }
         if (!failures.isEmpty()) {
             Assert.fail("[mode=" + commitMode + "]\n" + failures);
@@ -636,6 +685,23 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
                 owner.resetDurabilityFailure();
             }
         }
+    }
+
+    private static HashSet<String> openFiles() {
+        final HashSet<String> fds = new HashSet<>();
+        for (String fd : io.questdb.std.Files.getOpenFdDebugInfo().split(",")) {
+            if (!fd.isBlank()) {
+                fds.add(fd.trim());
+            }
+        }
+        return fds;
+    }
+
+    private static void releasePools() {
+        engine.releaseInactive();
+        // A table or view the failed workload left behind keeps its pooled WAL writer until the pool's TTL.
+        engine.releaseAllWalWriters();
+        engine.releaseAllViewWalWriters();
     }
 
     private static void renameDetachedToAttachable(String table, String partition) throws Exception {

@@ -194,14 +194,12 @@ public class ViewWalWriter extends WalWriterBase {
     private void openNewSegment() {
         final int newSegmentId = segmentId + 1;
         final long oldLastSegmentTxn = lastSegmentTxn;
+        long dirFd = -1;
         try {
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
-            final long dirFd;
             final int commitMode = configuration.getCommitMode();
-            if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
-                dirFd = -1;
-            } else {
+            if (!Os.isWindows() && commitMode != CommitMode.NOSYNC) {
                 dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
             }
 
@@ -209,13 +207,20 @@ public class ViewWalWriter extends WalWriterBase {
             syncIfRequired();
 
             if (dirFd != -1) {
-                ff.fsyncAndClose(dirFd);
+                final long fd = dirFd;
+                // fsyncAndClose closes the fd even when the flush fails
+                dirFd = -1;
+                ff.fsyncAndClose(fd);
                 fsyncSegmentDirEntries(commitMode, newSegmentId);
             }
             lastSegmentTxn = -1;
             path.trimTo(pathSize).slash().put(newSegmentId);
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path).I$();
         } finally {
+            if (dirFd != -1) {
+                // An event file open or flush failed before the segment directory was flushed: release its fd.
+                ff.close(dirFd);
+            }
             int oldMinSegmentLocked = minSegmentLocked;
             if (moveMinSegmentLock(newSegmentId)) {
                 notifySegmentClosure(oldLastSegmentTxn, oldMinSegmentLocked);

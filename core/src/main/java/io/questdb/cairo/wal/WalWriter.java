@@ -1171,24 +1171,18 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles) {
-        int commitMode = walCommitMode();
+        final int commitMode = walCommitMode();
+        // Every file is closed even when a flush fails; the first failure is rethrown after the last close.
+        Throwable flushFailure = null;
         for (int columnIndex = 0, n = newColumnFiles.count(); columnIndex < n; columnIndex++) {
-            // A fixed-size column, the designated timestamp included, has no aux file, and a dropped or not-rolled
-            // column can leave a -1 dest fd in the sink. fsyncAndClose(-1) throws, so the -1 sentinel goes to plain
-            // close, a no-op on -1, as in the NOSYNC branch.
-            final long primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
-            if (commitMode != CommitMode.NOSYNC && primaryFd != -1) {
-                ff.fsyncAndClose(primaryFd);
-            } else {
-                ff.close(primaryFd);
-            }
-
-            final long secondaryFd = newColumnFiles.getDestAuxFd(columnIndex);
-            if (commitMode != CommitMode.NOSYNC && secondaryFd != -1) {
-                ff.fsyncAndClose(secondaryFd);
-            } else {
-                ff.close(secondaryFd);
-            }
+            flushFailure = fsyncAndCloseSegmentSwitchFile(commitMode, newColumnFiles.getDestPrimaryFd(columnIndex), flushFailure);
+            flushFailure = fsyncAndCloseSegmentSwitchFile(commitMode, newColumnFiles.getDestAuxFd(columnIndex), flushFailure);
+        }
+        if (flushFailure instanceof Error e) {
+            throw e;
+        }
+        if (flushFailure != null) {
+            throw (RuntimeException) flushFailure;
         }
     }
 
@@ -1682,6 +1676,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private void freeSymbolMapReaders() {
         Misc.freeObjListIfCloseable(symbolMapReaders);
         Misc.freeObjListIfCloseable(symbolMaps);
+    }
+
+    private Throwable fsyncAndCloseSegmentSwitchFile(int commitMode, long fd, Throwable flushFailure) {
+        // A fixed-size column, the designated timestamp included, has no aux file, and a dropped or not-rolled
+        // column can leave a -1 dest fd in the sink. fsyncAndClose(-1) throws, so the -1 sentinel goes to plain
+        // close, a no-op on -1, as in the NOSYNC branch.
+        if (commitMode == CommitMode.NOSYNC || fd == -1) {
+            ff.close(fd);
+            return flushFailure;
+        }
+        try {
+            // fsyncAndClose closes the fd even when the flush fails
+            ff.fsyncAndClose(fd);
+        } catch (Throwable th) {
+            if (flushFailure == null) {
+                return th;
+            }
+        }
+        return flushFailure;
     }
 
     private long getColumnStructureVersion() {
@@ -2411,30 +2424,47 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void switchColumnsToNewSegment(SegmentColumnRollSink rollSink, int columnsToRoll, int convertColumnIndex) {
-        for (int i = 0; i < columnsToRoll; i++) {
-            final int columnType = metadata.getColumnType(i);
-            if (columnType > 0) {
-                if (i != convertColumnIndex) {
-                    switchColumnsToNewSegmentRollColumn(rollSink, i, i);
-                } else {
-                    // Column is converted, the destination column objects are for the last added column
-                    switchColumnsToNewSegmentRollColumn(rollSink, i, columnCount - 1);
+        int i = 0;
+        try {
+            for (; i < columnsToRoll; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
+                    if (i != convertColumnIndex) {
+                        switchColumnsToNewSegmentRollColumn(rollSink, i, i);
+                    } else {
+                        // Column is converted, the destination column objects are for the last added column
+                        switchColumnsToNewSegmentRollColumn(rollSink, i, columnCount - 1);
+                    }
                 }
             }
+        } catch (Throwable th) {
+            // The columns after the failed one have not handed their destination files to a column memory yet.
+            for (int j = i + 1, n = rollSink.count(); j < n; j++) {
+                ff.close(rollSink.getDestPrimaryFd(j));
+                ff.close(rollSink.getDestAuxFd(j));
+            }
+            throw th;
         }
     }
 
     private void switchColumnsToNewSegmentRollColumn(SegmentColumnRollSink rollSink, int srcColumnIndex, int destColumnIndex) {
-        long currentOffset = rollSink.getSrcPrimaryOffset(srcColumnIndex);
-        MemoryMA primaryColumnFile = getDataColumn(srcColumnIndex);
-        primaryColumnFile.jumpTo(currentOffset);
-        primaryColumnFile.close(isTruncateFilesOnClose());
+        try {
+            long currentOffset = rollSink.getSrcPrimaryOffset(srcColumnIndex);
+            MemoryMA primaryColumnFile = getDataColumn(srcColumnIndex);
+            primaryColumnFile.jumpTo(currentOffset);
+            primaryColumnFile.close(isTruncateFilesOnClose());
 
-        MemoryMA auxColumn = getAuxColumn(srcColumnIndex);
-        if (auxColumn != null) {
-            long auxOffset = rollSink.getSrcAuxOffset(srcColumnIndex);
-            auxColumn.jumpTo(auxOffset);
-            auxColumn.close(isTruncateFilesOnClose());
+            MemoryMA auxColumn = getAuxColumn(srcColumnIndex);
+            if (auxColumn != null) {
+                long auxOffset = rollSink.getSrcAuxOffset(srcColumnIndex);
+                auxColumn.jumpTo(auxOffset);
+                auxColumn.close(isTruncateFilesOnClose());
+            }
+        } catch (Throwable th) {
+            // Closing a source column flushes its last page and can fail: the destination files are not handed over.
+            ff.close(rollSink.getDestPrimaryFd(srcColumnIndex));
+            ff.close(rollSink.getDestAuxFd(srcColumnIndex));
+            throw th;
         }
 
         long newSize = rollSink.getDestPrimarySize(srcColumnIndex);

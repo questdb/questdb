@@ -797,10 +797,14 @@ public final class TableUtils {
     }
 
     public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
-        mem.putStr(charSequence);
-        mem.putByte((byte) 0);
-        mem.sync(false);
-        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+        try {
+            mem.putStr(charSequence);
+            mem.putByte((byte) 0);
+            mem.sync(false);
+        } finally {
+            // The memory can be a long-lived one, a SQL compiler's: a failed flush must not leave the file open in it.
+            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
     }
 
     public static void createTableOrMatViewInVolume(
@@ -2050,9 +2054,12 @@ public final class TableUtils {
         // so very limited circumstances.
         Path nameFilePath = tablePath.concat(TABLE_NAME_FILE);
         memory.smallFile(ff, nameFilePath.$(), MemoryTag.MMAP_TABLE_WRITER);
-        memory.jumpTo(0);
-        createTableNameFile(memory, tableName);
-        memory.close(true, Vm.TRUNCATE_TO_POINTER);
+        try {
+            memory.jumpTo(0);
+            createTableNameFile(memory, tableName);
+        } finally {
+            memory.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
     }
 
     /**

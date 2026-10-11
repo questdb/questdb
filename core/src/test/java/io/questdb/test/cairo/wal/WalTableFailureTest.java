@@ -757,6 +757,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailToRollUncommittedToNewWalSegmentWhenFlushesFail() throws Exception {
+        // The disk fails the copy and then every flush of the new segment's files: the roll still closes them all.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        failToCopyDataToFile("sym.d", true);
+    }
+
+    @Test
     public void testForceDropActivePartitionWithSavedLag() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = saveWalLag("('2022-02-24', 1_000_000, 'c', 'c1'), ('2022-02-25', 2_000_000, 'c', 'c2')");
@@ -2377,21 +2384,42 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     private void failToCopyDataToFile(String failToRollFile) throws Exception {
+        failToCopyDataToFile(failToRollFile, false);
+    }
+
+    private void failToCopyDataToFile(String failToRollFile, boolean failNewSegmentFlushes) throws Exception {
+        final LongHashSet newSegmentFds = new LongHashSet();
+        final AtomicBoolean copyFailed = new AtomicBoolean();
         FilesFacade dodgyFf = new TestFilesFacadeImpl() {
 
             @Override
             public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
                 if (destFd == fd) {
+                    copyFailed.set(true);
                     return -1;
                 }
                 return super.copyData(srcFd, destFd, offsetSrc, length);
             }
 
             @Override
+            public void fsyncAndClose(long fd) {
+                if (failNewSegmentFlushes && copyFailed.get() && newSegmentFds.contains(fd)) {
+                    // as the real facade does, the fd is closed before the failure is thrown
+                    close(fd);
+                    throw CairoException.critical(5).put("could not fsync [fd=").put(fd).put(']');
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
             public long openRW(LPSZ name, int opts) {
-                if (Utf8s.endsWithAscii(name, "1" + Files.SEPARATOR + failToRollFile)) {
-                    fd = super.openRW(name, opts);
-                    return fd;
+                if (Utf8s.containsAscii(name, Files.SEPARATOR + "1" + Files.SEPARATOR)) {
+                    final long newSegmentFd = super.openRW(name, opts);
+                    newSegmentFds.add(newSegmentFd);
+                    if (Utf8s.endsWithAscii(name, "1" + Files.SEPARATOR + failToRollFile)) {
+                        fd = newSegmentFd;
+                    }
+                    return newSegmentFd;
                 }
                 return super.openRW(name, opts);
             }
@@ -2425,7 +2453,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         insertMethod.commit();
                     } catch (CairoException e) {
                         // todo: check all assertContains() usages
-                        TestUtils.assertContains(e.getFlyweightMessage(), "failed to copy column file to new segment");
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                failNewSegmentFlushes ? "could not fsync" : "failed to copy column file to new segment"
+                        );
                     }
                 }
             }
