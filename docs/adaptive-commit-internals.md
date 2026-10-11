@@ -395,7 +395,10 @@ root (COPY staging) never marks a table safe. `nosync`, `async` and non-WAL tabl
 
 **The engine stop.** In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs`, `sync_file_range` or
 synchronous `msync` is fatal, because the data it covered may not be on the disk and the next commit would build on
-it. The failure is decided where it is created: `CairoException.dataSyncFailure(ff, ...)`, the one Java factory of a
+it. The one exception is the write-back drain's kick (`sync_file_range(WRITE)`, which starts a write-back and does
+not wait): ENOMEM, EAGAIN and EINTR leave the pages dirty, and the drain's wait and the barrier after it write them
+back and report any error, so the kick ignores them (`Vm.checkWritebackKick`); any other error is fatal, since ext4
+can drop pages whose block allocation failed for good without recording an error for a later wait or barrier. The failure is decided where it is created: `CairoException.dataSyncFailure(ff, ...)`, the one Java factory of a
 flush failure (with the forms `dataSyncFailureOfFd` and `dataSyncFailureOfMapping` that name the file), tells the
 engine that owns the file at once, so a path that later drops, counts or wraps the exception (a task's error counter,
 a job's top-level catch, a wrapper without the cause) cannot lose the stop. The owner is a live engine whose files

@@ -33,6 +33,7 @@ import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
@@ -52,7 +53,9 @@ import java.util.List;
  * at any moment (under a group window a peer's batch flush covers every record in the log). Nothing else is written
  * back: only the product's own barriers make bytes durable. After the power loss, every record the durable log
  * names must be readable from the durable {@code _event} and {@code _event.i} files of the segment it names, the
- * table must apply without suspending, and the operation's effect must be visible.
+ * segment {@code _meta} of every data record must declare the record's structure version (the Enterprise uploader
+ * reads it to ship the record), the table must apply without suspending, and the operation's effect must be
+ * visible.
  * <p>
  * A new write path goes into {@link #data()}: it fails here if it sequences a record before its files are durable.
  */
@@ -79,6 +82,9 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
         };
         final String[] paths = {
                 "insert",
+                "insert in a new writer",
+                "insert after a segment roll",
+                "add column on an empty segment, then insert",
                 "update",
                 "drop partition",
                 "truncate",
@@ -102,6 +108,10 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, groupWindowUs);
         node1.setProperty(PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, false);
+        if (path.equals("insert after a segment roll")) {
+            // Two rows per segment: the first insert fills segment 0, so the case's row rolls into a new one.
+            node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
+        }
         runWithCrashFacade(() -> {
             crashFf.modelSharedJournal = false;
             execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -116,6 +126,10 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
                 }
             }
             drainWalAndViewQueues();
+            if (path.equals("insert in a new writer") || path.startsWith("add column on an empty segment")) {
+                // The case's writer opens its segment 0 after the baseline.
+                engine.releaseAllWalWriters();
+            }
             final TableToken token = engine.verifyTableName(isView ? "v" : "t");
             final long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
             markDurableBaseline();
@@ -123,7 +137,8 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
             runPath();
 
             final long seqTxn = engine.getTableSequencerAPI().lastTxn(token);
-            Assert.assertEquals("the operation must sequence one txn", txnBefore + 1, seqTxn);
+            final int sequencedTxns = path.startsWith("add column on an empty segment") ? 2 : 1;
+            Assert.assertEquals("the operation must sequence its txns", txnBefore + sequencedTxns, seqTxn);
             // Any writer may flush the shared log now: a peer's batch flush under a window, or the operation's own.
             engine.getTableSequencerAPI().fdatasyncTxnLog(token);
             if (path.endsWith("directories synced")) {
@@ -160,7 +175,10 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
 
     private void assertEffect() throws Exception {
         switch (path) {
-            case "insert" -> assertQuery("SELECT v FROM t ORDER BY v").expectSize().returns("v\n1\n2\n3\n");
+            case "insert", "insert in a new writer", "insert after a segment roll" ->
+                    assertQuery("SELECT v FROM t ORDER BY v").expectSize().returns("v\n1\n2\n3\n");
+            case "add column on an empty segment, then insert" ->
+                    assertQuery("SELECT v, c FROM t ORDER BY v").expectSize().returns("v\tc\n1\tnull\n2\tnull\n3\t30\n");
             case "update" -> assertQuery("SELECT v FROM t ORDER BY v").expectSize().returns("v\n42\n42\n");
             case "drop partition" -> assertQuery("SELECT v FROM t").expectSize().returns("v\n2\n");
             case "truncate" -> assertQuery("SELECT v FROM t").expectSize().returns("v\n");
@@ -177,6 +195,7 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
         try (
                 TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, 0);
                 WalEventReader reader = new WalEventReader(engine.getConfiguration());
+                SequencerMetadata segmentMeta = new SequencerMetadata(engine.getConfiguration(), true);
                 Path segmentPath = new Path()
         ) {
             while (cursor.hasNext()) {
@@ -193,6 +212,18 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
                         throw new AssertionError("the log names a WAL event that is not on disk [" + what + ']', th);
                     }
                     Assert.assertEquals(what, cursor.getSegmentTxn(), events.getTxn());
+                    if (WalTxnType.isDataType(events.getType())) {
+                        try {
+                            segmentMeta.open(segmentPath, segmentPath.size(), token);
+                        } catch (Throwable th) {
+                            throw new AssertionError("the log names a data record whose segment _meta is not on disk [" + what + ']', th);
+                        }
+                        Assert.assertTrue(
+                                "the segment _meta on disk is older than the data record [" + what + ", recordVersion="
+                                        + cursor.getStructureVersion() + ", metaVersion=" + segmentMeta.getMetadataVersion() + ']',
+                                segmentMeta.getMetadataVersion() >= cursor.getStructureVersion()
+                        );
+                    }
                     if (events.getType() == WalTxnType.VIEW_DEFINITION) {
                         lastViewSql = events.getViewDefinitionInfo().getViewSql();
                     }
@@ -203,7 +234,18 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
 
     private void runPath() throws Exception {
         switch (path) {
-            case "insert" -> execute("INSERT INTO t VALUES ('1970-01-02T01:00:00', 3)");
+            case "insert", "insert in a new writer", "insert after a segment roll" ->
+                    execute("INSERT INTO t VALUES ('1970-01-02T01:00:00', 3)");
+            case "add column on an empty segment, then insert" -> {
+                final TableToken token = engine.verifyTableName("t");
+                try (WalWriter writer = getWalWriter("t")) {
+                    // The kernel may write the new segment's _meta back at any time; the in-place rewrite below must
+                    // still reach the disk before the insert that relies on it is sequenced.
+                    crashFf.markFileDurable(root + "/" + token.getDirName() + "/" + writer.getWalName() + "/0/" + TableUtils.META_FILE_NAME);
+                }
+                execute("ALTER TABLE t ADD COLUMN c INT");
+                execute("INSERT INTO t VALUES ('1970-01-02T01:00:00', 3, 30)");
+            }
             case "update" -> execute("UPDATE t SET v = 42");
             case "drop partition" -> execute("ALTER TABLE t DROP PARTITION LIST '1970-01-01'");
             case "truncate" -> execute("TRUNCATE TABLE t");

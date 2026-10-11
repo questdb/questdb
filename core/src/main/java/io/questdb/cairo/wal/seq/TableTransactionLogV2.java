@@ -41,6 +41,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -76,6 +77,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long RESERVED_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
     public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
+    // The smallest unit a device writes whole: a power loss tears a record only at a multiple of it.
+    private static final int SECTOR_SIZE = 512;
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
@@ -260,11 +263,14 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
-        maxTxn.set(lastTxn);
         partTransactionCount = txnMem.getInt(HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
         }
+        if (lastTxn > 0L && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+            lastTxn = recoverTail(path, lastTxn);
+        }
+        maxTxn.set(lastTxn);
 
         long maxStructureVersion = 0L;
         if (lastTxn > 0L) {
@@ -277,6 +283,15 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         // Open part can leave prev txn append position when part is the same
         setAppendPosition();
         return maxStructureVersion;
+    }
+
+    private static boolean isZero(long lo, long hi) {
+        for (long p = lo; p < hi; p++) {
+            if (Unsafe.getByte(p) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static long openPartFileRO(final FilesFacade ff, final LPSZ path, boolean bypassFdCache) {
@@ -316,6 +331,34 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         return configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0;
     }
 
+    /**
+     * Whether the record in part slot {@code slot} is torn: it fails its check, and it shows what a power loss
+     * leaves, zeros where a sector of it never reached the disk. It fails its check with wal id 0, with a stored
+     * checksum that does not match the body, or with a zero checksum where an earlier record of the scan carries one
+     * (calculateCvAreaChecksum never returns 0; a binary without the checksum writes 0). A 60-byte record spans at
+     * most one 512-byte sector boundary, so the zeros fill the whole record, or one side of that boundary: the side
+     * after it (the checksum is lost), or the side before it when that side holds the wal id, which is never 0. A
+     * record that fails its check without such zeros was on disk and is damaged since: it is kept, and the cursor
+     * reports it when it is read, rather than the cut dropping it and every record after it.
+     */
+    private boolean isTornRecord(long slot, boolean isChecksumExpected) {
+        final long address = txnPartMem.addressOf(slot * RECORD_SIZE);
+        final long storedCrc = Unsafe.getLong(address + RESERVED_OFFSET);
+        final boolean failsCheck = Unsafe.getInt(address + TX_LOG_WAL_ID_OFFSET) == 0
+                || (storedCrc == 0L ? isChecksumExpected : storedCrc != TableUtils.calculateCvAreaChecksum(address, RESERVED_OFFSET));
+        if (!failsCheck) {
+            return false;
+        }
+        if (isZero(address, address + RECORD_SIZE)) {
+            return true;
+        }
+        final long split = SECTOR_SIZE - (slot * RECORD_SIZE) % SECTOR_SIZE;
+        return split < RECORD_SIZE && (
+                isZero(address + split, address + RECORD_SIZE)
+                        || (split >= TX_LOG_WAL_ID_OFFSET + Integer.BYTES && isZero(address, address + split))
+        );
+    }
+
     private void openTxnMem(Path path) {
         rootPath.of(path);
         int rootLen = rootPath.size();
@@ -353,6 +396,43 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     private void openTxnPart() {
         openTxnPart(this.maxTxn.get());
+    }
+
+    /**
+     * Drops a torn tail left by a power loss and returns the txn the log ends at. Under ADAPTIVE with a group window
+     * the part and the header reach the disk together only at the batched flush, and a power loss before it can leave
+     * the header counting records the part does not hold, or holds only in part. Scans the part that holds the last
+     * published record from its first record and cuts the log before the first torn one: a page of the part can be
+     * lost while a later one reached the disk. Earlier parts are whole: ADAPTIVE flushes a part before it opens the
+     * next (openTxnPart), and at every append without a window. A cut zeroes everything past the new tail and makes
+     * that durable before the header, so a record later written over it tears over zeros and the header never counts
+     * a dropped record again. Reads at most one part of records.
+     */
+    private long recoverTail(Path path, long publishedTxn) {
+        final long lastPartFirstTxn = (publishedTxn - 1) / partTransactionCount * partTransactionCount + 1;
+        openTxnPart(publishedTxn - 1);
+        long tail = publishedTxn;
+        boolean isChecksumExpected = false;
+        for (long txn = lastPartFirstTxn; txn <= publishedTxn; txn++) {
+            final long slot = (txn - 1) % partTransactionCount;
+            if (isTornRecord(slot, isChecksumExpected)) {
+                tail = txn - 1;
+                break;
+            }
+            isChecksumExpected |= txnPartMem.getLong(slot * RECORD_SIZE + RESERVED_OFFSET) != 0L;
+        }
+        if (tail != publishedTxn) {
+            LOG.info().$("dropping torn sequencer txnlog tail [path=").$(path)
+                    .$(", publishedTxn=").$(publishedTxn)
+                    .$(", keptTxn=").$(tail)
+                    .I$();
+            final long cutOffset = (tail - lastPartFirstTxn + 1) * RECORD_SIZE;
+            Vect.memset(txnPartMem.addressOf(cutOffset), (long) partTransactionCount * RECORD_SIZE - cutOffset, 0);
+            ff.fdatasync(txnPartMem.getFd());
+            txnMem.putLong(MAX_TXN_OFFSET_64, tail);
+            ff.fdatasync(txnMem.getFd());
+        }
+        return tail;
     }
 
     private void setAppendPosition() {

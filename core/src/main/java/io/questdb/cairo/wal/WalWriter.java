@@ -758,6 +758,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         symbolMapReaders.setQuick(columnIndex, symbolMapReader);
     }
 
+    @Override
+    void syncSegmentFilesBeforeSequencing(int commitMode) {
+        metadata.syncBeforeSequencing(commitMode);
+    }
+
     /**
      * Validates that a designated timestamp value is within allowed bounds. The columnar
      * appender calls this per row to match the validation in {@link #newRow(long)}.
@@ -3116,10 +3121,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         path.trimTo(pathSize).slash().put(segmentId);
                         // this will close old _meta file and create the new one
                         // Create the column files before publishing the segment _meta that declares the column. Apply
-                        // requires the file to exist for the committed row range, so a crash between the two (at the _meta.swp
-                        // barrier) would leave a segment that can never be applied. Create the files, fsync the segment
-                        // directory so their names are durable (openNewSegment does the same for the files it creates), and
-                        // only then publish the metadata.
+                        // requires the file to exist for the committed row range, and the kernel can write _meta back at any
+                        // time, so a power loss between the two would leave a segment that can never be applied. Create the
+                        // files, fsync the segment directory so their names are durable (openNewSegment does the same for the
+                        // files it creates), and only then publish the metadata; nextSeqTxn flushes it before the segment's
+                        // next record is sequenced.
                         final int segPathLen = path.size();
                         openColumnFiles(columnName, columnType, columnIndex, segPathLen);
                         if (CommitMode.isPowerLossDurable(walCommitMode())) {
@@ -3232,10 +3238,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                 path.trimTo(pathSize).slash().put(segmentId);
                                 // Create the files before publishing, as addColumn and renameColumn do. The segment _meta
                                 // written by switchTo describes the column with its new type, and apply sizes the files from
-                                // that type: a var-size type needs an aux (.i) vector that only openColumnFiles creates. A
-                                // crash between publish and create (at the _meta.swp barrier) would leave a segment that can
-                                // never be applied. Create the files, fsync the segment directory so their names are durable,
-                                // and only then publish the metadata.
+                                // that type: a var-size type needs an aux (.i) vector that only openColumnFiles creates. The
+                                // kernel can write _meta back at any time, so a power loss between publish and create would
+                                // leave a segment that can never be applied. Create the files, fsync the segment directory so
+                                // their names are durable, and only then publish the metadata.
                                 final int segPathLen = path.size();
                                 if (segmentRowCount == 0) {
                                     openColumnFiles(columnName, newType, newColumnIndex, segPathLen);
@@ -3378,10 +3384,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             // we should switch metadata to this new segment
                             path.trimTo(pathSize).slash().put(segmentId);
                             // Rename before publishing. The segment _meta written by switchTo names the column by its new
-                            // name, and apply resolves that name to a file, so a crash between publish and rename (at the
-                            // _meta.swp barrier) would leave a segment that can never be applied. Move the files into place,
-                            // fsync the segment directory so the renames are durable (a rename changes an entry in the parent,
-                            // which needs its own barrier), and only then publish the metadata.
+                            // name, and apply resolves that name to a file. The kernel can write _meta back at any time, so a
+                            // power loss between publish and rename would leave a segment that can never be applied. Move the
+                            // files into place, fsync the segment directory so the renames are durable (a rename changes an
+                            // entry in the parent, which needs its own barrier), and only then publish the metadata.
                             final int segPathLen = path.size();
                             renameColumnFiles(columnType, columnName, newColumnName);
                             if (CommitMode.isPowerLossDurable(walCommitMode())) {
