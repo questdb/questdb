@@ -190,6 +190,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         private final RecordChain slaveChain;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMapBuilt;
+        private boolean isMapEmpty;
         private boolean isOpen;
         private Record masterRecord;
         private long size = -1;
@@ -238,6 +239,10 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
             }
+            // no master row matches a key of an empty table, so the master goes unread
+            if (isMapEmpty) {
+                return false;
+            }
 
             while (masterCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
@@ -267,7 +272,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 return size;
             }
             buildMapOfSlaveRecords();
-            return size = computeCursorSizeFromMap(masterCursor, joinKeyMap, masterKeySink);
+            return size = isMapEmpty ? 0 : computeCursorSizeFromMap(masterCursor, joinKeyMap, masterKeySink);
         }
 
         @Override
@@ -286,6 +291,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 final Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
                 populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
+                isMapEmpty = joinKeyMap.size() == 0;
             }
         }
 

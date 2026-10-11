@@ -6759,6 +6759,13 @@ public class SqlOptimiser implements Mutable {
         return caseNode;
     }
 
+    // Returns false when node reads no column of the level, as a constant or a bind variable does, and true
+    // when it reads one or a name that does not resolve to exactly one join model.
+    private boolean hasJoinModelReference(IQueryModel parent, ExpressionNode node) throws SqlException {
+        tempIntHashSet.clear();
+        return !collectReferencedJoinModels(parent, node, tempIntHashSet) || tempIntHashSet.size() > 0;
+    }
+
     private boolean hasLateralCountCompensatedRef(ExpressionNode node, IQueryModel translatingModel, IQueryModel baseModel) {
         if (node == null) {
             return false;
@@ -9774,6 +9781,15 @@ public class SqlOptimiser implements Mutable {
                 final boolean isMovableInnerPredicate = joinOp != JOIN_OP_AND
                         && innerPredicate
                         && joinBarriers.excludes(joinModel.getJoinType());
+                // A conjunct that reads no table keeps or drops every row of its INNER join, as a filter of the
+                // joined table does, so the joined table takes it. assignFilters would give it to the level's
+                // constant filter, which also drops the rows that a RIGHT, FULL or SPLICE join written after the
+                // INNER join keeps. Without such a join, the constant filter empties the level without reading it.
+                if (isMovableInnerPredicate && masterNullingJoinIndex(joinIndex) > -1 && !hasJoinModelReference(parent, n)) {
+                    addWhereNode(parent, joinIndex, n);
+                    n = null;
+                    continue;
+                }
                 switch (joinOp) {
                     case JOIN_OP_EQUAL:
                         analyseEquals(parent, n, innerPredicate, joinModel, joinIndex);

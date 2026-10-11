@@ -6159,6 +6159,49 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerOnBindVariableBeforeNullingJoin() throws Exception {
+        // A bind variable in an INNER join ON clause reads no table, so the table of the INNER join takes it, see
+        // testJoinInnerOnConstantConjunctBeforeNullingJoin. While it is false, the INNER join returns no rows and
+        // the RIGHT or FULL join returns every row of c with NULL in a and b. The constant filter of the level
+        // dropped those rows too.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x INT, v INT)");
+            execute("INSERT INTO a VALUES (1, 1, 1), (2, 2, 2)");
+            execute("CREATE TABLE b (v INT)");
+            execute("INSERT INTO b VALUES (1), (2)");
+            execute("CREATE TABLE c (k INT, x INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 1, 0), (2, 3, 5), (3, 2, 1)");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    final String query = "SELECT a.k, b2.v bv2, c.k ck FROM a JOIN b b2 ON a.v = b2.v AND :flag "
+                            + joinType + " c ON a.k = c.k ORDER BY ck";
+                    bindVariableService.clear();
+                    bindVariableService.setBoolean("flag", false);
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tbv2\tck
+                                    null\tnull\t1
+                                    null\tnull\t2
+                                    null\tnull\t3
+                                    """);
+                    bindVariableService.setBoolean("flag", true);
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tbv2\tck
+                                    1\t1\t1
+                                    2\t2\t2
+                                    null\tnull\t3
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testJoinInnerOnComputedRegexDoesNotPublishColumnFact() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (id INT, x STRING, y STRING)");
@@ -6726,6 +6769,202 @@ public class JoinTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("row_count\n1\n");
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnConstantConjunctBeforeNullingJoin() throws Exception {
+        // An INNER join ON conjunct that reads no table, such as 1 = 2, keeps or drops every row of its join.
+        // assignFilters gave it to the constant filter of the level, which also dropped the rows of c that a
+        // RIGHT or FULL join written after the INNER join keeps, so these queries returned no rows. The table
+        // of the INNER join takes the conjunct instead, as it takes one that reads only that table, and the
+        // queries return every row of c with NULL in the tables before it. Master failed the first query with
+        // "Invalid column: a.x". Without a RIGHT or FULL join after it, the conjunct still empties the level
+        // without reading it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x INT, v INT)");
+            execute("INSERT INTO a VALUES (1, 1, 1), (2, 2, 2)");
+            execute("CREATE TABLE b (v INT)");
+            execute("INSERT INTO b VALUES (1), (2)");
+            execute("CREATE TABLE c (k INT, x INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 1, 0), (2, 3, 5), (3, 2, 1)");
+            assertQuery("SELECT a.k, b.v, b2.v bv2, c.k ck, d.k dk FROM a CROSS JOIN b JOIN b b2 ON b.v = b2.v AND 1 = 2 RIGHT JOIN c ON a.k != c.x AND a.x > c.v LEFT JOIN a d ON a.v < d.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: a.v<d.k
+                                    Nested Loop Right Join
+                                      filter: (a.k!=c.x and c.v<a.x)
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: b2.v=b.v
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                                Hash
+                                                    Empty table
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                            """)
+                    .returns("""
+                            k\tv\tbv2\tck\tdk
+                            null\tnull\tnull\t1\tnull
+                            null\tnull\tnull\t2\tnull
+                            null\tnull\tnull\t3\tnull
+                            """);
+            final String expected = """
+                    k\tbv2\tck
+                    null\tnull\t1
+                    null\tnull\t2
+                    null\tnull\t3
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    assertQuery("SELECT a.k, b.v, b2.v bv2, c.k ck, d.k dk FROM a CROSS JOIN b JOIN b b2 ON b.v = b2.v AND 1 = 2 "
+                            + joinType + " c ON a.k != c.x AND a.x > c.v LEFT JOIN a d ON a.v < d.k ORDER BY ck")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tv\tbv2\tck\tdk
+                                    null\tnull\tnull\t1\tnull
+                                    null\tnull\tnull\t2\tnull
+                                    null\tnull\tnull\t3\tnull
+                                    """);
+                    for (String conjunct : new String[]{"1 = 2", "false", "'a' = 'b'"}) {
+                        // the INNER join with and without a join key
+                        assertQuery("SELECT a.k, b2.v bv2, c.k ck FROM a JOIN b b2 ON a.v = b2.v AND " + conjunct + " "
+                                + joinType + " c ON a.x > c.v ORDER BY ck")
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .returns(expected);
+                        assertQuery("SELECT a.k, b2.v bv2, c.k ck FROM a JOIN b b2 ON " + conjunct + " "
+                                + joinType + " c ON a.x > c.v ORDER BY ck")
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .returns(expected);
+                    }
+                }
+                // a true conjunct keeps the rows of the INNER join
+                assertQuery("SELECT a.k, b2.v bv2, c.k ck FROM a JOIN b b2 ON a.v = b2.v AND 1 = 1 RIGHT JOIN c ON a.x > c.v ORDER BY ck, k")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tbv2\tck
+                                1\t1\t1
+                                2\t2\t1
+                                null\tnull\t2
+                                2\t2\t3
+                                """);
+                // a false conjunct of an INNER join after the RIGHT JOIN, or of WHERE, drops every row
+                assertQuery("SELECT a.k, b2.v bv2, c.k ck, d.k dk FROM a JOIN b b2 ON a.v = b2.v AND 1 = 2 RIGHT JOIN c ON a.x > c.v JOIN a d ON d.k = c.k AND 1 = 2")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .expectSize()
+                        .returns("k\tbv2\tck\tdk\n");
+                assertQuery("SELECT a.k, b2.v bv2, c.k ck FROM a JOIN b b2 ON a.v = b2.v RIGHT JOIN c ON a.x > c.v WHERE 1 = 2")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .expectSize()
+                        .returns("k\tbv2\tck\n");
+            }
+            assertQuery("SELECT a.k, b2.v bv2, c.k ck FROM a JOIN b b2 ON a.v = b2.v AND 1 = 2 JOIN c ON c.k = a.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Empty table
+                            """)
+                    .returns("k\tbv2\tck\n");
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnConstantConjunctBetweenKeyedOuterJoins() throws Exception {
+        // The LEFT JOIN to cn runs after the keyed RIGHT JOINs and checks the rows that they NULL-extend, see
+        // testKeylessLeftJoinAfterRightJoinWithFalseOnClause. The INNER join to b returns no rows, as its ON
+        // clause is false, so the RIGHT or FULL JOIN to f returns each row of f once, with NULL in the other
+        // tables. The INNER join opens its master without reading it, so the check finds the cursor of the RIGHT
+        // JOIN to l open.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE cn (id INT, y INT)");
+            execute("INSERT INTO cn VALUES (1, 1), (2, null), (3, null)");
+            assertQuery("SELECT a.k, cn.id, l.k lk, b.k bk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k JOIN b ON l.k = b.k AND 1 = 2 RIGHT JOIN f ON b.k = f.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: a.x>=cn.y
+                                  outerJoinCheck: true
+                                    Hash Right Outer Join Light
+                                      condition: f.k=b.k
+                                        Hash Join Light
+                                          condition: b.k=l.k
+                                            Hash Right Outer Join Light
+                                              condition: l.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: l
+                                            Hash
+                                                Empty table
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: f
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cn
+                            """)
+                    .returns("""
+                            k\tid\tlk\tbk\tfk
+                            null\tnull\tnull\tnull\t4
+                            null\tnull\tnull\tnull\t6
+                            null\tnull\tnull\tnull\t2
+                            """);
+            final String expected = """
+                    k\tid\tlk\tbk\tfk
+                    null\tnull\tnull\tnull\t2
+                    null\tnull\tnull\tnull\t4
+                    null\tnull\tnull\tnull\t6
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (String outerJoin : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    // the INNER join with and without a join key, and with a bind variable
+                    for (String innerJoin : new String[]{"JOIN b ON l.k = b.k AND 1 = 2", "JOIN b ON 1 = 2", "JOIN b ON l.k = b.k AND :flag"}) {
+                        bindVariableService.clear();
+                        bindVariableService.setBoolean("flag", false);
+                        assertQuery("SELECT a.k, cn.id, l.k lk, b.k bk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k "
+                                + innerJoin + " " + outerJoin + " f ON b.k = f.k ORDER BY fk")
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .returns(expected);
+                    }
+                }
+                bindVariableService.setBoolean("flag", true);
+                assertQuery("SELECT a.k, cn.id, l.k lk, b.k bk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k JOIN b ON l.k = b.k AND :flag RIGHT JOIN f ON b.k = f.k ORDER BY fk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tbk\tfk
+                                2\t1\t2\t2\t2
+                                4\t1\t4\t4\t4
+                                null\tnull\tnull\tnull\t6
+                                """);
+            }
         });
     }
 
@@ -8455,6 +8694,28 @@ public class JoinTest extends AbstractCairoTest {
                             "null\tnull\t55\t\n" +
                             "null\tnull\t64\t\n" +
                             expected.replace("c\ta\tb\tts\n", ""));
+        });
+    }
+
+    @Test
+    public void testJoinWithEmptyTableReadsNoMaster() throws Exception {
+        // An INNER hash join whose table has no rows, and a CROSS join whose right side has none, return no rows
+        // without reading their master. A false INNER ON conjunct before a nested loop RIGHT JOIN empties the
+        // table of the INNER join, and the RIGHT JOIN reads its master once per row of d: when the INNER join
+        // read its master too, the filter on a ran 6 times per row of d. The rows do not change.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            final String filteredA = "(SELECT * FROM a WHERE test_latched_counter()) a";
+            assertJoinFilterEvaluationCount("SELECT a.k, d.k dk FROM " + filteredA + " JOIN b ON a.k = b.k AND 1 = 2 RIGHT JOIN d ON a.x >= d.k", 2, 0);
+            assertJoinFilterEvaluationCount("SELECT a.k, d.k dk FROM " + filteredA + " JOIN b ON 1 = 2 RIGHT JOIN d ON a.x >= d.k", 2, 0);
+            // b.k < 0 leaves the table of the INNER join empty once it runs
+            assertJoinFilterEvaluationCount("SELECT a.k, d.k dk FROM " + filteredA + " JOIN b ON a.k = b.k AND b.k < 0 RIGHT JOIN d ON a.x >= d.k", 2, 0);
+            assertJoinFilterEvaluationCount("SELECT a.k FROM " + filteredA + " JOIN (SELECT * FROM b WHERE 1 = 2) e ON a.k = e.k", 0, 0);
+            assertJoinFilterEvaluationCount("SELECT a.k FROM " + filteredA + " CROSS JOIN (SELECT * FROM b WHERE 1 = 2) e", 0, 0);
+            assertJoinFilterEvaluationCount("SELECT count(*) FROM " + filteredA + " JOIN (SELECT * FROM b WHERE 1 = 2) e ON a.k = e.k", 1, 0);
+            assertJoinFilterEvaluationCount("SELECT count(*) FROM " + filteredA + " CROSS JOIN (SELECT * FROM b WHERE 1 = 2) e", 1, 0);
+            // a table with rows reads the master
+            assertJoinFilterEvaluationCount("SELECT a.k FROM " + filteredA + " JOIN b ON a.k = b.k", 3, 6);
         });
     }
 

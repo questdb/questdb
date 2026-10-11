@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.std.Misc;
 
 // This exec plan is filter-less Nested Loop
@@ -116,6 +117,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMasterHasNextPending;
         private boolean isMasterSizeCalculated;
+        private boolean isSlaveEmpty;
         private boolean isSlavePartialSizeCalculated;
         private boolean isSlaveReset;
         private boolean isSlaveSizeCalculated;
@@ -135,7 +137,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-            if (!isMasterHasNextPending && !masterHasNext) {
+            if (isSlaveEmpty || (!isMasterHasNextPending && !masterHasNext)) {
                 return;
             }
             if (keyFilterGate.hasFilter()) {
@@ -191,7 +193,8 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         public boolean hasNext() {
             while (true) {
                 if (isMasterHasNextPending) {
-                    masterHasNext = nextMasterRow();
+                    // no master row has a slave row to join with, so the master goes unread
+                    masterHasNext = !isSlaveEmpty && nextMasterRow();
                     isMasterHasNextPending = false;
                     slaveRowsInPass = 0;
                 }
@@ -328,6 +331,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             this.slaveCursor = slaveCursor;
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
+            // EmptyTableRecordCursorFactory returns this cursor, as does RuntimeConstGateRecordCursorFactory
+            // while its filter is false
+            isSlaveEmpty = slaveCursor == EmptyTableRandomRecordCursor.INSTANCE;
             // not the slave's size: a parent may still be opening its other cursors, see JoinKeyFilterGate
             keyFilterGate.of(slaveCursor);
             this.circuitBreaker = circuitBreaker;
