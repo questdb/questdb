@@ -645,6 +645,12 @@ change reads as unverified, never as torn, and a released binary ignores the new
   disk before a later record is.
   A field of 0 trusts every record: an older log, a log another mode wrote, or one a replica's downloader appends to
   (Enterprise clears the field when its downloader advances `maxTxn`, and a replica's first open clears it too).
+  The header slot next to the field (bytes 48-55) holds `maxTxn` as this release last stored it, while the field is
+  set: it is stored before a `maxTxn` it raises and after one it lowers. A writer that does not know the field (an
+  older binary after a downgrade, the downloader) moves `maxTxn` alone, so a `maxTxn` above the slot means the records
+  above it carry no checksum. Every open of a node that keeps the log durable itself then trusts the whole log and
+  clears the field (`trusting sequencer txnlog records appended without a flushed-through txn [...]`); the next
+  `adaptive` append starts it again above them.
 - **Version 1 sequencer log: the zero tail.** A V1 log has no room for a checksum. Instead, an open scans the records
   after a hint kept in the header (offset 40: the first transaction a completed flush may not have covered) and cuts
   the tail at the first record that cannot be whole (zero WAL id, zero timestamp, a gap in the structure version): it

@@ -56,6 +56,7 @@ import static io.questdb.cairo.wal.seq.TableTransactionLogV2.RESERVED_OFFSET;
  * replica's downloader.
  */
 public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
+    private static final long KNOWN_MAX_TXN_OFFSET = 48;
     private static final int PART = 200;
     private static final int RS = (int) RECORD_SIZE;
     // Slots 0-127 give a 60-byte record every offset from a 512-byte sector boundary it can have.
@@ -73,6 +74,40 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
             }
             Assert.assertEquals(120, reopen(dir, adaptive(10_000))[0]);
             Assert.assertEquals(120, reopen(dir, adaptive(10_000))[0]);
+        });
+    }
+
+    @Test
+    public void testCrashBetweenTheSlotAndMaxTxnStoresKeepsTheScan() throws Exception {
+        // This binary stores the slot before a max txn it raises, so a crash or a writeback between the two stores
+        // can leave the slot one above the max txn. That is not an older binary's record: the scan still runs and
+        // cuts a torn record. The cut lowers the max txn before the slot, so its own window looks the same.
+        assertMemoryLeak(() -> {
+            final String dir = "slotAhead";
+            writeLog(dir, 6, CommitMode.ADAPTIVE, 10_000);
+            Assert.assertEquals(6, readLong(headerFile(dir), KNOWN_MAX_TXN_OFFSET));
+            patch(partFile(dir, 0), 5L * RS + 12, new byte[RS - 12]);
+            patchLong(headerFile(dir), KNOWN_MAX_TXN_OFFSET, 7);
+            Assert.assertEquals(5, reopen(dir, adaptive(10_000))[0]);
+            Assert.assertEquals(5, readLong(headerFile(dir), KNOWN_MAX_TXN_OFFSET));
+            Assert.assertEquals(6, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+        });
+    }
+
+    @Test
+    public void testDownloadedRecordsAreKeptWhenTheNodeStartsAsAPrimaryFirst() throws Exception {
+        // A demoted primary's log keeps its field, and the downloader appends an older primary's records without a
+        // checksum, moving the max txn only. After a crash before the replica's first open, the next start opens the
+        // log as a primary in ADAPTIVE before the replica role is installed: the records are above the slot and must
+        // be kept even where the downloader did not clear the field.
+        assertMemoryLeak(() -> {
+            for (long window : new long[]{0, 10_000}) {
+                final String dir = "demoted" + window;
+                writeLog(dir, 5, CommitMode.ADAPTIVE, window);
+                appendAsDownloader(dir, 100);
+                Assert.assertEquals(105, reopen(dir, adaptive(window))[0]);
+                Assert.assertEquals(105, reopen(dir, adaptive(window))[0]);
+            }
         });
     }
 
@@ -239,6 +274,69 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOlderBinaryRecordsAreKeptAndTheScanResumes() throws Exception {
+        // Downgrade, write, upgrade: an older binary appends records without a checksum and moves the max txn only,
+        // leaving the field and the slot as this binary left them. The upgraded binary must keep every one of them,
+        // whatever mode it opens and appends in first, whether its last run had a window and flushed it, and whether
+        // the older records stay in the tail's part or start the next one. Once it appends, the field covers only its
+        // own records again: a second downgrade is handled the same way, and its own torn record is still cut.
+        assertMemoryLeak(() -> {
+            // window of the last run before the downgrade, and whether its batched flush ran
+            final long[][] lastRuns = {{0, 0}, {10_000, 0}, {10_000, 1}};
+            final long[][] upgrades = {{CommitMode.ADAPTIVE, 0}, {CommitMode.ADAPTIVE, 10_000}, {CommitMode.NOSYNC, 0}, {CommitMode.SYNC, 0}};
+            int run = 0;
+            for (long[] lastRun : lastRuns) {
+                for (long[] upgrade : upgrades) {
+                    for (int count : new int[]{5, PART - 2}) {
+                        final String dir = "downgrade" + run++;
+                        final String what = "last run window=" + lastRun[0] + "us, flushed=" + lastRun[1]
+                                + "; upgrade mode=" + upgrade[0] + ", window=" + upgrade[1] + "us; records=" + count;
+                        writeLog(dir, count, CommitMode.ADAPTIVE, lastRun[0]);
+                        if (lastRun[1] == 1) {
+                            flushLog(dir, adaptive(lastRun[0]));
+                        }
+                        appendAsOlderBinary(dir, 5);
+                        long expected = count + 5;
+                        final CairoConfiguration upgraded = withMode((int) upgrade[0], upgrade[1]);
+                        Assert.assertEquals(what, expected, reopen(dir, upgraded)[0]);
+                        appendLog(dir, 2, upgraded);
+                        expected += 2;
+                        Assert.assertEquals(what, expected, reopen(dir, adaptive(0))[0]);
+                        Assert.assertEquals(what, expected, reopen(dir, adaptive(10_000))[0]);
+
+                        appendAsOlderBinary(dir, 3);
+                        expected += 3;
+                        Assert.assertEquals(what, expected, reopen(dir, adaptive(10_000))[0]);
+
+                        appendLog(dir, 2, adaptive(10_000));
+                        final long torn = expected + 2;
+                        patch(partFile(dir, (torn - 1) / PART), ((torn - 1) % PART) * RS + 12, new byte[RS - 12]);
+                        Assert.assertEquals(what, expected + 1, reopen(dir, adaptive(10_000))[0]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOlderBinaryTornRecordsAreTrustedAsBase() throws Exception {
+        // A crash of the older binary can leave its last record torn, and a power loss under this binary's group
+        // window can leave a torn record the older binary then builds on. The older binary trusts both, as base does;
+        // the upgraded open must trust them too, or it would drop the older binary's records with them.
+        assertMemoryLeak(() -> {
+            writeLog("olderTorn", 5, CommitMode.ADAPTIVE, 0);
+            appendAsOlderBinary("olderTorn", 5);
+            patch(partFile("olderTorn", 0), 9L * RS + 12, new byte[RS - 12]);
+            Assert.assertEquals(10, reopen("olderTorn", adaptive(10_000))[0]);
+
+            writeLog("tornUnderOlder", 5, CommitMode.ADAPTIVE, 10_000);
+            patch(partFile("tornUnderOlder", 0), 4L * RS + 12, new byte[RS - 12]);
+            appendAsOlderBinary("tornUnderOlder", 5);
+            Assert.assertEquals(10, reopen("tornUnderOlder", adaptive(10_000))[0]);
+        });
+    }
+
+    @Test
     public void testOnlyTheLastPartIsScanned() throws Exception {
         // Within an ADAPTIVE run a part is flushed before the next one opens; an earlier part is never scanned.
         assertMemoryLeak(() -> {
@@ -330,6 +428,42 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
                         }
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testPowerLossAfterAnOlderBinaryRunCutsOnlyTheNewTail() throws Exception {
+        // The crash files facade keeps only what reached the disk. This binary ran with a window and flushed; an older
+        // binary appended and its records reached the disk; the upgraded binary appends with a window, its first batch
+        // is flushed, and the power goes with the header of its second batch on the disk and the part not. The open
+        // must keep the older records and the flushed batch, and drop the records the disk lost.
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final String dir = "olderThenPowerLoss";
+            final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+            final CairoConfiguration windowed = withMode(ff, CommitMode.ADAPTIVE, 10_000_000);
+            writeLog(dir, 5, windowed, LocalDurabilityPolicy.ALWAYS_ON);
+            flushLog(dir, windowed);
+            appendAsOlderBinary(dir, 5);
+            ff.markDurableBaseline(root);
+            appendLog(dir, 4, windowed);
+            flushLog(dir, windowed);
+            appendLog(dir, 3, windowed);
+            try (Path path = new Path()) {
+                final long fd = ff.openRW(path.of(headerFile(dir)).$(), CairoConfiguration.O_NONE);
+                try {
+                    ff.fdatasync(fd);
+                } finally {
+                    ff.close(fd);
+                }
+            }
+            ff.powerLoss();
+            ff.crash(root);
+            Assert.assertEquals(17, readLong(headerFile(dir), MAX_TXN_OFFSET_64));
+            Assert.assertEquals(14, reopen(dir, adaptive(10_000))[0]);
+            for (long txn = 6; txn <= 10; txn++) {
+                Assert.assertNotEquals("older txn " + txn, 0, read(partFile(dir, 0), (txn - 1) * RS + 8, 4)[0]);
             }
         });
     }
@@ -464,6 +598,11 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
         final byte[] maxTxn = read(headerFile(dir), MAX_TXN_OFFSET_64, Long.BYTES);
         System.arraycopy(maxTxn, 0, header, (int) MAX_TXN_OFFSET_64, Long.BYTES);
         patch(headerFile(dir), 0, header);
+    }
+
+    // An older binary writes as the downloader does: no checksum, the header's max txn only.
+    private void appendAsOlderBinary(String dir, int count) throws IOException {
+        appendAsDownloader(dir, count);
     }
 
     // Appends count records as a node that keeps the log durable itself.

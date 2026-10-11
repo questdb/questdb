@@ -86,11 +86,20 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
      * Header slot, in the reserved area, holding the first txn whose record a completed flush may not have covered.
      * Zero means every record is trusted: a log no ADAPTIVE append on a node that keeps it durable itself has
      * touched, one written by a binary without the slot, or one a replica's downloader appends to. The first such
-     * append starts it, and it moves only after a flush of the part and the header. Every record at or above it was
-     * appended by this binary with a checksum. It is V1's slot and encoding, and shares the header's first sector
-     * with {@code MAX_TXN_OFFSET_64}, so a power loss cannot persist one without the other.
+     * append starts it, and it moves only after a flush of the part and the header. Every record at or above it, up to
+     * {@link #KNOWN_MAX_TXN_OFFSET_64}, was appended by this binary with a checksum. It is V1's slot and encoding, and
+     * shares the header's first sector with {@code MAX_TXN_OFFSET_64}, so a power loss cannot persist one without the
+     * other.
      */
     public static final long UNSYNCED_FROM_TXN_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
+    /**
+     * Header slot next to {@link #UNSYNCED_FROM_TXN_OFFSET_64} holding the max txn as this binary last stored it while
+     * the field is set. A writer that does not know the field, an older binary or a replica's downloader, appends
+     * without a checksum and moves only the max txn, so a max txn above this slot means the records above it are that
+     * writer's: they are trusted, as that writer trusts them. It is raised before the max txn and lowered after it, in
+     * the same cache line and sector, so the disk never shows this binary's records above it.
+     */
+    public static final long KNOWN_MAX_TXN_OFFSET_64 = UNSYNCED_FROM_TXN_OFFSET_64 + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
@@ -174,6 +183,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.putLong(txnRowCount);
         // Write CRC over the body [recordStart, recordStart+RESERVED_OFFSET) in the reserved trailing slot.
         txnPartMem.putLong(TableUtils.calculateCvAreaChecksum(txnPartMem.addressOf(recordStart), RESERVED_OFFSET));
+        storeKnownMaxTxn(this.maxTxn.get() + 1);
 
         Unsafe.storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
@@ -223,6 +233,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public long endMetadataChangeEntry() {
+        storeKnownMaxTxn(maxTxn.get() + 1);
+        Unsafe.storeFence();
         // Transactions are 1 based here
         long nextTxn = maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
@@ -298,6 +310,21 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         partTransactionCount = txnMem.getInt(HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
+        }
+        final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
+        final long knownMaxTxn = txnMem.getLong(KNOWN_MAX_TXN_OFFSET_64);
+        if (unsyncedFrom != 0 && lastTxn > knownMaxTxn && durabilityPolicy.isLocalDurabilityEnabled()) {
+            // A writer that does not know the field, an older binary, appended the records above the slot without a
+            // checksum. They are trusted, as it trusts them, and so is every record under them, since a cut would drop
+            // them. The field starts again above them at the next ADAPTIVE append. Cleared in every mode, so that no
+            // append stores the slot over them while the field is still set.
+            txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, 0);
+            Unsafe.storeFence();
+            LOG.info().$("trusting sequencer txnlog records appended without a flushed-through txn [path=").$(path)
+                    .$(", unsyncedFromTxn=").$(unsyncedFrom)
+                    .$(", knownMaxTxn=").$(knownMaxTxn)
+                    .$(", maxTxn=").$(lastTxn)
+                    .I$();
         }
         final boolean isAdaptive = LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), durabilityPolicy) == CommitMode.ADAPTIVE;
         if (isAdaptive) {
@@ -478,6 +505,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             ff.fdatasync(txnPartMem.getFd());
             txnMem.putLong(MAX_TXN_OFFSET_64, tail);
             txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, tail + 1);
+            // Lowered after the max txn: a header caught in between shows the slot above the max txn, never below.
+            Unsafe.storeFence();
+            txnMem.putLong(KNOWN_MAX_TXN_OFFSET_64, tail);
             ff.fdatasync(txnMem.getFd());
         } else if (unsyncedFrom > publishedTxn + 1) {
             // The max txn was lowered under the field (a checkpoint restore): the records past it are written again.
@@ -500,6 +530,16 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 && txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64) == 0
                 && durabilityPolicy.isLocalDurabilityEnabled()) {
             txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, maxTxn.get() + 1);
+        }
+    }
+
+    /**
+     * Stores the max txn about to be published in the slot, while the field is set. The caller fences before it
+     * stores the max txn, so the slot is never below a max txn this binary published.
+     */
+    private void storeKnownMaxTxn(long txn) {
+        if (txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64) != 0) {
+            txnMem.putLong(KNOWN_MAX_TXN_OFFSET_64, txn);
         }
     }
 
