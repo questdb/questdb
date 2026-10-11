@@ -104,6 +104,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private final WalDirectoryPolicy walDirectoryPolicy;
     private long partId = -1;
     private int partTransactionCount;
+    // The part an ADAPTIVE append of this instance has made zero past its append position; -1 until the first one.
+    private long pastTailZeroedPartId = -1;
 
     @TestOnly
     public TableTransactionLogV2(CairoConfiguration configuration, int seqPartTransactionCount, WalDirectoryPolicy walDirectoryPolicy) {
@@ -158,6 +160,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     @Override
     public long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         openTxnPart();
+        zeroPastTail();
         startUnsyncedFrom();
 
         final long recordStart = txnPartMem.getAppendOffset();
@@ -183,6 +186,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     @Override
     public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         openTxnPart();
+        zeroPastTail();
         startUnsyncedFrom();
 
         final long recordStart = txnPartMem.getAppendOffset();
@@ -316,14 +320,18 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         openTxnPart();
         // Open part can leave prev txn append position when part is the same
         setAppendPosition();
-        if (isAdaptive) {
-            zeroPastTail();
-        }
+        pastTailZeroedPartId = -1;
         return maxStructureVersion;
     }
 
     private static boolean isZero(long lo, long hi) {
-        for (long p = lo; p < hi; p++) {
+        long p = lo;
+        for (; p + Long.BYTES <= hi; p += Long.BYTES) {
+            if (Unsafe.getLong(p) != 0) {
+                return false;
+            }
+        }
+        for (; p < hi; p++) {
             if (Unsafe.getByte(p) != 0) {
                 return false;
             }
@@ -407,9 +415,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             try {
                 rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part);
                 long partSize = partTransactionCount * RECORD_SIZE;
-                if (txnPartMem.isOpen() && isDeviceFlushDeferred()) {
-                    // The batched fdatasyncTxnLog() reaches only the open part, so this one would never be
-                    // flushed. Its records may be pending, including ones a since-closed instance wrote.
+                if (txnPartMem.isOpen()
+                        && CommitMode.isPowerLossDurable(configuration.getCommitMode())
+                        && partId * partTransactionCount < maxTxn.get()) {
+                    // Every later flush reaches only the open part, so the part being left would never be flushed.
+                    // Its records may be pending, written under a group window or by a since-closed instance that
+                    // ran in another mode, and the records after them become durable. A part past the tail holds
+                    // none.
                     ff.fdatasync(txnPartMem.getFd());
                 }
                 txnPartMem.close(false);
@@ -520,17 +532,26 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     /**
-     * Zeroes the part past the tail when a record sits there, left by an append that crashed before the header
-     * counted it or by a checkpoint restore that lowered the max txn, and makes that durable before the next append. A
-     * record written over it and torn by a power loss could otherwise show the old record whole, which passes its
-     * check. Appends are sequential, so the first slot past the tail tells.
+     * Before the first ADAPTIVE append of this instance into a part, on a node that keeps the log durable itself,
+     * zeroes the part from the append position on and makes that durable. An append that crashed before the header
+     * counted its record, a checkpoint restore that lowered the max txn, or a power loss that kept a later sector and
+     * lost an earlier one can leave a whole record anywhere past the tail, in the tail's part or in a later one. A
+     * record written over it and torn by a power loss could show it whole, which passes its check. The open leaves
+     * these bytes alone: a replica's downloader writes a batch's records past the max txn before it advances the max
+     * txn. Reads the rest of a part once per part.
      */
     private void zeroPastTail() {
-        final long offset = (maxTxn.get() % partTransactionCount) * RECORD_SIZE;
-        final long address = txnPartMem.addressOf(offset);
-        if (!isZero(address, address + RECORD_SIZE)) {
-            Vect.memset(address, (long) partTransactionCount * RECORD_SIZE - offset, 0);
-            ff.fdatasync(txnPartMem.getFd());
+        if (pastTailZeroedPartId != partId
+                && configuration.getCommitMode() == CommitMode.ADAPTIVE
+                && durabilityPolicy.isLocalDurabilityEnabled()) {
+            final long offset = txnPartMem.getAppendOffset();
+            final long partSize = (long) partTransactionCount * RECORD_SIZE;
+            final long address = txnPartMem.addressOf(offset);
+            if (!isZero(address, address + partSize - offset)) {
+                Vect.memset(address, partSize - offset, 0);
+                ff.fdatasync(txnPartMem.getFd());
+            }
+            pastTailZeroedPartId = partId;
         }
     }
 

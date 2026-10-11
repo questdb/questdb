@@ -637,7 +637,12 @@ change reads as unverified, never as torn, and a released binary ignores the new
   flush of the part and the header, so every record at or above it was written by this release with a checksum. An
   `adaptive` open scans from it (no lower than the last part's first transaction) to `maxTxn` and cuts before the
   first record whose checksum is 0 or does not match (`dropping torn sequencer txnlog tail [...]`); a record below it
-  is never cut. The open also zeroes the part past the tail (`TableTransactionLogV2.recoverTail`, `zeroPastTail`).
+  is never cut (`TableTransactionLogV2.recoverTail`). An open that cuts nothing leaves the bytes past the tail alone,
+  so a replica's downloader can write a batch past `maxTxn` before it advances it. Before the first `adaptive` append
+  of a log instance into a part, the rest of that part is checked and, if any byte is non-zero, zeroed and flushed
+  (`zeroPastTail`), so a stale record can never look valid after the next power loss. A `sync` or `adaptive` log
+  flushes a part before it moves to the next one, so a part a group window or another mode left unflushed is on the
+  disk before a later record is.
   A field of 0 trusts every record: an older log, a log another mode wrote, or one a replica's downloader appends to
   (Enterprise clears the field when its downloader advances `maxTxn`, and a replica's first open clears it too).
 - **Version 1 sequencer log: the zero tail.** A V1 log has no room for a checksum. Instead, an open scans the records

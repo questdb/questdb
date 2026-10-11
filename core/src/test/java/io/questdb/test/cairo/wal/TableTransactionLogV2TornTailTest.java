@@ -31,9 +31,13 @@ import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.crash.CrashFaultFilesFacade;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -150,6 +154,45 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstAppendZeroesEveryRecordPastTheTail() throws Exception {
+        // A crashed append, a checkpoint restore that lowered the max txn, or a power loss that kept a later sector
+        // and lost an earlier one can leave a whole record anywhere past the tail: in the tail's part, or in a later
+        // part. A record written over it and torn by a power loss could show it whole, and it would pass its check.
+        // So before an ADAPTIVE append writes into a part, the part must hold zeros from the append position on.
+        assertMemoryLeak(() -> {
+            int run = 0;
+            for (long windowUs : new long[]{0, 10_000}) {
+                // A stale record in each slot of the tail's part.
+                for (int slot = 3; slot < PART; slot++) {
+                    final String dir = "stale" + run++;
+                    writeLog(dir, 3, CommitMode.NOSYNC, 0);
+                    patch(partFile(dir, 0), (long) slot * RS, read(partFile(dir, 0), 2L * RS, RS));
+                    appendLog(dir, 1, adaptive(windowUs));
+                    Assert.assertTrue(
+                            "window=" + windowUs + "us, stale record in slot " + slot + " kept",
+                            isZero(read(partFile(dir, 0), 4L * RS, (PART - 4) * RS), 0, (PART - 4) * RS)
+                    );
+                }
+                // A stale record in the next part: the append that enters it must zero it first.
+                for (int slot : new int[]{1, 2, PART / 2, PART - 1}) {
+                    final String dir = "stale" + run++;
+                    writeLog(dir, PART - 1, CommitMode.NOSYNC, 0);
+                    final byte[] stale = read(partFile(dir, 0), 2L * RS, RS);
+                    try (RandomAccessFile f = new RandomAccessFile(partFile(dir, 1), "rw")) {
+                        f.setLength((long) PART * RS);
+                    }
+                    patch(partFile(dir, 1), (long) slot * RS, stale);
+                    appendLog(dir, 2, adaptive(windowUs));
+                    Assert.assertTrue(
+                            "window=" + windowUs + "us, stale record in slot " + slot + " of the next part kept",
+                            isZero(read(partFile(dir, 1), RS, (PART - 1) * RS), 0, (PART - 1) * RS)
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFlushedRecordIsNeverCut() throws Exception {
         // A record a completed flush covered and that is damaged since is not a tear: the cursor reports it.
         assertMemoryLeak(() -> {
@@ -212,6 +255,86 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenLeavesRecordsPastTheTailAlone() throws Exception {
+        // A replica's downloader writes a batch's records past the max txn and advances the max txn once the
+        // segments have arrived. An open in between, in any mode, under either policy, with or without the field,
+        // must leave those records as they are.
+        assertMemoryLeak(() -> {
+            final long[][] modes = {
+                    {CommitMode.NOSYNC, 0},
+                    {CommitMode.ASYNC, 0},
+                    {CommitMode.SYNC, 0},
+                    {CommitMode.ADAPTIVE, 0},
+                    {CommitMode.ADAPTIVE, 10_000}
+            };
+            int run = 0;
+            for (long[] mode : modes) {
+                for (LocalDurabilityPolicy policy : new LocalDurabilityPolicy[]{LocalDurabilityPolicy.ALWAYS_ON, LocalDurabilityPolicy.REPLICA_SKIP}) {
+                    for (int writtenIn : new int[]{CommitMode.NOSYNC, CommitMode.ADAPTIVE}) {
+                        final String dir = "ahead" + run++;
+                        writeLog(dir, 3, writtenIn, 0);
+                        appendLog(dir, PART + 2, withMode(CommitMode.NOSYNC, 0));
+                        patchLong(headerFile(dir), MAX_TXN_OFFSET_64, 3);
+                        final byte[] part0 = read(partFile(dir, 0), 0, PART * RS);
+                        final byte[] part1 = read(partFile(dir, 1), 0, PART * RS);
+                        final String what = "mode=" + mode[0] + ", window=" + mode[1] + "us, replica=" + (policy == LocalDurabilityPolicy.REPLICA_SKIP)
+                                + ", log written in mode " + writtenIn;
+                        for (int open = 0; open < 2; open++) {
+                            Assert.assertEquals(what, 3, reopen(dir, withMode((int) mode[0], mode[1]), policy)[0]);
+                        }
+                        Assert.assertArrayEquals(what, part0, read(partFile(dir, 0), 0, PART * RS));
+                        Assert.assertArrayEquals(what, part1, read(partFile(dir, 1), 0, PART * RS));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartLeftUnflushedByADeadRunIsFlushedBeforeLaterRecords() throws Exception {
+        // A run that does not flush its part at once (a group window, NOSYNC, ASYNC) dies, without a power loss, with
+        // its tail in a part. A restart in a power-loss durable mode must flush that part before a record after it
+        // becomes durable, wherever the dead run's tail is: a power loss must never leave the header counting records
+        // the disk lost.
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final long[][] deadRuns = {{CommitMode.ADAPTIVE, 10_000_000}, {CommitMode.NOSYNC, 0}, {CommitMode.ASYNC, 0}};
+            final long[][] restarts = {{CommitMode.ADAPTIVE, 0}, {CommitMode.ADAPTIVE, 10_000_000}, {CommitMode.SYNC, 0}};
+            int run = 0;
+            for (long[] deadRun : deadRuns) {
+                for (long[] restart : restarts) {
+                    for (int deadTail : new int[]{PART, PART - 1, PART / 2}) {
+                        final String dir = "dead" + run++;
+                        final String what = "dead run mode=" + deadRun[0] + ", window=" + deadRun[1] + "us, tail=" + deadTail
+                                + "; restart mode=" + restart[0] + ", window=" + restart[1] + "us";
+                        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+                        writeLog(dir, 1, withMode(ff, CommitMode.ADAPTIVE, 0), LocalDurabilityPolicy.ALWAYS_ON);
+                        // Part 1's file exists and is durable, so the power loss keeps its directory entry.
+                        try (RandomAccessFile f = new RandomAccessFile(partFile(dir, 1), "rw")) {
+                            f.setLength((long) PART * RS);
+                        }
+                        ff.markDurableBaseline(root);
+                        appendLog(dir, deadTail - 1, withMode(ff, (int) deadRun[0], deadRun[1]));
+                        appendLog(dir, 2, withMode(ff, (int) restart[0], restart[1]));
+                        if (restart[1] > 0) {
+                            // The batched flush, which the WAL writer runs once the window has passed.
+                            flushLog(dir, withMode(ff, (int) restart[0], restart[1]));
+                        }
+                        ff.powerLoss();
+                        ff.crash(root);
+                        final long durableTxn = readLong(headerFile(dir), MAX_TXN_OFFSET_64);
+                        Assert.assertEquals(what, deadTail + 2, durableTxn);
+                        for (long txn = 1; txn <= durableTxn; txn++) {
+                            final long checksum = readLong(partFile(dir, (txn - 1) / PART), ((txn - 1) % PART) * RS + RESERVED_OFFSET);
+                            Assert.assertNotEquals(what + ": txn " + txn + " lost under the durable max txn", 0, checksum);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRebaseSeedOnAReplicaThenPromotionKeepsDownloadedRecords() throws Exception {
         // REBASE WAL INTO on a replica seeds txns 1-2 through the replica's own sequencer, with checksums; the
         // downloader then appends an older primary's records without one. The node promoted from that replica must
@@ -236,21 +359,20 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     @Test
     public void testRecordsPastTheTailAreZeroed() throws Exception {
         // An append that crashed before the header counted its record, or a checkpoint restore that lowered the max
-        // txn, leaves whole records past the tail. A record written over one and torn could show it whole.
+        // txn, leaves whole records past the tail. The open clamps the field to the tail, and the first append zeroes
+        // the records before it writes.
         assertMemoryLeak(() -> {
             final String dir = "past";
             writeLog(dir, 10, CommitMode.ADAPTIVE, 0);
             Assert.assertEquals(11, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
-            final byte[] maxTxn = new byte[Long.BYTES];
-            maxTxn[0] = 9;
-            patch(headerFile(dir), MAX_TXN_OFFSET_64, maxTxn);
+            patchLong(headerFile(dir), MAX_TXN_OFFSET_64, 9);
             Assert.assertEquals(9, reopen(dir, adaptive(10_000))[0]);
-            Assert.assertTrue(isZero(read(partFile(dir, 0), 9L * RS, RS), 0, RS));
             Assert.assertEquals(10, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
-            maxTxn[0] = 4;
-            patch(headerFile(dir), MAX_TXN_OFFSET_64, maxTxn);
+            patchLong(headerFile(dir), MAX_TXN_OFFSET_64, 4);
             Assert.assertEquals(4, reopen(dir, adaptive(10_000))[0]);
-            Assert.assertTrue(isZero(read(partFile(dir, 0), 4L * RS, (PART - 4) * RS), 0, (PART - 4) * RS));
+            Assert.assertEquals(5, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+            appendLog(dir, 1, adaptive(10_000));
+            Assert.assertTrue(isZero(read(partFile(dir, 0), 5L * RS, (PART - 5) * RS), 0, (PART - 5) * RS));
             Assert.assertEquals(5, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
         });
     }
@@ -289,6 +411,13 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
         try (RandomAccessFile f = new RandomAccessFile(file, "rw")) {
             f.seek(offset);
             f.write(bytes);
+        }
+    }
+
+    private static void patchLong(String file, long offset, long value) throws IOException {
+        try (RandomAccessFile f = new RandomAccessFile(file, "rw")) {
+            f.seek(offset);
+            f.writeLong(Long.reverseBytes(value));
         }
     }
 
@@ -354,6 +483,20 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
         }
     }
 
+    // The batched device flush of a group window.
+    private void flushLog(String dir, CairoConfiguration config) {
+        try (Path path = new Path()) {
+            path.of(root).concat(dir);
+            final TableTransactionLogV2 v2 = new TableTransactionLogV2(config, PART, DefaultWalDirectoryPolicy.INSTANCE);
+            try {
+                v2.open(path);
+                v2.fdatasyncTxnLog();
+            } finally {
+                v2.close();
+            }
+        }
+    }
+
     private String headerFile(String dir) {
         return root + "/" + dir + "/" + WalUtils.TXNLOG_FILE_NAME;
     }
@@ -380,6 +523,10 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     private CairoConfiguration withMode(int mode, long windowUs) {
+        return withMode(configuration.getFilesFacade(), mode, windowUs);
+    }
+
+    private CairoConfiguration withMode(FilesFacade ff, int mode, long windowUs) {
         return new CairoConfigurationWrapper(configuration) {
             @Override
             public long getAdaptiveCommitGroupWindowUs() {
@@ -390,6 +537,11 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
             public int getCommitMode() {
                 return mode;
             }
+
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
         };
     }
 
@@ -398,10 +550,14 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     private void writeLog(String dir, int count, int mode, long windowUs, LocalDurabilityPolicy policy) {
+        writeLog(dir, count, withMode(mode, windowUs), policy);
+    }
+
+    private void writeLog(String dir, int count, CairoConfiguration config, LocalDurabilityPolicy policy) {
         try (Path path = new Path()) {
             path.of(root).concat(dir);
-            configuration.getFilesFacade().mkdir(path.$(), configuration.getMkDirMode());
-            final TableTransactionLogV2 v2 = new TableTransactionLogV2(withMode(mode, windowUs), PART, DefaultWalDirectoryPolicy.INSTANCE, policy);
+            config.getFilesFacade().mkdir(path.$(), configuration.getMkDirMode());
+            final TableTransactionLogV2 v2 = new TableTransactionLogV2(config, PART, DefaultWalDirectoryPolicy.INSTANCE, policy);
             try {
                 v2.create(path, 1L);
                 v2.open(path);
