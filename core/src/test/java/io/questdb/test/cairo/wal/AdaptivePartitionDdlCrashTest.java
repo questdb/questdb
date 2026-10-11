@@ -37,6 +37,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
+import io.questdb.cutlass.text.TextImportException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,8 +45,10 @@ import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -190,6 +193,16 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         final List<Object[]> params = new ArrayList<>();
         for (History history : History.values()) {
             for (Operation operation : Operation.values()) {
+                if (history == History.NEWEST_GENERATION_DAMAGED) {
+                    // A fallback replays an ATTACH from the WAL, which must find .attachable again; nothing replays
+                    // a COPY, so both generations must cover it.
+                    if (operation.attaches()) {
+                        params.add(new Object[]{history, operation, OperationPath.WAL});
+                    } else if (operation == Operation.COPY_INTO_EXISTING_TABLE) {
+                        params.add(new Object[]{history, operation, OperationPath.OWN});
+                    }
+                    continue;
+                }
                 if (history.killed()) {
                     if (operation.movesDirectory() && (history.killsAttach() || operation.detaches())) {
                         params.add(new Object[]{history, operation, OperationPath.WAL});
@@ -287,6 +300,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 if (history == History.SAVE_POINT_FAILS_CLEAN_RESTART_INTO_NOSYNC) {
                     setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
                 }
+                if (history == History.NEWEST_GENERATION_DAMAGED) {
+                    // Damage after publish: the start falls back to the older generation and replays the WAL after it.
+                    corruptNewestGeneration(e);
+                }
                 e = restart(e);
                 if (e.getTableSequencerAPI().isSuspended(e.verifyTableName("t"))) {
                     e.execute("ALTER TABLE t RESUME WAL");
@@ -329,6 +346,37 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         TestUtils.drainWalQueue(e);
         Assert.assertTrue("the table must stay suspended", e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")));
         Assert.assertFalse("the transaction must be skipped", snapshot(e).contains("skipped"));
+    }
+
+    private static boolean attachableExists(CairoEngine e) {
+        try (Path attachable = new Path()) {
+            attachable.of(e.getConfiguration().getDbRoot()).concat(e.verifyTableName("t"))
+                    .concat(PARTITION + e.getConfiguration().getAttachPartitionSuffix());
+            return e.getConfiguration().getFilesFacade().exists(attachable.$());
+        }
+    }
+
+    // Flips the first byte of the _txn section of the newest generation: its header stays valid, its checksum fails.
+    private static void corruptNewestGeneration(CairoEngine e) {
+        final FilesFacade ff = e.getConfiguration().getFilesFacade();
+        final TableToken token = e.verifyTableName("t");
+        try (Path p = new Path()) {
+            p.of(e.getConfiguration().getDbRoot()).concat(token);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, p, p.size(), token.getTableId());
+            Assert.assertTrue("a save point must exist", saved.length > 0);
+            p.concat(DurableEpochManifest.FILE_NAME).put('.').put(saved[0].generation);
+            final long fd = ff.openRW(p.$(), e.getConfiguration().getWriterFileOpenOpts());
+            Assert.assertTrue("must open the newest generation", fd > 0);
+            final long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Assert.assertEquals(1, ff.read(fd, buf, 1, DurableEpochManifest.FILE_SIZE));
+                Unsafe.getUnsafe().putByte(buf, (byte) ~Unsafe.getUnsafe().getByte(buf));
+                Assert.assertEquals(1, ff.write(fd, buf, 1, DurableEpochManifest.FILE_SIZE));
+            } finally {
+                Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                ff.close(fd);
+            }
+        }
     }
 
     private static void insertDay(CairoEngine e, String day, int base) throws SqlException {
@@ -621,6 +669,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     // its save point. In ADAPTIVE the older save point, which recovery falls back to, may still name them, so the
     // purge the statement schedules removes them once the next save point moves past them.
     private void assertSupersededDirsRemoved(CairoEngine e, long supersededBefore) throws Exception {
+        // The ATTACH's save point covers it in one generation; a fallback to the older generation replays the ATTACH
+        // from .attachable, so it stays until a second save point puts the older generation past the attach.
+        if (operation.keepsAttachable() && !history.failsSavePoint() && !history.killed()
+                && history != History.NOSYNC && history != History.NEWEST_GENERATION_DAMAGED) {
+            Assert.assertTrue("the attach source must stay until the older generation covers the attach", attachableExists(e));
+            takeSavePoint(e);
+            Assert.assertFalse("the attach source must go once both generations cover the attach", attachableExists(e));
+        }
         switch (operation) {
             case CONVERT_LIST_SECOND_FAILS, CONVERT_TO_NATIVE, CONVERT_TO_PARQUET, DETACH, DETACH_LIST_SECOND_FAILS -> {
                 if (!history.failsSavePoint()) {
@@ -657,16 +713,26 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     }
 
     private void importCsv(CairoEngine e) throws Exception {
+        // Nothing replays an import after a fallback, so a COPY whose save point fails must not report it done.
+        final boolean savePointFails = history.failsSavePoint() && operation == Operation.COPY_INTO_EXISTING_TABLE;
         startOperation();
         try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(e, 1)) {
             importer.of("t", "t.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
             importer.process(AllowAllSecurityContext.INSTANCE);
+            Assert.assertFalse("a COPY whose save point fails must fail", savePointFails);
+        } catch (TextImportException ex) {
+            if (!savePointFails) {
+                throw ex;
+            }
+            TestUtils.assertContains(ex.getFlyweightMessage(), "save point");
+            TestUtils.assertContains(ex.getFlyweightMessage(), "truncated");
         } finally {
             endOperation();
         }
-        // One save point per COPY statement, not one per imported partition. A table COPY creates has no
-        // save point until the next restart: the importer's writer holds a non-WAL token, so it does not enrol it.
-        final int expected = history == History.NOSYNC || operation == Operation.COPY_INTO_NEW_TABLE ? 0 : 1;
+        // Two save points per COPY into an existing table, one per generation, not one per imported partition. A
+        // table COPY creates has no save point until the next restart: the importer's writer holds a non-WAL token,
+        // so it does not enrol it.
+        final int expected = history == History.NOSYNC || operation == Operation.COPY_INTO_NEW_TABLE ? 0 : savePointFails ? 1 : 2;
         Assert.assertEquals("save points during the COPY", expected, savePoints.get());
     }
 
@@ -791,7 +857,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         // The process is killed while a DETACH that its save point covers takes its final .detached name.
         KILLED_IN_DETACH_FINAL_LINK,
         // As KILLED_BEFORE_TXN on a NOSYNC instance.
-        KILLED_BEFORE_TXN_NOSYNC;
+        KILLED_BEFORE_TXN_NOSYNC,
+        // The newest save point, the one after the operation, is damaged on the disk before the restart: the start
+        // falls back to the older generation, below the operation.
+        NEWEST_GENERATION_DAMAGED;
 
         boolean cleanRestart() {
             return switch (this) {
@@ -864,8 +933,21 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         TRUNCATE,
         TTL;
 
+        boolean attaches() {
+            return switch (this) {
+                case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK,
+                     ATTACH_WITH_COPY_SETTING -> true;
+                default -> false;
+            };
+        }
+
         boolean detaches() {
             return this == DETACH || this == DETACH_AFTER_O3 || this == DETACH_CROSS_DEVICE;
+        }
+
+        // The ATTACH links the files of .attachable, which stays until both generations cover the attach.
+        boolean keepsAttachable() {
+            return attaches() && this != ATTACH_WITH_COPY_SETTING;
         }
 
         // The statement fails after it changed the table.

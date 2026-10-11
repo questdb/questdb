@@ -48,6 +48,7 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.text.types.BadDateAdapter;
 import io.questdb.cutlass.text.types.BadTimestampAdapter;
 import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
@@ -748,9 +749,30 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         .put('[').put(e.getErrno()).put("] ").put(e.getFlyweightMessage()).put(']');
             }
         }
-        // The attaches consumed the imported partition directories, so one durable epoch covers them all. On
-        // failure there is none: cleanUp() truncates or drops the table, which the previous epoch describes.
+        // The attaches consumed the imported partition directories, so one durable epoch covers them all, in the
+        // newer generation. Nothing in the WAL redoes an import, so a start that fell back to the older generation
+        // would lose it: the older generation must cover the attaches too, which takes a second epoch unless the
+        // first left no older generation behind. An epoch that is skipped or fails leaves the import to be undone
+        // by the next fallback, so COPY fails instead of reporting it done; cleanUp() then truncates the target,
+        // which was empty. Outside an enrolled adaptive table the epochs are no-ops, and so is the check.
         writer.advanceDurableEpochAfter("attach partition");
+        if (writer.getEffectiveCommitMode() == CommitMode.ADAPTIVE
+                && tableToken.isWal()
+                && writer.getMetadata().isWalEnabled()
+                && cairoEngine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+            final SeqTxnTracker tracker = cairoEngine.getTableSequencerAPI().getTxnTracker(tableToken);
+            final long attachTxn = writer.getTxn();
+            if (tracker.getPinnedEpochTxn() >= attachTxn && tracker.getOtherPinnedEpochTxn() > -1 && tracker.getOtherPinnedEpochTxn() < attachTxn) {
+                writer.advanceDurableEpochAfter("attach partition, second generation");
+            }
+            if (tracker.getPinnedEpochTxn() < attachTxn || (tracker.getOtherPinnedEpochTxn() > -1 && tracker.getOtherPinnedEpochTxn() < attachTxn)) {
+                throw TextImportException.instance(
+                        CopyImportTask.PHASE_ATTACH_PARTITIONS,
+                        "import is not durable against a save point fallback: a save point after the attach was skipped or failed (see the log), "
+                                + "so a start that falls back to the older save point would lose the import; the target table, which was empty, is truncated, run COPY again [table="
+                ).put(tableName).put(']');
+            }
+        }
 
         phaseEpilogue(CopyImportTask.PHASE_ATTACH_PARTITIONS);
     }

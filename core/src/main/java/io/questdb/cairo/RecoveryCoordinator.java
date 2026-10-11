@@ -635,7 +635,7 @@ public class RecoveryCoordinator {
             if (sequencerFrontierOrUnknown(token) > epochSeqTxn) {
                 removeUnnamedPostingGenerations(token, src);
             }
-            pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn, otherEpochTxn);
+            pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn, otherEpochTxn, selected.generation);
             LOG.info().$("adaptive epoch matches live state, nothing to restore [table=").$(token)
                     .$(", epochSeqTxn=").$(epochSeqTxn).I$();
             return true;
@@ -654,17 +654,24 @@ public class RecoveryCoordinator {
         // Only a validated restore bumps the in-memory recovery incarnation counter; every other path returns
         // above. The tracker initialises lazily on the first WAL apply, but getTxnTracker always returns one.
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
-        pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn, otherEpochTxn);
+        pinRecoveredEpoch(token, selected.epochTxn, epochSeqTxn, otherEpochTxn, selected.generation);
         tracker.bumpRecoveryIncarnation();
         engine.getMetrics().walMetrics().incrementRecoveryEvents();
         return true;
     }
 
-    private void pinRecoveredEpoch(TableToken token, long epochTxn, long epochSeqTxn, long otherEpochTxn) {
+    // Pins the save point recovery selected, or a baseline published outside a writer, and records `generation`,
+    // the one the table now stands on, so that the writer's next save point goes into the other one.
+    private void pinRecoveredEpoch(TableToken token, long epochTxn, long epochSeqTxn, long otherEpochTxn, int generation) {
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
         final long priorEpochTxn = tracker.getPinnedEpochTxn();
         final long priorOtherEpochTxn = tracker.getOtherPinnedEpochTxn();
         if (priorEpochTxn == epochTxn && priorOtherEpochTxn == otherEpochTxn) {
+            // The pins stand; the generation may not: a recovery in a live engine can select the other generation
+            // of a tie (both at one txn), and the next save point must spare the one it selected.
+            if (tracker.getPinnedEpochGeneration() != generation) {
+                tracker.setPinnedEpoch(epochTxn, tracker.isPinnedEpochSlotA(), otherEpochTxn, generation);
+            }
             tracker.setDurableEpochSeqTxn(epochSeqTxn);
             return;
         }
@@ -709,7 +716,7 @@ public class RecoveryCoordinator {
             // reference the board, idle eviction can free it, and the pool seeds the replacement from this
             // record (SeqTxnTracker.restoreEpochPin). Recording it after the close would let a replacement
             // come up with the prior pin, or none, and leave the recovered cut unprotected.
-            tracker.setPinnedEpoch(epochTxn, slotA, pinnedOtherEpochTxn);
+            tracker.setPinnedEpoch(epochTxn, slotA, pinnedOtherEpochTxn, generation);
         }
         tracker.setDurableEpochSeqTxn(epochSeqTxn);
     }
@@ -722,10 +729,11 @@ public class RecoveryCoordinator {
      * {@code _txn} names the header's cut, its symbol count matches {@code _meta}, {@code _cv} is at the column
      * version {@code _txn} names, and the save point still validates against those versions.
      * <p>
-     * Any failure to decode returns {@code false}: a short file, a corrupt body, a read past a truncated mapping.
-     * Recovery then restores the other generation; if none validates, the start fails closed. A definite mismatch
-     * (table id, cut, symbol count, versions) also sets {@link #contentMismatch}, and recovery removes this
-     * generation once the other one is restored.
+     * Any failure to decode the live files returns {@code false}: a short file, a corrupt body, a read past a
+     * truncated mapping. Recovery then restores the other generation; if none validates, the start fails closed. A
+     * definite mismatch (table id, cut, symbol count, versions) also sets {@link #contentMismatch}, and recovery
+     * removes this generation once the other one is restored. A read error of the save point file itself throws:
+     * its sections passed their checksums before the restore, so it is a fault, never a verdict.
      */
     private boolean areEpochCopiesValid(TableToken token, Path scratch, DurableEpochManifest.Candidate candidate) {
         contentMismatch = false;
@@ -759,6 +767,7 @@ public class RecoveryCoordinator {
         // Validate _txn: a clean A/B-checksummed load at the cut the header names.
         TxReader txReader = null;
         ColumnVersionReader cvReader = null;
+        final long columnVersion;
         try {
             tablePath(scratch, token).concat(TableUtils.TXN_FILE_NAME);
             txReader = new TxReader(ff);
@@ -815,25 +824,7 @@ public class RecoveryCoordinator {
                 contentMismatch = true;
                 return false;
             }
-            tablePath(scratch, token);
-            final int rootLen = scratch.size();
-            if (DurableEpochManifest.validate(
-                    configuration,
-                    token,
-                    scratch,
-                    rootLen,
-                    epochGeneration,
-                    markerEpochSeqTxn,
-                    candidate.epochTxn,
-                    txReader.getColumnVersion(),
-                    metadataVersion
-            )) {
-                return true;
-            }
-            // The sections passed before the restore, so this is the header's versions, or a read failure,
-            // which the read below throws.
-            contentMismatch = !DurableEpochManifest.recordsVersions(configuration, scratch, rootLen, epochGeneration, txReader.getColumnVersion(), metadataVersion);
-            return false;
+            columnVersion = txReader.getColumnVersion();
         } catch (Throwable e) {
             // Fail safe: any failure to decode the restored files means invalid. A torn file can throw a
             // CairoException (a short file, both A/B checksums wrong), a CairoError, a mapping bounds
@@ -848,6 +839,27 @@ public class RecoveryCoordinator {
             Misc.free(txReader);
             Misc.free(epochMetadata);
         }
+        // The save point file, outside the catch above: it cannot SIGBUS under recovery and its sections passed
+        // their checksums, so a failure to read it is a fault that fails the start, not a generation that failed
+        // its content checks.
+        tablePath(scratch, token);
+        final int rootLen = scratch.size();
+        if (DurableEpochManifest.validate(
+                configuration,
+                token,
+                scratch,
+                rootLen,
+                epochGeneration,
+                markerEpochSeqTxn,
+                candidate.epochTxn,
+                columnVersion,
+                metadataVersion
+        )) {
+            return true;
+        }
+        // The sections passed before the restore, so this is the header's versions.
+        contentMismatch = !DurableEpochManifest.recordsVersions(configuration, scratch, rootLen, epochGeneration, columnVersion, metadataVersion);
+        return false;
     }
 
     /**
@@ -954,11 +966,15 @@ public class RecoveryCoordinator {
     // Pins the generation-zero save point a conversion to WAL or a REBASE WAL clone publishes outside a writer: it
     // names the table's partitions, and a writer pins only the save points it publishes itself.
     static void pinPublishedBaseline(CairoEngine engine, TableToken token, long baselineTxn) {
-        new RecoveryCoordinator(engine).pinRecoveredEpoch(token, baselineTxn, 0, -1);
+        new RecoveryCoordinator(engine).pinRecoveredEpoch(token, baselineTxn, 0, -1, 0);
     }
 
-    // Releases the pin of the save point recovery restored, once the save point is removed.
-    static void unpinEpoch(CairoEngine engine, TableToken token) {
+    /**
+     * Releases the pins of the save point recovery restored, or a writer published, once the save point is removed:
+     * the exit from adaptive at start, a conversion to non-WAL, and the Enterprise demote clear of a leftover save
+     * point outside adaptive, which cannot go through the writer's reconcile.
+     */
+    public static void unpinEpoch(CairoEngine engine, TableToken token) {
         final io.questdb.cairo.wal.seq.SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
         final long pinnedTxn = tracker.getPinnedEpochTxn();
         if (pinnedTxn < 0) {

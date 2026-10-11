@@ -49,6 +49,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -996,6 +997,162 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 new RecoveryCoordinator(engine).recover();
                 Assert.assertEquals("torn newest generation must fall back to creation baseline", 0, readTxnSeqTxn(token));
             } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    @Test
+    public void testSavePointAfterFallbackOverwritesTheDamagedGeneration() throws Exception {
+        // An idle table stands on two generations of one cut (the idle save point), listed generation 0 first. When
+        // generation 0 fails its checksums, recovery selects generation 1 and the table stands on it. The next save
+        // point must overwrite generation 0, the damaged one: writing into generation 1 would truncate the only
+        // intact generation, and a power loss inside that write would leave the table without a trustworthy one.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            try {
+                execute("create table tie (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("tie");
+                execute("insert into tie values ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final long cutSeqTxn;
+                final long cutTxn;
+                try (TableWriter writer = getWriter(tt)) {
+                    // Generation 1, then generation 0 at the same cut, as the idle save point does.
+                    writer.advanceDurableEpoch(1L);
+                    writer.advanceDurableEpoch(2L);
+                    cutSeqTxn = writer.getSeqTxn();
+                    cutTxn = writer.getTxn();
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    final io.questdb.cairo.DurableEpochManifest.Candidate[] tie = io.questdb.cairo.DurableEpochManifest.loadCandidates(engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId());
+                    Assert.assertEquals("precondition: two generations", 2, tie.length);
+                    Assert.assertEquals("precondition: generation 0 is listed first on a tie", 0, tie[0].generation);
+                    Assert.assertEquals("precondition: both generations hold the cut", tie[0].epochTxn, tie[1].epochTxn);
+                }
+                assertSavePointHolds(tt, 1, cutSeqTxn, cutTxn);
+                corruptSavePointSection(tt, 0);
+
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("recovery must stand on the intact generation", cutSeqTxn, readTxnSeqTxn(tt));
+
+                execute("insert into tie values ('2024-09-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                final long nextSeqTxn;
+                final long nextTxn;
+                try (TableWriter writer = getWriter(tt)) {
+                    writer.advanceDurableEpoch(3L);
+                    nextSeqTxn = writer.getSeqTxn();
+                    nextTxn = writer.getTxn();
+                }
+                Assert.assertTrue("precondition: the save point names a later cut", nextSeqTxn > cutSeqTxn);
+                assertSavePointHolds(tt, 1, cutSeqTxn, cutTxn);
+                assertSavePointHolds(tt, 0, nextSeqTxn, nextTxn);
+            } finally {
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    @Test
+    public void testRecoverFailsOnSavePointReadErrorInsteadOfFallingBack() throws Exception {
+        // A read error on the newest generation at start is not a failed checksum. Falling back to the older
+        // generation would rewind the table over a transient fault, and the WAL after the older cut may be gone.
+        // The start fails with the I/O error, retryable, and leaves the live files as they are.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            final int simErrno = 5;
+            final SavePointMmapFaultFacade failingFf = new SavePointMmapFaultFacade(1, 1, simErrno);
+            final FilesFacade ffBefore = AbstractCairoTest.ff;
+            try {
+                buildAdaptiveLazyGapTable("ioerr");
+                final TableToken tt = engine.verifyTableName("ioerr");
+                final long liveSeqTxn = readTxnSeqTxn(tt);
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                AbstractCairoTest.ff = failingFf;
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("startup recovery must fail on a save point read error, not fall back");
+                } catch (CairoException expected) {
+                    Assert.assertEquals(simErrno, expected.getErrno());
+                }
+                AbstractCairoTest.ff = ffBefore;
+                Assert.assertEquals("the injected fault must fire", 1, failingFf.failures);
+                Assert.assertEquals("a read error must not rewind the table", liveSeqTxn, readTxnSeqTxn(tt));
+                Assert.assertEquals("a failed start must not bump recoveryIncarnation",
+                        0L, engine.getTableSequencerAPI().getTxnTracker(tt).getRecoveryIncarnation());
+            } finally {
+                AbstractCairoTest.ff = ffBefore;
+                engine.resetDurabilityFailure();
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            }
+        });
+    }
+
+    @Test
+    public void testRecoverReportsSavePointReadErrorInsteadOfPostDatesRefusal() throws Exception {
+        // The state an earlier fallback leaves: the live _txn equals the older generation's section and the newer
+        // generation is ahead of it. The start recognises it by reading the older generation; a read error there
+        // is not evidence of a wrong lineage, so the start must fail with the I/O error, not refuse with the
+        // post-dates message whose manual step is for another cause.
+        org.junit.Assume.assumeFalse("the live _txn is rewritten by hand, which Windows forbids", Os.isWindows());
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+            final int simErrno = 5;
+            // The second mmap of generation 1 in the start: its section check, then the comparison with the live _txn.
+            final SavePointMmapFaultFacade failingFf = new SavePointMmapFaultFacade(1, 2, simErrno);
+            final FilesFacade ffBefore = AbstractCairoTest.ff;
+            try {
+                execute("create table rejected (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("rejected");
+                for (int i = 0; i < 3; i++) {
+                    execute("insert into rejected values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                final long olderSeqTxn;
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                    olderSeqTxn = w.getSeqTxn();
+                }
+                for (int i = 3; i < 6; i++) {
+                    execute("insert into rejected values ('2024-09-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(2L);
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                // The live _txn and _cv as the older generation saved them: the rewind of a fallback.
+                restoreLiveFileFromSavePoint(tt, 1, TableUtils.TXN_FILE_NAME);
+                restoreLiveFileFromSavePoint(tt, 1, TableUtils.COLUMN_VERSION_FILE_NAME);
+                Assert.assertEquals("precondition: the live _txn is at the older cut", olderSeqTxn, readTxnSeqTxn(tt));
+
+                AbstractCairoTest.ff = failingFf;
+                try {
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.fail("startup recovery must fail on a save point read error");
+                } catch (CairoException expected) {
+                    Assert.assertFalse("a read error is not a wrong-lineage verdict: " + expected.getFlyweightMessage(),
+                            io.questdb.std.Chars.contains(expected.getFlyweightMessage(), "post-dates"));
+                    Assert.assertEquals(simErrno, expected.getErrno());
+                }
+                AbstractCairoTest.ff = ffBefore;
+                Assert.assertEquals("the injected fault must fire", 1, failingFf.failures);
+                Assert.assertEquals("a failed start must leave the live _txn untouched", olderSeqTxn, readTxnSeqTxn(tt));
+            } finally {
+                AbstractCairoTest.ff = ffBefore;
+                engine.resetDurabilityFailure();
                 setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
                 setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
             }
@@ -3092,6 +3249,53 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
+    // Fails the n-th mmap of one save point generation's file with a simulated errno, reported once.
+    private static final class SavePointMmapFaultFacade extends TestFilesFacadeImpl {
+        private final int failAtMmap;
+        private final int generation;
+        private final AtomicBoolean justFailed = new AtomicBoolean();
+        private final LongHashSet manifestFds = new LongHashSet();
+        private final int simErrno;
+        int failures;
+        private int mmaps;
+
+        SavePointMmapFaultFacade(int generation, int failAtMmap, int simErrno) {
+            this.generation = generation;
+            this.failAtMmap = failAtMmap;
+            this.simErrno = simErrno;
+        }
+
+        @Override
+        public boolean close(long fd) {
+            manifestFds.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public int errno() {
+            return justFailed.compareAndSet(true, false) ? simErrno : super.errno();
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            if (manifestFds.contains(fd) && ++mmaps == failAtMmap) {
+                failures++;
+                justFailed.set(true);
+                return -1;
+            }
+            return super.mmap(fd, len, offset, flags, memoryTag);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (fd > -1 && Utf8s.endsWithAscii(name, io.questdb.cairo.DurableEpochManifest.FILE_NAME + "." + generation)) {
+                manifestFds.add(fd);
+            }
+            return fd;
+        }
+    }
+
     /**
      * Fails the next flush of {@code failingFile} during the replay before a conversion to non-WAL, with a data-sync
      * failure or a plain one. The production callback halts the process inside the call that stops the engine, so
@@ -3596,6 +3800,39 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
             }
+        }
+    }
+
+    // Generation `generation` has a valid header naming this cut, and its sections pass their checksums.
+    private void assertSavePointHolds(TableToken tt, int generation, long seqTxn, long txn) {
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+            final int rootLen = p.size();
+            final io.questdb.cairo.DurableEpochManifest.Candidate[] saved = io.questdb.cairo.DurableEpochManifest.loadCandidates(engine.getConfiguration().getFilesFacade(), p, rootLen, tt.getTableId());
+            io.questdb.cairo.DurableEpochManifest.Candidate found = null;
+            for (io.questdb.cairo.DurableEpochManifest.Candidate candidate : saved) {
+                if (candidate.generation == generation) {
+                    found = candidate;
+                }
+            }
+            Assert.assertNotNull("generation " + generation + " must have a valid header", found);
+            Assert.assertEquals("seqTxn of generation " + generation, seqTxn, found.epochSeqTxn);
+            Assert.assertEquals("txn of generation " + generation, txn, found.epochTxn);
+            Assert.assertTrue("sections of generation " + generation + " must pass their checksums",
+                    io.questdb.cairo.DurableEpochManifest.validateSections(engine.getConfiguration(), tt, p, rootLen, generation, seqTxn, txn));
+        }
+    }
+
+    // Writes the section of one live file, as generation `generation` saved it, over the live file.
+    private void restoreLiveFileFromSavePoint(TableToken tt, int generation, String name) throws IOException {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path p = new Path()) {
+            final long[] section = TestUtils.savePointSection(ff, p, engine.getConfiguration().getDbRoot(), tt, generation, name);
+            final byte[] manifest = Files.readAllBytes(Paths.get(p.toString()));
+            Files.write(
+                    Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName(), name),
+                    Arrays.copyOfRange(manifest, (int) section[0], (int) (section[0] + section[1]))
+            );
         }
     }
 

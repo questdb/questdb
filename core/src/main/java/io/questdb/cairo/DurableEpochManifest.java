@@ -31,10 +31,11 @@ import org.jetbrains.annotations.Nullable;
  * One save point generation of one table, in one file: a {@link #FILE_SIZE}-byte header, then byte copies
  * (sections) of the live {@code _txn}, {@code _cv} and {@code _meta}, in that order. The header binds the
  * sections to one table and cut and carries the size and checksum of each, so every reader rejects a file whose
- * sections did not all land. A table has two generations, {@code 0} and {@code 1}; of those whose header is valid,
- * the one with the higher (seqTxn, txn) is the current save point, and a new one is always written into the other.
- * The header is written last, once the sections and the file's name are durable, so its fsync publishes the
- * generation.
+ * sections did not all land. A table has two generations, {@code 0} and {@code 1}. The table stands on one of
+ * them, the current save point: the generation recovery selected, or the one its writer last published, which the
+ * table's {@code SeqTxnTracker} records with the save point's pin; without a pin it is the valid generation with the
+ * higher (seqTxn, txn). A new save point is always written into the other generation. The header is written last,
+ * once the sections and the file's name are durable, so its fsync publishes the generation.
  */
 public final class DurableEpochManifest {
     public static final String FILE_NAME = "_epoch.manifest";
@@ -264,22 +265,26 @@ public final class DurableEpochManifest {
 
     /**
      * Whether the live {@code _txn} is byte-equal to the {@code _txn} section of a generation that
-     * {@link #validateSections} accepted, that is, whether the live cut is the one that generation saved.
+     * {@link #validateSections} accepted, that is, whether the live cut is the one that generation saved. A read
+     * failure of either file throws, so {@code false} is a definite difference: the caller takes it as a verdict on
+     * the table's lineage.
      */
     public static boolean liveTxnEqualsSection(CairoConfiguration configuration, Path tablePath, int rootLen, int generation) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path manifest = new Path()) {
             manifest.of(tablePath).trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
-            try (MemoryCMR mem = Vm.getCMRInstance(ff, manifest.$(), ff.length(manifest.$()), MemoryTag.MMAP_TABLE_READER)) {
-                return liveFileEquals(ff, tablePath, rootLen, TableUtils.TXN_FILE_NAME, mem.addressOf(FILE_SIZE), mem.getLong(OFFSET_TXN_SIZE));
-            } catch (CairoException | CairoError e) {
-                return false;
+            final long manifestSize = ff.length(manifest.$());
+            if (manifestSize < 0) {
+                throw CairoException.critical(ff.errno()).put("could not stat adaptive save point [path=").put(manifest).put(']');
+            }
+            try (MemoryCMR mem = Vm.getCMRInstance(ff, manifest.$(), manifestSize, MemoryTag.MMAP_TABLE_READER)) {
+                return liveFileEqualsOrFail(ff, tablePath, rootLen, TableUtils.TXN_FILE_NAME, mem.addressOf(FILE_SIZE), mem.getLong(OFFSET_TXN_SIZE));
             }
         }
     }
 
     /**
-     * Whether the header of generation {@code generation} records these column and metadata versions. Unlike
+     * Whether the header of generation {@code generation} records these column and metadata versions. Like
      * {@link #validate}, a read failure throws, so {@code false} is a definite mismatch.
      */
     public static boolean recordsVersions(CairoConfiguration configuration, Path tablePath, int rootLen, int generation, long columnVersion, long metadataVersion) {
@@ -645,18 +650,32 @@ public final class DurableEpochManifest {
                 && Unsafe.getUnsafe().getLong(addr + BODY_SIZE + 8) == TableUtils.calculateCvAreaChecksum(addr, BODY_SIZE);
     }
 
+    // The restore's variant: any failure to compare sends the file down the restore.
     private static boolean liveFileEquals(FilesFacade ff, Path tablePath, int rootLen, String name, long sectionAddr, long sectionSize) {
+        try {
+            return liveFileEqualsOrFail(ff, tablePath, rootLen, name, sectionAddr, sectionSize);
+        } catch (CairoException | CairoError e) {
+            return false;
+        }
+    }
+
+    // A read failure of the live file throws, so false is a definite difference; a missing live file differs.
+    private static boolean liveFileEqualsOrFail(FilesFacade ff, Path tablePath, int rootLen, String name, long sectionAddr, long sectionSize) {
         tablePath.trimTo(rootLen).concat(name);
         try {
-            if (ff.length(tablePath.$()) != sectionSize) {
+            if (!ff.exists(tablePath.$())) {
+                return false;
+            }
+            final long length = ff.length(tablePath.$());
+            if (length < 0) {
+                throw CairoException.critical(ff.errno()).put("could not stat live table file [path=").put(tablePath).put(']');
+            }
+            if (length != sectionSize) {
                 return false;
             }
             try (MemoryCMR live = Vm.getCMRInstance(ff, tablePath.$(), sectionSize, MemoryTag.MMAP_TABLE_READER)) {
                 return Vect.memeq(live.addressOf(0), sectionAddr, sectionSize);
             }
-        } catch (CairoException | CairoError e) {
-            // Any failure to compare sends the file down the restore.
-            return false;
         } finally {
             tablePath.trimTo(rootLen);
         }
@@ -770,8 +789,18 @@ public final class DurableEpochManifest {
         final FilesFacade ff = configuration.getFilesFacade();
         tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
         try {
+            if (!ff.exists(tablePath.$())) {
+                return false;
+            }
+            // A read error is never a verdict: a generation this cannot stat, open or map has not failed its
+            // checksums, and a caller that fell back on false would rewind the table over a transient fault. The
+            // stat throws here; the open and the map throw in getCMRInstance. Every false below is a definite
+            // comparison, since the sizes are checked before any section is read.
             final long fileSize = ff.length(tablePath.$());
-            if (!ff.exists(tablePath.$()) || fileSize <= FILE_SIZE) {
+            if (fileSize < 0) {
+                throw CairoException.critical(ff.errno()).put("could not stat adaptive save point [path=").put(tablePath).put(']');
+            }
+            if (fileSize <= FILE_SIZE) {
                 return false;
             }
             try (MemoryCMR mem = Vm.getCMRInstance(ff, tablePath.$(), fileSize, MemoryTag.MMAP_TABLE_READER)) {
@@ -793,8 +822,6 @@ public final class DurableEpochManifest {
                         && TableUtils.calculateCvAreaChecksum(mem.addressOf(FILE_SIZE + txnSize), cvSize) == mem.getLong(OFFSET_CV_SIZE + 8)
                         && TableUtils.calculateCvAreaChecksum(mem.addressOf(FILE_SIZE + txnSize + cvSize), metaSize) == mem.getLong(OFFSET_META_SIZE + 8);
             }
-        } catch (Throwable e) {
-            return false;
         } finally {
             tablePath.trimTo(rootLen);
         }
