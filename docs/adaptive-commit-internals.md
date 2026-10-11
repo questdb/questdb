@@ -694,7 +694,7 @@ new bytes):
 |---|---|
 | `_txn` | body checksum and stamp at offsets 116-127; the lag checksum reset writes 4 bytes instead of 8 (a fix) |
 | `_cv` | a 16-byte trailer after each area; areas are placed with room for it |
-| sequencer V2 part files | a checksum in the 8 reserved bytes of each record; a capability marker in the header (written, not read) |
+| sequencer V2 part files and `_txnlog` | a checksum in the 8 reserved bytes of each record; in the header, the flushed-through field at offset 40 and the slot holding `maxTxn` as this release last stored it at offset 48 (both written only once an `adaptive` append has touched the log) |
 | sequencer V1 `_txnlog` | the unsynced-from hint at header offset 40 (negated after a `nosync` or `async` open) |
 | `_meta` | none: the base layout (format minor version 2). A development build's enrolment field still loads. |
 | `_convert` | none |
