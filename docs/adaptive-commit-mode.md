@@ -386,12 +386,13 @@ More detail:
   `nosync`, `async` and a non-WAL table in `adaptive`: no flush.
 - **The first `sync` or `adaptive` start after `nosync` or `async`** reads each WAL table's version 1 sequencer log
   from its first transaction and flushes it, once per table (section 8): one `fdatasync` and a read of 28 bytes per
-  transaction in the log. The first `adaptive` start after a `nosync`, `async` or `sync` run flushes the kept parts of
-  each version 2 log an earlier `adaptive` run had written: one directory listing and one `fdatasync` per kept part
-  (5,000 transactions each by default) plus the header, once per table, with no read of the records. Measured while other work loaded the same disk: 1,000 tables with 100 to 1,000 transactions
+  transaction in the log. Measured while other work loaded the same disk: 1,000 tables with 100 to 1,000 transactions
   each took 3.0 s in `sync` and 4.2 s in `adaptive`, against about 50 ms at the next start; one table with a million
   transactions 7.5 ms against 0.2 ms with its log in the page cache, 0.27 s when the log had to be read from the disk.
-  In QuestDB Enterprise the uploader start includes it, so on that start uploads begin that much later.
+  In QuestDB Enterprise the uploader start includes it, so on that start uploads begin that much later. The first
+  `adaptive` start after a `nosync`, `async` or `sync` run also flushes the kept parts of each version 2 log an
+  earlier `adaptive` run had written: one directory listing and one `fdatasync` per kept part (5,000 transactions
+  each by default) plus the header, once per table, with no read of the records.
 - **Disk.** Because a start can fall back to the older of the two save points, the WAL, the superseded partition
   versions and the superseded column and index files wait one save point longer before they are removed: one minute
   at the defaults, but with a negative `cairo.adaptive.epoch.interval` that can be days. The WAL purge job reads the
