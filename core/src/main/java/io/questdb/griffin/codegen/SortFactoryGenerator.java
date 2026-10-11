@@ -55,11 +55,11 @@ import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
@@ -166,13 +166,13 @@ final class SortFactoryGenerator {
 
     /**
      * Builds the parallel top-K of the sort under the LIMIT over the page frames of the input of the projection it
-     * builds over itself, see {@link LogicalPlans#parallelTopKProjection}, applying the filter it steals from that
+     * builds over itself, see {@link PlanToFactoryRules#parallelTopKProjection}, applying the filter it steals from that
      * input when the sort's algorithm says so, and the projection over the top-K.
      */
     RecordCursorFactory generateParallelTopK(GenerationFrame frame, SortPlan sort, LimitPlan limit, SqlExecutionContext executionContext)
             throws SqlException {
-        final ProjectPlan projection = GeneratedShapes.parallelTopKProjection(sort);
-        final LogicalPlan source = GeneratedShapes.parallelTopKSource(sort);
+        final ProjectPlan projection = PlanToFactoryRules.parallelTopKProjection(sort);
+        final LogicalPlan source = PlanToFactoryRules.parallelTopKSource(sort);
         final boolean isFilterStolen = sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K;
         final PreparedFilter prepared = frame.pushPreparedFilter(isFilterStolen);
         final RecordCursorFactory topK;

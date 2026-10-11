@@ -38,7 +38,6 @@ import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
@@ -52,6 +51,7 @@ import io.questdb.griffin.plan.logical.LogicalPlanPrinter;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -689,7 +689,7 @@ public final class PlanVerifier {
         }
         // LATEST BY over a table reads the table's designated timestamp whether or not the scan projects it
         checkedReadIds.add(timestampId);
-        final ScanPlan scan = GeneratedShapes.latestByScan(latest);
+        final ScanPlan scan = PlanToFactoryRules.latestByScan(latest);
         if (scan == null || scan.getNativeTimestampColumnId() != timestampId) {
             fail(UNRESOLVED_COLUMN, timestampId);
         }

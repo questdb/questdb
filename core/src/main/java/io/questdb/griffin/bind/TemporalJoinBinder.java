@@ -124,6 +124,24 @@ final class TemporalJoinBinder {
         }
     }
 
+    private static ExpressionNode findSlaveReference(ExpressionNode node, CharSequence slaveAlias) {
+        if (node == null || slaveAlias == null) {
+            return null;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+            return dot > 0 && Chars.equalsIgnoreCase(GenericLexer.unquote(node.token.subSequence(0, dot)), slaveAlias) ? node : null;
+        }
+        ExpressionNode reference = findSlaveReference(node.lhs, slaveAlias);
+        if (reference == null) {
+            reference = findSlaveReference(node.rhs, slaveAlias);
+        }
+        for (int i = 0, n = node.args.size(); reference == null && i < n; i++) {
+            reference = findSlaveReference(node.args.getQuick(i), slaveAlias);
+        }
+        return reference;
+    }
+
     /**
      * True when the node regroups, deduplicates or windows its input rows, so a timestamp offset of the
      * input does not carry through it.
@@ -212,24 +230,6 @@ final class TemporalJoinBinder {
         return position == -2 || child == -2 ? -2 : position == -1 ? child : position;
     }
 
-    private static void rejectSlaveBoundReference(ExpressionNode node, CharSequence slaveAlias) throws SqlException {
-        if (node == null) {
-            return;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
-            if (dot > 0 && slaveAlias != null && Chars.equalsIgnoreCase(GenericLexer.unquote(node.token.subSequence(0, dot)), slaveAlias)) {
-                throw SqlException.$(node.position, "RANGE BETWEEN expression must not reference right table columns");
-            }
-            return;
-        }
-        rejectSlaveBoundReference(node.lhs, slaveAlias);
-        rejectSlaveBoundReference(node.rhs, slaveAlias);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            rejectSlaveBoundReference(node.args.getQuick(i), slaveAlias);
-        }
-    }
-
     private static void rejectUnknownHorizonColumn(ExpressionNode node, OutputSchema output, CharSequence horizonAlias) throws SqlException {
         if (node == null) {
             return;
@@ -275,24 +275,6 @@ final class TemporalJoinBinder {
         return position;
     }
 
-    private static void validateWindowJoinFilter(ExpressionNode node, CharSequence slaveAlias) throws SqlException {
-        if (node == null || slaveAlias == null) {
-            return;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
-            if (dot > 0 && Chars.equalsIgnoreCase(GenericLexer.unquote(node.token.subSequence(0, dot)), slaveAlias)) {
-                throw SqlException.invalidColumn(node.position, node.token);
-            }
-            return;
-        }
-        validateWindowJoinFilter(node.lhs, slaveAlias);
-        validateWindowJoinFilter(node.rhs, slaveAlias);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            validateWindowJoinFilter(node.args.getQuick(i), slaveAlias);
-        }
-    }
-
     private static void validateWindowJoinStep(WindowJoinStep step, OutputSchema master) throws SqlException {
         JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), master.getTimestampColumnId(), step.getSlave().getOutput());
         final int timestampType = master.getColumnType(master.getTimestampIndex());
@@ -311,7 +293,10 @@ final class TemporalJoinBinder {
 
     private static void validateWindowJoinWhere(ExpressionNode where, ObjList<QueryModel> sources, int first) throws SqlException {
         for (int i = first, n = sources.size(); i < n; i++) {
-            validateWindowJoinFilter(where, sourceAlias(sources.getQuick(i)));
+            final ExpressionNode reference = findSlaveReference(where, sourceAlias(sources.getQuick(i)));
+            if (reference != null) {
+                throw SqlException.invalidColumn(reference.position, reference.token);
+            }
         }
     }
 
@@ -460,7 +445,10 @@ final class TemporalJoinBinder {
 
     private BoundExpression windowJoinBoundExpression(ExpressionNode expression, OutputSchema master, CharSequence slaveAlias,
                                                       SqlExecutionContext executionContext) throws SqlException {
-        rejectSlaveBoundReference(expression, slaveAlias);
+        final ExpressionNode reference = findSlaveReference(expression, slaveAlias);
+        if (reference != null) {
+            throw SqlException.$(reference.position, "RANGE BETWEEN expression must not reference right table columns");
+        }
         return ctx.functionBinder.bind(expression, master, null, executionContext);
     }
 
@@ -576,9 +564,12 @@ final class TemporalJoinBinder {
         }
     }
 
-    static int horizonJoinIndex(QueryModel source) {
+    /**
+     * The index of the block's first join model of the join type, or -1 when it has none.
+     */
+    static int joinIndex(QueryModel source, int joinType) {
         for (int i = 1, n = source.getJoinModels().size(); i < n; i++) {
-            if (source.getJoinModels().getQuick(i).getJoinType() == QueryModel.JOIN_HORIZON) {
+            if (source.getJoinModels().getQuick(i).getJoinType() == joinType) {
                 return i;
             }
         }
@@ -674,15 +665,6 @@ final class TemporalJoinBinder {
         if (position >= 0) {
             throw SqlException.$(position, "invalid time period [unit=").put(period).put(']');
         }
-    }
-
-    static int windowJoinIndex(QueryModel source) {
-        for (int i = 1, n = source.getJoinModels().size(); i < n; i++) {
-            if (source.getJoinModels().getQuick(i).getJoinType() == QueryModel.JOIN_WINDOW) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     LogicalPlan bindHorizonJoin(QueryModel model, QueryModel source, ExpressionNode where,
@@ -799,7 +781,7 @@ final class TemporalJoinBinder {
     ) throws SqlException {
         final BindScope bindScope = ctx.scope();
         final ObjList<QueryModel> sources = source.getJoinModels();
-        final int first = windowJoinIndex(source);
+        final int first = joinIndex(source, QueryModel.JOIN_WINDOW);
         if (source.getSampleBy() != null) {
             throw SqlException.$(source.getSampleBy().position, "SAMPLE BY cannot be used with WINDOW JOIN");
         }

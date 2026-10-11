@@ -54,10 +54,10 @@ import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorF
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
@@ -325,7 +325,7 @@ final class LatestByFactoryGenerator {
     RecordCursorFactory generateLatestBy(GenerationFrame frame, LatestByPlan latest, SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan input = latest.getInput();
         // LATEST BY locates its timestamp by position; a declaration alone adds nothing.
-        final RecordCursorFactory base = codeGenerator.generate(frame, GeneratedShapes.latestByBase(latest), executionContext);
+        final RecordCursorFactory base = codeGenerator.generate(frame, PlanToFactoryRules.latestByBase(latest), executionContext);
         final OutputSchema schema = input.getOutput();
         final int timestampIndex = schema.getColumnIndexById(latest.getTimestampColumnId());
         final IntList keyIndexes = latestByColumnIndexes;

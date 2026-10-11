@@ -117,11 +117,11 @@ import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.UnnestSpec;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
@@ -265,7 +265,7 @@ final class JoinFactoryGenerator {
             outerMetadata.add(new TableColumnMetadata(Chars.toString(projection.getOutput().getColumnName(i)), column.getColumnType(),
                     column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
         }
-        outerMetadata.setTimestampIndex(GeneratedShapes.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex(), splitIndex));
+        outerMetadata.setTimestampIndex(PlanToFactoryRules.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex(), splitIndex));
         return isIdentity ? null : columnIndex;
     }
 
@@ -1675,13 +1675,13 @@ final class JoinFactoryGenerator {
             RecordCursorFactory master,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final ProjectPlan projection = GeneratedShapes.temporalSlaveProjection(step.getInput());
+        final ProjectPlan projection = PlanToFactoryRules.temporalSlaveProjection(step.getInput());
         final PreparedFilter prepared = frame.pushPreparedFilter();
         final RecordCursorFactory factory;
         try {
             final RecordCursorFactory slave;
             try {
-                slave = codeGenerator.generateStolenFilter(frame, GeneratedShapes.temporalStolenFilter(step.getInput()), prepared, executionContext);
+                slave = codeGenerator.generateStolenFilter(frame, PlanToFactoryRules.temporalStolenFilter(step.getInput()), prepared, executionContext);
             } catch (Throwable th) {
                 Misc.free(master, th);
                 throw th;
@@ -1739,7 +1739,7 @@ final class JoinFactoryGenerator {
                 throw new IllegalStateException("temporal join has an ON residual");
             }
             final boolean isSelfJoin = master.getTableToken() != null && master.getTableToken().equals(slave.getTableToken());
-            final boolean isKeyed = GeneratedShapes.isKeyedTemporalJoin(step, masterOutput, masterMetadata.getTimestampIndex(),
+            final boolean isKeyed = PlanToFactoryRules.isKeyedTemporalJoin(step, masterOutput, masterMetadata.getTimestampIndex(),
                     slaveMetadata.getTimestampIndex());
             if (isKeyed) {
                 resolveKeys(masterOutput, step.getMasterKeyColumnIds(), masterKeyIndexes);

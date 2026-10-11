@@ -163,9 +163,9 @@ final class UpdateBinder implements Mutable {
         if (isGrouped) {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final ExpressionNode expression = columns.getQuick(i).getAst();
-                final int position = expression.windowExpression != null ? expression.position : windowBinder.findWindowPosition(expression, false, true);
+                final int position = windowBinder.findUnaggregatedWindowPosition(expression);
                 if (position >= 0) {
-                    return SqlException.$(position, "Window function is not allowed in context of aggregation. Use sub-query.");
+                    return WindowBinder.windowInAggregation(position);
                 }
             }
         }

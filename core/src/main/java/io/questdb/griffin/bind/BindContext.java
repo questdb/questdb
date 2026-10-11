@@ -196,6 +196,21 @@ public final class BindContext implements Mutable {
         return false;
     }
 
+    static boolean hasSubQuery(ExpressionNode expression) {
+        if (expression == null) {
+            return false;
+        }
+        if (expression.type == ExpressionNode.QUERY || hasSubQuery(expression.lhs) || hasSubQuery(expression.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = expression.args.size(); i < n; i++) {
+            if (hasSubQuery(expression.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static boolean isPlainColumnProjection(ProjectPlan project) {
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column) || column.isCast()) {

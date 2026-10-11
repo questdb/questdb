@@ -115,7 +115,7 @@ public final class PhysicalProperties {
      * of a pattern scan that filters in parallel.
      */
     public static Capability supportsLeafTimeFrameCursor(FilterPlan filter) {
-        final ScanPlan scan = GeneratedShapes.fusedScan(filter);
+        final ScanPlan scan = PlanToFactoryRules.fusedScan(filter);
         if (scan == null) {
             return supportsTimeFrameCursor(filter.getInput(), null);
         }
@@ -183,18 +183,18 @@ public final class PhysicalProperties {
 
     private static int aggregate(AggregatePlan aggregate) {
         final Capability isKeyed = Capability.of(aggregate.getGroupingExpressions().size() > 0);
-        final GeneratedShapes.AggregateFactory factory = GeneratedShapes.aggregateFactory(aggregate);
-        if (factory == GeneratedShapes.AggregateFactory.HORIZON) {
+        final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
+        if (factory == PlanToFactoryRules.AggregateFactory.HORIZON) {
             return computed(isKeyed, ScanDirection.FORWARD, capability(derive(((HorizonJoinPlan) aggregate.getInput()).getMaster(), null), LONG_SEQUENCE));
         }
-        if (factory == GeneratedShapes.AggregateFactory.POSTING_DISTINCT) {
+        if (factory == PlanToFactoryRules.AggregateFactory.POSTING_DISTINCT) {
             return computed(Capability.NO, ScanDirection.FORWARD, Capability.NO);
         }
         final int input = derive(aggregate.getInput(), null);
         // A shared source the aggregate re-reads hides the base chain of the source.
         final Capability isLongSequence = aggregate.getSharedSource() == null ? capability(input, LONG_SEQUENCE)
                 : and(Capability.UNKNOWN, capability(input, LONG_SEQUENCE));
-        if (factory == GeneratedShapes.AggregateFactory.COUNT) {
+        if (factory == PlanToFactoryRules.AggregateFactory.COUNT) {
             return computed(Capability.NO, ScanDirection.FORWARD, isLongSequence);
         }
         final ScanDirection direction = switch (aggregate.getAlgorithm()) {
@@ -211,7 +211,7 @@ public final class PhysicalProperties {
      * the keyless parallel one only when operator planning counts a consumer that re-reads the aggregate.
      */
     private static Capability aggregateSharedCursors(AggregatePlan aggregate) {
-        if (GeneratedShapes.aggregateFactory(aggregate) != GeneratedShapes.AggregateFactory.GROUP_BY) {
+        if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY) {
             return Capability.NO;
         }
         return switch (aggregate.getAlgorithm()) {
@@ -229,11 +229,11 @@ public final class PhysicalProperties {
      */
     private static int aggregateTimestampIndex(AggregatePlan aggregate) {
         final int timestampIndex = aggregate.getOutput().getTimestampIndex();
-        final GeneratedShapes.AggregateFactory factory = GeneratedShapes.aggregateFactory(aggregate);
-        if (factory == GeneratedShapes.AggregateFactory.HORIZON || timestampIndex < 0) {
+        final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
+        if (factory == PlanToFactoryRules.AggregateFactory.HORIZON || timestampIndex < 0) {
             return timestampIndex;
         }
-        if (factory != GeneratedShapes.AggregateFactory.GROUP_BY) {
+        if (factory != PlanToFactoryRules.AggregateFactory.GROUP_BY) {
             return -1;
         }
         if (aggregate.getAlgorithm() == null && aggregate.getGroupingExpressions().size() == 1
@@ -357,12 +357,11 @@ public final class PhysicalProperties {
     }
 
     private static int filter(FilterPlan filter) {
-        final BoundExpression predicate = filter.getPredicate();
-        final ScanPlan scan = GeneratedShapes.fusedScan(filter);
+        final ScanPlan scan = PlanToFactoryRules.fusedScan(filter);
         if (scan != null) {
             return scan(scan);
         }
-        return filtered(predicate, derive(filter.getInput(), null), parallel(filter.getAlgorithm()), false, true);
+        return filtered(filter.getPredicate(), derive(filter.getInput(), null), parallel(filter.getAlgorithm()), false, true);
     }
 
     /**
@@ -390,6 +389,15 @@ public final class PhysicalProperties {
 
     private static Capability isLightLatestBy(LatestByPlan latest) {
         return latest.getAlgorithm() == null ? Capability.UNKNOWN : Capability.of(latest.getAlgorithm() != LatestByPlan.Algorithm.MATERIALIZED);
+    }
+
+    /**
+     * Whether the generator builds no factory for a LIMIT over no sort: YES when the input applies it, NO when a
+     * LIMIT operator runs, UNKNOWN before planning.
+     */
+    private static Capability isLimitPassedThrough(LimitPlan limit) {
+        final LimitPlan.Application application = limit.getApplication();
+        return application == null ? Capability.UNKNOWN : Capability.of(application == LimitPlan.Application.INPUT);
     }
 
     /**
@@ -449,7 +457,7 @@ public final class PhysicalProperties {
                 }
             }
             if (filter != null) {
-                properties = filtered(filter, properties, Capability.NO, false, GeneratedShapes.isPostJoinFilterFolded(step, filter));
+                properties = filtered(filter, properties, Capability.NO, false, PlanToFactoryRules.isPostJoinFilterFolded(step, filter));
             }
         }
         return isTimestampIndex ? timestampIndex : properties;
@@ -464,19 +472,20 @@ public final class PhysicalProperties {
 
     /**
      * The direction a scan that reads the rows of several keys from the index emits them in: by row id only from
-     * forward frames through a heap of the key cursors, which it builds unless row order does not matter.
+     * forward frames through a heap of the key cursors, which it builds when row order matters or the consumers
+     * order by the designated timestamp, {@code isTimestampOrdered}.
      */
-    private static ScanDirection keyListDirection(ScanPlan scan) {
-        final boolean isHeap = scan.isRowOrderRequired() || scan.getIndexOrder() == ScanPlan.IndexOrder.TIMESTAMP;
+    private static ScanDirection keyListDirection(ScanPlan scan, boolean isTimestampOrdered) {
+        final boolean isHeap = scan.isRowOrderRequired() || isTimestampOrdered;
         return isHeap && scan.getScanDirection() == SortDirection.ASCENDING ? ScanDirection.FORWARD : ScanDirection.OTHER;
     }
 
     private static int latestBy(LatestByPlan latest) {
-        final ScanPlan scan = GeneratedShapes.latestByScan(latest);
+        final ScanPlan scan = PlanToFactoryRules.latestByScan(latest);
         if (scan != null) {
             return scan(scan);
         }
-        final int properties = derive(GeneratedShapes.latestByBase(latest), null);
+        final int properties = derive(PlanToFactoryRules.latestByBase(latest), null);
         return computed(isLightLatestBy(latest), ScanDirection.FORWARD, capability(properties, LONG_SEQUENCE));
     }
 
@@ -517,16 +526,15 @@ public final class PhysicalProperties {
     }
 
     private static int project(ProjectPlan project, @Nullable LimitPlan sortedLimit) {
-        final LogicalPlan input = project.getInput();
-        if (sortedLimit == null) {
-            if (input instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window)) {
-                return window(window);
-            }
-            if (input instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project)) {
-                return windowJoin(windowJoin);
-            }
+        final WindowPlan window = PlanToFactoryRules.generatedWindow(project);
+        if (window != null) {
+            return window(window);
         }
-        final int properties = derive(input, sortedLimit);
+        final WindowJoinPlan windowJoin = PlanToFactoryRules.generatedWindowJoin(project);
+        if (windowJoin != null) {
+            return windowJoin(windowJoin);
+        }
+        final int properties = derive(project.getInput(), sortedLimit);
         if (!LogicalPlans.isComputedProjection(project)) {
             return properties;
         }
@@ -553,11 +561,12 @@ public final class PhysicalProperties {
      */
     private static int projectionTimestamp(ProjectPlan project, @Nullable LimitPlan sortedLimit, boolean isSource) {
         final LogicalPlan input = project.getInput();
-        if (sortedLimit == null && input instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project)) {
+        final WindowJoinPlan windowJoin = PlanToFactoryRules.generatedWindowJoin(project);
+        if (windowJoin != null) {
             final int masterIndex = timestamp(windowJoin.getMaster(), null, false);
             return forwarded(masterIndex == UNKNOWN_TIMESTAMP ? UNKNOWN_TIMESTAMP
-                    : GeneratedShapes.windowJoinProjectionTimestampIndex(project, windowJoin.getOutput(), masterIndex, windowJoin.getOutput().getColumnCount()
-                                                                                                                       - windowJoin.getSteps().getQuick(windowJoin.getSteps().size() - 1).getAggregates().size()), isSource);
+                    : PlanToFactoryRules.windowJoinProjectionTimestampIndex(project, windowJoin.getOutput(), masterIndex, windowJoin.getOutput().getColumnCount()
+                                                                                                                          - windowJoin.getSteps().getQuick(windowJoin.getSteps().size() - 1).getAggregates().size()), isSource);
         }
         if (isSource && project.hasTimestampDeclaration()) {
             final OutputSchema inputOutput = input.getOutput();
@@ -565,7 +574,7 @@ public final class PhysicalProperties {
                     && declared.isDirectReference() && inputOutput.getTimestampIndex() >= 0 && declared.getColumnId() == inputOutput.getTimestampColumnId() ? 0 : -1;
         }
         final int inputIndex = timestamp(input, sortedLimit, false);
-        return forwarded(inputIndex == UNKNOWN_TIMESTAMP ? UNKNOWN_TIMESTAMP : GeneratedShapes.projectedTimestampIndex(project, inputIndex), isSource);
+        return forwarded(inputIndex == UNKNOWN_TIMESTAMP ? UNKNOWN_TIMESTAMP : PlanToFactoryRules.projectedTimestampIndex(project, inputIndex), isSource);
     }
 
     private static int properties(
@@ -602,7 +611,6 @@ public final class PhysicalProperties {
         }
         final BoundExpression residual = scan.getResidual();
         final boolean isLiveView = scan.getTableToken().isLiveView();
-        final ScanDirection frameDirection = ScanDirection.of(scan.getScanDirection());
         final int properties = switch (accessPath) {
             case EMPTY, UPDATE_STUB -> EMPTY;
             case PAGE_FRAMES -> residual == null || isLiveView ? pageFrames(scan)
@@ -612,7 +620,7 @@ public final class PhysicalProperties {
             case SYMBOL_INDEX -> symbolIndex(scan);
             case EXCLUDED_SYMBOL_INDEX ->
                     properties(Capability.YES, Capability.NO, Capability.NO, Capability.of(scan.isRequestedOrderDelivered()),
-                            keyListDirection(scan), Capability.NO);
+                            keyListDirection(scan, scan.getIndexOrder() == ScanPlan.IndexOrder.TIMESTAMP), Capability.NO);
             // The sub-query is the base of its factory.
             case SYMBOL_SUBQUERY ->
                     properties(Capability.YES, Capability.NO, Capability.NO, Capability.NO, ScanDirection.FORWARD,
@@ -686,7 +694,6 @@ public final class PhysicalProperties {
         };
     }
 
-
     /**
      * The direction of the factory under the filter a parallel GROUP BY or window join steals from the plan: the
      * frames of a self-filtering pattern scan, else the direction the filter passes through from its input.
@@ -716,19 +723,20 @@ public final class PhysicalProperties {
         }
         return switch (plan) {
             case AggregatePlan aggregate -> {
-                if (aggregate.getInput() instanceof HorizonJoinPlan || aggregate.getGroupingExpressions().size() == 0) {
+                if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY
+                        || aggregate.getGroupingExpressions().size() == 0) {
                     yield Capability.NO;
                 }
                 final int type = aggregate.getOutput().getColumnType(columnIndex);
-                final Capability isLong = Capability.of(type == ColumnType.LONG || ColumnType.isTimestamp(type));
-                yield GeneratedShapes.postingDistinctScan(aggregate) != null ? Capability.NO : isLong;
+                yield Capability.of(type == ColumnType.LONG || ColumnType.isTimestamp(type));
             }
             case ProjectPlan project -> {
                 final LogicalPlan input = project.getInput();
-                if (sortedLimit == null && input instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window)) {
+                if (PlanToFactoryRules.generatedWindow(project) != null) {
                     yield Capability.NO;
                 }
-                if (sortedLimit == null && input instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project)) {
+                final WindowJoinPlan windowJoin = PlanToFactoryRules.generatedWindowJoin(project);
+                if (windowJoin != null) {
                     yield windowJoinLongTopK(windowJoin, windowJoin.getOutput().getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(columnIndex)).getColumnId()));
                 }
                 if (!(project.getExpressions().getQuick(columnIndex) instanceof ColumnExpression column)) {
@@ -751,7 +759,7 @@ public final class PhysicalProperties {
                 yield and(capability(project(project, sortedLimit), RANDOM_ACCESS),
                         supportsLongTopK(input, sortedLimit, index));
             }
-            case FilterPlan filter -> GeneratedShapes.isFusedFilter(filter)
+            case FilterPlan filter -> PlanToFactoryRules.isFusedFilter(filter)
                     || !LogicalPlans.isConstant(filter.getPredicate()) ? Capability.NO : supportsLongTopK(filter.getInput(), null, columnIndex);
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
@@ -767,23 +775,22 @@ public final class PhysicalProperties {
     private static Capability supportsSharedCursors(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
         return switch (plan) {
             case AggregatePlan aggregate -> aggregateSharedCursors(aggregate);
-            case FilterPlan filter -> GeneratedShapes.isFusedFilter(filter) ? Capability.NO
+            case FilterPlan filter -> PlanToFactoryRules.isFusedFilter(filter) ? Capability.NO
                     : wrapped(filter.getPredicate(), supportsSharedCursors(filter.getInput(), null));
-            case ProjectPlan project -> {
-                final LogicalPlan input = project.getInput();
-                yield LogicalPlans.isComputedProjection(project)
-                        || sortedLimit == null && (input instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window)
-                        || input instanceof WindowJoinPlan && LogicalPlans.isColumnOnlyProjection(project))
-                        ? Capability.NO : supportsSharedCursors(input, sortedLimit);
-            }
+            case ProjectPlan project ->
+                    LogicalPlans.isComputedProjection(project) || !PlanToFactoryRules.isPeelableProjection(project)
+                            ? Capability.NO : supportsSharedCursors(project.getInput(), sortedLimit);
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
                 yield isPassedThrough == Capability.YES ? supportsSharedCursors(sort.getInput(), null) : isPassedThrough;
             }
-            case LimitPlan limit -> LogicalPlans.hasSortUnderStableProjects(limit.getInput())
-                    ? supportsSharedCursors(limit.getInput(), limit)
-                    : limit.getApplication() == LimitPlan.Application.INPUT ? supportsSharedCursors(limit.getInput(), null)
-                      : limit.getApplication() == null ? Capability.UNKNOWN : Capability.NO;
+            case LimitPlan limit -> {
+                if (LogicalPlans.hasSortUnderStableProjects(limit.getInput())) {
+                    yield supportsSharedCursors(limit.getInput(), limit);
+                }
+                final Capability isPassedThrough = isLimitPassedThrough(limit);
+                yield isPassedThrough == Capability.YES ? supportsSharedCursors(limit.getInput(), null) : isPassedThrough;
+            }
             case JoinPlan join -> join.getOrderedInputs().size() == 1
                     ? supportsSharedCursors(join.getOrderedInputs().getQuick(0).getInput(), null) : Capability.NO;
             default -> Capability.NO;
@@ -793,25 +800,28 @@ public final class PhysicalProperties {
     private static Capability supportsTimeFrameCursor(LogicalPlan plan, @Nullable LimitPlan sortedLimit) {
         return switch (plan) {
             case ScanPlan scan -> scanTimeFrame(scan);
-            case FilterPlan filter -> GeneratedShapes.fusedScan(filter) instanceof ScanPlan scan ? scanTimeFrame(scan)
-                    : wrapped(filter.getPredicate(), supportsTimeFrameCursor(filter.getInput(), null));
+            case FilterPlan filter ->
+                    PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan ? scanTimeFrame(scan)
+                            : wrapped(filter.getPredicate(), supportsTimeFrameCursor(filter.getInput(), null));
             case ProjectPlan project -> {
-                final LogicalPlan input = project.getInput();
-                if (sortedLimit == null && input instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project)) {
+                final WindowJoinPlan windowJoin = PlanToFactoryRules.generatedWindowJoin(project);
+                if (windowJoin != null) {
                     yield windowJoinTimeFrame(windowJoin);
                 }
-                yield LogicalPlans.isComputedProjection(project)
-                        || sortedLimit == null && input instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window)
-                        ? Capability.NO : supportsTimeFrameCursor(input, sortedLimit);
+                yield LogicalPlans.isComputedProjection(project) || PlanToFactoryRules.generatedWindow(project) != null
+                        ? Capability.NO : supportsTimeFrameCursor(project.getInput(), sortedLimit);
             }
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
                 yield isPassedThrough == Capability.YES ? supportsTimeFrameCursor(sort.getInput(), null) : isPassedThrough;
             }
-            case LimitPlan limit -> LogicalPlans.hasSortUnderStableProjects(limit.getInput())
-                    ? supportsTimeFrameCursor(limit.getInput(), limit)
-                    : limit.getApplication() == LimitPlan.Application.INPUT ? supportsTimeFrameCursor(limit.getInput(), null)
-                      : limit.getApplication() == null ? Capability.UNKNOWN : Capability.NO;
+            case LimitPlan limit -> {
+                if (LogicalPlans.hasSortUnderStableProjects(limit.getInput())) {
+                    yield supportsTimeFrameCursor(limit.getInput(), limit);
+                }
+                final Capability isPassedThrough = isLimitPassedThrough(limit);
+                yield isPassedThrough == Capability.YES ? supportsTimeFrameCursor(limit.getInput(), null) : isPassedThrough;
+            }
             case JoinPlan join -> join.getOrderedInputs().size() == 1
                     ? supportsTimeFrameCursor(join.getOrderedInputs().getQuick(0).getInput(), null) : Capability.NO;
             case WindowJoinPlan windowJoin -> windowJoinTimeFrame(windowJoin);
@@ -821,7 +831,8 @@ public final class PhysicalProperties {
 
     private static int symbolIndex(ScanPlan scan) {
         final boolean isSingleKey = scan.getIndexKeys().size() == 1;
-        final ScanDirection direction = isSingleKey ? ScanDirection.of(scan.getScanDirection()) : keyListDirection(scan);
+        final ScanDirection direction = isSingleKey ? ScanDirection.of(scan.getScanDirection())
+                : keyListDirection(scan, scan.getIndexOrder() == ScanPlan.IndexOrder.TIMESTAMP);
         if (scan.getIndexRead() == ScanPlan.IndexRead.COVERING) {
             return covering(scan, direction);
         }
@@ -834,9 +845,7 @@ public final class PhysicalProperties {
      * filter above it applies the residual otherwise.
      */
     private static int symbolPattern(ScanPlan scan) {
-        final SortKeys order = scan.getRequestedOrder();
-        final boolean isHeap = scan.isRowOrderRequired() || order.size() == 1 && order.getColumnIds().getQuick(0) == scan.getNativeTimestampColumnId();
-        final ScanDirection direction = isHeap && scan.getScanDirection() == SortDirection.ASCENDING ? ScanDirection.FORWARD : ScanDirection.OTHER;
+        final ScanDirection direction = keyListDirection(scan, scan.isNativeTimestampOrderRequested());
         final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
         final Capability isParallel = residualParallel(scan);
         return properties(choose(isParallel, Capability.YES, Capability.of(!isCovering)), Capability.NO,
@@ -860,17 +869,17 @@ public final class PhysicalProperties {
                 default -> sort.getOutput().getTimestampIndex();
             };
             case FilterPlan filter -> {
-                final ScanPlan scan = GeneratedShapes.fusedScan(filter);
+                final ScanPlan scan = PlanToFactoryRules.fusedScan(filter);
                 if (scan == null) {
                     yield forwarded(timestamp(filter.getInput(), null, false), isSource);
                 }
                 yield forwarded(scanTimestampIndex(scan), isSource);
             }
             case LatestByPlan latest -> {
-                if (GeneratedShapes.latestByScan(latest) != null) {
+                if (PlanToFactoryRules.latestByScan(latest) != null) {
                     yield forwarded(plan.getOutput().getTimestampIndex(), isSource);
                 }
-                yield forwarded(chooseTimestamp(isLightLatestBy(latest), -1, timestamp(GeneratedShapes.latestByBase(latest), null, false)),
+                yield forwarded(chooseTimestamp(isLightLatestBy(latest), -1, timestamp(PlanToFactoryRules.latestByBase(latest), null, false)),
                         isSource);
             }
             case SetOperationPlan operation -> {
@@ -931,33 +940,16 @@ public final class PhysicalProperties {
      * output: only a null-extended master does, as the master would.
      */
     private static Capability windowJoinLongTopK(WindowJoinPlan windowJoin, int columnIndex) {
-        if (windowJoin.isEmpty()) {
-            return Capability.NO;
-        }
-        final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
-        for (int i = 0, n = steps.size(); i < n; i++) {
-            if (!steps.getQuick(i).isNullExtending()) {
-                return Capability.NO;
-            }
-        }
         final LogicalPlan master = windowJoin.getMaster();
-        return columnIndex < master.getOutput().getColumnCount() ? supportsLongTopK(master, null, columnIndex) : Capability.NO;
+        return windowJoin.isMasterPassedThrough() && columnIndex < master.getOutput().getColumnCount()
+                ? supportsLongTopK(master, null, columnIndex) : Capability.NO;
     }
 
     /**
      * Whether the window join null-extends its master through every step, passing the master's time frames through.
      */
     private static Capability windowJoinTimeFrame(WindowJoinPlan windowJoin) {
-        if (windowJoin.isEmpty()) {
-            return Capability.NO;
-        }
-        final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
-        for (int i = 0, n = steps.size(); i < n; i++) {
-            if (!steps.getQuick(i).isNullExtending()) {
-                return Capability.NO;
-            }
-        }
-        return supportsTimeFrameCursor(windowJoin.getMaster(), null);
+        return windowJoin.isMasterPassedThrough() ? supportsTimeFrameCursor(windowJoin.getMaster(), null) : Capability.NO;
     }
 
     /**

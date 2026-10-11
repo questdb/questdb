@@ -63,9 +63,9 @@ import io.questdb.griffin.engine.window.WindowMapState;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.WindowPlan;
@@ -623,7 +623,7 @@ final class WindowFactoryGenerator {
                 metadata.add(sources.getQuick(i) >= 0 ? outputColumns.getQuick(i) : windowMetadata.getQuick(i));
             }
             metadata.setTimestampIndex(projection == null ? inputMetadata.getTimestampIndex()
-                    : GeneratedShapes.projectedTimestampIndex(projection, inputMetadata.getTimestampIndex()));
+                    : PlanToFactoryRules.projectedTimestampIndex(projection, inputMetadata.getTimestampIndex()));
             if (isStreaming) {
                 if (!isLiveView) {
                     final RecordCursorFactory ownedBase = base;

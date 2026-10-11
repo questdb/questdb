@@ -43,7 +43,6 @@ import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -51,6 +50,7 @@ import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
@@ -89,11 +89,9 @@ final class AccessPathPlanning {
     private final ExpressionVisitor cursorFinder = this::findCursor;
     private final ObjList<CursorExpression> cursors = new ObjList<>();
     private final IntervalAnalysis intervals;
-    private final IntList keyIndexes = new IntList();
     private final SymbolKeyExtractor keys = new SymbolKeyExtractor();
     private final OperatorPlanning operatorPlanning;
     private final LongList prefixes = new LongList();
-    private final IntList tableColumnIndexes = new IntList();
     private final ObjList<Subquery> subqueries = new ObjList<>();
     private final PlanExpressionVisitor subqueryCollector = new PlanExpressionVisitor() {
         @Override
@@ -107,12 +105,10 @@ final class AccessPathPlanning {
             return expression;
         }
     };
+    private final IntList tableColumnIndexes = new IntList();
     private int captureLevel = -1;
     private int depth;
-    private boolean hasExtractor;
-    private int intervalTimestampType;
     private boolean isCapturing;
-    private boolean isTimestampRequired;
     private WindowJoinStep pendingStep;
     private TableAccessInfo table;
 
@@ -123,10 +119,6 @@ final class AccessPathPlanning {
         this.intervals = new IntervalAnalysis(configuration);
     }
 
-    private static boolean isSingleKeyBitmap(TableAccessInfo table, IntList indexes, IntList keyIndexes, boolean isIndexAllowed) {
-        return isIndexAllowed && keyIndexes.size() == 1 && table.getIndexType(indexes.getQuick(keyIndexes.getQuick(0))) == IndexType.BITMAP;
-    }
-
     /**
      * The row count a filter over the scan may stop after, when the consumer's LIMIT is a plain count.
      */
@@ -134,8 +126,15 @@ final class AccessPathPlanning {
         return scan.getLimitHi() == null ? scan.getLimitLo() : null;
     }
 
-    private void capture() {
-        if (!isCapturing || !hasExtractor || !intervals.hasIntervalFilters()) {
+    /**
+     * The pattern a negated pattern conjunct negates, or the conjunct itself.
+     */
+    private static FunctionExpression positivePattern(FunctionExpression pattern) {
+        return pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
+    }
+
+    private void capture(boolean hasModel) {
+        if (!isCapturing || !hasModel) {
             return;
         }
         final LongList captured = capturedIntervals.getQuick(captureLevel);
@@ -143,7 +142,7 @@ final class AccessPathPlanning {
         if (intervals.isStatic()) {
             captured.add(intervals.getStaticIntervals());
         }
-        capturedTypes.setQuick(captureLevel, intervalTimestampType);
+        capturedTypes.setQuick(captureLevel, intervals.getTimestampType());
     }
 
     /**
@@ -161,7 +160,7 @@ final class AccessPathPlanning {
                 || output.getColumnIndexById(column.getColumnId()) < 0) {
             return null;
         }
-        return GeneratedShapes.withinPrefixes(call, output, prefixes) ? call : null;
+        return PlanToFactoryRules.withinPrefixes(call, output, prefixes) ? call : null;
     }
 
     private int findCursor(BoundExpression expression) {
@@ -194,7 +193,7 @@ final class AccessPathPlanning {
 
     private boolean isIndexedSymbolColumn(BoundExpression expression, OutputSchema output) {
         return expression instanceof ColumnExpression column && column.isDirectReference() && ColumnType.isSymbol(column.getDataType())
-                && table.isIndexed(tableColumnIndexes.getQuick(output.getColumnIndexById(column.getColumnId())));
+                && table.isIndexed(tableColumnIndex(output, column.getColumnId()));
     }
 
     private boolean isIndexedSymbolPattern(BoundExpression expression, OutputSchema output) {
@@ -215,18 +214,17 @@ final class AccessPathPlanning {
     }
 
     private boolean isSymbolKeySetProviderDeclared(FunctionExpression pattern, OutputSchema output) {
-        final FunctionExpression positive = pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
-        final int keyIndex = output.getColumnIndexById(((ColumnExpression) positive.argumentAt(0)).getColumnId());
-        final boolean isSymbolTableStatic = table.isSymbolTableStatic(tableColumnIndexes.getQuick(keyIndex));
+        final FunctionExpression positive = positivePattern(pattern);
+        final boolean isSymbolTableStatic = table.isSymbolTableStatic(tableColumnIndex(output, ((ColumnExpression) positive.argumentAt(0)).getColumnId()));
         return MatchSymbolFunctionFactory.positivePatternFactory(pattern).isSymbolKeySetProvider(positive.getArguments(), isSymbolTableStatic);
     }
 
-    private void planIndexed(ScanPlan scan, BoundExpression residual) {
+    private void planIndexed(ScanPlan scan, BoundExpression residual, boolean hasModel, boolean isTimestampRequired) {
         final OutputSchema output = scan.getOutput();
         final int keyId = keys.getColumnId();
-        final int tableKeyIndex = tableColumnIndexes.getQuick(output.getColumnIndexById(keyId));
+        final int tableKeyIndex = tableColumnIndex(output, keyId);
         final int keyCount = keys.getValues().size();
-        final boolean isSinglePartition = hasExtractor && intervals.hasIntervalFilters()
+        final boolean isSinglePartition = hasModel
                 ? intervals.allIntervalsHitOnePartition(table.getPartitionedBy()) : table.getPartitionedBy() == PartitionBy.NONE;
         final SortKeys order = scan.getRequestedOrder();
         final int orderCount = order.size();
@@ -273,25 +271,32 @@ final class AccessPathPlanning {
         scan.setAccessPath(ScanPlan.AccessPath.SYMBOL_INDEX, filter);
     }
 
-    private void planLatestBy(ScanPlan scan, LatestByPlan latest, BoundExpression residual, SymbolKeyExtractor latestKeys, FunctionExpression within) {
+    private void planLatestBy(
+            ScanPlan scan,
+            LatestByPlan latest,
+            BoundExpression residual,
+            SymbolKeyExtractor latestKeys,
+            FunctionExpression within,
+            boolean hasExtractor
+    ) {
         final OutputSchema output = scan.getOutput();
         final IntList keyIds = latest.getKeyColumnIds();
-        keyIndexes.clear();
-        for (int i = 0, n = keyIds.size(); i < n; i++) {
-            keyIndexes.add(output.getColumnIndexById(keyIds.getQuick(i)));
-        }
+        final boolean hasKey = keyIds.size() > 0;
+        final int keyId = hasKey ? keyIds.getQuick(0) : -1;
+        final int tableKeyIndex = hasKey ? tableColumnIndex(output, keyId) : -1;
         final boolean isIndexAllowed = !scan.hasHint(ScanPlan.HINT_NO_INDEX);
-        final boolean isIndexedAllowed = (!hasExtractor || configuration.useWithinLatestByOptimisation()) && isIndexAllowed;
+        final boolean isIndexed = hasKey && isIndexAllowed && table.isIndexed(tableKeyIndex);
+        final boolean isSingleKeyBitmap = (!hasExtractor || configuration.useWithinLatestByOptimisation()) && isIndexAllowed
+                && keyIds.size() == 1 && table.getIndexType(tableKeyIndex) == IndexType.BITMAP;
         if (residual != null && residual == within && (latestKeys == null || !latestKeys.hasKey() && latestKeys.getSubquery() == null)
-                && isSingleKeyBitmap(table, tableColumnIndexes, keyIndexes, isIndexedAllowed)) {
+                && isSingleKeyBitmap) {
             residual = null;
             scan.setWithin(within);
         }
         final CursorExpression keySubquery = latestKeys == null ? null : latestKeys.getSubquery();
         if (keySubquery != null) {
             scan.setKeySubquery(keySubquery);
-            scan.setIndex(keyIds.getQuick(0), isIndexAllowed && table.isIndexed(tableColumnIndexes.getQuick(keyIndexes.getQuick(0)))
-                    ? ScanPlan.IndexRead.INDEX : ScanPlan.IndexRead.NONE);
+            scan.setIndex(keyId, isIndexed ? ScanPlan.IndexRead.INDEX : ScanPlan.IndexRead.NONE);
             scan.setAccessPath(ScanPlan.AccessPath.LATEST_BY_SUBQUERY, residual);
             return;
         }
@@ -302,38 +307,28 @@ final class AccessPathPlanning {
         final int valueCount = latestKeys == null ? 0 : latestKeys.getValues().size();
         final int excludedCount = latestKeys == null ? 0 : latestKeys.getExcludedValues().size();
         if (valueCount > 0 || excludedCount > 0) {
-            final int tableKeyIndex = tableColumnIndexes.getQuick(keyIndexes.getQuick(0));
-            final boolean isIndexed = isIndexAllowed && table.isIndexed(tableKeyIndex);
             final boolean isCovered = context.getExecutionContext().isCoveringIndexEnabled() && !scan.hasHint(ScanPlan.HINT_NO_COVERING)
                     && table.isCovering(tableKeyIndex, tableColumnIndexes);
-            final ScanPlan.IndexRead read;
-            if (valueCount == 1 && excludedCount == 0) {
-                read = !isIndexed ? ScanPlan.IndexRead.NONE : isCovered ? ScanPlan.IndexRead.COVERING : ScanPlan.IndexRead.INDEX;
-            } else {
-                read = !isIndexed || excludedCount > 0 ? ScanPlan.IndexRead.NONE : isCovered ? ScanPlan.IndexRead.COVERING : ScanPlan.IndexRead.INDEX;
-            }
             scan.getIndexKeys().addAll(latestKeys.getValues());
             scan.getExcludedKeys().addAll(latestKeys.getExcludedValues());
-            scan.setIndex(keyIds.getQuick(0), read);
+            scan.setIndex(keyId, !isIndexed || excludedCount > 0 ? ScanPlan.IndexRead.NONE
+                    : isCovered ? ScanPlan.IndexRead.COVERING : ScanPlan.IndexRead.INDEX);
             scan.setAccessPath(valueCount == 1 && excludedCount == 0 ? ScanPlan.AccessPath.LATEST_BY_VALUE : ScanPlan.AccessPath.LATEST_BY_VALUES,
                     residual);
             return;
         }
-        if (keyIds.size() == 1 && residual == null && isSingleKeyBitmap(table, tableColumnIndexes, keyIndexes, isIndexedAllowed)) {
-            scan.setIndex(keyIds.getQuick(0), ScanPlan.IndexRead.INDEX);
+        if (residual == null && isSingleKeyBitmap) {
+            scan.setIndex(keyId, ScanPlan.IndexRead.INDEX);
             scan.setAccessPath(ScanPlan.AccessPath.LATEST_BY_ALL_INDEXED, null);
             return;
         }
-        if (keyIds.size() == 1) {
-            final int tableKeyIndex = tableColumnIndexes.getQuick(keyIndexes.getQuick(0));
-            if (ColumnType.isSymbol(table.getColumnType(tableKeyIndex)) && table.isSymbolTableStatic(tableKeyIndex)) {
-                scan.setAccessPath(ScanPlan.AccessPath.LATEST_BY_STATIC_SYMBOL, residual);
-                return;
-            }
+        if (keyIds.size() == 1 && ColumnType.isSymbol(table.getColumnType(tableKeyIndex)) && table.isSymbolTableStatic(tableKeyIndex)) {
+            scan.setAccessPath(ScanPlan.AccessPath.LATEST_BY_STATIC_SYMBOL, residual);
+            return;
         }
         boolean hasOnlySymbolKeys = true;
-        for (int i = 0, n = keyIndexes.size(); i < n; i++) {
-            hasOnlySymbolKeys &= ColumnType.isSymbol(table.getColumnType(tableColumnIndexes.getQuick(keyIndexes.getQuick(i))));
+        for (int i = 0, n = keyIds.size(); i < n; i++) {
+            hasOnlySymbolKeys &= ColumnType.isSymbol(table.getColumnType(tableColumnIndex(output, keyIds.getQuick(i))));
         }
         scan.setAccessPath(hasOnlySymbolKeys ? ScanPlan.AccessPath.LATEST_BY_SYMBOLS : ScanPlan.AccessPath.LATEST_BY_ALL, residual);
     }
@@ -343,9 +338,8 @@ final class AccessPathPlanning {
      * pattern conjunct can drive the scan.
      */
     private boolean planPattern(ScanPlan scan, BoundExpression residual) {
-        final SortKeys order = scan.getRequestedOrder();
-        final boolean isOrderByTimestampOnly = order.size() == 1 && order.getColumnIds().getQuick(0) == scan.getNativeTimestampColumnId();
-        if (isOrderByTimestampOnly && scan.getLimitLo() == null && order.getDirections().getQuick(0) == SortDirection.DESCENDING) {
+        if (scan.isNativeTimestampOrderRequested() && scan.getLimitLo() == null
+                && scan.getRequestedOrder().getDirections().getQuick(0) == SortDirection.DESCENDING) {
             return false;
         }
         final OutputSchema output = scan.getOutput();
@@ -369,10 +363,9 @@ final class AccessPathPlanning {
         if (!isSymbolKeySetProviderDeclared(pattern, output)) {
             return false;
         }
-        final FunctionExpression positive = pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
-        final int keyId = ((ColumnExpression) positive.argumentAt(0)).getColumnId();
+        final int keyId = ((ColumnExpression) positivePattern(pattern).argumentAt(0)).getColumnId();
         final boolean isCovering = context.getExecutionContext().isCoveringIndexEnabled() && !scan.hasHint(ScanPlan.HINT_NO_COVERING)
-                && !isNegated && table.isCovering(tableColumnIndexes.getQuick(output.getColumnIndexById(keyId)), tableColumnIndexes);
+                && !isNegated && table.isCovering(tableColumnIndex(output, keyId), tableColumnIndexes);
         scan.setKeyPattern(pattern);
         scan.setIndex(keyId, isCovering ? ScanPlan.IndexRead.COVERING : ScanPlan.IndexRead.INDEX);
         scan.setAccessPath(ScanPlan.AccessPath.SYMBOL_PATTERN, residual);
@@ -425,15 +418,25 @@ final class AccessPathPlanning {
     private void planScan(ScanPlan scan, BoundExpression predicate, LatestByPlan latest, boolean isTimestampRequired) throws SqlException {
         final WindowJoinStep step = pendingStep;
         pendingStep = null;
-        this.isTimestampRequired = isTimestampRequired;
         scan.clearAccessPath();
         scan.setDepth(depth);
         table = null;
         try {
-            planTableScan(scan, predicate, latest, step);
+            planTableScan(scan, predicate, latest, step, isTimestampRequired);
         } finally {
             table = null;
         }
+    }
+
+    /**
+     * Plans the sub-queries of a scan the generator builds with the operator over it, {@code input}, read directly or
+     * through one filter.
+     */
+    private void planScanSubqueries(LogicalPlan input, ScanPlan scan) throws SqlException {
+        if (input != scan) {
+            planSubqueries(input);
+        }
+        planSubqueries(scan);
     }
 
     private void planSubqueries(LogicalPlan plan) throws SqlException {
@@ -467,7 +470,13 @@ final class AccessPathPlanning {
      * Mirrors the generator's scan of a table: the intervals and keys the predicate implies, then the access path they
      * and the table allow; raises the error the generator raises before it reads the decision.
      */
-    private void planTableScan(ScanPlan scan, BoundExpression predicate, LatestByPlan latest, WindowJoinStep step) throws SqlException {
+    private void planTableScan(
+            ScanPlan scan,
+            BoundExpression predicate,
+            LatestByPlan latest,
+            WindowJoinStep step,
+            boolean isTimestampRequired
+    ) throws SqlException {
         final SqlExecutionContext executionContext = context.getExecutionContext();
         final OutputSchema output = scan.getOutput();
         final int timestampType = scan.getNativeTimestampType();
@@ -476,7 +485,7 @@ final class AccessPathPlanning {
         BoundExpression residual = null;
         SymbolKeyExtractor latestKeys = null;
         FunctionExpression within = null;
-        hasExtractor = predicate != null;
+        boolean hasExtractor = predicate != null;
         if (predicate != null) {
             if (latest != null && configuration.useWithinLatestByOptimisation()) {
                 prefixes.clear();
@@ -484,11 +493,9 @@ final class AccessPathPlanning {
             }
             final int timestampIndex = output.getColumnIndexById(scan.getNativeTimestampColumnId());
             if (timestampIndex >= 0) {
-                intervalTimestampType = output.getColumnType(timestampIndex);
-                intervals.analyse(predicate, scan.getNativeTimestampColumnId(), intervalTimestampType, depth, context.getRewriter());
+                intervals.analyse(predicate, scan.getNativeTimestampColumnId(), output.getColumnType(timestampIndex), depth, context.getRewriter());
                 residual = intervals.getResidual();
             } else {
-                intervalTimestampType = timestampType;
                 intervals.of(timestampType);
                 residual = predicate;
             }
@@ -503,7 +510,6 @@ final class AccessPathPlanning {
         final boolean isMerged = step != null && !isWalClientUpdate && capturedTypes.getQuick(captureLevel) == timestampType;
         if (isOverridden || isMerged) {
             if (!hasExtractor) {
-                intervalTimestampType = timestampType;
                 intervals.of(timestampType);
                 hasExtractor = true;
             }
@@ -523,6 +529,7 @@ final class AccessPathPlanning {
             scan.setAccessPath(ScanPlan.AccessPath.UPDATE_STUB, null);
             return;
         }
+        final boolean hasModel = hasExtractor && intervals.hasIntervalFilters();
         table = context.getTableAccessInfo(scan);
         tableColumnIndexes.clear();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
@@ -535,8 +542,8 @@ final class AccessPathPlanning {
             return;
         }
         if (latest != null) {
-            planLatestBy(scan, latest, residual, latestKeys, within);
-            capture();
+            planLatestBy(scan, latest, residual, latestKeys, within, hasExtractor);
+            capture(hasModel);
             return;
         }
         final BoundExpression liveViewResidual = residual;
@@ -554,26 +561,25 @@ final class AccessPathPlanning {
                 scan.setKeySubquery(keySubquery);
                 scan.setIndex(keys.getColumnId(), ScanPlan.IndexRead.INDEX);
                 scan.setAccessPath(ScanPlan.AccessPath.SYMBOL_SUBQUERY, residual);
-                capture();
+                capture(hasModel);
                 return;
             }
             if (!keys.hasKey() && configuration.isSymbolPatternIndexEnabled() && !scan.isUpdate()
                     && !scan.hasHint(ScanPlan.HINT_NO_SYMBOL_PATTERN_INDEX) && planPattern(scan, residual)) {
-                capture();
+                capture(hasModel);
                 return;
             }
             if (keys.hasKey()) {
-                if (keys.getValues().size() > 0 || table.getSymbolCount(tableColumnIndexes.getQuick(output.getColumnIndexById(keys.getColumnId())))
+                if (keys.getValues().size() > 0 || table.getSymbolCount(tableColumnIndex(output, keys.getColumnId()))
                         < configuration.getMaxSymbolNotEqualsCount()) {
-                    planIndexed(scan, residual);
-                    capture();
+                    planIndexed(scan, residual, hasModel, isTimestampRequired);
+                    capture(hasModel);
                     return;
                 }
                 residual = restoreExclusions(residual);
             }
         }
-        final boolean hasModel = hasExtractor && intervals.hasIntervalFilters();
-        final int sortedKeyIndex = sortedSymbolIndexKey(scan, residual, hasModel);
+        final int sortedKeyIndex = sortedSymbolIndexKey(scan, residual, hasModel, isTimestampRequired);
         if (sortedKeyIndex >= 0) {
             scan.setSinglePartition(true);
             scan.setTimestampDropped(true);
@@ -584,7 +590,7 @@ final class AccessPathPlanning {
         } else {
             scan.setAccessPath(ScanPlan.AccessPath.PAGE_FRAMES, isLiveView ? liveViewResidual : residual);
         }
-        capture();
+        capture(hasModel);
     }
 
     private BoundExpression restoreExclusions(BoundExpression residual) throws SqlException {
@@ -600,7 +606,7 @@ final class AccessPathPlanning {
      * The output index of the key a single-partition scan can read the requested order of from its bitmap index, or
      * -1.
      */
-    private int sortedSymbolIndexKey(ScanPlan scan, BoundExpression residual, boolean hasModel) {
+    private int sortedSymbolIndexKey(ScanPlan scan, BoundExpression residual, boolean hasModel, boolean isTimestampRequired) {
         final SortKeys order = scan.getRequestedOrder();
         if (residual != null || !hasModel || order.isEmpty() || isTimestampRequired || scan.hasHint(ScanPlan.HINT_NO_INDEX) || scan.isUpdate()
                 || !intervals.allIntervalsHitOnePartition(table.getPartitionedBy())) {
@@ -615,6 +621,13 @@ final class AccessPathPlanning {
     }
 
     /**
+     * The index in the table of the scan column {@code columnId}.
+     */
+    private int tableColumnIndex(OutputSchema output, int columnId) {
+        return tableColumnIndexes.getQuick(output.getColumnIndexById(columnId));
+    }
+
+    /**
      * Plans the scans under the node, each input of which requires its designated timestamp as
      * {@link OperatorPlanning#requiresInputTimestamp} decides from {@code isTimestampRequired}, the requirement of the
      * node's consumer, then the operators of the node.
@@ -622,7 +635,7 @@ final class AccessPathPlanning {
     private void walk(LogicalPlan plan, boolean isTimestampRequired) throws SqlException {
         switch (plan) {
             case ScanPlan scan -> planScan(scan, null, null, isTimestampRequired);
-            case FilterPlan filter when GeneratedShapes.fusedScan(filter) instanceof ScanPlan scan -> {
+            case FilterPlan filter when PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan -> {
                 planScan(scan, filter.getPredicate(), null, operatorPlanning.requiresInputTimestamp(filter, 0, isTimestampRequired));
                 planSubqueries(scan);
             }
@@ -631,7 +644,7 @@ final class AccessPathPlanning {
             case JoinPlan join -> walkJoin(join, isTimestampRequired);
             case WindowJoinPlan windowJoin -> walkWindowJoin(windowJoin, isTimestampRequired);
             case SampleByPlan sample ->
-                    walk(GeneratedShapes.sampleByBase(sample), operatorPlanning.requiresInputTimestamp(sample, 0, isTimestampRequired));
+                    walk(PlanToFactoryRules.sampleByBase(sample), operatorPlanning.requiresInputTimestamp(sample, 0, isTimestampRequired));
             default -> {
                 for (int i = 0, n = plan.inputCount(); i < n; i++) {
                     walk(plan.inputAt(i), operatorPlanning.requiresInputTimestamp(plan, i, isTimestampRequired));
@@ -656,13 +669,7 @@ final class AccessPathPlanning {
             walk(aggregate.getInput(), operatorPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired));
             return;
         }
-        final LogicalPlan input = aggregate.getInput();
-        if (input instanceof FilterPlan filter) {
-            planSubqueries(filter);
-            planSubqueries(filter.getInput());
-        } else {
-            planSubqueries(input);
-        }
+        planScanSubqueries(aggregate.getInput(), PlanToFactoryRules.postingDistinctScan(aggregate));
     }
 
     private void walkJoin(JoinPlan join, boolean isTimestampRequired) throws SqlException {
@@ -684,17 +691,14 @@ final class AccessPathPlanning {
 
     private void walkLatestBy(LatestByPlan latest, boolean isTimestampRequired) throws SqlException {
         final LogicalPlan input = latest.getInput();
-        final ScanPlan scan = GeneratedShapes.latestByScan(latest);
+        final ScanPlan scan = PlanToFactoryRules.latestByScan(latest);
         final boolean isInputTimestampRequired = operatorPlanning.requiresInputTimestamp(latest, 0, isTimestampRequired);
         if (scan != null) {
             planScan(scan, input instanceof FilterPlan filter ? filter.getPredicate() : null, latest, isInputTimestampRequired);
-            if (input != scan) {
-                planSubqueries(input);
-            }
-            planSubqueries(scan);
+            planScanSubqueries(input, scan);
             return;
         }
-        walk(GeneratedShapes.latestByBase(latest), isInputTimestampRequired);
+        walk(PlanToFactoryRules.latestByBase(latest), isInputTimestampRequired);
     }
 
     private void walkWindowJoin(WindowJoinPlan windowJoin, boolean isTimestampRequired) throws SqlException {
@@ -737,6 +741,7 @@ final class AccessPathPlanning {
      */
     void plan(LogicalPlan root, int depth, boolean isTimestampRequired) throws SqlException {
         subqueries.clear();
+        cursors.clear();
         captureLevel = -1;
         isCapturing = false;
         pendingStep = null;
@@ -748,5 +753,4 @@ final class AccessPathPlanning {
             operatorPlanning.settleMasterSides();
         }
     }
-
 }

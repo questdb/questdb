@@ -87,10 +87,10 @@ import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortKeys;
@@ -411,7 +411,7 @@ final class ScanFactoryGenerator {
         }
         frame.latestPrefixes.clear();
         if (scan.getWithin() != null) {
-            GeneratedShapes.withinPrefixes(scan.getWithin(), scan.getOutput(), frame.latestPrefixes);
+            PlanToFactoryRules.withinPrefixes(scan.getWithin(), scan.getOutput(), frame.latestPrefixes);
         }
         final BoundExpression residual = scan.getResidual();
         final CursorExpression keySubquery = scan.getKeySubquery();
@@ -590,9 +590,7 @@ final class ScanFactoryGenerator {
         final BoundExpression predicate = scan.getResidual();
         final FunctionExpression pattern = scan.getKeyPattern();
         final OutputSchema input = scan.getOutput();
-        final SortKeys requestedOrder = scan.getRequestedOrder();
-        final boolean isOrderByTimestampOnly = requestedOrder.size() == 1
-                && requestedOrder.getColumnIds().getQuick(0) == scan.getNativeTimestampColumnId();
+        final boolean isOrderByTimestampOnly = scan.isNativeTimestampOrderRequested();
         final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
         frame.patternConjuncts.clear();
         LogicalPlans.collectConjuncts(predicate, frame.patternConjuncts);
@@ -873,11 +871,11 @@ final class ScanFactoryGenerator {
 
     /**
      * Builds the DISTINCT of the aggregate's single key from the posting index its scan reads, see
-     * {@link LogicalPlans#postingDistinctScan}.
+     * {@link PlanToFactoryRules#postingDistinctScan}.
      */
     RecordCursorFactory generatePostingDistinct(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext)
             throws SqlException {
-        final ScanPlan scan = GeneratedShapes.postingDistinctScan(aggregate);
+        final ScanPlan scan = PlanToFactoryRules.postingDistinctScan(aggregate);
         final BoundExpression predicate = aggregate.getInput() instanceof FilterPlan filter ? filter.getPredicate() : null;
         final RecordCursorFactory factory;
         try {

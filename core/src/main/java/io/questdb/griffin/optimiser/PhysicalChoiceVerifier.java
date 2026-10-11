@@ -28,7 +28,6 @@ import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
@@ -37,6 +36,7 @@ import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationKind;
@@ -58,17 +58,17 @@ final class PhysicalChoiceVerifier {
 
     static String aggregate(AggregatePlan aggregate, boolean isPlanned) {
         final AggregatePlan.Algorithm algorithm = aggregate.getAlgorithm();
-        final GeneratedShapes.AggregateFactory factory = GeneratedShapes.aggregateFactory(aggregate);
-        final boolean isHorizon = factory == GeneratedShapes.AggregateFactory.HORIZON;
-        final boolean hasChoice = isHorizon || factory == GeneratedShapes.AggregateFactory.GROUP_BY;
+        final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
+        final boolean isHorizon = factory == PlanToFactoryRules.AggregateFactory.HORIZON;
+        final boolean hasChoice = isHorizon || factory == PlanToFactoryRules.AggregateFactory.GROUP_BY;
         if (algorithm == null) {
             return isPlanned && hasChoice ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
         final boolean isValid = hasChoice && switch (algorithm) {
-            case VECTORISED -> !isHorizon && GeneratedShapes.hasVectorShape(aggregate);
+            case VECTORISED -> !isHorizon && PlanToFactoryRules.hasVectorShape(aggregate);
             case PARALLEL_STOLEN_FILTER ->
-                    GeneratedShapes.stolenFilter(isHorizon ? ((HorizonJoinPlan) aggregate.getInput()).getMaster()
-                            : GeneratedShapes.aggregateBase(aggregate)) != null;
+                    PlanToFactoryRules.stolenFilter(isHorizon ? ((HorizonJoinPlan) aggregate.getInput()).getMaster()
+                            : PlanToFactoryRules.aggregateBase(aggregate)) != null;
             case PARALLEL, SERIAL -> true;
         };
         return isValid ? null : PlanVerifier.AGGREGATE_ALGORITHM;
@@ -83,12 +83,12 @@ final class PhysicalChoiceVerifier {
     }
 
     static String filter(FilterPlan filter, boolean isPlanned) {
-        final boolean hasChoice = !GeneratedShapes.isFusedFilter(filter) && OperatorPlanning.isFiltering(filter.getPredicate());
+        final boolean hasChoice = !PlanToFactoryRules.isFusedFilter(filter) && OperatorPlanning.isFiltering(filter.getPredicate());
         final FilterPlan.Algorithm algorithm = filter.getAlgorithm();
         if (algorithm == null) {
             return isPlanned && hasChoice ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        return !hasChoice || (algorithm == FilterPlan.Algorithm.WINDOW_KEEP_FLAG) != GeneratedShapes.isWindowKeepFlag(filter)
+        return !hasChoice || (algorithm == FilterPlan.Algorithm.WINDOW_KEEP_FLAG) != PlanToFactoryRules.isWindowKeepFlag(filter)
                 ? PlanVerifier.FILTER_ALGORITHM : null;
     }
 
@@ -109,10 +109,10 @@ final class PhysicalChoiceVerifier {
             case TEMPORAL, FULL_FAT_TEMPORAL -> joinType == JoinKind.ASOF || joinType == JoinKind.LT;
             case TEMPORAL_TIME_FRAME ->
                     !isLinear(step) && (joinType == JoinKind.ASOF || joinType == JoinKind.LT && position > 0
-                            && !GeneratedShapes.isKeyedTemporalJoin(step, join.getOrderedInputs().getQuick(position - 1).getOutput(),
+                            && !PlanToFactoryRules.isKeyedTemporalJoin(step, join.getOrderedInputs().getQuick(position - 1).getOutput(),
                             PhysicalProperties.masterTimestampIndex(join, position), PhysicalProperties.timestampIndex(step.getInput())));
             case TEMPORAL_STOLEN_FILTER ->
-                    joinType == JoinKind.ASOF && !isLinear(step) && GeneratedShapes.temporalStolenFilter(step.getInput()) != null;
+                    joinType == JoinKind.ASOF && !isLinear(step) && PlanToFactoryRules.temporalStolenFilter(step.getInput()) != null;
             case SPLICE, FULL_FAT_SPLICE -> joinType == JoinKind.SPLICE;
             case MARKOUT -> joinType.isRelational() && step.getMarkoutTimestampColumnId() >= 0;
             case NESTED_LOOP -> joinType.isRelational() && step.getMasterKeyColumnIds().size() == 0;
@@ -122,7 +122,7 @@ final class PhysicalChoiceVerifier {
     }
 
     static String latestBy(LatestByPlan latest, boolean isPlanned) {
-        final boolean isScanned = GeneratedShapes.latestByScan(latest) != null;
+        final boolean isScanned = PlanToFactoryRules.latestByScan(latest) != null;
         if (latest.getAlgorithm() != null && isScanned) {
             return PlanVerifier.LATEST_BY_ALGORITHM;
         }
@@ -197,7 +197,7 @@ final class PhysicalChoiceVerifier {
         }
         return algorithm == SortPlan.Algorithm.TIMESTAMP_DECLARATION && !sort.isMarkoutHorizon()
                 || isBounded(algorithm) && !sort.isLimited()
-                || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K && GeneratedShapes.stolenFilter(GeneratedShapes.parallelTopKSource(sort)) == null
+                || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K && PlanToFactoryRules.stolenFilter(PlanToFactoryRules.parallelTopKSource(sort)) == null
                 ? PlanVerifier.SORT_ALGORITHM : null;
     }
 
@@ -219,7 +219,7 @@ final class PhysicalChoiceVerifier {
             return isPlanned && !step.isNullExtending() ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
         return step.isNullExtending() || algorithm == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
-                && (index > 0 || GeneratedShapes.stolenFilter(windowJoin.getMaster()) == null)
+                && (index > 0 || PlanToFactoryRules.stolenFilter(windowJoin.getMaster()) == null)
                 ? PlanVerifier.WINDOW_JOIN_ALGORITHM : null;
     }
 

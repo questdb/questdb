@@ -36,7 +36,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.FunctionInstantiator;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -49,9 +48,9 @@ import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
@@ -358,7 +357,7 @@ final class FilterFactoryGenerator {
 
     /**
      * Filters the factory on one thread with the filter the join step applies to its joined rows, folding a constant
-     * as {@link LogicalPlans#isPostJoinFilterFolded} decides. Consumes both executable roots on entry, including on
+     * as {@link PlanToFactoryRules#isPostJoinFilterFolded} decides. Consumes both executable roots on entry, including on
      * failure.
      */
     RecordCursorFactory generatePostJoin(
@@ -370,7 +369,7 @@ final class FilterFactoryGenerator {
             SqlExecutionContext executionContext
     ) throws SqlException {
         return generate(frame, predicate, step.getOutput(), base, filter, frame.functionInstantiator, executionContext, false, false, null,
-                false, GeneratedShapes.isPostJoinFilterFolded(step, predicate));
+                false, PlanToFactoryRules.isPostJoinFilterFolded(step, predicate));
     }
 
     /**

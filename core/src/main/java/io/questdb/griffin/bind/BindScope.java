@@ -136,6 +136,7 @@ public final class BindScope implements Mutable {
     OutputSchema expressionInput;
     CharSequence expressionInputAlias;
     boolean isInsideJoin;
+    QueryModel namedWindowScope;
     IntHashSet nativeTimestampIds;
     int nestedWindowPosition;
     ObjList<ColumnExpression> replacementColumns;
@@ -216,6 +217,7 @@ public final class BindScope implements Mutable {
         expressionInput = null;
         expressionInputAlias = null;
         isInsideJoin = false;
+        namedWindowScope = null;
         nativeTimestampIds = null;
         nestedWindowPosition = 0;
         replacementColumns = null;

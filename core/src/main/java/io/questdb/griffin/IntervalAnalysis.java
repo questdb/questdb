@@ -95,6 +95,13 @@ public final class IntervalAnalysis {
     }
 
     /**
+     * The type of the designated timestamp the last analysis read.
+     */
+    public int getTimestampType() {
+        return timestampType;
+    }
+
+    /**
      * Whether the predicate constrains the timestamp at all; codegen builds no interval model otherwise.
      */
     public boolean hasIntervalFilters() {

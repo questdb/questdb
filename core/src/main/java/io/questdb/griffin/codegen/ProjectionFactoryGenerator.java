@@ -68,7 +68,6 @@ import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
@@ -76,6 +75,7 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
@@ -312,7 +312,7 @@ final class ProjectionFactoryGenerator {
             mapping.add(index);
             metadata.add(SqlCodeGenerator.copyColumn(baseMetadata, index, Chars.toString(project.getOutput().getColumnName(i))));
         }
-        metadata.setTimestampIndex(GeneratedShapes.projectedTimestampIndex(project, baseMetadata.getTimestampIndex()));
+        metadata.setTimestampIndex(PlanToFactoryRules.projectedTimestampIndex(project, baseMetadata.getTimestampIndex()));
     }
 
     void collectColumnReferenceCounts(GenerationFrame frame, LogicalPlan plan) {
@@ -408,9 +408,9 @@ final class ProjectionFactoryGenerator {
             throws SqlException {
         final int timestampIndex;
         try {
-            timestampIndex = GeneratedShapes.projectedTimestampIndex(project, base.getMetadata().getTimestampIndex());
+            timestampIndex = PlanToFactoryRules.projectedTimestampIndex(project, base.getMetadata().getTimestampIndex());
             if (ParanoiaState.PLAN_PARANOIA_MODE && isPlannedIdentityChecked(project)
-                    && GeneratedShapes.isIdentityProjection(project) != GeneratedShapes.isIdentityProjection(project, base.getMetadata(), timestampIndex, base.getMetadata().getTimestampIndex())) {
+                    && PlanToFactoryRules.isIdentityProjection(project) != PlanToFactoryRules.isIdentityProjection(project, base.getMetadata(), timestampIndex, base.getMetadata().getTimestampIndex())) {
                 throw new AssertionError("planned identity projection differs from the generator's");
             }
         } catch (Throwable th) {
@@ -437,7 +437,7 @@ final class ProjectionFactoryGenerator {
         final IntList mapping;
         final GenericRecordMetadata metadata;
         try {
-            if (GeneratedShapes.isIdentityProjection(project, base.getMetadata(), timestampIndex, base.getMetadata().getTimestampIndex())) {
+            if (PlanToFactoryRules.isIdentityProjection(project, base.getMetadata(), timestampIndex, base.getMetadata().getTimestampIndex())) {
                 return base;
             }
             mapping = new IntList(project.getExpressions().size());

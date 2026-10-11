@@ -45,9 +45,9 @@ import org.jetbrains.annotations.Nullable;
  * planning, plan verification, {@link PhysicalProperties} and codegen read them; {@link LogicalPlans} holds the plan
  * facts they are built on and never reads them.
  */
-public final class GeneratedShapes {
+public final class PlanToFactoryRules {
 
-    private GeneratedShapes() {
+    private PlanToFactoryRules() {
     }
 
     /**
@@ -115,6 +115,14 @@ public final class GeneratedShapes {
         }
         return plan instanceof ProjectPlan project && project.getInput() instanceof WindowPlan window
                 && isWindowOutputProjection(project, window) ? window : null;
+    }
+
+    /**
+     * The window join under a column-only projection of its output, which the window join factory builds; null
+     * otherwise.
+     */
+    public static WindowJoinPlan generatedWindowJoin(ProjectPlan project) {
+        return project.getInput() instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ? windowJoin : null;
     }
 
     /**
@@ -236,9 +244,7 @@ public final class GeneratedShapes {
         if (!(plan instanceof ProjectPlan project)) {
             return false;
         }
-        final LogicalPlan input = project.getInput();
-        return !(input instanceof WindowPlan window && isWindowOutputProjection(project, window))
-                && !(input instanceof WindowJoinPlan && LogicalPlans.isColumnOnlyProjection(project));
+        return generatedWindow(project) == null && generatedWindowJoin(project) == null;
     }
 
     /**

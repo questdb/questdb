@@ -35,7 +35,6 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
@@ -44,6 +43,7 @@ import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
@@ -383,20 +383,20 @@ final class OrderPlanning implements OptimiserPass {
         switch (plan) {
             case WindowPlan window -> requireWindow(window, orderColumnId, direction, order,
                     window.isSelectOrdered() && order != null && order.getInput() == plan, isRowOrderRequired);
-            case ProjectPlan project when project.getInput() instanceof WindowPlan window && GeneratedShapes.isWindowOutputProjection(project, window) ->
+            case ProjectPlan project when project.getInput() instanceof WindowPlan window && PlanToFactoryRules.isWindowOutputProjection(project, window) ->
                     requireWindow(window, LogicalPlans.projectedSourceColumnId(project, orderColumnId), direction, projectedOrder(project, order),
                             window.isSelectOrdered() && order != null && order.getInput() == plan, isRowOrderRequired);
             case ProjectPlan project when project.getInput() instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ->
                     requireWindowJoin(windowJoin);
             case LatestByPlan latest -> {
-                final ScanPlan scan = GeneratedShapes.latestByScan(latest);
+                final ScanPlan scan = PlanToFactoryRules.latestByScan(latest);
                 if (scan != null) {
                     requireScan(scan, SortDirection.DESCENDING, null, null, true);
                 } else {
-                    requireNothing(GeneratedShapes.latestByBase(latest));
+                    requireNothing(PlanToFactoryRules.latestByBase(latest));
                 }
             }
-            case SampleByPlan sample -> requireNothing(GeneratedShapes.sampleByBase(sample));
+            case SampleByPlan sample -> requireNothing(PlanToFactoryRules.sampleByBase(sample));
             case FillPlan fill -> requireNothing(fill.getInput());
             case ScanPlan scan ->
                     requireScan(scan, orderColumnId >= 0 ? scanDirection(scan, orderColumnId, direction) : SortDirection.ASCENDING,
@@ -445,7 +445,7 @@ final class OrderPlanning implements OptimiserPass {
             }
             inputOrder = projectedOrder(rename, inputOrder);
         }
-        require(GeneratedShapes.aggregateBase(aggregate), inputOrderColumnId,
+        require(PlanToFactoryRules.aggregateBase(aggregate), inputOrderColumnId,
                 inputOrderColumnId < 0 ? null : direction, inputOrder, null, isInputRowOrderRequired);
     }
 
@@ -533,11 +533,11 @@ final class OrderPlanning implements OptimiserPass {
                 }
                 inputOrderColumnId = LogicalPlans.projectedSourceColumnId(project, orderColumnId);
                 inputDirection = inputOrderColumnId < 0 ? null : direction;
-                if (GeneratedShapes.hasNativeFilterInput(project)) {
+                if (PlanToFactoryRules.hasNativeFilterInput(project)) {
                     inputOrder = projectedOrder(project, order);
                     inputLimit = order == null || inputOrder != null ? limit : null;
                 } else if (project.getInput() instanceof AggregatePlan || project.getInput() instanceof WindowPlan
-                        || GeneratedShapes.hasOrderedJoinMasterInput(project)) {
+                        || PlanToFactoryRules.hasOrderedJoinMasterInput(project)) {
                     inputOrder = projectedOrder(project, order);
                 }
             }

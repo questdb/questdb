@@ -199,8 +199,7 @@ public final class ScanPlan extends LogicalPlan {
         if (limitHi != null) {
             return null;
         }
-        return requestedOrder.isEmpty() || requestedOrder.size() == 1
-                && requestedOrder.getColumnIds().getQuick(0) == nativeTimestampColumnId
+        return requestedOrder.isEmpty() || isNativeTimestampOrderRequested()
                 && requestedOrder.getDirections().getQuick(0) == scanDirection ? limitLo : null;
     }
 
@@ -405,6 +404,13 @@ public final class ScanPlan extends LogicalPlan {
     @Override
     public int inputCount() {
         return 0;
+    }
+
+    /**
+     * Whether the consumers request the order of the native designated timestamp alone, in either direction.
+     */
+    public boolean isNativeTimestampOrderRequested() {
+        return requestedOrder.size() == 1 && requestedOrder.getColumnIds().getQuick(0) == nativeTimestampColumnId;
     }
 
     public boolean isRandomAccess() {

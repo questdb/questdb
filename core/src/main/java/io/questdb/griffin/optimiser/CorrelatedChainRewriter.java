@@ -126,10 +126,7 @@ final class CorrelatedChainRewriter {
             spec.getPartitionBy().add(ctx.planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
         }
         final int timestampId = latest.getTimestampColumnId();
-        spec.getOrderByColumnIds().add(timestampId);
-        spec.getOrderByDirections().add(SortDirection.DESCENDING);
-        spec.getOrderByPositions().add(position);
-        spec.getOrderByNames().add(output.getColumnName(output.getColumnIndexById(timestampId)));
+        spec.addOrderBy(timestampId, SortDirection.DESCENDING, output.getColumnName(output.getColumnIndexById(timestampId)), position);
         return rowNumberFilter(input, spec, "_latest_rn", position, null, null);
     }
 
@@ -151,10 +148,7 @@ final class CorrelatedChainRewriter {
         if (ordered instanceof SortPlan sort) {
             for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
                 final int columnId = sort.getColumnIds().getQuick(i);
-                spec.getOrderByColumnIds().add(columnId);
-                spec.getOrderByDirections().add(sort.getDirections().getQuick(i));
-                spec.getOrderByPositions().add(position);
-                spec.getOrderByNames().add(output.getColumnName(output.getColumnIndexById(columnId)));
+                spec.addOrderBy(columnId, sort.getDirections().getQuick(i), output.getColumnName(output.getColumnIndexById(columnId)), position);
             }
             ordered = sort.getInput();
         }

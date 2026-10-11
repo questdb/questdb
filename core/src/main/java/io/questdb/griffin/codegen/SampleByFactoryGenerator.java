@@ -69,8 +69,8 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
@@ -771,7 +771,7 @@ final class SampleByFactoryGenerator {
     }
 
     RecordCursorFactory generateSampleBy(GenerationFrame frame, SampleByPlan sample, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory base = codeGenerator.generate(frame, GeneratedShapes.sampleByBase(sample), executionContext);
+        final RecordCursorFactory base = codeGenerator.generate(frame, PlanToFactoryRules.sampleByBase(sample), executionContext);
         return generateSampleBy(frame, sample, base, executionContext);
     }
 

@@ -416,7 +416,7 @@ public final class SqlBinder implements Mutable {
             throw new IllegalStateException("query block has no source");
         }
         final ExpressionNode subsample = source.getSubsample();
-        if (subsample != null && Chars.equalsIgnoreCase(subsample.token, "sdt")) {
+        if (subsample != null && SampleByBinder.subsampleMethod(subsample) == SampleByBinder.SUBSAMPLE_SDT) {
             if (bindScope.isInsideJoin || source.getJoinModels().size() > 1) {
                 throw SqlException.$(subsample.position, "SUBSAMPLE sdt is not supported inside a join");
             }
@@ -429,10 +429,10 @@ public final class SqlBinder implements Mutable {
         }
         validateBlockWindows(model, source);
         ExpressionNode where = copyWhereClause(source);
-        if (windowJoinIndex(source) > 0) {
+        if (joinIndex(source, QueryModel.JOIN_WINDOW) > 0) {
             return temporalJoinBinder.bindWindowJoinQuery(model, source, where, executionContext);
         }
-        final boolean isHorizonJoin = horizonJoinIndex(source) > 0;
+        final boolean isHorizonJoin = joinIndex(source, QueryModel.JOIN_HORIZON) > 0;
         final int outerColumnBase = bindScope.outerColumnIds.size();
         LogicalPlan sourcePlan;
         if (isHorizonJoin) {
@@ -510,9 +510,8 @@ public final class SqlBinder implements Mutable {
         }
 
         if (subsample != null && !hasWindows && source.getSampleBy() == null && !sampleByBinder.hasSubsampleTimestampProjection(model, source, sourcePlan)) {
-            sampleByBinder.validateSubsampleCall(subsample);
-            if (!Chars.equalsIgnoreCase(subsample.token, "sdt") && !Chars.equalsIgnoreCase(subsample.token, "uniform")
-                    && !Chars.equalsIgnoreCase(subsample.token, "cadence")) {
+            final int method = sampleByBinder.validateSubsampleCall(subsample);
+            if (method == SampleByBinder.SUBSAMPLE_EXTREMA || method == SampleByBinder.SUBSAMPLE_LTTB) {
                 sampleByBinder.validateSubsampleSelectValue(subsample.args.getQuick(0), model);
             }
             throw sampleByBinder.subsampleTimestampMissing(source, sourcePlan);
@@ -1114,7 +1113,15 @@ public final class SqlBinder implements Mutable {
      */
     LogicalPlan bindBlockSource(QueryModel model, QueryModel source, ExpressionNode where, SqlExecutionContext executionContext) throws SqlException {
         final boolean hasJoins = source.getJoinModels().size() > 1;
-        final LogicalPlan sourcePlan = hasJoins ? joinBinder.bindJoins(source, where, executionContext) : bindSource(source, executionContext);
+        final BindScope scope = ctx.scope();
+        final QueryModel previousWindowScope = scope.namedWindowScope;
+        scope.namedWindowScope = model;
+        final LogicalPlan sourcePlan;
+        try {
+            sourcePlan = hasJoins ? joinBinder.bindJoins(source, where, executionContext) : bindSource(source, executionContext);
+        } finally {
+            scope.namedWindowScope = previousWindowScope;
+        }
         ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), hasJoins ? null : sourceAlias(source));
         return sourcePlan;
     }

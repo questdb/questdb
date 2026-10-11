@@ -31,13 +31,13 @@ import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.optimiser.PlanVerifier;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
-import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PhysicalProperties.Capability;
 import io.questdb.griffin.plan.logical.PhysicalProperties.ScanDirection;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
@@ -186,7 +186,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             ) {
                 final ProjectPlan project = find(compiler.getPlanForTesting(), ProjectPlan.class);
                 Assert.assertTrue(project.getInput() instanceof JoinPlan);
-                Assert.assertTrue(GeneratedShapes.isIdentityProjection(project));
+                Assert.assertTrue(PlanToFactoryRules.isIdentityProjection(project));
                 Assert.assertTrue(factory.getBaseFactory() instanceof SelectedRecordCursorFactory);
             }
             assertQuery(sql)
@@ -858,7 +858,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             try (UpdateOperation ignore = compiler.compile(sql, sqlExecutionContext).getUpdateOperation()) {
                 final FilterPlan filter = find(compiler.getPlanForTesting(), FilterPlan.class);
                 Assert.assertEquals(expected, ((ScanPlan) filter.getInput()).isWalClientUpdate());
-                Assert.assertEquals(!expected, GeneratedShapes.isFusedFilter(filter));
+                Assert.assertEquals(!expected, PlanToFactoryRules.isFusedFilter(filter));
             }
         }
     }

@@ -72,6 +72,21 @@ public final class WindowJoinPlan extends LogicalPlan {
         return isEmpty;
     }
 
+    /**
+     * True when the window join is not empty and every step null-extends, so its factory passes the master through.
+     */
+    public boolean isMasterPassedThrough() {
+        if (isEmpty) {
+            return false;
+        }
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            if (!steps.getQuick(i).isNullExtending()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public WindowJoinPlan of(LogicalPlan master, int position) {
         this.master = Objects.requireNonNull(master);
         setPosition(position);

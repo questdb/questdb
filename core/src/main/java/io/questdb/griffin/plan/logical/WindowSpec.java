@@ -58,6 +58,16 @@ public final class WindowSpec implements Mutable {
     private char rowsLoExprTimeUnit;
     private int rowsLoKindPos;
 
+    /**
+     * Appends an ORDER BY key: the input column it reads, or -1 for an expression that is not a column.
+     */
+    public void addOrderBy(int columnId, SortDirection direction, CharSequence name, int position) {
+        orderByColumnIds.add(columnId);
+        orderByDirections.add(direction);
+        orderByNames.add(name);
+        orderByPositions.add(position);
+    }
+
     @Override
     public void clear() {
         orderByColumnIds.clear();

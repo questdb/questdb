@@ -727,6 +727,24 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotNamedWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, 1_000_000), ('b', 2, 2_000_000), ('a', 3, 3_000_000), ('b', 4, 4_000_000), ('a', 5, 5_000_000)");
+            assertQuery("""
+                    SELECT * FROM t PIVOT (SUM(sum(v) OVER w) FOR s IN ('a', 'b'))
+                    WINDOW w AS (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            15.0\t10.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotNestedPivot() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
@@ -2213,6 +2231,28 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWindowFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, 1_000_000), ('b', 2, 2_000_000), ('a', 3, 3_000_000), ('b', 4, 4_000_000), ('a', 5, 5_000_000)");
+            assertQuery("SELECT * FROM t PIVOT (SUM(sum(v) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)) FOR s IN ('a', 'b'))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            15.0\t10.0
+                            """);
+            assertQuery("SELECT * FROM t PIVOT (SUM(sum(v) OVER (ORDER BY ts)) FOR s IN ('a', 'b'))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            22.0\t13.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotWindowJoinErrors() throws Exception {
         assertMemoryLeak(() -> {
             createWindowJoinTables();
@@ -2312,6 +2352,19 @@ public class PivotTest extends AbstractSqlParserTest {
                     "SELECT * FROM t PIVOT (SUM(lag(v) OVER (PARTITION BY s ORDER BY ts)) + SUM(v) FOR s IN ('a', 'b'))",
                     23,
                     "Aggregate over window function cannot be combined with other terms. Use a sub-query."
+            );
+        });
+    }
+
+    @Test
+    public void testPivotWindowSpecErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck("SELECT * FROM t PIVOT (SUM(sum(v) OVER zz) FOR s IN ('a', 'b'))", 39, "window 'zz' is not defined");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM t PIVOT (SUM(sum(v) OVER (PARTITION BY row_number() OVER ())) FOR s IN ('a', 'b'))",
+                    53,
+                    "window function is not allowed in PARTITION BY clause"
             );
         });
     }
