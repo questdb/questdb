@@ -76,6 +76,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -4073,6 +4074,44 @@ public class CheckpointTest extends AbstractCairoTest {
             System.arraycopy(onDisk[0], 0, image, offset, recordSize);
             java.nio.file.Files.write(txnLog, image);
             Assert.assertEquals("the rolled-back record came back after a torn append", keptTxn, engine.getTableSequencerAPI().lastTxn(tableToken));
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreLowersTheV2FieldAndSlotWithTheMaxTxn() throws Exception {
+        // The restore lowers a V2 log's max txn under records an ADAPTIVE run flushed. The flushed-through field and
+        // the slot next to it go down with it, in the same sector: the records an older binary appends after a
+        // downgrade then sit above the slot and are trusted at the next open, instead of being cut as torn.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+            setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 4);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("CREATE TABLE test (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 10; i++) {
+                execute("INSERT INTO test VALUES (" + i + ", " + i + ")");
+            }
+            drainWalQueue();
+            execute("CHECKPOINT CREATE");
+            for (int i = 10; i < 13; i++) {
+                execute("INSERT INTO test VALUES (" + i + ", " + i + ")");
+            }
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("test");
+            Assert.assertEquals(13, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            Assert.assertEquals(14, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.UNSYNCED_FROM_TXN_OFFSET_64));
+            Assert.assertEquals(13, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.KNOWN_MAX_TXN_OFFSET_64));
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+            engine.checkpointRecover();
+            Assert.assertEquals(10, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            Assert.assertEquals("the field follows the max txn", 11, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.UNSYNCED_FROM_TXN_OFFSET_64));
+            Assert.assertEquals("the slot follows the max txn", 10, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.KNOWN_MAX_TXN_OFFSET_64));
+            engine.checkpointRelease();
+
+            execute("INSERT INTO test VALUES (100, 100)");
+            Assert.assertEquals(11, engine.getTableSequencerAPI().lastTxn(tableToken));
         });
     }
 

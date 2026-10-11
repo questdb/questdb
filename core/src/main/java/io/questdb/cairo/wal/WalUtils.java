@@ -379,6 +379,9 @@ public class WalUtils {
                 mem.putLong(0L);
                 mem.putLong(tableCreateDate);
                 mem.putInt(chunkSize);
+                // A new log has no flushed-through field and no slot, whatever an existing file held there.
+                mem.putLong(TableTransactionLogV2.UNSYNCED_FROM_TXN_OFFSET_64, 0L);
+                mem.putLong(TableTransactionLogV2.KNOWN_MAX_TXN_OFFSET_64, 0L);
                 mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
                 mem.close(false);
 

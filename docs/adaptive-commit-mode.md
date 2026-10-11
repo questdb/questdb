@@ -259,7 +259,10 @@ Found while this mode was built, not yet filed:
   of each log pays it, once per table: in QuestDB the background table scan right after the start (or the table's
   first write, if that comes first), in QuestDB Enterprise the uploader start, before any upload. Later starts in a
   durable mode skip it. It costs one `fdatasync` per table and a read of the log: 3-4 s for 1,000 tables in our
-  measurement (section 9).
+  measurement (section 9). A version 2 sequencer log that an `adaptive` run had written is marked at its first
+  `nosync`, `async` or `sync` open; the first `adaptive` start after such a run flushes each such table's kept log
+  parts (one `fdatasync` per kept part, plus the header) at the log's first open, once per table, before it trusts
+  the log again. Later `adaptive` starts skip it.
 - **Out of `adaptive`** (to `nosync`, `async` or `sync`). The first start in the new mode makes every enrolled table
   durable (one `syncfs` per file system on Linux, the root and each volume; a flush of each table's files elsewhere),
   then removes its save point files and logs `table left adaptive commit mode, its save point is removed [table=...]`.
@@ -383,7 +386,9 @@ More detail:
   `nosync`, `async` and a non-WAL table in `adaptive`: no flush.
 - **The first `sync` or `adaptive` start after `nosync` or `async`** reads each WAL table's version 1 sequencer log
   from its first transaction and flushes it, once per table (section 8): one `fdatasync` and a read of 28 bytes per
-  transaction in the log. Measured while other work loaded the same disk: 1,000 tables with 100 to 1,000 transactions
+  transaction in the log. The first `adaptive` start after a `nosync`, `async` or `sync` run flushes the kept parts of
+  each version 2 log an earlier `adaptive` run had written: one directory listing and one `fdatasync` per kept part
+  (5,000 transactions each by default) plus the header, once per table, with no read of the records. Measured while other work loaded the same disk: 1,000 tables with 100 to 1,000 transactions
   each took 3.0 s in `sync` and 4.2 s in `adaptive`, against about 50 ms at the next start; one table with a million
   transactions 7.5 ms against 0.2 ms with its log in the page cache, 0.27 s when the log had to be read from the disk.
   In QuestDB Enterprise the uploader start includes it, so on that start uploads begin that much later.
