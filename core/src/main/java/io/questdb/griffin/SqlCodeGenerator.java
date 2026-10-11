@@ -1751,6 +1751,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
     // for those.
+    // Narrowing fill pairs with no cast factory that FillRecord can still read: SHORT/CHAR/INT
+    // literals into BYTE/SHORT (FillRecord reads those via getInt) and DOUBLE into FLOAT.
+    private static boolean isFillNarrowingReadable(int fillType, int targetColType) {
+        final short fromTag = ColumnType.tagOf(fillType);
+        final short toTag = ColumnType.tagOf(targetColType);
+        return ((toTag == ColumnType.BYTE || toTag == ColumnType.SHORT) && fromTag >= ColumnType.BYTE && fromTag <= ColumnType.INT)
+                || (fromTag == ColumnType.DOUBLE && toTag == ColumnType.FLOAT);
+    }
+
     private static boolean isFixedSizePrevSlotEligible(int srcTag) {
         return switch (srcTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL128,
@@ -1772,27 +1781,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model.getTableNameExpr() == null
                 && model.getNestedModel() == null
                 && model.getHorizonJoinContext().getAlias() != null;
-    }
-
-    // Base-class getters such as DoubleFunction.getLong throw UOE; probe the one FillRecord will use.
-    private static boolean isFillReadable(Function fillFunc, int targetColType) {
-        if (!fillFunc.isConstant()) {
-            // Not safe to evaluate before Function.init(); leave it to the runtime path.
-            return true;
-        }
-        try {
-            switch (ColumnType.tagOf(targetColType)) {
-                // FillRecord.getByte/getShort read via getInt and narrow.
-                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT -> fillFunc.getInt(null);
-                case ColumnType.LONG -> fillFunc.getLong(null);
-                case ColumnType.DATE -> fillFunc.getDate(null);
-                case ColumnType.TIMESTAMP -> fillFunc.getTimestamp(null);
-                case ColumnType.FLOAT -> fillFunc.getFloat(null);
-            }
-            return true;
-        } catch (UnsupportedOperationException e) {
-            return false;
-        }
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -4654,7 +4642,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (cast != null) {
                                     fillValues.setQuick(fillIdx, cast);
                                     fillFunc = cast;
-                                } else if (!isFillReadable(fillFunc, targetColType)) {
+                                } else if (!ColumnType.isToSameOrWider(fillType, targetColType)
+                                        && !isFillNarrowingReadable(fillType, targetColType)) {
+                                    // Narrowing without a cast factory: FillRecord would read the raw
+                                    // constant through a getter the base class does not implement
+                                    // (DoubleFunction.getLong, LongFunction.getInt).
                                     throw SqlException.$(fillExpr.position,
                                                     "fill value of type ").put(ColumnType.nameOf(fillType))
                                             .put(" cannot fill column of type ")
