@@ -30,6 +30,7 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.std.Os;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -52,7 +53,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <ul>
  *   <li>pure DDL: CREATE TABLE, DROP, RENAME, TRUNCATE, ALTER COLUMN ADD;</li>
  *   <li>data-modifying: INSERT (with row count), UPDATE (with row count);</li>
- *   <li>parse-time-executed: SET, BEGIN / COMMIT / ROLLBACK;</li>
+ *   <li>parse-time-executed: SET, BEGIN / COMMIT / ROLLBACK, CHECKPOINT,
+ *       REFRESH MATERIALIZED VIEW, WAL SUSPEND / RESUME, VACUUM;</li>
+ *   <li>statements without a row count (pure DDL, parse-time-executed) report
+ *       0 rows affected, never a negative sentinel;</li>
  *   <li>error paths: a malformed DDL bubbles up as QUERY_ERROR, a SELECT
  *       handler that only implements onBatch / onEnd still works for
  *       backwards compatibility;</li>
@@ -117,9 +121,10 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                                     + "TIMESTAMP(ts) PARTITION BY DAY WAL")
                     );
                     // Insert so we know the table is usable.
-                    short opType = executeDdl(client,
+                    ExecResult insert = executeExec(client,
                             "INSERT INTO newt VALUES (1, 'a', 1::TIMESTAMP), (2, 'b', 2::TIMESTAMP)");
-                    Assert.assertEquals(CompiledQuery.INSERT, opType);
+                    Assert.assertEquals(CompiledQuery.INSERT, insert.opType);
+                    Assert.assertEquals(2L, insert.rowsAffected);
                     // Drop it.
                     Assert.assertEquals(
                             CompiledQuery.DROP,
@@ -141,7 +146,10 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
                     c1.connect();
                     executeDdl(c1, "CREATE TABLE cross_conn(x LONG, ts TIMESTAMP) "
                             + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                    executeDdl(c1, "INSERT INTO cross_conn VALUES (100, 1::TIMESTAMP), (200, 2::TIMESTAMP)");
+                    Assert.assertEquals(
+                            2L,
+                            executeExec(c1, "INSERT INTO cross_conn VALUES (100, 1::TIMESTAMP), (200, 2::TIMESTAMP)").rowsAffected
+                    );
                 }
                 serverMain.awaitTable("cross_conn");
 
@@ -258,25 +266,44 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
 
     @Test
     public void testParseTimeExecutedStatements() throws Exception {
-        // Statements that the compiler executes at parse time (SET / BEGIN /
-        // COMMIT / ROLLBACK / TRUNCATE / VACUUM) still come back as
-        // EXEC_DONE with op_type set and rowsAffected usually 0.
+        // Statements that the compiler executes at parse time, and the PG
+        // compatibility no-ops, still come back as EXEC_DONE with their op_type.
+        // They carry no row count, so they must report 0 rows affected:
+        // rows_affected is an unsigned varint, and a negative count reaches
+        // clients that decode it as u64 as 2^64 - 1 (the Go client rejects
+        // the frame outright).
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE pt(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO pt VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
+                serverMain.execute("CREATE MATERIALIZED VIEW pt_mv AS (SELECT ts, count() cnt FROM pt SAMPLE BY 1d)");
                 serverMain.awaitTable("pt");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
-                    // TRUNCATE is parse-time executed; the server ships
-                    // EXEC_DONE with CompiledQuery.TRUNCATE and 0 rows affected
-                    // (rowsAffected from getAffectedRowsCount, which is 0).
+                    // executeDdl asserts 0 rows affected for each statement.
+                    Assert.assertEquals(CompiledQuery.SET, executeDdl(client, "SET application_name = 'qwp'"));
+                    Assert.assertEquals(CompiledQuery.SET, executeDdl(client, "RESET ALL"));
+                    Assert.assertEquals(CompiledQuery.BEGIN, executeDdl(client, "BEGIN"));
+                    Assert.assertEquals(CompiledQuery.COMMIT, executeDdl(client, "COMMIT"));
+                    Assert.assertEquals(CompiledQuery.ROLLBACK, executeDdl(client, "ROLLBACK"));
+                    Assert.assertEquals(CompiledQuery.DEALLOCATE, executeDdl(client, "DEALLOCATE qwp_stmt"));
+                    // The server rejects CHECKPOINT CREATE on Windows, which lacks the sync()
+                    // system call it relies on. CHECKPOINT RELEASE needs no prior CREATE, so it
+                    // runs on every platform.
+                    if (!Os.isWindows()) {
+                        Assert.assertEquals(CompiledQuery.CHECKPOINT_CREATE, executeDdl(client, "CHECKPOINT CREATE"));
+                    }
+                    Assert.assertEquals(CompiledQuery.CHECKPOINT_RELEASE, executeDdl(client, "CHECKPOINT RELEASE"));
                     Assert.assertEquals(
-                            CompiledQuery.TRUNCATE,
-                            executeDdl(client, "TRUNCATE TABLE pt")
+                            CompiledQuery.REFRESH_MAT_VIEW,
+                            executeDdl(client, "REFRESH MATERIALIZED VIEW pt_mv FULL")
                     );
+                    Assert.assertEquals(CompiledQuery.TABLE_SUSPEND, executeDdl(client, "ALTER TABLE pt SUSPEND WAL"));
+                    Assert.assertEquals(CompiledQuery.TABLE_RESUME, executeDdl(client, "ALTER TABLE pt RESUME WAL"));
+                    Assert.assertEquals(CompiledQuery.VACUUM, executeDdl(client, "VACUUM TABLE pt"));
+                    Assert.assertEquals(CompiledQuery.TRUNCATE, executeDdl(client, "TRUNCATE TABLE pt"));
                     serverMain.awaitTable("pt");
                     // Verify the rows are actually gone.
                     final int[] count = {0};
@@ -388,11 +415,14 @@ public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
     }
 
     /**
-     * Helper: runs a DDL that we don't care about rowsAffected for. Returns
-     * the op type so the test can assert against a CompiledQuery constant.
+     * Helper: runs a statement that carries no row count (DDL, or a statement
+     * the compiler executes at parse time) and asserts the server reports 0
+     * rows affected for it. Returns the op type so the test can assert against
+     * a CompiledQuery constant.
      */
     private static short executeDdl(QwpQueryClient client, String sql) {
         ExecResult r = executeExec(client, sql);
+        Assert.assertEquals("rows affected by [" + sql + ']', 0L, r.rowsAffected);
         return r.opType;
     }
 
