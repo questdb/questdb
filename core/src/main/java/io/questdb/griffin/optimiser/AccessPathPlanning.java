@@ -73,8 +73,10 @@ import io.questdb.std.ObjList;
  * <p>
  * A decision depends on where the generator builds the scan, which this pass follows as the generator walks the
  * plan: the generation depth of the query level, whether a consumer requires the designated timestamp, see
- * {@link OperatorPlanning#requiresInputTimestamp}, and the intervals of a window join master that the scan of its
- * slave narrows to. Every scan gets an access path; a static error the generator raises before it reads the
+ * {@link OperatorPlanning#requiresInputTimestamp}, the intervals of a window join master that the scan of its
+ * slave narrows to, and whether a HORIZON JOIN reads the time frames of the scan under the filter of its slave, see
+ * {@link PlanToFactoryRules#horizonSlaveFilter}, which keeps that scan on its page frames, with a constant false
+ * residual where the predicate admits no row. Every scan gets an access path; a static error the generator raises before it reads the
  * decision, such as an invalid interval bound, fails planning with the same message and position. Once it has
  * planned the inputs of a node, the walk hands the node to {@link OperatorPlanning#planOperators} with the timestamp
  * requirement of its consumer, which rejects what the generator cannot build.
@@ -108,6 +110,7 @@ final class AccessPathPlanning {
     private final IntList tableColumnIndexes = new IntList();
     private int captureLevel = -1;
     private int depth;
+    private ScanPlan horizonSlaveScan;
     private boolean isCapturing;
     private WindowJoinStep pendingStep;
     private TableAccessInfo table;
@@ -537,8 +540,13 @@ final class AccessPathPlanning {
             assert columnIndex > -1 : "bound column is missing from its table version";
             tableColumnIndexes.add(columnIndex);
         }
+        final boolean isHorizonSlave = scan == horizonSlaveScan;
         if (hasExtractor && intervals.isIntrinsicFalse() || latestKeys != null && latestKeys.isFalse()) {
-            scan.setAccessPath(ScanPlan.AccessPath.EMPTY, null);
+            if (isHorizonSlave) {
+                scan.setAccessPath(ScanPlan.AccessPath.PAGE_FRAMES, context.getRewriter().newFalseConstant(scan.getPosition()));
+            } else {
+                scan.setAccessPath(ScanPlan.AccessPath.EMPTY, null);
+            }
             return;
         }
         if (latest != null) {
@@ -549,6 +557,11 @@ final class AccessPathPlanning {
         final BoundExpression liveViewResidual = residual;
         if (isLiveView) {
             residual = null;
+        }
+        if (isHorizonSlave) {
+            scan.setAccessPath(ScanPlan.AccessPath.PAGE_FRAMES, isLiveView ? liveViewResidual : residual);
+            capture(hasModel);
+            return;
         }
         if (residual != null && !executionContext.isLiveViewCompile() && !scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
             residual = keys.extractIndexed(residual, output, tableColumnIndexes, table, context.getRewriter());
@@ -660,7 +673,14 @@ final class AccessPathPlanning {
             final boolean isHorizonTimestampRequired = operatorPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired);
             walk(horizon.getMaster(), operatorPlanning.requiresInputTimestamp(horizon, 0, isHorizonTimestampRequired));
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
-                walk(horizon.getSlaves().getQuick(i).getInput(), operatorPlanning.requiresInputTimestamp(horizon, i + 1, isHorizonTimestampRequired));
+                final LogicalPlan slave = horizon.getSlaves().getQuick(i).getInput();
+                final FilterPlan filter = PlanToFactoryRules.horizonSlaveFilter(slave);
+                horizonSlaveScan = filter != null ? PlanToFactoryRules.fusedScan(filter) : null;
+                try {
+                    walk(slave, operatorPlanning.requiresInputTimestamp(horizon, i + 1, isHorizonTimestampRequired));
+                } finally {
+                    horizonSlaveScan = null;
+                }
             }
             planSubqueries(horizon);
             return;
@@ -743,6 +763,7 @@ final class AccessPathPlanning {
         subqueries.clear();
         cursors.clear();
         captureLevel = -1;
+        horizonSlaveScan = null;
         isCapturing = false;
         pendingStep = null;
         this.depth = depth;

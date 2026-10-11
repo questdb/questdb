@@ -154,7 +154,6 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                 slaveFactories.add(state.getFactory());
                 state.detachFactory();
             }
-            slaveStates.clear();
 
             this.cursor = new AsyncMultiHorizonJoinNotKeyedRecordCursor(groupByFunctions, slaveFactories);
         } catch (Throwable th) {
@@ -183,7 +182,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         } catch (Throwable th) {
             // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
             // so the cached factory stays reusable.
-            cursor.close();
+            Misc.free(cursor, th);
             throw th;
         }
     }
@@ -204,6 +203,10 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         sink.setMetadata(null);
         sink.child(masterFactory);
         for (int i = 0, n = slaveFactories.size(); i < n; i++) {
+            final Function slaveFilter = slaveStates.getQuick(i).getFilter();
+            if (slaveFilter != null) {
+                sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));
+            }
             sink.child(slaveFactories.getQuick(i));
         }
     }
@@ -378,7 +381,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             for (int s = 0; s < slaveCount; s++) {
                 final HorizonJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(slotId, s);
                 final long scaledHorizonTs = scaleTimestamp(horizonTs, atom.getMasterTimestampScale(s));
-                long asOfRowId = helper.findAsOfRow(scaledHorizonTs);
+                long asOfRowId = helper.findAsOfRow(scaledHorizonTs, circuitBreaker);
 
                 long matchRowId = Long.MIN_VALUE;
                 final Map asOfJoinMap = atom.getAsOfJoinMap(slotId, s);
@@ -391,10 +394,10 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                             masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
                     matchRowId = helper.findKeyedAsOfMatch(
                             asOfRowId, masterKeyRecord, masterSink, slaveSink,
-                            asOfJoinMap, symbolTranslatingRecord
+                            asOfJoinMap, symbolTranslatingRecord, circuitBreaker
                     );
                 } else {
-                    matchRowId = asOfRowId;
+                    matchRowId = helper.findNotKeyedAsOfMatch(asOfRowId, circuitBreaker);
                 }
 
                 if (matchRowId != Long.MIN_VALUE) {

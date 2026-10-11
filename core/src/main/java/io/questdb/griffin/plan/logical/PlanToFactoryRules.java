@@ -171,6 +171,59 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * The filter node under the slave of a HORIZON JOIN, read directly or through a selection of input columns, which
+     * access path planning keeps on the page frames the join reads the time frames of; null when the slave has none.
+     */
+    public static FilterPlan horizonSlaveFilter(LogicalPlan slave) {
+        final LogicalPlan generated = generatedPlan(slave);
+        return generated instanceof ProjectPlan project && isPeelableProjection(project) && !LogicalPlans.isComputedProjection(project)
+                ? stolenFilter(project.getInput()) : stolenFilter(slave);
+    }
+
+    /**
+     * The selection a HORIZON JOIN reads the filter of its slave through: a projection of input columns under their
+     * own names that keeps the designated timestamp of its input; null when the generator builds the slave from
+     * another factory.
+     */
+    public static ProjectPlan horizonSlaveProjection(LogicalPlan slave) {
+        if (!(generatedPlan(slave) instanceof ProjectPlan project) || !isPeelableProjection(project) || LogicalPlans.isComputedProjection(project)) {
+            return null;
+        }
+        final OutputSchema output = project.getOutput();
+        final OutputSchema input = project.getInput().getOutput();
+        final int timestampIndex = PhysicalProperties.timestampIndex(project);
+        if (timestampIndex < 0) {
+            return null;
+        }
+        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+            final int index = input.getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId());
+            if (!Chars.equals(output.getColumnName(i), input.getColumnName(index))) {
+                return null;
+            }
+            if (i == timestampIndex && index != PhysicalProperties.timestampIndex(project.getInput())) {
+                return null;
+            }
+        }
+        return project;
+    }
+
+    /**
+     * The filter a HORIZON JOIN steals from its slave and applies to the slave rows before it matches them: the filter
+     * the generator builds the slave from, or the one under the selection {@link #horizonSlaveProjection} reads it
+     * through; null when there is none, or when access path planning left a fused filter no residual, whose scan then
+     * applies the whole predicate itself.
+     */
+    public static FilterPlan horizonStolenFilter(LogicalPlan slave) {
+        final ProjectPlan projection = horizonSlaveProjection(slave);
+        final FilterPlan filter = stolenFilter(projection != null ? projection.getInput() : slave);
+        if (filter == null) {
+            return null;
+        }
+        final ScanPlan scan = fusedScan(filter);
+        return scan == null || scan.getResidual() != null ? filter : null;
+    }
+
+    /**
      * True when the generator builds the filter into the factory of the table scan under it.
      */
     public static boolean isFusedFilter(FilterPlan filter) {

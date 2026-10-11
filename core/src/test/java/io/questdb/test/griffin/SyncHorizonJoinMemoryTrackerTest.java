@@ -124,6 +124,38 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinFilterKeyMissesStayWithinLimit() throws Exception {
+        // Once the scan has exhausted the prefix, further misses are not recorded, so the key miss
+        // map stays constant however many distinct master keys miss.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE trades AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x k FROM long_sequence(500_000)) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "CREATE TABLE prices AS (SELECT x::TIMESTAMP ts, x k, x::DOUBLE price FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        final String query = "SELECT count(p.price) " +
+                                "FROM trades t HORIZON JOIN prices p ON (t.k = p.k AND p.price < 0) " +
+                                "LIST (0s) AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, HorizonJoinNotKeyedRecordCursorFactory.class);
+                            assertReleasesAllocations(factory, sqlExecutionContext, 1);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testKeyedHorizonJoinArrayAggFailsOnLargeSet() throws Exception {
         // Keyed array_agg over a HORIZON JOIN routes through HorizonJoinRecordCursorFactory. Each
         // group accumulates the matched slave prices across a wide horizon window into a growing

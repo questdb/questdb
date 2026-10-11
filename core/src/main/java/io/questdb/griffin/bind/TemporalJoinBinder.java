@@ -226,6 +226,31 @@ final class TemporalJoinBinder {
         return true;
     }
 
+    /**
+     * True when no literal of the expression names a master column or qualifies another source than the slave.
+     */
+    private static boolean isSlavePredicate(ExpressionNode node, OutputSchema master, CharSequence masterAlias, CharSequence slaveAlias) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            if (FunctionBinder.findColumn(node, master, masterAlias) != -1) {
+                return false;
+            }
+            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+            return dot < 0 || Chars.equalsIgnoreCaseNc(GenericLexer.unquote(node.token.subSequence(0, dot)), slaveAlias);
+        }
+        if (!isSlavePredicate(node.lhs, master, masterAlias, slaveAlias) || !isSlavePredicate(node.rhs, master, masterAlias, slaveAlias)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isSlavePredicate(node.args.getQuick(i), master, masterAlias, slaveAlias)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static int mergeReferencePosition(int position, int child) {
         return position == -2 || child == -2 ? -2 : position == -1 ? child : position;
     }
@@ -310,15 +335,21 @@ final class TemporalJoinBinder {
         return node.token;
     }
 
-    private void bindHorizonKeys(ExpressionNode criteria, HorizonJoinSlave step, OutputSchema master, CharSequence masterAlias,
-                                 OutputSchema slave, CharSequence slaveAlias) throws SqlException {
+    /**
+     * Binds the equality keys of the ON clause into the step and returns the conjunction of its conjuncts that read
+     * only the slave or no column at all, which filter the slave; rejects any other conjunct.
+     */
+    private ExpressionNode bindHorizonKeys(ExpressionNode criteria, ExpressionNode slaveFilter, HorizonJoinSlave step, OutputSchema master,
+                                           CharSequence masterAlias, OutputSchema slave, CharSequence slaveAlias) throws SqlException {
         if (criteria == null) {
-            return;
+            return slaveFilter;
         }
         if (SqlKeywords.isAndKeyword(criteria.token) && criteria.paramCount == 2) {
-            bindHorizonKeys(criteria.lhs, step, master, masterAlias, slave, slaveAlias);
-            bindHorizonKeys(criteria.rhs, step, master, masterAlias, slave, slaveAlias);
-            return;
+            slaveFilter = bindHorizonKeys(criteria.lhs, slaveFilter, step, master, masterAlias, slave, slaveAlias);
+            return bindHorizonKeys(criteria.rhs, slaveFilter, step, master, masterAlias, slave, slaveAlias);
+        }
+        if (isSlavePredicate(criteria, master, masterAlias, slaveAlias)) {
+            return joinBinder.combineJoinPredicates(slaveFilter, criteria);
         }
         if (criteria.paramCount == 2 && Chars.equals(criteria.token, '=')
                 && criteria.lhs.type == ExpressionNode.LITERAL && criteria.rhs.type == ExpressionNode.LITERAL) {
@@ -331,7 +362,7 @@ final class TemporalJoinBinder {
                 step.getMasterKeyColumnIds().add(master.getColumnId(masterIndex));
                 step.getSlaveKeyColumnIds().add(slave.getColumnId(slaveIndex));
                 step.getKeyPositions().add(slaveNode.position);
-                return;
+                return slaveFilter;
             }
         }
         throw SqlException.$(criteria.position, "unsupported HORIZON join expression [expr='").put(criteria).put("']");
@@ -751,7 +782,14 @@ final class TemporalJoinBinder {
             final OutputSchema slaveOutput = slave.getOutput();
             JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getTimestampColumnId(), slaveOutput);
             output.addColumnsFrom(slaveOutput, slaveAlias);
-            bindHorizonKeys(occurrence.getJoinCriteria(), step, masterOutput, masterAlias, slaveOutput, slaveAlias);
+            final ExpressionNode slaveFilter = bindHorizonKeys(occurrence.getJoinCriteria(), null, step, masterOutput, masterAlias,
+                    slaveOutput, slaveAlias);
+            if (slaveFilter != null) {
+                final BoundExpression predicate = binder.bindPredicate(slaveFilter, slave, occurrence, executionContext);
+                if (LogicalPlans.constantTruth(predicate) != 1) {
+                    plan.replaceInput(plan.getSlaves().size(), ctx.planNodes.filters.next().of(slave, predicate, predicate.getPosition()));
+                }
+            }
             final ObjList<ExpressionNode> shorthand = occurrence.getJoinColumns();
             for (int k = 0, m = shorthand.size(); k < m; k++) {
                 final ExpressionNode column = shorthand.getQuick(k);
