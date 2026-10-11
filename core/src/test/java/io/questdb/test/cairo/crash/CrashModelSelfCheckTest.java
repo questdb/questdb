@@ -35,6 +35,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.BiConsumer;
@@ -484,37 +485,9 @@ public class CrashModelSelfCheckTest extends AbstractTest {
      */
     @Test
     public void test16_nothingAfterThePowerLossIsDurable() throws Exception {
-        final Map<String, BiConsumer<CrashFaultFilesFacade, String>> flushes = new LinkedHashMap<>();
-        flushes.put("fsync", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.fsync(m.fd)));
-        flushes.put("fdatasync", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.fdatasync(m.fd)));
-        flushes.put("msync(MS_SYNC)", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.msync(m.addr, SIZE, false)));
-        flushes.put("syncfs", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.syncfs(m.fd)));
-        flushes.put("fsyncAndClose", (ff, dir) -> {
-            try (Path a = new Path().of(dir).concat("a.d")) {
-                final Mapped m = mapAndFill(ff, a, NEW);
-                ff.munmap(m.addr, SIZE, MemoryTag.MMAP_DEFAULT);
-                ff.fsyncAndClose(m.fd);
-            }
-        });
-        flushes.put("new file, directory fsync", (ff, dir) -> {
-            rewriteAndSync(ff, dir, "c.d", (f, m) -> f.fsync(m.fd));
-            syncDirectory(ff, dir);
-        });
-        flushes.put("unlink, directory fsync", (ff, dir) -> {
-            try (Path b = new Path().of(dir).concat("b.d")) {
-                Assert.assertTrue(ff.removeQuiet(b.$()));
-            }
-            syncDirectory(ff, dir);
-        });
-        flushes.put("rename, directory fsync", (ff, dir) -> {
-            try (Path a = new Path().of(dir).concat("a.d"); Path d = new Path().of(dir).concat("d.d")) {
-                Assert.assertEquals(Files.FILES_RENAME_OK, ff.rename(a.$(), d.$()));
-            }
-            syncDirectory(ff, dir);
-        });
         final StringBuilder failures = new StringBuilder();
         int i = 0;
-        for (Map.Entry<String, BiConsumer<CrashFaultFilesFacade, String>> flush : flushes.entrySet()) {
+        for (Map.Entry<String, BiConsumer<CrashFaultFilesFacade, String>> flush : flushesAfterThePowerLoss().entrySet()) {
             final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
             final String dir = temp.newFolder("model16-" + i++).getAbsolutePath();
             try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
@@ -629,6 +602,127 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.crash(r2);
             assertAllBytes("test20: R1's rollback undid R2's flush", ff, a2, NEW);
         }
+    }
+
+    /**
+     * Test 21: a path the rollback deleted starts empty when it is created again.
+     * B durable (PRIOR) -> A in a new directory P gets NEW, then disappears one way -> power loss, crash: P is gone ->
+     * P, A and C created again, never written, their entries made durable -> B, fsync (a device flush) -> power loss,
+     * crash -> A and C hold no NEW. The engine creates the same partition, WAL directory, segment or column file again
+     * after a restart; a model that keeps a deleted path's durable bytes, device cache or watermarks writes NEW back at
+     * the next power loss, or lets an unrelated flush promote it.
+     */
+    @Test
+    public void test21_pathDeletedByTheRollbackStartsEmpty() throws Exception {
+        final Map<String, BiConsumer<CrashFaultFilesFacade, String>> ways = new LinkedHashMap<>();
+        ways.put("durable bytes, entry never durable", (ff, p) -> {
+            rewriteAndSync(ff, p, "a.d", (f, m) -> f.fsync(m.fd));
+            ff.powerLoss();
+        });
+        ways.put("durable bytes, removed after the power loss", (ff, p) -> {
+            rewriteAndSync(ff, p, "a.d", (f, m) -> f.fsync(m.fd));
+            ff.powerLoss();
+            try (Path a = new Path().of(p).concat("a.d")) {
+                Assert.assertTrue(ff.removeQuiet(a.$()));
+            }
+        });
+        ways.put("durable bytes, renamed after the power loss", (ff, p) -> {
+            rewriteAndSync(ff, p, "a.d", (f, m) -> f.fsync(m.fd));
+            ff.powerLoss();
+            try (Path a = new Path().of(p).concat("a.d"); Path c = new Path().of(p).concat("c.d")) {
+                Assert.assertEquals(Files.FILES_RENAME_OK, ff.rename(a.$(), c.$()));
+            }
+        });
+        ways.put("bytes in the device cache only", (ff, p) -> {
+            rewriteAndSync(ff, p, "a.d", (f, m) -> {
+                f.msync(m.addr, SIZE, true);
+                f.syncFileRange(m.fd, 0, SIZE, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
+            });
+            ff.powerLoss();
+        });
+        final String[] names = {"a.d", "c.d"};
+        final StringBuilder failures = new StringBuilder();
+        int i = 0;
+        for (Map.Entry<String, BiConsumer<CrashFaultFilesFacade, String>> way : ways.entrySet()) {
+            final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+            final String dir = temp.newFolder("model21-" + i++).getAbsolutePath();
+            final String p = Paths.get(dir, "p").toString();
+            try (Path b = new Path().of(dir).concat("b.d")) {
+                unmapAndClose(ff, mapAndFill(ff, b, PRIOR));
+                ff.markDurableBaseline(dir);
+                java.nio.file.Files.createDirectories(Paths.get(p));
+                way.getValue().accept(ff, p);
+                ff.crash(dir);
+                Assert.assertFalse("precondition: the rollback deletes P", exists(dir, "p"));
+                if (ff.trackedFileCountUnder(p) != 0) {
+                    failures.append(way.getKey()).append(": the model still tracks files under the deleted P\n");
+                }
+                for (String name : names) {
+                    final String file = Paths.get(p, name).toString();
+                    if (ff.durableContentOf(file) != null || ff.syncedDataEndOf(file) != 0 || ff.journaledDataEndOf(file) != 0) {
+                        failures.append(way.getKey()).append(": the model keeps state for the deleted ").append(name).append('\n');
+                    }
+                }
+                java.nio.file.Files.createDirectories(Paths.get(p));
+                for (String name : names) {
+                    try (Path path = new Path().of(p).concat(name)) {
+                        final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                        Assert.assertTrue("openRW failed, fd=" + fd, fd > 0);
+                        Assert.assertTrue("allocate failed", ff.allocate(fd, SIZE));
+                        ff.close(fd);
+                    }
+                }
+                syncDirectory(ff, p);
+                syncDirectory(ff, dir);
+                rewriteAndSync(ff, dir, "b.d", (f, m) -> f.fsync(m.fd));
+                ff.powerLoss();
+                ff.crash(dir);
+                for (String name : names) {
+                    if (holdsAny(p, name, NEW)) {
+                        failures.append(way.getKey()).append(": ").append(name)
+                                .append(" created again holds bytes the first power loss destroyed\n");
+                    }
+                }
+            }
+        }
+        Assert.assertEquals("", failures.toString());
+    }
+
+    /**
+     * Test 22: between the power loss and the rollback, the model reports the frozen state.
+     * A and B durable (PRIOR) -> powerLoss() -> one flushing operation -> durableContentOf each name -> crash -> each
+     * name holds what was reported. A check that reads the model after the mark (after the releases) must not count a
+     * flush the rollback throws away.
+     */
+    @Test
+    public void test22_durableContentAfterThePowerLossIsWhatTheRollbackRestores() throws Exception {
+        final String[] names = {"a.d", "b.d", "c.d", "d.d"};
+        final StringBuilder failures = new StringBuilder();
+        int i = 0;
+        for (Map.Entry<String, BiConsumer<CrashFaultFilesFacade, String>> flush : flushesAfterThePowerLoss().entrySet()) {
+            final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+            final String dir = temp.newFolder("model22-" + i++).getAbsolutePath();
+            try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
+                unmapAndClose(ff, mapAndFill(ff, a, PRIOR));
+                unmapAndClose(ff, mapAndFill(ff, b, PRIOR));
+                ff.markDurableBaseline(dir);
+                ff.powerLoss();
+                flush.getValue().accept(ff, dir);
+                final byte[][] reported = new byte[names.length][];
+                for (int n = 0; n < names.length; n++) {
+                    reported[n] = ff.durableContentOf(Paths.get(dir, names[n]).toString());
+                }
+                ff.crash(dir);
+                for (int n = 0; n < names.length; n++) {
+                    final byte[] restored = exists(dir, names[n]) ? java.nio.file.Files.readAllBytes(Paths.get(dir, names[n])) : null;
+                    if (!Arrays.equals(reported[n], restored)) {
+                        failures.append(flush.getKey()).append(": ").append(names[n])
+                                .append(" reported other bytes than the rollback restored\n");
+                    }
+                }
+            }
+        }
+        Assert.assertEquals("", failures.toString());
     }
 
     private static final class Mapped {
@@ -821,8 +915,59 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         return fd;
     }
 
+    /**
+     * One operation per kind of flush the facade models, each run on a directory holding A and B; test 16 runs them
+     * after the power loss.
+     */
+    private static Map<String, BiConsumer<CrashFaultFilesFacade, String>> flushesAfterThePowerLoss() {
+        final Map<String, BiConsumer<CrashFaultFilesFacade, String>> flushes = new LinkedHashMap<>();
+        flushes.put("fsync", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.fsync(m.fd)));
+        flushes.put("fdatasync", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.fdatasync(m.fd)));
+        flushes.put("msync(MS_SYNC)", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.msync(m.addr, SIZE, false)));
+        flushes.put("syncfs", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.syncfs(m.fd)));
+        flushes.put("fsyncAndClose", (ff, dir) -> {
+            try (Path a = new Path().of(dir).concat("a.d")) {
+                final Mapped m = mapAndFill(ff, a, NEW);
+                ff.munmap(m.addr, SIZE, MemoryTag.MMAP_DEFAULT);
+                ff.fsyncAndClose(m.fd);
+            }
+        });
+        flushes.put("new file, directory fsync", (ff, dir) -> {
+            rewriteAndSync(ff, dir, "c.d", (f, m) -> f.fsync(m.fd));
+            syncDirectory(ff, dir);
+        });
+        flushes.put("unlink, directory fsync", (ff, dir) -> {
+            try (Path b = new Path().of(dir).concat("b.d")) {
+                Assert.assertTrue(ff.removeQuiet(b.$()));
+            }
+            syncDirectory(ff, dir);
+        });
+        flushes.put("rename, directory fsync", (ff, dir) -> {
+            try (Path a = new Path().of(dir).concat("a.d"); Path d = new Path().of(dir).concat("d.d")) {
+                Assert.assertEquals(Files.FILES_RENAME_OK, ff.rename(a.$(), d.$()));
+            }
+            syncDirectory(ff, dir);
+        });
+        return flushes;
+    }
+
     private static boolean exists(String dir, String name) {
         return java.nio.file.Files.exists(Paths.get(dir, name));
+    }
+
+    /**
+     * True if {@code dir/name} exists and holds {@code value} in any of its bytes.
+     */
+    private static boolean holdsAny(String dir, String name, byte value) throws IOException {
+        if (!exists(dir, name)) {
+            return false;
+        }
+        for (byte got : java.nio.file.Files.readAllBytes(Paths.get(dir, name))) {
+            if (got == value) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

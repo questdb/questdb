@@ -706,10 +706,20 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         trackedFiles.removeIf(key -> matchesRemovedPath(key, path, includeDescendants));
     }
 
+    // Drops the model state of every path at or under root that is no longer on disk. The keys come from every
+    // per-path map, not only trackedFiles: a rollback can put back a frozen entry for a path that is not tracked.
     private void evictMissingDurability(String root) {
-        final String prefix = root + File.separator;
-        for (String key : new ArrayList<>(trackedFiles)) {
-            if ((key.equals(root) || key.startsWith(prefix)) && !Files.exists(Paths.get(key))) {
+        final Set<String> keys = new HashSet<>(trackedFiles);
+        keys.addAll(durableContent.keySet());
+        keys.addAll(deviceCacheContent.keySet());
+        keys.addAll(durableSize.keySet());
+        keys.addAll(writtenDataEnd.keySet());
+        keys.addAll(syncedDataEnd.keySet());
+        keys.addAll(journaledDataEnd.keySet());
+        keys.addAll(pteFlushed.keySet());
+        keys.addAll(tornTails.keySet());
+        for (String key : keys) {
+            if (isUnder(key, root) && !Files.exists(Paths.get(key))) {
                 evictDurability(key, false);
             }
         }
@@ -1043,6 +1053,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             }
         });
         pendingRenameTargetImages.clear();
+        // A path the rollback deleted starts empty if the engine creates it again: no durable bytes, device cache or
+        // watermarks of the deleted file survive.
+        evictMissingDurability(root.toString());
         // A rebooted machine reads back exactly the durable bytes: no page-cache or device-cache content survives,
         // so a later flush cannot promote bytes this power loss destroyed.
         markDurableBaseline(dbRoot);
@@ -1224,10 +1237,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * The bytes the content model currently considers durable for this file (null if untracked).
+     * The bytes the content model considers durable for this file (null if untracked). After a {@link #powerLoss}
+     * mark, the bytes frozen by the mark, which {@link #crash} restores: a flush after the mark does not count.
      */
     public byte[] durableContentOf(CharSequence absPath) {
-        return durableContent.get(Paths.get(absPath.toString()).toAbsolutePath().toString());
+        final String key = Paths.get(absPath.toString()).toAbsolutePath().toString();
+        return powerLossMarked ? powerLossContent.get(key) : durableContent.get(key);
     }
 
     /**
@@ -1260,14 +1275,16 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * The written-data end (data-at-device) the model has recorded for this file (0 if untracked).
+     * The written-data end (data-at-device) the model has recorded for this file (0 if untracked). Live: after a
+     * {@link #powerLoss} mark it still counts later writebacks, which {@link #crash} discards.
      */
     public long syncedDataEndOf(CharSequence absPath) {
         return syncedDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
     }
 
     /**
-     * The journaled written-data end (metadata-journaled) the model has recorded (0 if untracked).
+     * The journaled written-data end (metadata-journaled) the model has recorded (0 if untracked). Live: after a
+     * {@link #powerLoss} mark it still counts later journal commits, which {@link #crash} discards.
      */
     public long journaledDataEndOf(CharSequence absPath) {
         return journaledDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
