@@ -29,6 +29,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.LogCapture;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -61,6 +62,69 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             "select value from " + VIEW1,
             "select t1.ts, t2.v from " + TABLE1 + " t1 join " + TABLE2 + " t2 on k"
     };
+
+    @Test
+    public void testRepeatedFailuresLogTheInvalidationAtErrorOnlyOnTheFlip() throws Exception {
+        // The ERROR promotion exists so an operator watching for ERROR sees a view go invalid. It must
+        // fire on the FLIP only. SqlCompilerImpl.compileExecutionModel enqueues a recompile from its
+        // catch-all, so every failed query that merely names a broken view re-asserts the invalid state
+        // through this same method -- an unguarded promotion turns one broken view on a 1 Hz dashboard
+        // into ~86k ERROR lines a day. Counting matters here: asserting "an ERROR was logged" passes
+        // either way.
+        final int failingQueries = 20;
+        final String viewQuery = "select ts, k, max(v) as v_max from " + TABLE1 + " where v > 4";
+        final String expectedErrorMessage = "table does not exist [table=" + TABLE1 + "]";
+        // "updating view state [view=view1, invalid=true" preceded by the level header, which is " E "
+        // or " ERROR " depending on cairo.log.level.verbose.
+        final String invalidRecordRE = "updating view state \\[view=" + VIEW1 + ", invalid=true";
+        final String errorInvalidRecordRE = " (E|ERROR) \\S+ " + invalidRecordRE;
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1750345200000000L);
+            createTable(TABLE1);
+            createView(VIEW1, viewQuery, TABLE1);
+            compileView(VIEW1);
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                // The flip.
+                execute("RENAME TABLE " + TABLE1 + " TO " + TABLE3);
+                drainWalQueue();
+                drainViewQueue();
+                assertViewState(VIEW1, expectedErrorMessage);
+                capture.drain();
+                assertEquals(
+                        "the flip into invalid must be logged at ERROR",
+                        1,
+                        capture.countLoggedRE(errorInvalidRecordRE)
+                );
+
+                // Re-assertions. An operator's dashboard keeps querying the broken view.
+                for (int i = 0; i < failingQueries; i++) {
+                    assertExceptionNoLeakCheck("select * from " + VIEW1, -1, expectedErrorMessage);
+                    drainViewQueue();
+                }
+                capture.drain();
+
+                // Every failed query still re-asserts the invalid state -- the guard demotes those
+                // records, it does not suppress them ...
+                assertEquals(
+                        "each failed query must still re-assert the invalid state",
+                        failingQueries + 1,
+                        capture.countLoggedRE(invalidRecordRE)
+                );
+                // ... and exactly one of them, the flip, is an ERROR.
+                assertEquals(
+                        "only the flip may be logged at ERROR",
+                        1,
+                        capture.countLoggedRE(errorInvalidRecordRE)
+                );
+            } finally {
+                capture.stop();
+            }
+        });
+    }
 
     @Test
     public void testConcurrentEventProcessing() throws Exception {
