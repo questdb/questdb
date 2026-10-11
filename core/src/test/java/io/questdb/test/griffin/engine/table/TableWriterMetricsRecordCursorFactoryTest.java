@@ -28,13 +28,17 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.metrics.QueryTracingJob;
+import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
 import org.junit.Test;
 
 import static org.junit.Assert.assertNotEquals;
@@ -105,6 +109,32 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractCairoTest
                 .noRandomAccess()
                 .expectSize()
                 .returns(toExpectedTableContent(snapshotMetrics()));
+    }
+
+    @Test
+    public void testSystemTableWritesAreNotCounted() throws Exception {
+        assertMemoryLeak(() -> {
+            final MetricsSnapshot before = snapshotMetrics();
+            // System tables by prefix and by fixed name: in-order and O3 commits, and a rollback.
+            for (String tableName : new String[]{"sys.writer_metrics_test", TelemetryTask.TABLE_NAME, QueryTracingJob.TABLE_NAME}) {
+                execute("CREATE TABLE \"" + tableName + "\" (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO \"" + tableName + "\" VALUES ('2020-01-02', 1), ('2020-01-03', 2)");
+                execute("INSERT INTO \"" + tableName + "\" VALUES ('2020-01-01', 3)");
+                try (TableWriter writer = getWriter(tableName)) {
+                    writer.newRow(0).append();
+                    writer.rollback();
+                }
+            }
+            Assert.assertEquals(before, snapshotMetrics());
+
+            execute("CREATE TABLE user_tab (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO user_tab VALUES ('2020-01-02', 1), ('2020-01-03', 2)");
+            execute("INSERT INTO user_tab VALUES ('2020-01-01', 3)");
+            final MetricsSnapshot after = snapshotMetrics();
+            Assert.assertEquals(before.commitCount + 2, after.commitCount);
+            Assert.assertEquals(before.o3CommitCount + 1, after.o3CommitCount);
+            Assert.assertEquals(before.committedRows + 3, after.committedRows);
+        });
     }
 
     private static MetricsSnapshot snapshotMetrics() {

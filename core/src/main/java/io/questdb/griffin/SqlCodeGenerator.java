@@ -564,6 +564,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    // Only this RHS leaf must retain a time-frame-capable scan beneath its residual filter.
+    private IQueryModel horizonJoinSlaveModel;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
@@ -733,6 +735,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (whereClauseParsers.size() > MAX_RETAINED_WHERE_CLAUSE_PARSERS) {
             whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
         }
+        horizonJoinSlaveModel = null;
         whereClauseParserDepth = 0;
         symbolEstimator.clear();
         intListPool.clear();
@@ -1046,6 +1049,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             indices.add(index);
         }
         return indices;
+    }
+
+    // A peeled HORIZON slave exposes columns its projection dropped. They keep their record
+    // positions for the borrowed filter, but only the projected names may resolve.
+    private static void addHorizonJoinSlaveColumns(
+            JoinRecordMetadata metadata,
+            CharSequence slaveAlias,
+            RecordMetadata slaveMetadata,
+            @Nullable RecordMetadata slaveProjectionMetadata
+    ) {
+        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+            final TableColumnMetadata m = slaveMetadata.getColumnMetadata(i);
+            if (slaveProjectionMetadata == null || slaveProjectionMetadata.getColumnIndexQuiet(m.getColumnName()) > -1) {
+                metadata.add(slaveAlias, m);
+            } else {
+                metadata.addHidden(slaveAlias, m);
+            }
+        }
     }
 
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(IQueryModel model, RecordMetadata metadata) {
@@ -1830,6 +1851,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static void validateHorizonJoinFilter(IQueryModel model, int horizonJoinIndex, IQueryModel slaveModel) throws SqlException {
+        validateOuterJoinExpressions(slaveModel, "HORIZON");
         // HORIZON JOIN WHERE clause can only reference master table columns.
         // Predicates on slave columns end up as postJoinWhereClause on the slave model.
         if (slaveModel.getPostJoinWhereClause() != null) {
@@ -1849,6 +1871,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
                 }
             }
+        }
+    }
+
+    private static void validateOuterJoinExpressions(IQueryModel model, CharSequence joinType) throws SqlException {
+        if (model.getOuterJoinExpressionClause() != null) {
+            throw SqlException.$(model.getOuterJoinExpressionClause().position, "unsupported ").put(joinType).put(" join expression ")
+                    .put("[expr='").put(model.getOuterJoinExpressionClause()).put("']");
         }
     }
 
@@ -2956,7 +2985,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata masterMetadata,
             CharSequence horizonAlias,
             CharSequence slaveAlias,
-            RecordMetadata slaveMetadata
+            RecordMetadata slaveMetadata,
+            @Nullable RecordMetadata slaveProjectionMetadata
     ) {
         // Create metadata with master columns + horizon columns (offset, timestamp) + slave columns
         JoinRecordMetadata metadata = new JoinRecordMetadata(
@@ -2974,10 +3004,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         metadata.add(horizonAlias, new TableColumnMetadata("offset", ColumnType.LONG));
         metadata.add(horizonAlias, new TableColumnMetadata("timestamp", masterMetadata.getTimestampType()));
 
-        // Add slave columns
-        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-            metadata.add(slaveAlias, slaveMetadata.getColumnMetadata(i));
-        }
+        addHorizonJoinSlaveColumns(metadata, slaveAlias, slaveMetadata, slaveProjectionMetadata);
 
         // Set timestamp index from master
         int masterTsIdx = masterMetadata.getTimestampIndex();
@@ -4980,6 +5007,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw e;
         }
 
+        if (model == horizonJoinSlaveModel && factory.supportsTimeFrameCursor()) {
+            // HORIZON applies the residual during ASOF lookup. Preserve constant-false
+            // filters too, so no-match semantics still have a time-frame-capable source.
+            // A constant-true filter falls through and drops.
+            try {
+                if (!filter.isConstant() || !filter.getBool(null)) {
+                    return new FilteredRecordCursorFactory(factory, filter, deepClone(expressionNodePool, filterExpr));
+                }
+            } catch (Throwable th) {
+                Misc.free(filter, th);
+                Misc.free(factory, th);
+                throw th;
+            }
+        }
+
         if (filter.isConstant()) {
             try {
                 if (filter.getBool(null)) {
@@ -5223,6 +5265,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slaveFactory,
             IQueryModel slaveModel,
             RecordMetadata slaveMetadata,
+            @Nullable RecordMetadata slaveProjectionMetadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
         long[] offsets;
@@ -5230,6 +5273,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         MemoryCARW bindVarMemory = null;
         ObjList<Function> bindVarFunctions = null;
         Function filter = null;
+        Function slaveFilter = null;
+        ExpressionNode slaveFilterExpr = null;
+        ObjList<Function> perWorkerSlaveFilters = null;
         ExpressionNode filterExpr = null;
         boolean supportsParallelism;
         boolean canStealFilter;
@@ -5264,6 +5310,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && masterFactory.getBaseFactory().supportsPageFrameCursor();
             supportsParallelism |= canStealFilter;
 
+            if (!slaveFactory.supportsTimeFrameCursor()
+                    && slaveFactory.supportsFilterStealing()
+                    && slaveFactory.getBaseFactory().supportsTimeFrameCursor()) {
+                final RecordCursorFactory filterFactory = slaveFactory;
+                final Function stolenFilter = filterFactory.getFilter();
+                final ExpressionNode stolenFilterExpr = filterFactory.getStealFilterExpr();
+                final CompiledFilter unusedCompiledFilter = filterFactory.getCompiledFilter();
+                final MemoryCARW unusedBindVarMemory = filterFactory.getBindVarMemory();
+                final ObjList<Function> unusedBindVarFunctions = filterFactory.getBindVarFunctions();
+                // Keep the wrapper as rollback owner until halfClose succeeds.
+                filterFactory.halfClose();
+                slaveFactory = filterFactory.getBaseFactory();
+                slaveFilter = stolenFilter;
+                slaveFilterExpr = stolenFilterExpr;
+                Throwable cleanupFailure = Misc.freeBestEffort(null, unusedCompiledFilter);
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, unusedBindVarMemory);
+                cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, unusedBindVarFunctions);
+                CairoException.rethrowCleanupFailure(cleanupFailure);
+            }
+
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
             if (!slaveFactory.supportsTimeFrameCursor()) {
                 throw SqlException.position(slaveModel.getJoinKeywordPosition())
@@ -5291,7 +5357,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterMetadata,
                     horizonAlias,
                     slaveAlias,
-                    slaveMetadata
+                    slaveMetadata,
+                    slaveProjectionMetadata
             );
 
             // Prepare GROUP BY functions using the join result metadata
@@ -5558,6 +5625,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Transfer ownership to factory constructor. keyFunctions is empty on the
                 // not-keyed branch (no keys means no virtual key functions), so nulling it out
                 // for both branches transfers ownership correctly.
+                final Function slaveFilter0 = slaveFilter;
+                slaveFilter = null;
                 final JoinRecordMetadata innerMetadata0 = innerMetadata;
                 innerMetadata = null;
                 final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
@@ -5575,6 +5644,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             innerMetadata0,
                             masterFactory,
                             slaveFactory,
+                            slaveFilter0,
                             offsets,
                             masterTimestampColumnIndex,
                             groupByFunctions0,
@@ -5598,6 +5668,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         innerMetadata0,
                         masterFactory,
                         slaveFactory,
+                        slaveFilter0,
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions0,
@@ -5625,6 +5696,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterFactory.getMetadata()
             );
 
+            perWorkerSlaveFilters = compileWorkerFiltersConditionally(
+                    executionContext,
+                    slaveFilter,
+                    workerCount,
+                    slaveFilterExpr,
+                    slaveFactory.getMetadata()
+            );
+
             // Transfer ownership of resources to factory/atom constructor. keyFunctions is
             // empty on the not-keyed branch (no keys means no virtual key functions), so
             // nulling it out for both branches transfers ownership correctly.
@@ -5641,6 +5720,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     filterUsedColumnIndexes,
                     perWorkerFilters
             );
+            resources.setSlaveFilters(slaveFilter, perWorkerSlaveFilters);
+            slaveFilter = null;
+            perWorkerSlaveFilters = null;
             innerMetadata = null;
             groupByFunctions = null;
             keyFunctions = null;
@@ -5742,6 +5824,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(bindVarMemory, th);
             Misc.freeObjList(bindVarFunctions, th);
             Misc.free(filter, th);
+            Misc.free(slaveFilter, th);
+            Misc.freeObjList(perWorkerSlaveFilters, th);
             Misc.freeObjList(perWorkerFilters, th);
             if (!isFactoriesTransferred) {
                 Misc.free(masterFactory, th);
@@ -6244,6 +6328,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         CharSequence masterAlias = null;
         ObjList<RecordCursorFactory> pendingHorizonSlaves = null;
         ObjList<IQueryModel> pendingHorizonSlaveModels = null;
+        ObjList<RecordMetadata> pendingHorizonSlaveProjectionMetadatas = null;
         boolean isHorizonJoinCompleted = false;
 
         try {
@@ -6307,7 +6392,59 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     // compile
-                    slaveToFree = generateQuery(slaveModel, executionContext, index > 0);
+                    RecordMetadata horizonSlaveProjectionMetadata = null;
+                    final IQueryModel previousHorizonSlaveModel = horizonJoinSlaveModel;
+                    if (slaveModel.getJoinType() == IQueryModel.JOIN_HORIZON) {
+                        horizonJoinSlaveModel = slaveModel;
+                        while (horizonJoinSlaveModel.getNestedModel() != null) {
+                            horizonJoinSlaveModel = horizonJoinSlaveModel.getNestedModel();
+                        }
+                    }
+                    try {
+                        slaveToFree = generateQuery(slaveModel, executionContext, index > 0);
+                        if (slaveModel.getJoinType() == IQueryModel.JOIN_HORIZON) {
+                            // A filtered subquery may project away filter-only columns. Keep
+                            // those columns available to the borrowed filter, and resolve the
+                            // join against the expanded metadata before compiling its mappings.
+                            while (!slaveToFree.supportsTimeFrameCursor() && slaveToFree.isProjection()) {
+                                final RecordCursorFactory base = slaveToFree.getBaseFactory();
+                                final IntList crossIndex = slaveToFree.getColumnCrossIndex();
+                                final int timestampIndex = slaveToFree.getMetadata().getTimestampIndex();
+                                if (crossIndex == null || timestampIndex < 0
+                                        || crossIndex.getQuick(timestampIndex) != base.getMetadata().getTimestampIndex()) {
+                                    break;
+                                }
+                                boolean hasRenamedColumn = false;
+                                for (int c = 0, count = crossIndex.size(); c < count; c++) {
+                                    final CharSequence columnName = slaveToFree.getMetadata().getColumnName(c);
+                                    // Projection pruning leaves an unnamed designated timestamp.
+                                    final boolean isHiddenTimestamp = columnName.length() == 0
+                                            && c == slaveToFree.getMetadata().getTimestampIndex()
+                                            && crossIndex.getQuick(c) == base.getMetadata().getTimestampIndex();
+                                    if ((!isHiddenTimestamp && !Chars.equals(columnName,
+                                            base.getMetadata().getColumnName(crossIndex.getQuick(c))))
+                                            || slaveToFree.getMetadata().getColumnType(c)
+                                            != base.getMetadata().getColumnType(crossIndex.getQuick(c))) {
+                                        hasRenamedColumn = true;
+                                        break;
+                                    }
+                                }
+                                if (hasRenamedColumn) {
+                                    break;
+                                }
+                                if (horizonSlaveProjectionMetadata == null) {
+                                    // Peeling preserves names, so the outermost projection
+                                    // names every column the query may reference.
+                                    horizonSlaveProjectionMetadata = slaveToFree.getMetadata();
+                                }
+                                // Projection cursors have not been opened and own no native
+                                // resources; the base remains the sole rollback owner.
+                                slaveToFree = base;
+                            }
+                        }
+                    } finally {
+                        horizonJoinSlaveModel = previousHorizonSlaveModel;
+                    }
 
                     // check if this is the root of joins
                     if (master == null) {
@@ -7123,9 +7260,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     if (pendingHorizonSlaves == null) {
                                         pendingHorizonSlaves = new ObjList<>();
                                         pendingHorizonSlaveModels = new ObjList<>();
+                                        pendingHorizonSlaveProjectionMetadatas = new ObjList<>();
                                     }
                                     pendingHorizonSlaves.add(slaveToFree);
                                     pendingHorizonSlaveModels.add(slaveModel);
+                                    pendingHorizonSlaveProjectionMetadatas.add(horizonSlaveProjectionMetadata);
                                     closeSlaveOnFailure = false;
                                     break;
                                 }
@@ -7159,11 +7298,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     // to false so the outer catch block doesn't double-free.
                                     pendingHorizonSlaves.add(slaveToFree);
                                     pendingHorizonSlaveModels.add(slaveModel);
+                                    pendingHorizonSlaveProjectionMetadatas.add(horizonSlaveProjectionMetadata);
                                     closeSlaveOnFailure = false;
                                     ObjList<RecordCursorFactory> slaves = pendingHorizonSlaves;
                                     ObjList<IQueryModel> slaveModels = pendingHorizonSlaveModels;
+                                    ObjList<RecordMetadata> slaveProjectionMetadatas = pendingHorizonSlaveProjectionMetadatas;
                                     pendingHorizonSlaves = null;
                                     pendingHorizonSlaveModels = null;
+                                    pendingHorizonSlaveProjectionMetadatas = null;
                                     final RecordCursorFactory masterToTransfer = master;
                                     master = null;
                                     slaveToFree = null;
@@ -7175,6 +7317,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             masterMetadata,
                                             slaves,
                                             slaveModels,
+                                            slaveProjectionMetadatas,
                                             executionContext
                                     );
                                 } else {
@@ -7193,6 +7336,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveToTransfer,
                                             slaveModel,
                                             slaveMetadata,
+                                            horizonSlaveProjectionMetadata,
                                             executionContext
                                     );
                                 }
@@ -8024,6 +8168,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata masterMetadata,
             ObjList<RecordCursorFactory> slaveFactories,
             ObjList<IQueryModel> slaveModels,
+            ObjList<RecordMetadata> slaveProjectionMetadatas,
             SqlExecutionContext executionContext
     ) throws SqlException {
         long[] offsets;
@@ -8033,6 +8178,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         MemoryCARW bindVarMemory = null;
         ObjList<Function> bindVarFunctions = null;
         Function filter = null;
+        ObjList<Function> slaveFilters = null;
+        ObjList<ExpressionNode> slaveFilterExprs = null;
         ExpressionNode filterExpr = null;
         boolean canStealFilter = false;
         boolean supportsParallelism = false;
@@ -8050,6 +8197,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         boolean isSlaveFactoriesTransferred = false;
 
         try {
+            slaveFilters = new ObjList<>(slaveCount);
+            slaveFilterExprs = new ObjList<>(slaveCount);
+            slaveFilters.setPos(slaveCount);
+            slaveFilterExprs.setPos(slaveCount);
             // This method adopts the master and every slave factory on entry. Until a cursor
             // factory constructor adopts them, this catch owns their rollback.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
@@ -8068,7 +8219,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Validate all slave factories
             for (int s = 0; s < slaveCount; s++) {
-                if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
+                RecordCursorFactory slaveFactory = slaveFactories.getQuick(s);
+                if (!slaveFactory.supportsTimeFrameCursor()
+                        && slaveFactory.supportsFilterStealing()
+                        && slaveFactory.getBaseFactory().supportsTimeFrameCursor()) {
+                    final RecordCursorFactory filterFactory = slaveFactory;
+                    final Function stolenFilter = filterFactory.getFilter();
+                    final ExpressionNode stolenFilterExpr = filterFactory.getStealFilterExpr();
+                    final CompiledFilter unusedCompiledFilter = filterFactory.getCompiledFilter();
+                    final MemoryCARW unusedBindVarMemory = filterFactory.getBindVarMemory();
+                    final ObjList<Function> unusedBindVarFunctions = filterFactory.getBindVarFunctions();
+                    // Commit ownership only after the wrapper's cleanup succeeds.
+                    filterFactory.halfClose();
+                    slaveFactory = filterFactory.getBaseFactory();
+                    slaveFactories.setQuick(s, slaveFactory);
+                    slaveFilters.setQuick(s, stolenFilter);
+                    slaveFilterExprs.setQuick(s, stolenFilterExpr);
+                    Throwable cleanupFailure = Misc.freeBestEffort(null, unusedCompiledFilter);
+                    cleanupFailure = Misc.freeBestEffort(cleanupFailure, unusedBindVarMemory);
+                    cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, unusedBindVarFunctions);
+                    CairoException.rethrowCleanupFailure(cleanupFailure);
+                }
+                if (!slaveFactory.supportsTimeFrameCursor()) {
                     throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
                             .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
@@ -8095,9 +8267,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             innerMetadata.add(horizonAlias, new TableColumnMetadata("offset", ColumnType.LONG));
             innerMetadata.add(horizonAlias, new TableColumnMetadata("timestamp", masterMetadata.getTimestampType()));
             for (int s = 0; s < slaveCount; s++) {
-                for (int col = 0, n = slaveMetadatas[s].getColumnCount(); col < n; col++) {
-                    innerMetadata.add(slaveAliases[s], slaveMetadatas[s].getColumnMetadata(col));
-                }
+                addHorizonJoinSlaveColumns(innerMetadata, slaveAliases[s], slaveMetadatas[s], slaveProjectionMetadatas.getQuick(s));
             }
             int masterTsIdx = masterMetadata.getTimestampIndex();
             if (masterTsIdx >= 0) {
@@ -8327,6 +8497,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices
                 ));
+                final HorizonJoinSlaveState state = slaveStates.getQuick(s);
+                state.setFilter(slaveFilters.getQuick(s));
+                slaveFilters.setQuick(s, null);
+                if (supportsParallelism) {
+                    state.setPerWorkerFilters(compileWorkerFiltersConditionally(
+                            executionContext,
+                            state.getFilter(),
+                            workerCount,
+                            slaveFilterExprs.getQuick(s),
+                            slaveMeta
+                    ));
+                }
             }
 
             if (!supportsParallelism) {
@@ -8554,6 +8736,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(bindVarMemory, th);
             Misc.freeObjList(bindVarFunctions, th);
             Misc.free(filter, th);
+            Misc.freeObjList(slaveFilters, th);
             Misc.freeObjList(perWorkerFilters, th);
             if (slaveStates != null) {
                 // States own their wrapped factories. Close and detach every state before moving
@@ -12200,7 +12383,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // 'sym IS NOT NULL') out of the residual filter into the key intrinsic and
                 // the LatestByAllFiltered/LatestByAllSymbolsFiltered path, which ignores
                 // the key column, silently drops the predicate.
-                final boolean isKeyColumnSuppressed = latestByColumnCount > 0 && preferredKeyColumn == null;
+                final boolean isKeyColumnSuppressed = (latestByColumnCount > 0 && preferredKeyColumn == null)
+                        || model == horizonJoinSlaveModel;
 
                 intrinsicModel = getWhereClauseParser().extract(
                         model,
@@ -12271,6 +12455,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // We will clear it preemptively. If nothing picks filter up we will set model "where"
             // to the downsized filter
             model.setWhereClause(null);
+
+            if (model == horizonJoinSlaveModel && intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
+                intrinsicModel.clearIntervalFilters();
+                intrinsicModel.intrinsicValue = IntrinsicModel.UNDEFINED;
+                intrinsicModel.filter = expressionNodePool.next().of(CONSTANT, "false", 0, whereClause.position);
+            }
 
             if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
                 // the WHERE clause is unsatisfiable, so the result is empty; clear the latest-by nodes
@@ -12762,6 +12952,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (intrinsicModel.keyColumn == null
                         && intrinsicModel.filter != null
                         && intrinsicModel.keySubQuery == null
+                        && model != horizonJoinSlaveModel
                         && configuration.isSymbolPatternIndexEnabled()
                         && !SqlHints.hasNoSymbolPatternIndexHint(model)
                         && !SqlHints.hasNoIndexHint(model)
@@ -14172,13 +14363,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (slaveMetadata.getTimestampIndex() == -1) {
             throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
-        }
-    }
-
-    private void validateOuterJoinExpressions(IQueryModel model, CharSequence joinType) throws SqlException {
-        if (model.getOuterJoinExpressionClause() != null) {
-            throw SqlException.$(model.getOuterJoinExpressionClause().position, "unsupported ").put(joinType).put(" join expression ")
-                    .put("[expr='").put(model.getOuterJoinExpressionClause()).put("']");
         }
     }
 
