@@ -6645,7 +6645,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         RecordCursorFactory keylessJoin = null;
         int keylessJoinColumnSplit = 0;
         // the RIGHT and FULL joins with join keys built so far, and their join model indexes, see
-        // OuterJoinNullCheck
+        // OuterJoinNullCheck. Like keylessJoin, they are part of master: a branch that frees master and
+        // goes on joining must reset both.
         ObjList<OuterJoinRecordSource> outerJoins = null;
         IntList outerJoinIndexes = null;
         ObjList<RecordCursorFactory> pendingHorizonSlaves = null;
@@ -7645,6 +7646,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     } else if (joinType == IQueryModel.JOIN_RIGHT_OUTER) {
                                         Misc.free(master);
                                         master = new EmptyTableRecordCursorFactory(masterMetadata);
+                                        // master took the joins built so far with it, so drop what points into it:
+                                        // a freed outer join never opens a cursor, see OuterJoinNullCheck. This
+                                        // join NULL-extends every table they joined, so a LEFT join written before
+                                        // it needs no check of them.
+                                        keylessJoin = null;
+                                        keylessJoinColumnSplit = 0;
+                                        if (outerJoins != null) {
+                                            outerJoins.clear();
+                                            outerJoinIndexes.clear();
+                                        }
                                     }
                                 }
 

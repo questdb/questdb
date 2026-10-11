@@ -8928,6 +8928,89 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeylessLeftJoinAfterRightJoinWithFalseOnClause() throws Exception {
+        // The ON clause of the RIGHT JOIN to f is false for every row, so the join reads an empty table in place
+        // of the joins built before it, which close without opening a cursor. The LEFT JOIN to cn runs after the
+        // RIGHT JOINs and checks the one to f alone: it NULL-extends every table before it, so each f row comes
+        // once with NULL in cn, although cn rows 2 and 3 have a NULL y and a.x >= cn.y is true when both are
+        // NULL. Checking the closed RIGHT JOIN to l failed with "outer join cursor is not open".
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE cn (id INT, y INT)");
+            execute("INSERT INTO cn VALUES (1, 1), (2, null), (3, null)");
+            assertQuery("SELECT a.k, cn.id, cn.y, l.k lk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k RIGHT JOIN f ON l.k = f.k AND 1 = 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Nested Loop Left Join
+                                  filter: a.x>=cn.y
+                                  outerJoinCheck: true
+                                    Hash Right Outer Join Light
+                                      condition: f.k=l.k
+                                      filter: false
+                                        Empty table
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: f
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cn
+                            """)
+                    .returns("""
+                            k\tid\ty\tlk\tfk
+                            null\tnull\tnull\tnull\t4
+                            null\tnull\tnull\tnull\t6
+                            null\tnull\tnull\tnull\t2
+                            """);
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("SELECT a.k, cn.id, l.k lk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k RIGHT JOIN f ON l.k = f.k AND 1 = 2 ORDER BY fk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tfk
+                                null\tnull\tnull\t2
+                                null\tnull\tnull\t4
+                                null\tnull\tnull\t6
+                                """);
+                // an INNER JOIN between the RIGHT JOINs
+                assertQuery("SELECT a.k, cn.id, l.k lk, b.k bk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k JOIN b ON l.k = b.k RIGHT JOIN f ON b.k = f.k AND false ORDER BY fk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tbk\tfk
+                                null\tnull\tnull\tnull\t2
+                                null\tnull\tnull\tnull\t4
+                                null\tnull\tnull\tnull\t6
+                                """);
+                // a FULL JOIN before the RIGHT JOIN to f
+                assertQuery("SELECT a.k, cn.id, l.k lk, f.k fk FROM a LEFT JOIN cn ON a.x >= cn.y FULL JOIN l ON a.k = l.k RIGHT JOIN f ON l.k = f.k AND 1 = 2 ORDER BY fk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tfk
+                                null\tnull\tnull\t2
+                                null\tnull\tnull\t4
+                                null\tnull\tnull\t6
+                                """);
+                // the FULL JOIN to d runs after the RIGHT JOIN to f and NULL-extends f for its own rows
+                assertQuery("SELECT a.k, cn.id, l.k lk, f.k fk, d.k dk FROM a LEFT JOIN cn ON a.x >= cn.y RIGHT JOIN l ON a.k = l.k RIGHT JOIN f ON l.k = f.k AND 1 = 2 FULL JOIN d ON f.k = d.k ORDER BY fk, dk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tlk\tfk\tdk
+                                null\tnull\tnull\tnull\t7
+                                null\tnull\tnull\tnull\t100
+                                null\tnull\tnull\t2\tnull
+                                null\tnull\tnull\t4\tnull
+                                null\tnull\tnull\t6\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testKeylessLeftJoinRunsAfterKeyedOuterJoin() throws Exception {
         // A RIGHT or FULL join with a key NULL-extends a, and the LEFT JOIN to c written before it, for the
         // rows of l without a match: 1 and 3. The LEFT JOIN runs after the outer join, as on master, and
