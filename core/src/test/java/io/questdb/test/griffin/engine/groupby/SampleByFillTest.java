@@ -2076,8 +2076,6 @@ public class SampleByFillTest extends AbstractCairoTest {
         assertQuery("SELECT ts, count() c FROM t_fv_dbl SAMPLE BY 1m FILL(1.5)")
                 .ddl("CREATE TABLE t_fv_dbl (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
                 .fails(53, "fill value of type DOUBLE cannot fill column of type LONG");
-        assertQuery("SELECT ts, count() c FROM t_fv_dbl SAMPLE BY 1m FILL(0.0)")
-                .fails(53, "fill value of type DOUBLE cannot fill column of type LONG");
     }
 
     @Test

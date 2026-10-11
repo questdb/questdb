@@ -1775,14 +1775,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * A fill constant whose type {@link ColumnType#isConvertibleFrom} accepts only as a narrowing
-     * cast (DOUBLE -> LONG, LONG -> INT, ...) has no implicit cast factory, so FillRecord reads the
-     * raw constant through the target type's getter. Most base-class getters on that path throw
-     * UnsupportedOperationException (DoubleFunction.getLong, LongFunction.getInt), while a few work
-     * (DoubleFunction.getFloat, IntFunction.getInt for BYTE/SHORT targets). Probe the same getter
-     * FillRecord will call, once, so the user sees a SqlException instead of a runtime crash.
+     * FillRecord reads a fill constant through the target type's getter, and base-class getters
+     * such as DoubleFunction.getLong throw UnsupportedOperationException. Probe the same getter
+     * once at compile time so the user sees a SqlException instead of a runtime failure.
      */
-    private static boolean isNarrowingFillReadable(Function fillFunc, int targetColType) {
+    private static boolean isFillReadable(Function fillFunc, int targetColType) {
         if (!fillFunc.isConstant()) {
             // Not safe to evaluate before Function.init(); leave it to the runtime path.
             return true;
@@ -1795,8 +1792,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 case ColumnType.DATE -> fillFunc.getDate(null);
                 case ColumnType.TIMESTAMP -> fillFunc.getTimestamp(null);
                 case ColumnType.FLOAT -> fillFunc.getFloat(null);
-                default -> {
-                }
             }
             return true;
         } catch (UnsupportedOperationException e) {
@@ -4663,8 +4658,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (cast != null) {
                                     fillValues.setQuick(fillIdx, cast);
                                     fillFunc = cast;
-                                } else if (!ColumnType.isToSameOrWider(fillType, targetColType)
-                                        && !isNarrowingFillReadable(fillFunc, targetColType)) {
+                                } else if (!isFillReadable(fillFunc, targetColType)) {
                                     throw SqlException.$(fillExpr.position,
                                                     "fill value of type ").put(ColumnType.nameOf(fillType))
                                             .put(" cannot fill column of type ")
