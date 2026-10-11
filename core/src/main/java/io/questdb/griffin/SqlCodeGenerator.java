@@ -1680,14 +1680,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
-     * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
-     *
-     * @param model            the parent model containing join models
-     * @param horizonJoinIndex the index of the HORIZON JOIN model
-     * @return the HorizonJoinContext or null if not found
-     */
-    /**
      * Returns the index of the SAMPLE BY bucket key in the group-by output, or -1 when
      * the output does not carry it. SqlOptimiser.rewriteSampleBy records the bucket's
      * alias on the model that holds the fill parameters, so the lookup never guesses
@@ -1711,6 +1703,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return SqlUtil.isSampleByBucketFloor(column.getAst()) ? index : -1;
     }
 
+    /**
+     * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
+     * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
+     *
+     * @param model            the parent model containing join models
+     * @param horizonJoinIndex the index of the HORIZON JOIN model
+     * @return the HorizonJoinContext or null if not found
+     */
     private static HorizonJoinContext findHorizonOffsetContext(IQueryModel model, int horizonJoinIndex) {
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
         // Look for the synthetic offset model before the HORIZON JOIN model
