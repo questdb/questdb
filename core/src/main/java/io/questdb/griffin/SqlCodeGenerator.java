@@ -389,6 +389,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -403,6 +404,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -1771,6 +1773,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return Chars.equalsIgnoreCase(masterAlias, token, 0, dot)
                 ? masterMetadata.getColumnIndexQuiet(token, dot + 1, token.length())
                 : -1;
+    }
+
+    // Returns the peeled HORIZON JOIN slave metadata with every column under the name the query reads it by.
+    // A column that no name reads keeps its own name when no read name takes it. Otherwise, it gets a name
+    // that is not a read name. Only the projected names resolve in the join metadata, see
+    // addHorizonJoinSlaveColumns().
+    private static GenericRecordMetadata renameHorizonSlaveColumns(RecordMetadata metadata, ObjList<CharSequence> columnNames) {
+        final LowerCaseCharSequenceHashSet takenNames = new LowerCaseCharSequenceHashSet();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final CharSequence columnName = columnNames.getQuick(i);
+            if (columnName != null) {
+                takenNames.add(columnName);
+            }
+        }
+        final GenericRecordMetadata renamed = new GenericRecordMetadata();
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final TableColumnMetadata m = metadata.getColumnMetadata(i);
+            CharSequence columnName = columnNames.getQuick(i);
+            if (columnName == null) {
+                columnName = m.getColumnName();
+                if (takenNames.contains(columnName)) {
+                    sink.clear();
+                    sink.put(m.getColumnName()).put('#').put(i);
+                    while (takenNames.contains(sink) || metadata.getColumnIndexQuiet(sink) > -1) {
+                        sink.put('#');
+                    }
+                    columnName = sink.toString();
+                }
+                takenNames.add(columnName);
+            }
+            final TableColumnMetadata renamedColumn = new TableColumnMetadata(
+                    Chars.toString(columnName),
+                    m.getColumnType(),
+                    m.getIndexType(),
+                    m.getIndexValueBlockCapacity(),
+                    m.isSymbolTableStatic(),
+                    m.getMetadata()
+            );
+            renamedColumn.setParquetEncodingConfig(m.getParquetEncodingConfig());
+            renamed.add(renamedColumn);
+        }
+        renamed.setTimestampIndex(metadata.getTimestampIndex());
+        return renamed;
     }
 
     // Connects a CROSS or nested loop LEFT join to the table of the INNER hash join that reads its rows,
@@ -6837,6 +6883,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<RecordCursorFactory> pendingHorizonSlaves = null;
         ObjList<IQueryModel> pendingHorizonSlaveModels = null;
         ObjList<RecordMetadata> pendingHorizonSlaveProjectionMetadatas = null;
+        ObjList<RecordMetadata> pendingHorizonSlaveMetadatas = null;
         boolean isHorizonJoinCompleted = false;
 
         try {
@@ -6906,6 +6953,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     // compile
                     RecordMetadata horizonSlaveProjectionMetadata = null;
+                    // the peeled slave's metadata under the names the query reads, set when a peeled
+                    // projection renames a column
+                    RecordMetadata horizonSlaveMetadata = null;
                     final IQueryModel previousHorizonSlaveModel = horizonJoinSlaveModel;
                     if (slaveModel.getJoinType() == IQueryModel.JOIN_HORIZON) {
                         horizonJoinSlaveModel = slaveModel;
@@ -6916,43 +6966,66 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     try {
                         slaveToFree = generateQuery(slaveModel, executionContext, index > 0);
                         if (slaveModel.getJoinType() == IQueryModel.JOIN_HORIZON) {
-                            // A filtered subquery may project away filter-only columns. Keep
-                            // those columns available to the borrowed filter, and resolve the
-                            // join against the expanded metadata before compiling its mappings.
+                            // A filtered subquery may project away filter-only columns, or rename
+                            // columns. Keep those columns available to the borrowed filter, and resolve
+                            // the join against the expanded metadata, under the names the query reads,
+                            // before compiling its mappings.
+                            // The name the query reads each column of slaveToFree by, null for a column
+                            // that no projection above exposes. The list stays null until a peeled
+                            // projection renames a column, and the names are those of slaveToFree.
+                            ObjList<CharSequence> columnNames = null;
                             while (!slaveToFree.supportsTimeFrameCursor() && slaveToFree.isProjection()) {
                                 final RecordCursorFactory base = slaveToFree.getBaseFactory();
                                 final IntList crossIndex = slaveToFree.getColumnCrossIndex();
-                                final int timestampIndex = slaveToFree.getMetadata().getTimestampIndex();
+                                final RecordMetadata projectionMetadata = slaveToFree.getMetadata();
+                                final RecordMetadata baseMetadata = base.getMetadata();
+                                final int timestampIndex = projectionMetadata.getTimestampIndex();
                                 if (crossIndex == null || timestampIndex < 0
-                                        || crossIndex.getQuick(timestampIndex) != base.getMetadata().getTimestampIndex()) {
+                                        || crossIndex.getQuick(timestampIndex) != baseMetadata.getTimestampIndex()) {
                                     break;
                                 }
-                                boolean hasRenamedColumn = false;
+                                // Each base column takes the name of the projected column that exposes it,
+                                // so a projection that changes a column type, or exposes one base column
+                                // under two names, cannot be peeled.
+                                final int baseColumnCount = baseMetadata.getColumnCount();
+                                final ObjList<CharSequence> baseColumnNames = new ObjList<>(baseColumnCount);
+                                baseColumnNames.setPos(baseColumnCount);
+                                boolean isPeelable = true;
+                                boolean isRenamed = columnNames != null;
                                 for (int c = 0, count = crossIndex.size(); c < count; c++) {
-                                    final CharSequence columnName = slaveToFree.getMetadata().getColumnName(c);
-                                    // Projection pruning leaves an unnamed designated timestamp.
-                                    final boolean isHiddenTimestamp = columnName.length() == 0
-                                            && c == slaveToFree.getMetadata().getTimestampIndex()
-                                            && crossIndex.getQuick(c) == base.getMetadata().getTimestampIndex();
-                                    if ((!isHiddenTimestamp && !Chars.equals(columnName,
-                                            base.getMetadata().getColumnName(crossIndex.getQuick(c))))
-                                            || slaveToFree.getMetadata().getColumnType(c)
-                                            != base.getMetadata().getColumnType(crossIndex.getQuick(c))) {
-                                        hasRenamedColumn = true;
+                                    final int baseIndex = crossIndex.getQuick(c);
+                                    if (projectionMetadata.getColumnType(c) != baseMetadata.getColumnType(baseIndex)) {
+                                        isPeelable = false;
                                         break;
                                     }
+                                    final CharSequence columnName = columnNames != null ? columnNames.getQuick(c) : projectionMetadata.getColumnName(c);
+                                    // Projection pruning leaves an unnamed designated timestamp, which no
+                                    // name reads.
+                                    if (columnName == null || (columnName.length() == 0 && c == timestampIndex)) {
+                                        continue;
+                                    }
+                                    if (baseColumnNames.getQuick(baseIndex) != null) {
+                                        isPeelable = false;
+                                        break;
+                                    }
+                                    baseColumnNames.setQuick(baseIndex, columnName);
+                                    isRenamed |= !Chars.equals(columnName, baseMetadata.getColumnName(baseIndex));
                                 }
-                                if (hasRenamedColumn) {
+                                if (!isPeelable) {
                                     break;
                                 }
                                 if (horizonSlaveProjectionMetadata == null) {
-                                    // Peeling preserves names, so the outermost projection
-                                    // names every column the query may reference.
-                                    horizonSlaveProjectionMetadata = slaveToFree.getMetadata();
+                                    // The outermost projection names every column the query may
+                                    // reference.
+                                    horizonSlaveProjectionMetadata = projectionMetadata;
                                 }
+                                columnNames = isRenamed ? baseColumnNames : null;
                                 // Projection cursors have not been opened and own no native
                                 // resources; the base remains the sole rollback owner.
                                 slaveToFree = base;
+                            }
+                            if (columnNames != null) {
+                                horizonSlaveMetadata = renameHorizonSlaveColumns(slaveToFree.getMetadata(), columnNames);
                             }
                         }
                     } finally {
@@ -7782,10 +7855,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         pendingHorizonSlaves = new ObjList<>();
                                         pendingHorizonSlaveModels = new ObjList<>();
                                         pendingHorizonSlaveProjectionMetadatas = new ObjList<>();
+                                        pendingHorizonSlaveMetadatas = new ObjList<>();
                                     }
                                     pendingHorizonSlaves.add(slaveToFree);
                                     pendingHorizonSlaveModels.add(slaveModel);
                                     pendingHorizonSlaveProjectionMetadatas.add(horizonSlaveProjectionMetadata);
+                                    pendingHorizonSlaveMetadatas.add(horizonSlaveMetadata);
                                     closeSlaveOnFailure = false;
                                     break;
                                 }
@@ -7817,13 +7892,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     pendingHorizonSlaves.add(slaveToFree);
                                     pendingHorizonSlaveModels.add(slaveModel);
                                     pendingHorizonSlaveProjectionMetadatas.add(horizonSlaveProjectionMetadata);
+                                    pendingHorizonSlaveMetadatas.add(horizonSlaveMetadata);
                                     closeSlaveOnFailure = false;
                                     ObjList<RecordCursorFactory> slaves = pendingHorizonSlaves;
                                     ObjList<IQueryModel> slaveModels = pendingHorizonSlaveModels;
                                     ObjList<RecordMetadata> slaveProjectionMetadatas = pendingHorizonSlaveProjectionMetadatas;
+                                    ObjList<RecordMetadata> renamedSlaveMetadatas = pendingHorizonSlaveMetadatas;
                                     pendingHorizonSlaves = null;
                                     pendingHorizonSlaveModels = null;
                                     pendingHorizonSlaveProjectionMetadatas = null;
+                                    pendingHorizonSlaveMetadatas = null;
                                     final RecordCursorFactory masterToTransfer = master;
                                     master = null;
                                     slaveToFree = null;
@@ -7836,6 +7914,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaves,
                                             slaveModels,
                                             slaveProjectionMetadatas,
+                                            renamedSlaveMetadatas,
                                             executionContext
                                     );
                                 } else {
@@ -7853,7 +7932,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             masterMetadata,
                                             slaveToTransfer,
                                             slaveModel,
-                                            slaveMetadata,
+                                            horizonSlaveMetadata != null ? horizonSlaveMetadata : slaveMetadata,
                                             horizonSlaveProjectionMetadata,
                                             executionContext
                                     );
@@ -8729,6 +8808,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<RecordCursorFactory> slaveFactories,
             ObjList<IQueryModel> slaveModels,
             ObjList<RecordMetadata> slaveProjectionMetadatas,
+            ObjList<RecordMetadata> renamedSlaveMetadatas,
             SqlExecutionContext executionContext
     ) throws SqlException {
         long[] offsets;
@@ -8813,7 +8893,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int s = 0; s < slaveCount; s++) {
                 IQueryModel sm = slaveModels.getQuick(s);
                 slaveAliases[s] = sm.getAlias() != null ? sm.getAlias().token : sm.getName();
-                slaveMetadatas[s] = slaveFactories.getQuick(s).getMetadata();
+                final RecordMetadata renamedSlaveMetadata = renamedSlaveMetadatas.getQuick(s);
+                slaveMetadatas[s] = renamedSlaveMetadata != null ? renamedSlaveMetadata : slaveFactories.getQuick(s).getMetadata();
             }
 
             int totalSlaveColumns = 0;
@@ -9076,12 +9157,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 state.setFilter(slaveFilters.getQuick(s));
                 slaveFilters.setQuick(s, null);
                 if (supportsParallelism) {
+                    // the borrowed filter reads the slave factory's own column names, which a
+                    // renamed slave metadata does not carry
                     state.setPerWorkerFilters(compileWorkerFiltersConditionally(
                             executionContext,
                             state.getFilter(),
                             workerCount,
                             slaveFilterExprs.getQuick(s),
-                            slaveMeta
+                            slaveFactory.getMetadata()
                     ));
                 }
             }
