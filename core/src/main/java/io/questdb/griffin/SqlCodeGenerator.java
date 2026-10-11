@@ -155,6 +155,7 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.griffin.engine.functions.memoization.ArrayFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
@@ -1697,6 +1698,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return null;
+    }
+
+    /**
+     * Returns the index of the SAMPLE BY bucket key in the group-by output, or -1 when
+     * the output does not carry it. SqlOptimiser.rewriteSampleBy records the bucket's
+     * alias on the model that holds the fill parameters, so the lookup never guesses
+     * the bucket from column names (#7838). As a defensive check, the column under that
+     * alias must be TIMESTAMP-typed and must be the rewrite's own timestamp_floor_utc key.
+     */
+    private static int findFillBucketIndex(IQueryModel model, RecordMetadata metadata, IQueryModel fillModel) {
+        final CharSequence bucketAlias = fillModel.getFillBucketAlias();
+        assert bucketAlias != null : "rewriteSampleBy records fillBucketAlias together with fillStride";
+        if (bucketAlias == null) {
+            return -1;
+        }
+        final int index = SqlUtil.getColumnIndexQuiet(metadata, bucketAlias);
+        if (index < 0 || !ColumnType.isTimestamp(metadata.getColumnType(index))) {
+            return -1;
+        }
+        final QueryColumn column = model.getAliasToColumnMap().get(bucketAlias);
+        if (column == null) {
+            return -1;
+        }
+        final ExpressionNode ast = column.getAst();
+        return ast.type == ExpressionNode.FUNCTION
+                && ast.paramCount == 5
+                && Chars.equalsIgnoreCase(TimestampFloorFromOffsetUtcFunctionFactory.NAME, ast.token)
+                ? index
+                : -1;
     }
 
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
@@ -4219,56 +4249,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
 
-            IQueryModel temp = model;
-            ExpressionNode timestamp = model.getTimestamp();
-
-            while (timestamp == null && temp != null) {
-                temp = temp.getNestedModel();
-
-                if (temp != null) {
-                    timestamp = temp.getTimestamp();
-                }
-            }
-
-            assert timestamp != null;
-
-            // look for timestamp_floor to check for an alias
-            CharSequence alias = timestamp.token;
-            final CharSequence currTimestamp = curr.getTimestamp().token;
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn col = model.getBottomUpColumns().getQuick(i);
-                final ExpressionNode ast = col.getAst();
-                if (SqlUtil.isTimestampFloorFunction(ast)) {
-                    final CharSequence ts = SqlUtil.getTimestampFloorTimestampArg(ast).token;
-                    if (Chars.equalsIgnoreCase(ts, currTimestamp)) {
-                        alias = col.getAlias();
-                    }
-                }
-            }
-
             final RecordMetadata baseMeta = groupByFactory.getMetadata();
-            int timestampIndex = SqlUtil.getColumnIndexQuiet(baseMeta, alias);
-            // The alias may resolve to a non-TIMESTAMP column after outer projection
-            // (e.g. SELECT ts::LONG AS ts, ...). Reset so the fallback below can try
-            // the raw timestamp token and getTimestampDriver doesn't trip its tag
-            // assert.
-            if (timestampIndex >= 0
-                    && !ColumnType.isTimestamp(baseMeta.getColumnType(timestampIndex))) {
-                timestampIndex = -1;
-            }
-            // When the same timestamp column appears multiple times (e.g. SELECT k, k),
-            // the alias may land on a renamed duplicate. Prefer the original token if
-            // it yields an earlier TIMESTAMP-typed index.
-            if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
-                int origIndex = SqlUtil.getColumnIndexQuiet(baseMeta, timestamp.token);
-                if (origIndex >= 0
-                        && ColumnType.isTimestamp(baseMeta.getColumnType(origIndex))
-                        && (timestampIndex < 0 || origIndex < timestampIndex)) {
-                    timestampIndex = origIndex;
-                }
-            }
-            // No TIMESTAMP column reachable (e.g. wrapped by an outer GROUP BY that
-            // projects different columns). Skip fill entirely.
+            final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);
+            // The group-by output does not carry the bucket key that rewriteSampleBy
+            // recorded (e.g. an outer GROUP BY that projects different columns). Skip
+            // fill entirely.
             if (timestampIndex < 0) {
                 final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
                 fillValues = null;

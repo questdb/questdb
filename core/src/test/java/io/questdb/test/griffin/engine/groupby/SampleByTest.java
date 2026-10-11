@@ -7046,7 +7046,7 @@ public class SampleByTest extends AbstractCairoTest {
                     GROUP BY ts
                     ORDER BY ts""")
                     .timestamp("ts")
-                    .noRandomAccess()
+                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             ts\trows\tkeys

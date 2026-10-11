@@ -4790,7 +4790,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     ORDER BY ts""")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
+                    .expectSize()
                     .returns("""
                             ts\trows\tkeys
                             2017-12-20T00:00:00.000000000Z\t479\t479

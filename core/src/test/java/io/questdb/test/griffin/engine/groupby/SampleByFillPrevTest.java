@@ -9,6 +9,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
@@ -133,6 +134,49 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\ttrue
                             2024-01-01T02:00:00.000000Z\ttrue
                             2024-01-01T03:00:00.000000Z\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevBucketWhenLastTimestampAliasedAsTimestamp() throws Exception {
+        // last(ts) AS ts takes the timestamp's name, so generateFill must fill by the recorded
+        // bucket and not by the TIMESTAMP column that merely carries the name ts (#7838).
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT last(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ts	v
+                            2024-01-01T00:00:00.000000Z	1.0
+                            2024-01-01T01:15:00.000000Z	2.0
+                            2024-01-01T01:15:00.000000Z	2.0
+                            2024-01-01T03:30:00.000000Z	3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedBucketKeyRenamedByAggregateAlias() throws Exception {
+        // The emitted avg(val) aggregate claims the alias avg first, so the group-by model
+        // renames the bucket key to avg1 and the recorded bucket alias follows it. The column
+        // surfaces as avg1 instead of avg: that naming comes from the pre-existing key rename,
+        // not from fill, and this test does not endorse it.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT k, avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(PREV) ORDER BY k, v")
+                    .noLeakCheck()
+                    .returns("""
+                            k	v	avg1
+                            a	2.0	2024-01-01T00:00:00.000000Z
+                            a	2.0	2024-01-01T01:00:00.000000Z
+                            a	2.0	2024-01-01T02:00:00.000000Z
+                            a	6.0	2024-01-01T03:00:00.000000Z
+                            b	4.0	2024-01-01T01:00:00.000000Z
+                            b	4.0	2024-01-01T02:00:00.000000Z
+                            b	8.0	2024-01-01T03:00:00.000000Z
+                            b	null	2024-01-01T00:00:00.000000Z
                             """);
         });
     }
@@ -2425,5 +2469,15 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             2024-01-03T10:00:00.000000Z\t3.0
                             """);
         });
+    }
+
+    private static void createBucketAliasTable() throws SqlException {
+        execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ets TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t VALUES
+                    ('a', 1.0, '2024-01-01T05:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-01T04:00:00.000000Z', '2024-01-01T01:15:00.000000Z'),
+                    ('a', 3.0, '2024-01-01T03:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
+                    ('b', 4.0, '2024-01-01T02:00:00.000000Z', '2024-01-01T03:30:00.000000Z')""");
     }
 }
