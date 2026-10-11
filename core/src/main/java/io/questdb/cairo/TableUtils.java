@@ -90,6 +90,7 @@ import io.questdb.tasks.O3PartitionPurgeTask;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
@@ -2778,6 +2779,7 @@ public final class TableUtils {
      * Fail-stop throughout: a failed open, truncate or transfer throws, and both fds are closed on the way
      * out.
      */
+    @TestOnly
     public static void replaceFileContent(FilesFacade ff, LPSZ src, LPSZ dst, int fileOpenOpts) {
         if (Os.isWindows()) {
             // Windows takes the unlink-then-copy route, because the in-place variant below is not safe there:

@@ -70,6 +70,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private int lastRecordBaseOffset = -1;
     private long lastRecordStructureVersion = -1;
     private long lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+    @TestOnly
     private long partitionTableHashCount;
     private long prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
     private long prevMaxTimestamp;

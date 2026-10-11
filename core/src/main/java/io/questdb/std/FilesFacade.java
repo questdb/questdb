@@ -118,7 +118,7 @@ public interface FilesFacade {
         if (res == 0) {
             return;
         }
-        throw CairoException.critical(Os.errno()).put("could not syncfs [fd=").put(fd).put(']');
+        throw CairoException.dataSyncFailureOfFd(this, fd, Os.errno(), "syncfs", "could not syncfs");
     }
 
     /**

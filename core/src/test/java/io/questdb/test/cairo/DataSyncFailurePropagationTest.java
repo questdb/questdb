@@ -30,9 +30,11 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -43,6 +45,9 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.io.File;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
@@ -152,6 +157,24 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
                 },
                 table -> execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL")
         );
+    }
+
+    @Test
+    public void testFlushFailureStopsEngineWhicheverFacadeRaisesIt() throws Exception {
+        // A failed flush is raised by a facade's own method, by an interface default the facade does not override,
+        // or by the facade a wrapper forwards to. Whichever raises it, the engine configured with the facade stops.
+        assertMemoryLeak(() -> {
+            final StringBuilder failures = new StringBuilder();
+            final String[] everyFlush = {"barrierFsync", "fdatasync", "fsync", "fsyncAndClose", "fsyncDurable", "msync", "syncfs"};
+            assertFlushFailuresStopEngine("FilesFacadeImpl", new FilesFacadeImpl(), everyFlush, failures);
+            assertFlushFailuresStopEngine("FailureFileFacade", new FailureFileFacade(new FilesFacadeImpl()), everyFlush, failures);
+            // syncfs is the one interface default that flushes on its own; barrierFsync and fsyncDurable default to
+            // the facade's fdatasync and fsync.
+            assertFlushFailuresStopEngine("interface defaults", facadeWithInterfaceDefaults(new FilesFacadeImpl()), new String[]{"syncfs"}, failures);
+            if (!failures.isEmpty()) {
+                Assert.fail("[mode=" + commitMode + "]\n" + failures);
+            }
+        });
     }
 
     @Test
@@ -464,17 +487,20 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     }
 
     private static CairoConfiguration bystanderConfiguration(String root, FilesFacade ff) {
-        return new DefaultTestCairoConfiguration(root) {
-            @Override
-            public int getCommitMode() {
-                return CommitMode.SYNC;
-            }
+        return engineConfiguration(root, ff, CommitMode.SYNC);
+    }
 
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
+    private static void callFlush(FilesFacade ff, String operation) {
+        switch (operation) {
+            case "barrierFsync" -> ff.barrierFsync(-1);
+            case "fdatasync" -> ff.fdatasync(-1);
+            case "fsync" -> ff.fsync(-1);
+            case "fsyncAndClose" -> ff.fsyncAndClose(-1);
+            case "fsyncDurable" -> ff.fsyncDurable(-1);
+            case "msync" -> ff.msync(1, 1, false);
+            case "syncfs" -> ff.syncfs(-1);
+            default -> throw new IllegalArgumentException(operation);
+        }
     }
 
     private static void createNonWalTable(String table) throws Exception {
@@ -486,6 +512,38 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
         insertDays(table, "2024-01-01", 3);
         drainWalQueue();
+    }
+
+    private static CairoConfiguration engineConfiguration(String root, FilesFacade ff, int commitMode) {
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public int getCommitMode() {
+                return commitMode;
+            }
+
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+    }
+
+    private static FilesFacade facadeWithInterfaceDefaults(FilesFacade delegate) {
+        // implements the interface and overrides none of its defaults
+        return (FilesFacade) Proxy.newProxyInstance(
+                FilesFacade.class.getClassLoader(),
+                new Class<?>[]{FilesFacade.class},
+                (proxy, method, args) -> {
+                    if (method.isDefault()) {
+                        return InvocationHandler.invokeDefault(proxy, method, args);
+                    }
+                    try {
+                        return method.invoke(delegate, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                }
+        );
     }
 
     private static void insertDays(String table, String firstDay, int days) throws Exception {
@@ -556,6 +614,28 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
             Assert.fail("[mode=" + commitMode + "]\n" + failures);
         }
         Assert.assertTrue("most flushes of the dry run were not reached again", injectedCount * 2 >= firstOfEachPath.size());
+    }
+
+    private void assertFlushFailuresStopEngine(String shape, FilesFacade facade, String[] operations, StringBuilder failures) throws Exception {
+        final File root = new File(temp.newFolder(), "db");
+        Assert.assertTrue(root.mkdir());
+        try (CairoEngine owner = new CairoEngine(engineConfiguration(root.getAbsolutePath(), facade, CommitMode.fromString(commitMode)))) {
+            for (String operation : operations) {
+                try {
+                    callFlush(facade, operation);
+                    failures.append(shape).append(' ').append(operation).append(": the flush did not fail\n");
+                } catch (CairoException e) {
+                    if (!e.isDataSyncFailure()) {
+                        failures.append(shape).append(' ').append(operation).append(": not raised as a failed flush [")
+                                .append(e.getFlyweightMessage()).append("]\n");
+                    }
+                }
+                if (!owner.isDurabilityFailed()) {
+                    failures.append(shape).append(' ').append(operation).append(": the engine did not stop\n");
+                }
+                owner.resetDurabilityFailure();
+            }
+        }
     }
 
     private static void renameDetachedToAttachable(String table, String partition) throws Exception {

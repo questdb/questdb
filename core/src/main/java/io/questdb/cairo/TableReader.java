@@ -575,9 +575,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Name txn of a partition, that is, which version of the directory this reader sees. The scrub needs it
-     * to address exactly the version its reader has pinned.
+     * Name txn of a partition, that is, which version of the directory this reader sees.
      */
+    @TestOnly
     public long getPartitionNameTxnByIndex(int partitionIndex) {
         return txFile.getPartitionNameTxn(partitionIndex);
     }

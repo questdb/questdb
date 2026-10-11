@@ -215,14 +215,17 @@ public class CairoEngine implements Closeable, WriterSource {
             this.message = message;
         }
 
+        @TestOnly
         public int getErrno() {
             return errno;
         }
 
+        @TestOnly
         public String getMessage() {
             return message;
         }
 
+        @TestOnly
         public String getOperation() {
             return operation;
         }
@@ -2265,6 +2268,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return isDurabilityFailed() ? DefaultDurableAckRegistry.INSTANCE : durableAckRegistry;
     }
 
+    @TestOnly
     public @Nullable DurabilityFailure getDurabilityFailure() {
         return durabilityFailure.get();
     }

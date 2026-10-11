@@ -213,27 +213,47 @@ public class FailureFileFacade implements FilesFacade {
      */
     @Override
     public void barrierFsync(long fd) {
-        ff.barrierFsync(fd);
+        try {
+            ff.barrierFsync(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
     public void fdatasync(long fd) {
-        ff.fdatasync(fd);
+        try {
+            ff.fdatasync(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
     public void syncfs(long fd) {
-        ff.syncfs(fd);
+        try {
+            ff.syncfs(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
     public void fsync(long fd) {
-        ff.fsync(fd);
+        try {
+            ff.fsync(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
     public void fsyncAndClose(long fd) {
-        ff.fsyncAndClose(fd);
+        try {
+            ff.fsyncAndClose(fd);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
@@ -403,7 +423,11 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public void msync(long addr, long len, boolean async) {
-        ff.msync(addr, len, async);
+        try {
+            ff.msync(addr, len, async);
+        } catch (CairoException e) {
+            throw raiseAsOwnFlushFailure(e);
+        }
     }
 
     @Override
@@ -673,5 +697,16 @@ public class FailureFileFacade implements FilesFacade {
             failureGenerated.incrementAndGet();
         }
         return fail;
+    }
+
+    /**
+     * The wrapped facade records a failed flush against itself, so it would not reach the engine configured with
+     * this wrapper. Raise it again through the factory against this facade.
+     */
+    private CairoException raiseAsOwnFlushFailure(CairoException e) {
+        if (!e.isDataSyncFailure()) {
+            return e;
+        }
+        return CairoException.dataSyncFailure(this, e.getErrno(), e.getDataSyncOperation(), e.getFlyweightMessage());
     }
 }

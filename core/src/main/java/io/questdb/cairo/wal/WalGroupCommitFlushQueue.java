@@ -27,6 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,11 +49,13 @@ public class WalGroupCommitFlushQueue {
     // traverse it while writers register and deregister.
     private final Set<WalWriter> pending = ConcurrentHashMap.newKeySet();
     // A non-zero count flags a distressed writer, a table being dropped, or a flush on a stale fd.
+    @TestOnly
     private final java.util.concurrent.atomic.AtomicLong failedFlushes = new java.util.concurrent.atomic.AtomicLong();
 
     /**
      * Number of background flushes that threw and dropped their writer from the set. Zero in healthy operation.
      */
+    @TestOnly
     public long getFailedFlushCount() {
         return failedFlushes.get();
     }

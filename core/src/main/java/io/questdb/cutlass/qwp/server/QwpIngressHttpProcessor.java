@@ -38,6 +38,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import java.nio.charset.StandardCharsets;
 import java.security.DigestException;
@@ -438,6 +439,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
      * confirm token, {@code false} sends none.
      */
+    @TestOnly
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
     }
@@ -447,6 +449,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
      * confirm token, {@code false} sends none.
      */
+    @TestOnly
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes,
                 durableAckEnabled ? RESPONSE_DURABLE_ACK_TOKEN_ENABLED : null,
@@ -473,14 +476,17 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
                 roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol);
     }
 
+    @TestOnly
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, null);
     }
 
+    @TestOnly
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, null);
     }
 
+    @TestOnly
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, false);
     }
@@ -630,6 +636,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
      * confirm token, {@code false} sends none.
      */
+    @TestOnly
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
     }
@@ -639,6 +646,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * with the durable-ack confirmation as a flag: {@code true} sends the {@code "enabled"}
      * confirm token, {@code false} sends none.
      */
+    @TestOnly
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes,
                 durableAckEnabled ? RESPONSE_DURABLE_ACK_TOKEN_ENABLED : null,
@@ -665,14 +673,17 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
                 roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol);
     }
 
+    @TestOnly
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, null);
     }
 
+    @TestOnly
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, null);
     }
 
+    @TestOnly
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, false);
     }
