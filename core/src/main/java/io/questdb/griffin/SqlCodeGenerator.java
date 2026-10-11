@@ -1774,6 +1774,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && model.getHorizonJoinContext().getAlias() != null;
     }
 
+    /**
+     * A fill constant whose type {@link ColumnType#isConvertibleFrom} accepts only as a narrowing
+     * cast (DOUBLE -> LONG, LONG -> INT, ...) has no implicit cast factory, so FillRecord reads the
+     * raw constant through the target type's getter. Most base-class getters on that path throw
+     * UnsupportedOperationException (DoubleFunction.getLong, LongFunction.getInt), while a few work
+     * (DoubleFunction.getFloat, IntFunction.getInt for BYTE/SHORT targets). Probe the same getter
+     * FillRecord will call, once, so the user sees a SqlException instead of a runtime crash.
+     */
+    private static boolean isNarrowingFillReadable(Function fillFunc, int targetColType) {
+        if (!fillFunc.isConstant()) {
+            // Not safe to evaluate before Function.init(); leave it to the runtime path.
+            return true;
+        }
+        try {
+            switch (ColumnType.tagOf(targetColType)) {
+                // FillRecord.getByte/getShort read via getInt and narrow.
+                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT -> fillFunc.getInt(null);
+                case ColumnType.LONG -> fillFunc.getLong(null);
+                case ColumnType.DATE -> fillFunc.getDate(null);
+                case ColumnType.TIMESTAMP -> fillFunc.getTimestamp(null);
+                case ColumnType.FLOAT -> fillFunc.getFloat(null);
+                default -> {
+                }
+            }
+            return true;
+        } catch (UnsupportedOperationException e) {
+            return false;
+        }
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -4611,10 +4641,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // which would also require isConstant/isRuntimeConstant and
                             // reject valid cast(literal) wrappers.
                             //
-                            // isConvertibleFrom catches obvious type mismatches up front;
-                            // otherwise Function.getXxx throws UnsupportedOperationException
-                            // at runtime. UNDEFINED (unbound bind variable) is left to
-                            // late binding.
+                            // isConvertibleFrom rejects obvious type mismatches up front.
+                            // UNDEFINED (unbound bind variable) is left to late binding.
                             Function fillFunc = fillValues.getQuick(fillIdx);
                             final int fillType = fillFunc.getType();
                             if (fillType != ColumnType.UNDEFINED
@@ -4635,6 +4663,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (cast != null) {
                                     fillValues.setQuick(fillIdx, cast);
                                     fillFunc = cast;
+                                } else if (!ColumnType.isToSameOrWider(fillType, targetColType)
+                                        && !isNarrowingFillReadable(fillFunc, targetColType)) {
+                                    throw SqlException.$(fillExpr.position,
+                                                    "fill value of type ").put(ColumnType.nameOf(fillType))
+                                            .put(" cannot fill column of type ")
+                                            .put(ColumnType.nameOf(targetColType));
                                 }
                             }
                             if (fillFunc.isNonDeterministic()) {
