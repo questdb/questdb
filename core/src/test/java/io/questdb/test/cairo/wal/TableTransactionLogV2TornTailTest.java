@@ -212,6 +212,28 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRecordsPastTheTailAreZeroed() throws Exception {
+        // An append that crashed before the header counted its record, or a checkpoint restore that lowered the max
+        // txn, leaves whole records past the tail. A record written over one and torn could show it whole.
+        assertMemoryLeak(() -> {
+            final String dir = "past";
+            writeLog(dir, 10, CommitMode.ADAPTIVE, 0);
+            Assert.assertEquals(11, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+            final byte[] maxTxn = new byte[Long.BYTES];
+            maxTxn[0] = 9;
+            patch(headerFile(dir), MAX_TXN_OFFSET_64, maxTxn);
+            Assert.assertEquals(9, reopen(dir, adaptive(10_000))[0]);
+            Assert.assertTrue(isZero(read(partFile(dir, 0), 9L * RS, RS), 0, RS));
+            Assert.assertEquals(10, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+            maxTxn[0] = 4;
+            patch(headerFile(dir), MAX_TXN_OFFSET_64, maxTxn);
+            Assert.assertEquals(4, reopen(dir, adaptive(10_000))[0]);
+            Assert.assertTrue(isZero(read(partFile(dir, 0), 4L * RS, (PART - 4) * RS), 0, (PART - 4) * RS));
+            Assert.assertEquals(5, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+        });
+    }
+
+    @Test
     public void testReplicaKeepsDownloadedRecords() throws Exception {
         // A primary's log gets records from the downloader once the node is a replica; an older primary sends them
         // without a checksum. The replica, and the node promoted from it, must keep them.

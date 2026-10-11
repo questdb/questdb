@@ -295,7 +295,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (partTransactionCount < 1) {
             throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
         }
-        if (LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), durabilityPolicy) == CommitMode.ADAPTIVE) {
+        final boolean isAdaptive = LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), durabilityPolicy) == CommitMode.ADAPTIVE;
+        if (isAdaptive) {
             lastTxn = recoverTail(path, lastTxn);
         } else if (!durabilityPolicy.isLocalDurabilityEnabled() && txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64) != 0) {
             // A replica's downloader appends records the field does not cover, without a checksum when its primary
@@ -315,7 +316,19 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         openTxnPart();
         // Open part can leave prev txn append position when part is the same
         setAppendPosition();
+        if (isAdaptive) {
+            zeroPastTail();
+        }
         return maxStructureVersion;
+    }
+
+    private static boolean isZero(long lo, long hi) {
+        for (long p = lo; p < hi; p++) {
+            if (Unsafe.getByte(p) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static long openPartFileRO(final FilesFacade ff, final LPSZ path, boolean bypassFdCache) {
@@ -503,6 +516,21 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 ff.fdatasync(txnMem.getFd());
                 markFlushed(maxTxn.get());
             }
+        }
+    }
+
+    /**
+     * Zeroes the part past the tail when a record sits there, left by an append that crashed before the header
+     * counted it or by a checkpoint restore that lowered the max txn, and makes that durable before the next append. A
+     * record written over it and torn by a power loss could otherwise show the old record whole, which passes its
+     * check. Appends are sequential, so the first slot past the tail tells.
+     */
+    private void zeroPastTail() {
+        final long offset = (maxTxn.get() % partTransactionCount) * RECORD_SIZE;
+        final long address = txnPartMem.addressOf(offset);
+        if (!isZero(address, address + RECORD_SIZE)) {
+            Vect.memset(address, (long) partTransactionCount * RECORD_SIZE - offset, 0);
+            ff.fdatasync(txnPartMem.getFd());
         }
     }
 
