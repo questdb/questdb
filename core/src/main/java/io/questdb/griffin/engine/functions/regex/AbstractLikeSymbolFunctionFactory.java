@@ -74,13 +74,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
     ) throws SqlException {
         final SymbolFunction value = (SymbolFunction) args.getQuick(0);
         final Function pattern = args.getQuick(1);
+        final char escapeChar = AbstractLikeStrFunctionFactory.parseAndCloseEscapeChar(args, argPositions);
 
         if (value.isSymbolTableStatic()) {
             if (pattern.isConstant()) {
                 final CharSequence likeSeq = pattern.getStrA(null);
                 int len;
                 if (likeSeq != null && (len = likeSeq.length()) > 0) {
-                    if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                    if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, escapeChar) == 0) {
                         final int anyCount = countChar(likeSeq, '%');
                         if (anyCount == 1) {
                             if (len == 1) {
@@ -123,7 +124,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                         }
                     }
 
-                    String p = escapeSpecialChars(likeSeq, null);
+                    String p = escapeSpecialChars(likeSeq, null, escapeChar);
                     assert p != null;
                     int flags = Pattern.DOTALL;
                     if (isCaseInsensitive()) {
@@ -140,7 +141,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
             if (pattern.isRuntimeConstant()) {
                 // bind variable
-                return new BindLikeStaticSymbolTableFunction(value, pattern, isCaseInsensitive());
+                return new BindLikeStaticSymbolTableFunction(value, pattern, isCaseInsensitive(), escapeChar);
             }
 
             throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
@@ -169,6 +170,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     private static class BindLikeStaticSymbolTableFunction extends BooleanFunction implements BinaryFunction, SymbolKeySetProvider {
         private final boolean caseInsensitive;
+        private final char escapeChar;
         private final Function pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
@@ -180,10 +182,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private boolean isStateInherited = false;
         private boolean stateShared = false;
 
-        public BindLikeStaticSymbolTableFunction(SymbolFunction value, Function pattern, boolean caseInsensitive) {
+        public BindLikeStaticSymbolTableFunction(SymbolFunction value, Function pattern, boolean caseInsensitive, char escapeChar) {
             this.value = value;
             this.pattern = pattern;
             this.caseInsensitive = caseInsensitive;
+            this.escapeChar = escapeChar;
         }
 
         @Override
@@ -222,7 +225,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             this.stateShared = false;
             final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
-                String p = escapeSpecialChars(patternValue, lastPattern);
+                String p = escapeSpecialChars(patternValue, lastPattern, escapeChar);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
                     // Keep the escaped spelling for allocation-free exact hits, but invalidate only

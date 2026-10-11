@@ -204,6 +204,12 @@ io.questdb.griffin.engine.functions.regex.LikeSymbolFunctionFactory
 io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory
 io.questdb.griffin.engine.functions.regex.ILikeVarcharFunctionFactory
 io.questdb.griffin.engine.functions.regex.ILikeSymbolFunctionFactory
+io.questdb.griffin.engine.functions.regex.LikeEscapeStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.LikeEscapeVarcharFunctionFactory
+io.questdb.griffin.engine.functions.regex.LikeEscapeSymbolFunctionFactory
+io.questdb.griffin.engine.functions.regex.ILikeEscapeStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.ILikeEscapeVarcharFunctionFactory
+io.questdb.griffin.engine.functions.regex.ILikeEscapeSymbolFunctionFactory
 
 # 'to_char'
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
