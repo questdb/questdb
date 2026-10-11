@@ -75,11 +75,11 @@ import io.questdb.std.ObjList;
  * plan: the generation depth of the query level, whether a consumer requires the designated timestamp, see
  * {@link OperatorPlanning#requiresInputTimestamp}, the intervals of a window join master that the scan of its
  * slave narrows to, and whether a HORIZON JOIN reads the time frames of the scan under the filter of its slave, see
- * {@link PlanToFactoryRules#horizonSlaveFilter}, which keeps that scan on its page frames, with a constant false
- * residual where the predicate admits no row. Every scan gets an access path; a static error the generator raises before it reads the
- * decision, such as an invalid interval bound, fails planning with the same message and position. Once it has
- * planned the inputs of a node, the walk hands the node to {@link OperatorPlanning#planOperators} with the timestamp
- * requirement of its consumer, which rejects what the generator cannot build.
+ * {@link PlanToFactoryRules#temporalStolenFilter}, which keeps that scan on its page frames, with a constant false
+ * residual where the predicate admits no row. Every scan gets an access path; a static error the generator raises
+ * before it reads the decision, such as an invalid interval bound, fails planning with the same message and position.
+ * Once it has planned the inputs of a node, the walk hands the node to {@link OperatorPlanning#planOperators} with the
+ * timestamp requirement of its consumer, which rejects what the generator cannot build.
  */
 final class AccessPathPlanning {
     private static final int MODEL_NONE = -1;
@@ -674,7 +674,7 @@ final class AccessPathPlanning {
             walk(horizon.getMaster(), operatorPlanning.requiresInputTimestamp(horizon, 0, isHorizonTimestampRequired));
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
                 final LogicalPlan slave = horizon.getSlaves().getQuick(i).getInput();
-                final FilterPlan filter = PlanToFactoryRules.horizonSlaveFilter(slave);
+                final FilterPlan filter = PlanToFactoryRules.temporalStolenFilter(slave);
                 horizonSlaveScan = filter != null ? PlanToFactoryRules.fusedScan(filter) : null;
                 try {
                     walk(slave, operatorPlanning.requiresInputTimestamp(horizon, i + 1, isHorizonTimestampRequired));

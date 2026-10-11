@@ -171,30 +171,20 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * The filter node under the slave of a HORIZON JOIN, read directly or through a selection of input columns, which
-     * access path planning keeps on the page frames the join reads the time frames of; null when the slave has none.
-     */
-    public static FilterPlan horizonSlaveFilter(LogicalPlan slave) {
-        final LogicalPlan generated = generatedPlan(slave);
-        return generated instanceof ProjectPlan project && isPeelableProjection(project) && !LogicalPlans.isComputedProjection(project)
-                ? stolenFilter(project.getInput()) : stolenFilter(slave);
-    }
-
-    /**
-     * The selection a HORIZON JOIN reads the filter of its slave through: a projection of input columns under their
-     * own names that keeps the designated timestamp of its input; null when the generator builds the slave from
-     * another factory.
+     * The selection a HORIZON JOIN reads the filter of its slave through: the {@link #temporalSlaveProjection} that
+     * keeps the names of its input columns and the designated timestamp of its input; null otherwise.
      */
     public static ProjectPlan horizonSlaveProjection(LogicalPlan slave) {
-        if (!(generatedPlan(slave) instanceof ProjectPlan project) || !isPeelableProjection(project) || LogicalPlans.isComputedProjection(project)) {
+        final ProjectPlan project = temporalSlaveProjection(slave);
+        if (project == null) {
             return null;
         }
-        final OutputSchema output = project.getOutput();
-        final OutputSchema input = project.getInput().getOutput();
         final int timestampIndex = PhysicalProperties.timestampIndex(project);
         if (timestampIndex < 0) {
             return null;
         }
+        final OutputSchema output = project.getOutput();
+        final OutputSchema input = project.getInput().getOutput();
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             final int index = input.getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId());
             if (!Chars.equals(output.getColumnName(i), input.getColumnName(index))) {
@@ -467,7 +457,7 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * The selection a temporal join reads the stolen filter of its slave through, or null when it reads the filter
+     * The selection an ASOF or HORIZON JOIN reads the filter of its slave through, or null when it reads the filter
      * directly.
      */
     public static ProjectPlan temporalSlaveProjection(LogicalPlan slave) {
@@ -476,8 +466,8 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * The filter node a temporal join steals from its slave: the filter the generator builds the slave from, or the
-     * one under the selection it builds the slave from.
+     * The filter node an ASOF or HORIZON JOIN reads its slave under: the filter the generator builds the slave from,
+     * or the one under the selection it builds the slave from.
      */
     public static FilterPlan temporalStolenFilter(LogicalPlan slave) {
         final ProjectPlan projection = temporalSlaveProjection(slave);

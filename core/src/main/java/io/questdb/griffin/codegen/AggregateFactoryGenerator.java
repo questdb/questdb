@@ -195,21 +195,6 @@ final class AggregateFactoryGenerator {
         return metadata;
     }
 
-    /**
-     * Pops the holders of the slave filters {@link #generateHorizonSlave} pushed, freeing what the join did not adopt.
-     */
-    private static void popHorizonSlaveFilters(GenerationFrame frame, ObjList<PreparedFilter> slaveFilters, @Nullable Throwable primary) {
-        for (int i = slaveFilters.size() - 1; i >= 0; i--) {
-            if (slaveFilters.getQuick(i) != null) {
-                if (primary != null) {
-                    frame.popPreparedFilter(primary);
-                } else {
-                    frame.popPreparedFilter();
-                }
-            }
-        }
-    }
-
     private static void sharedRecordFunctions(
             AggregatePlan plan,
             RecordMetadata inputMetadata,
@@ -917,11 +902,15 @@ final class AggregateFactoryGenerator {
             factory = generateHorizonJoin(frame, aggregate, horizon, master, slaves, slaveFilters, slaveMetadatas, slaveCrossIndexes,
                     frame.functionInstantiator, prepared, executionContext);
         } catch (Throwable th) {
-            popHorizonSlaveFilters(frame, slaveFilters, th);
+            for (int i = slaveFilters.size() - 1; i >= 0; i--) {
+                frame.popPreparedFilter(slaveFilters.getQuick(i), th);
+            }
             frame.popPreparedFilter(prepared, th);
             throw th;
         }
-        popHorizonSlaveFilters(frame, slaveFilters, null);
+        for (int i = slaveFilters.size() - 1; i >= 0; i--) {
+            frame.popPreparedFilter(slaveFilters.getQuick(i));
+        }
         frame.popPreparedFilter(prepared);
         return factory;
     }

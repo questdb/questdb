@@ -41,8 +41,9 @@ import java.io.Closeable;
  * The filter the generator prepares, without building a filter factory, for the consumer that steals it from a
  * filter node, a parallel operator or a HORIZON JOIN over its slave: the filter function over the factory under the
  * node, and, once {@link FilterFactoryGenerator#prepareParallel} ran, the column set it reads, its per-worker clones
- * and its compiled JIT filter with the bind variables it reads; a parallel HORIZON JOIN sets only the clones. It owns every resource it holds until the consumer's constructor adopts
- * them, see {@link #adopt()}; {@link #close()} frees what it still holds.
+ * and its compiled JIT filter with the bind variables it reads; a parallel HORIZON JOIN sets only the clones. It owns
+ * every resource it holds until the consumer's constructor adopts them, see {@link #adopt()}; {@link #close()} frees
+ * what it still holds.
  */
 final class PreparedFilter implements Closeable {
     private ObjList<Function> bindVarFunctions;
