@@ -238,6 +238,7 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
 
                     // (2) Power loss right after the ack: drop both writers' pending without a device flush (A's row
                     // and the unacked tail are page-cache only, so lost), roll files back.
+                    crashFf.powerLoss();
                     a.simulatePowerLossDropPending();
                     b.simulatePowerLossDropPending();
                     crashFf.crash(engine.getConfiguration().getDbRoot());
@@ -389,6 +390,7 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
                     registry.getLocalDurableSeqTxn(dirName), ackedSeqTxn);
 
             // Power loss right after the ack.
+            crashFf.powerLoss();
             for (WalWriter writer : w) {
                 writer.simulatePowerLossDropPending();
             }
@@ -536,6 +538,7 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
                             committedSeqTxn, collectDurableAck("gone", dirName, committedSeqTxn, registry));
 
                     // Power loss right after the ack, then boot a fresh engine on what survived.
+                    crashFf.powerLoss();
                     w.simulatePowerLossDropPending();
                     crashFf.crash(engine.getConfiguration().getDbRoot());
                     try (CairoEngine rebooted = new CairoEngine(configuration)) {

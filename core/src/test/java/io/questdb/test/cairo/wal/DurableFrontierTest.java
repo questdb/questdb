@@ -667,6 +667,7 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                 Assert.assertEquals("the frontier must stay at the contiguous durable prefix (the baseline)",
                         baselineTxn, tracker.getLocalDurableSeqTxn());
 
+                crashFf.powerLoss();
                 a.simulatePowerLossDropPending();
                 b.simulatePowerLossDropPending();
                 crashFf.crash(engine.getConfiguration().getDbRoot());
@@ -716,6 +717,7 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                 Assert.assertEquals(frontierAfterFirst + 1, unflushedSeqTxn);
                 Assert.assertTrue(tracker.getLocalDurableSeqTxn() < unflushedSeqTxn);
                 // Power loss: drop the pending batch without a flush, then roll every file back to its durable content.
+                crashFf.powerLoss();
                 w.simulatePowerLossDropPending();
                 crashFf.crash(engine.getConfiguration().getDbRoot());
             } finally {

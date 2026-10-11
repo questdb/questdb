@@ -64,10 +64,12 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
     }
 
     /**
-     * Simulate power loss: release handles (clean close never fsyncs) then roll files back.
+     * Simulate power loss: mark it, release handles (their close-time flushes come after the power loss and do not
+     * count), then roll files back.
      */
     protected void crashAndReopen() {
         if (crashFf == null) throw new IllegalStateException("call runWithCrashFacade(...) first");
+        crashFf.powerLoss();
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());

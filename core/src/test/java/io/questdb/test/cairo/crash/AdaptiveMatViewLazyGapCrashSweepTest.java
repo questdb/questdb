@@ -399,6 +399,7 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 assertMvEqualsBaseAggregation(-1, "pre-crash");
 
                 // Crash: drop non-durable column data; keep the fsync/msync'd state and the durable WAL.
+                crashFf.powerLoss();
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseAllWalWriters();

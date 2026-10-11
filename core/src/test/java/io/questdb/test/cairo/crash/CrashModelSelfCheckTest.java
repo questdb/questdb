@@ -33,6 +33,12 @@ import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.nio.file.Paths;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.BiConsumer;
+
 /**
  * Self-check of {@link CrashFaultFilesFacade}'s content and device-flush model.
  * <p>
@@ -71,6 +77,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             Mapped m = mapAndFill(ff, a, NEW);
             ff.msync(m.addr, SIZE, false); // MS_SYNC: writeback + device flush
             unmapAndClose(ff, m);
+            ff.powerLoss();
             ff.crash(dir);
             assertAllBytes("test1: msync(MS_SYNC) content must survive crash", ff, a, NEW);
         }
@@ -92,6 +99,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             fill(m.addr, NEW);                  // overwrite with the value under test
             ff.msync(m.addr, SIZE, true);       // MS_ASYNC only -> no device cache, no flush
             unmapAndClose(ff, m);
+            ff.powerLoss();
             ff.crash(dir);
             assertAllBytes("test2: MS_ASYNC-only write must be lost (reverts to last durable)", ff, a, PRIOR);
         }
@@ -119,6 +127,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.fdatasync(ma.fd);                     // ONE flush -> promotes BOTH device caches to durable
             unmapAndClose(ff, ma);
             unmapAndClose(ff, mb);
+            ff.powerLoss();
             ff.crash(dir);
             assertAllBytes("test3: file A durable after batched flush", ff, a, NEW);
             assertAllBytes("test3: file B durable via the SAME batched flush (batching semantic)", ff, b, NEW);
@@ -143,6 +152,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.fdatasync(ma.fd);            // A snapshotted+flushed; B never reached the device cache
             unmapAndClose(ff, ma);
             unmapAndClose(ff, mb);
+            ff.powerLoss();
             ff.crash(dir);
             assertAllBytes("test4: file A reached the device cache (fdatasync) -> durable", ff, a, NEW);
             assertNoBytes("test4: file B never reached the device cache -> LOST", ff, b, NEW);
@@ -167,6 +177,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.fdatasync(md.fd);                    // flush fires, but C's device cache was never advanced
             unmapAndClose(ff, mc);
             unmapAndClose(ff, md);
+            ff.powerLoss();
             ff.crash(dir);
             assertNoBytes("test5: sync_file_range without msync is a no-op -> C content LOST", ff, c, NEW);
         }
@@ -191,6 +202,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             Assert.assertEquals("precondition: data reached the device", SIZE, ff.syncedDataEndOf(a.toString()));
             Assert.assertEquals("precondition: but nothing is journaled", 0L, ff.journaledDataEndOf(a.toString()));
             unmapAndClose(ff, m);
+            ff.powerLoss();
             ff.crash(dir);
             assertNoBytes("test6: data-at-device without a journal commit must be LOST", ff, a, NEW);
         }
@@ -223,6 +235,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             Assert.assertEquals("but B's extent metadata is NOT journaled (per-inode)", 0L, ff.journaledDataEndOf(b.toString()));
             unmapAndClose(ff, ma);
             unmapAndClose(ff, mb);
+            ff.powerLoss();
             ff.crash(dir);
             assertAllBytes("test7: A has its OWN journal commit -> durable", ff, a, NEW);
             assertNoBytes("test7: B's new-allocation data needs B's own journal commit -> LOST without shared journal", ff, b, NEW);
@@ -253,6 +266,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             Assert.assertEquals("shared journal also journals B", SIZE, ff.journaledDataEndOf(b.toString()));
             unmapAndClose(ff, ma);
             unmapAndClose(ff, mb);
+            ff.powerLoss();
             ff.crash(dir);
             assertAllBytes("test8: A durable", ff, a, NEW);
             assertAllBytes("test8: B durable via the SHARED journal commit (A's fdatasync covers B)", ff, b, NEW);
@@ -287,6 +301,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             Assert.assertEquals("syncfs journals A", SIZE, ff.journaledDataEndOf(a.toString()));
             unmapAndClose(ff, ma);
             unmapAndClose(ff, mb);
+            ff.powerLoss();
             ff.crash(dir);
             assertAllBytes("test9: A durable via syncfs", ff, a, NEW);
             assertAllBytes("test9: B durable via syncfs's WHOLE-FILESYSTEM journal commit (even under per-inode journaling)", ff, b, NEW);
@@ -313,6 +328,8 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.syncfs(mb.fd); // any fd on the filesystem flushes A as well
             unmapAndClose(ff, mb);
 
+            ff.powerLoss();
+
             ff.crash(dir);
             assertAllBytes("test10: syncfs must persist mmap-dirty A after munmap/close", ff, a, NEW);
         }
@@ -337,6 +354,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.msync(page1, Files.PAGE_SIZE, false); // MS_SYNC of page 1 only
             ff.munmap(page1, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
             ff.close(fd);
+            ff.powerLoss();
             ff.crash(dir);
             final byte[] got = readBack(ff, a, 2 * (int) Files.PAGE_SIZE);
             assertPage("test11: the MS_SYNC'd page 1 must survive", got, 1, true);
@@ -363,6 +381,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.fdatasync(mb.fd); // shared journal: journals A's drained extent too
             unmapAndClose(ff, mb);
             ff.close(fd);
+            ff.powerLoss();
             ff.crash(dir);
             final byte[] got = readBack(ff, a, 2 * (int) Files.PAGE_SIZE);
             assertPage("test12: the drained page 1 must survive", got, 1, true);
@@ -388,6 +407,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.fdatasync(fd);
             ff.munmap(page1, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
             ff.close(fd);
+            ff.powerLoss();
             ff.crash(dir);
             final byte[] got = readBack(ff, a, 2 * (int) Files.PAGE_SIZE);
             assertPage("test13: page 0 must survive the file's fdatasync", got, 0, true);
@@ -412,6 +432,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             ff.munmap(ma.addr, SIZE, MemoryTag.MMAP_DEFAULT); // deliberately no msync
             ff.fsync(ma.fd);
             ff.close(ma.fd);
+            ff.powerLoss();
             ff.crash(dir);
             assertAllBytes("test14: fsync must persist a store made through an unsynced mapping", ff, a, NEW);
         }
@@ -452,6 +473,162 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             }
         }
         Assert.assertEquals("", failures.toString());
+    }
+
+    /**
+     * Test 16: nothing flushed after the power loss is durable.
+     * A and B durable (PRIOR) -> powerLoss() -> one flushing operation -> crash -> A and B hold PRIOR, no new name.
+     * A test must release the engine's handles before crash(), and those closes flush (a writer's close-time save
+     * point runs syncfs). Every kind of flush the facade models is run after the mark: if any of them counts, the
+     * rollback keeps what a real power loss would have lost.
+     */
+    @Test
+    public void test16_nothingAfterThePowerLossIsDurable() throws Exception {
+        final Map<String, BiConsumer<CrashFaultFilesFacade, String>> flushes = new LinkedHashMap<>();
+        flushes.put("fsync", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.fsync(m.fd)));
+        flushes.put("fdatasync", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.fdatasync(m.fd)));
+        flushes.put("msync(MS_SYNC)", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.msync(m.addr, SIZE, false)));
+        flushes.put("syncfs", (ff, dir) -> rewriteAndSync(ff, dir, "a.d", (f, m) -> f.syncfs(m.fd)));
+        flushes.put("fsyncAndClose", (ff, dir) -> {
+            try (Path a = new Path().of(dir).concat("a.d")) {
+                final Mapped m = mapAndFill(ff, a, NEW);
+                ff.munmap(m.addr, SIZE, MemoryTag.MMAP_DEFAULT);
+                ff.fsyncAndClose(m.fd);
+            }
+        });
+        flushes.put("new file, directory fsync", (ff, dir) -> {
+            rewriteAndSync(ff, dir, "c.d", (f, m) -> f.fsync(m.fd));
+            syncDirectory(ff, dir);
+        });
+        flushes.put("unlink, directory fsync", (ff, dir) -> {
+            try (Path b = new Path().of(dir).concat("b.d")) {
+                Assert.assertTrue(ff.removeQuiet(b.$()));
+            }
+            syncDirectory(ff, dir);
+        });
+        flushes.put("rename, directory fsync", (ff, dir) -> {
+            try (Path a = new Path().of(dir).concat("a.d"); Path d = new Path().of(dir).concat("d.d")) {
+                Assert.assertEquals(Files.FILES_RENAME_OK, ff.rename(a.$(), d.$()));
+            }
+            syncDirectory(ff, dir);
+        });
+        final StringBuilder failures = new StringBuilder();
+        int i = 0;
+        for (Map.Entry<String, BiConsumer<CrashFaultFilesFacade, String>> flush : flushes.entrySet()) {
+            final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+            final String dir = temp.newFolder("model16-" + i++).getAbsolutePath();
+            try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
+                unmapAndClose(ff, mapAndFill(ff, a, PRIOR));
+                unmapAndClose(ff, mapAndFill(ff, b, PRIOR));
+                ff.markDurableBaseline(dir);
+                ff.powerLoss();
+                flush.getValue().accept(ff, dir);
+                ff.crash(dir);
+                if (!holdsOnly(dir, "a.d", PRIOR) || !holdsOnly(dir, "b.d", PRIOR)
+                        || exists(dir, "c.d") || exists(dir, "d.d")) {
+                    failures.append(flush.getKey()).append(" after the power loss became durable\n");
+                }
+            }
+        }
+        Assert.assertEquals("", failures.toString());
+    }
+
+    /**
+     * Test 17: an armed crash is the power loss.
+     * A durable (PRIOR) -> NEW, msync(MS_SYNC) is the armed op -> CrashSimulationError -> PRIOR2, msync(MS_SYNC) ->
+     * crash -> A holds NEW. The armed op completes and the machine stops right after it, so the engine's work after
+     * the error (a swallowed error's catch path, the harness releasing handles) does not count.
+     */
+    @Test
+    public void test17_armedCrashIsThePowerLoss() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("model17").getAbsolutePath();
+        try (Path a = new Path().of(dir).concat("a.d")) {
+            unmapAndClose(ff, mapAndFill(ff, a, PRIOR));
+            ff.markDurableBaseline(dir);
+            final Mapped m = mapAndFill(ff, a, NEW);
+            ff.armCrashAt(ff.durabilityOpCount() + 1);
+            try {
+                ff.msync(m.addr, SIZE, false);
+                Assert.fail("expected CrashSimulationError");
+            } catch (CrashSimulationError expected) {
+                Assert.assertTrue(ff.isPowerLossMarked());
+            }
+            fill(m.addr, (byte) 0xCC);
+            ff.msync(m.addr, SIZE, false);
+            unmapAndClose(ff, m);
+            ff.crash(dir);
+            assertAllBytes("test17: the armed op is durable, the flush after it is not", ff, a, NEW);
+        }
+    }
+
+    /**
+     * Test 18: the rollback leaves nothing in the device cache.
+     * A durable (PRIOR) -> NEW reaches the device cache (MS_ASYNC, sync_file_range), no device flush -> power loss,
+     * crash -> B, fsync (a device flush) -> power loss, crash -> A holds PRIOR. NEW died in the first power loss; a
+     * model that keeps A's device cache across it lets B's flush bring NEW back.
+     */
+    @Test
+    public void test18_rollbackLeavesNoCachedBytes() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("model18").getAbsolutePath();
+        try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
+            unmapAndClose(ff, mapAndFill(ff, a, PRIOR));
+            unmapAndClose(ff, mapAndFill(ff, b, PRIOR));
+            ff.markDurableBaseline(dir);
+            final Mapped ma = mapAndFill(ff, a, NEW);
+            ff.msync(ma.addr, SIZE, true);
+            ff.syncFileRange(ma.fd, 0, SIZE, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
+            unmapAndClose(ff, ma);
+            ff.powerLoss();
+            ff.crash(dir);
+            assertAllBytes("test18: A's device-cache bytes died in the power loss", ff, a, PRIOR);
+            rewriteAndSync(ff, dir, "b.d", (f, m) -> f.fsync(m.fd));
+            ff.powerLoss();
+            ff.crash(dir);
+            assertAllBytes("test18: a later flush brought back bytes the first power loss destroyed", ff, a, PRIOR);
+        }
+    }
+
+    /**
+     * Test 19: crash() needs a power loss. Only the test knows where it is, so a rollback without a mark (or a kill
+     * image) is refused instead of taking the instant of the call, after the handles were released.
+     */
+    @Test
+    public void test19_crashNeedsAPowerLoss() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("model19").getAbsolutePath();
+        ff.markDurableBaseline(dir);
+        try {
+            ff.crash(dir);
+            Assert.fail("expected IllegalStateException");
+        } catch (IllegalStateException expected) {
+            Assert.assertTrue(expected.getMessage().contains("powerLoss()"));
+        }
+    }
+
+    /**
+     * Test 20: a power loss on one root keeps another root's later flushes.
+     * Roots R1, R2 durable (PRIOR) -> power loss -> R2's A: NEW, msync(MS_SYNC) -> crash R1 -> power loss, crash R2 ->
+     * R2's A holds NEW. Two engines on two roots model two machines; rolling back R1 must not undo R2's durability.
+     */
+    @Test
+    public void test20_powerLossOnOneRootKeepsAnotherRootsFlushes() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String r1 = temp.newFolder("model20-r1").getAbsolutePath();
+        final String r2 = temp.newFolder("model20-r2").getAbsolutePath();
+        try (Path a1 = new Path().of(r1).concat("a.d"); Path a2 = new Path().of(r2).concat("a.d")) {
+            unmapAndClose(ff, mapAndFill(ff, a1, PRIOR));
+            unmapAndClose(ff, mapAndFill(ff, a2, PRIOR));
+            ff.markDurableBaseline(r1);
+            ff.markDurableBaseline(r2);
+            ff.powerLoss();
+            rewriteAndSync(ff, r2, "a.d", (f, m) -> f.msync(m.addr, SIZE, false));
+            ff.crash(r1);
+            ff.powerLoss();
+            ff.crash(r2);
+            assertAllBytes("test20: R1's rollback undid R2's flush", ff, a2, NEW);
+        }
     }
 
     private static final class Mapped {
@@ -617,6 +794,7 @@ public class CrashModelSelfCheckTest extends AbstractTest {
                 unmapAndClose(ff, mb);
             }
             ff.close(fd);
+            ff.powerLoss();
             ff.crash(dir);
             return readBack(ff, a, 2 * page);
         }
@@ -641,5 +819,51 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         Unsafe.getUnsafe().setMemory(page1, Files.PAGE_SIZE, NEW);
         ff.munmap(page1, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
         return fd;
+    }
+
+    private static boolean exists(String dir, String name) {
+        return java.nio.file.Files.exists(Paths.get(dir, name));
+    }
+
+    /**
+     * True if {@code dir/name} exists and holds {@code value} in each of its first SIZE bytes.
+     */
+    private static boolean holdsOnly(String dir, String name, byte value) throws IOException {
+        if (!exists(dir, name)) {
+            return false;
+        }
+        final byte[] got = java.nio.file.Files.readAllBytes(Paths.get(dir, name));
+        if (got.length < SIZE) {
+            return false;
+        }
+        for (int i = 0; i < SIZE; i++) {
+            if (got[i] != value) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Maps {@code dir/name}, fills it with NEW, runs {@code sync} with the mapping live, then unmaps and closes.
+     */
+    private static void rewriteAndSync(CrashFaultFilesFacade ff, String dir, String name, BiConsumer<CrashFaultFilesFacade, Mapped> sync) {
+        try (Path path = new Path().of(dir).concat(name)) {
+            final Mapped m = mapAndFill(ff, path, NEW);
+            sync.accept(ff, m);
+            unmapAndClose(ff, m);
+        }
+    }
+
+    private static void syncDirectory(CrashFaultFilesFacade ff, String dir) {
+        try (Path path = new Path().of(dir)) {
+            final long fd = ff.openRO(path.$());
+            Assert.assertTrue("openRO failed, fd=" + fd, fd > 0);
+            try {
+                ff.fsync(fd);
+            } finally {
+                ff.close(fd);
+            }
+        }
     }
 }

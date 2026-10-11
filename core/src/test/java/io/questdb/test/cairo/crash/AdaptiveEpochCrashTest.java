@@ -1519,6 +1519,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 removalCrashAt = -1;
                 removedPath = Utf8String.newInstance(name).toString();
                 poweredOff = true;
+                powerLoss();
                 throw new CrashSimulationError(durabilityOpCount());
             }
             return removed;
@@ -1620,6 +1621,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
 
         void powerOff() {
             poweredOff = true;
+            powerLoss();
         }
 
         private void faultAfter(String operation) {

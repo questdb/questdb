@@ -138,6 +138,9 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
      * {@code RecoveryCoordinator.recover()} runs.
      */
     protected void simulateRestart(TableToken[] tokens) {
+        // The power loss is now, or earlier when an armed crash fired: the releases below flush (a writer's close-time
+        // save point, a WalWriter's pending batch), and a real power loss runs none of that.
+        crashFf.powerLoss();
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         // Empty the WAL-writer pool before crash(), while the segment files still have their fallocated size: a pooled

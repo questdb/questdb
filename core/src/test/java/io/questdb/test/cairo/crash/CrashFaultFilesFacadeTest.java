@@ -27,6 +27,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
         ff.markDurableBaseline(dir);
         try (Path file = new Path().of(dir).concat("new.d")) {
             writeAndSync(ff, file, (byte) 1);
+            ff.powerLoss();
             ff.crash(dir);
             Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(file.toString())));
         }
@@ -40,6 +41,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
         try (Path file = new Path().of(dir).concat("new.d")) {
             writeAndSync(ff, file, (byte) 2);
             syncDirectory(ff, dir);
+            ff.powerLoss();
             ff.crash(dir);
             assertFileBytes(file, (byte) 2);
         }
@@ -55,6 +57,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             final long dirFd = ff.openRONoCache(directory.$());
             Assert.assertTrue(dirFd > -1);
             ff.fsyncAndClose(dirFd);
+            ff.powerLoss();
             ff.crash(dir);
             assertFileBytes(file, (byte) 8);
         }
@@ -70,6 +73,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             ff.markDurableBaseline(dir);
             ff.remove(file.$());
             Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(file.toString())));
+            ff.powerLoss();
             ff.crash(dir);
             assertFileBytes(file, (byte) 3);
         }
@@ -86,6 +90,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             ff.remove(file.$());
             Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(file.toString())));
             syncDirectory(ff, dir);
+            ff.powerLoss();
             ff.crash(dir);
             Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(file.toString())));
         }
@@ -100,6 +105,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             syncDirectory(ff, dir);
             ff.markDurableBaseline(dir);
             Assert.assertEquals(0, ff.rename(oldFile.$(), newFile.$()));
+            ff.powerLoss();
             ff.crash(dir);
             assertFileBytes(oldFile, (byte) 5);
             Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(newFile.toString())));
@@ -117,6 +123,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             Assert.assertEquals(io.questdb.std.Files.FILES_RENAME_OK, ff.hardLink(source.$(), target.$()));
             Assert.assertArrayEquals(ff.durableContentOf(source.toString()), ff.durableContentOf(target.toString()));
             syncDirectory(ff, dir);
+            ff.powerLoss();
             ff.crash(dir);
             assertFileBytes(source, (byte) 7);
             assertFileBytes(target, (byte) 7);
@@ -133,6 +140,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             syncDirectory(ff, dir);
             ff.markDurableBaseline(dir);
             Assert.assertEquals(0, ff.rename(oldFile.$(), targetFile.$()));
+            ff.powerLoss();
             ff.crash(dir);
             assertFileBytes(oldFile, (byte) 1);
             assertFileBytes(targetFile, (byte) 2);
@@ -149,6 +157,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             ff.markDurableBaseline(dir);
             Assert.assertEquals(0, ff.rename(oldFile.$(), newFile.$()));
             syncDirectory(ff, dir);
+            ff.powerLoss();
             ff.crash(dir);
             Assert.assertFalse(java.nio.file.Files.exists(java.nio.file.Paths.get(oldFile.toString())));
             assertFileBytes(newFile, (byte) 6);
@@ -167,6 +176,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             } finally {
                 ff.close(fd);
             }
+            ff.powerLoss();
             ff.crash(dir);
             assertFileBytes(file, (byte) 7);
         }
@@ -190,6 +200,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
                 Unsafe.free(buf, 32, MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
             }
+            ff.powerLoss();
             ff.crash(dir);
             Assert.assertEquals(16, ff.length(path.$()));
         }
@@ -287,6 +298,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             }
 
             // a power loss brings back the flushed byte
+            ff.powerLoss();
             ff.crash(powerLossDir);
             assertFileBytes(powerLossFile, (byte) 1);
 
@@ -327,6 +339,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
                 Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
             }
+            ff.powerLoss();
             ff.crash(dir);
             Assert.assertEquals("append-opened file must roll back to fsync'd size", 8, ff.length(path.$()));
         }
@@ -348,6 +361,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             }
             ff.markDurableBaseline(dir);   // treat the 64 bytes as durable even though never fsynced
             ff.tornTail(path.$(), 60, 4);  // zero bytes [60,64)
+            ff.powerLoss();
             ff.crash(dir);
             Assert.assertEquals("baseline size preserved", 64, ff.length(path.$()));
             long rd = ff.openRO(path.$());

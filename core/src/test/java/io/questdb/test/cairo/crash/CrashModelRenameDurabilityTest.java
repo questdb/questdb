@@ -93,6 +93,8 @@ public class CrashModelRenameDurabilityTest extends AbstractCairoTest {
                     ff.close(fd);
                 }
 
+                ff.powerLoss();
+
                 ff.crash(root);
 
                 Assert.assertEquals(

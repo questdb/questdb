@@ -26,6 +26,7 @@ package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -61,7 +62,7 @@ import java.util.List;
  * The tests run under per-inode journaling ({@code modelSharedJournal=false}), so the rows are durable only
  * if the epoch's own fs-wide flush made them so.
  */
-public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyTest {
+public class AdaptiveEpochFsWideFlushCrashTest extends AbstractAdaptiveCrashTest {
 
     // Day-1 rows (closed once day 2 is applied), then day-2 rows (open). One epoch covers them all.
     private static final int DAY1_ROWS = 4;
@@ -201,6 +202,21 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
     @Test
     public void testGracefulCloseAllColumnsClosedEpochFsWideNonBatched() throws Exception {
         runGracefulCloseAllColumnsClosedCase(false);
+    }
+
+    /**
+     * The power loss comes before the harness releases the writer, so the close-time save point that release runs
+     * (a filesystem-wide syncfs) must not make the un-epoched tail durable: right after the rollback the on-disk
+     * {@code _txn} still sits at the first-batch save point, and recovery rebuilds the tail from the WAL.
+     */
+    @Test
+    public void testReleaseAfterThePowerLossAddsNoDurabilityCrashAndReopen() throws Exception {
+        runReleaseAfterPowerLossCase(false);
+    }
+
+    @Test
+    public void testReleaseAfterThePowerLossAddsNoDurabilitySimulateRestart() throws Exception {
+        runReleaseAfterPowerLossCase(true);
     }
 
     private void runGracefulCloseAllColumnsClosedCase(boolean batched) throws Exception {
@@ -343,6 +359,49 @@ public class AdaptiveEpochFsWideFlushCrashTest extends AbstractCrashConsistencyT
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
+        }
+    }
+
+    private void runReleaseAfterPowerLossCase(boolean simulateRestart) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // As in the graceful-close case: one first-batch save point, then an un-epoched tail that only the
+        // close-time save point would make durable.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        try {
+            Assert.assertTrue("flush-on-close must be enabled for this test",
+                    engine.getConfiguration().isAdaptiveEpochFlushOnClose());
+            runWithCrashFacade(() -> {
+                crashFf.modelSharedJournal = false;
+                execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");
+                for (int i = 0; i < DAY1_ROWS; i++) {
+                    execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                for (int i = 0; i < DAY2_ROWS; i++) {
+                    execute("insert into t values ('2024-10-01T1" + i + ":00:00.000000Z', " + (DAY1_ROWS + i) + ")");
+                }
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("t");
+                Assert.assertEquals("pre-crash must see all rows", TOTAL, readVs().size());
+
+                final int syncfsBefore = crashFf.syncfsCount();
+                if (simulateRestart) {
+                    simulateRestart(new TableToken[]{tt});
+                } else {
+                    crashAndReopen();
+                }
+                Assert.assertTrue("the release must run the close-time save point", crashFf.syncfsCount() > syncfsBefore);
+                Assert.assertTrue("the close-time save point after the power loss made the tail durable",
+                        readOnDiskTxnSeqTxn(tt, PartitionBy.DAY) < TOTAL);
+
+                new io.questdb.cairo.RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+                Assert.assertEquals("recovery rebuilds every row from the WAL", TOTAL, readVs().size());
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
