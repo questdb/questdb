@@ -1512,65 +1512,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    /**
-     * Folds a fill constant into the aggregate's narrower numeric type with the same rules INSERT
-     * applies (SqlUtil.implicitCastXxx), so FILL(1.5) on a LONG aggregate fills 1 and an
-     * out-of-range literal raises ImplicitCastException. Returns null for pairs INSERT does not
-     * narrow either.
-     */
+    // Folds a narrowing fill literal into the aggregate's type with INSERT's implicit-cast rules;
+    // null when INSERT would not narrow it either.
     private static Function narrowFillConstant(Function fillFunc, int fillType, int targetColType) {
         if (!fillFunc.isConstant()) {
             return null;
         }
         final short toTag = ColumnType.tagOf(targetColType);
-        switch (ColumnType.tagOf(fillType)) {
-            case ColumnType.DOUBLE -> {
-                final double v = fillFunc.getDouble(null);
-                return switch (toTag) {
-                    case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastDoubleAsByte(v));
-                    case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastDoubleAsShort(v));
-                    case ColumnType.INT -> IntConstant.newInstance(SqlUtil.implicitCastDoubleAsInt(v));
-                    case ColumnType.LONG -> LongConstant.newInstance(SqlUtil.implicitCastDoubleAsLong(v));
-                    case ColumnType.FLOAT -> FloatConstant.newInstance(SqlUtil.implicitCastDoubleAsFloat(v));
-                    default -> null;
-                };
-            }
-            case ColumnType.FLOAT -> {
-                final float v = fillFunc.getFloat(null);
-                return switch (toTag) {
-                    case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastFloatAsByte(v));
-                    case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastFloatAsShort(v));
-                    case ColumnType.INT -> IntConstant.newInstance(SqlUtil.implicitCastFloatAsInt(v));
-                    case ColumnType.LONG -> LongConstant.newInstance(SqlUtil.implicitCastFloatAsLong(v));
-                    default -> null;
-                };
-            }
-            case ColumnType.LONG -> {
-                final long v = fillFunc.getLong(null);
-                return switch (toTag) {
-                    case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastLongAsByte(v));
-                    case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastLongAsShort(v));
-                    case ColumnType.INT -> IntConstant.newInstance(SqlUtil.implicitCastLongAsInt(v));
-                    default -> null;
-                };
-            }
-            case ColumnType.INT -> {
-                final int v = fillFunc.getInt(null);
-                return switch (toTag) {
-                    case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastIntAsByte(v));
-                    case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastIntAsShort(v));
-                    default -> null;
-                };
-            }
-            case ColumnType.SHORT -> {
-                return toTag == ColumnType.BYTE
-                        ? ByteConstant.newInstance(SqlUtil.implicitCastShortAsByte(fillFunc.getShort(null)))
-                        : null;
-            }
-            default -> {
-                return null;
-            }
+        if (fillType == ColumnType.DOUBLE || fillType == ColumnType.FLOAT) {
+            final double v = fillFunc.getDouble(null);
+            return switch (toTag) {
+                case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastDoubleAsByte(v));
+                case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastDoubleAsShort(v));
+                case ColumnType.INT -> IntConstant.newInstance(SqlUtil.implicitCastDoubleAsInt(v));
+                case ColumnType.LONG -> LongConstant.newInstance(SqlUtil.implicitCastDoubleAsLong(v));
+                case ColumnType.FLOAT -> FloatConstant.newInstance(SqlUtil.implicitCastDoubleAsFloat(v));
+                default -> null;
+            };
         }
+        final long v = fillFunc.getLong(null);
+        return switch (toTag) {
+            case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastLongAsByte(v));
+            case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastLongAsShort(v));
+            case ColumnType.INT -> IntConstant.newInstance(SqlUtil.implicitCastLongAsInt(v));
+            default -> null;
+        };
     }
 
     private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
@@ -4700,9 +4666,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     fillValues.setQuick(fillIdx, cast);
                                     fillFunc = cast;
                                 } else if (!ColumnType.isToSameOrWider(fillType, targetColType)) {
-                                    // Narrowing with no cast factory. FillRecord would read the raw
-                                    // constant through a getter the base class does not implement
-                                    // (DoubleFunction.getLong), so fold it to the target type here.
                                     final Function narrowed;
                                     try {
                                         narrowed = narrowFillConstant(fillFunc, fillType, targetColType);
@@ -4715,8 +4678,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 .put(" cannot fill column of type ")
                                                 .put(ColumnType.nameOf(targetColType));
                                     }
-                                    // Null-then-free: if close() throws, the outer catch must not
-                                    // double-close the same instance.
                                     fillValues.setQuick(fillIdx, null);
                                     Misc.free(fillFunc);
                                     fillValues.setQuick(fillIdx, narrowed);
