@@ -2043,6 +2043,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(expected);
     }
+
     @Test
     public void testFloatJustAboveIntRangeIsRefused() throws Exception {
         assertMemoryLeak(() -> {
@@ -2053,6 +2054,7 @@ public class InsertCastTest extends AbstractCairoTest {
             assertException("INSERT INTO i SELECT v FROM f", 0, "inconvertible value");
         });
     }
+
     @Test
     public void testFloatJustAboveLongRangeIsRefused() throws Exception {
         assertMemoryLeak(() -> {
@@ -2063,6 +2065,7 @@ public class InsertCastTest extends AbstractCairoTest {
             assertException("INSERT INTO l SELECT v FROM f", 0, "inconvertible value");
         });
     }
+
     @Test
     public void testDoubleJustAboveLongRangeIsRefused() throws Exception {
         assertMemoryLeak(() -> {
@@ -2073,6 +2076,7 @@ public class InsertCastTest extends AbstractCairoTest {
             assertException("INSERT INTO l SELECT v FROM d", 0, "inconvertible value");
         });
     }
+
     @Test
     public void testFloatAndDoubleWithinRangeAreAccepted() throws Exception {
         assertMemoryLeak(() -> {
@@ -2088,6 +2092,7 @@ public class InsertCastTest extends AbstractCairoTest {
             assertQuery("v\n100\n-100\n", "SELECT v FROM l", null, true);
         });
     }
+
     @Test
     public void testFloatAndDoubleMinBoundaryRefused() throws Exception {
         assertMemoryLeak(() -> {
