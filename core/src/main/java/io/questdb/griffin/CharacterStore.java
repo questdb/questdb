@@ -34,6 +34,7 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     private static final Log LOG = LogFactory.getLog(CharacterStore.class);
@@ -55,6 +56,11 @@ public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
         csPool.clear();
         size = 0;
         next = null;
+    }
+
+    @TestOnly
+    public int getPoolSize() {
+        return csPool.getSize();
     }
 
     @Override

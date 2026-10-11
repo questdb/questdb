@@ -68,14 +68,22 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
             countFunc = args.getQuick(0);
 
             if (argCount == 1 && ColumnType.isConvertibleFrom(countFunc.getType(), ColumnType.LONG)) {
-                try {
-                    return new CursorFunction(
-                            new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
-                    );
-                } catch (UnsupportedOperationException ex) {
-                    throw SqlException.position(position).put("argument type ")
-                            .put(ColumnType.nameOf(countFunc.getType())).put(" is not supported");
+                if (countFunc.isConstant()) {
+                    try {
+                        return new CursorFunction(
+                                new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
+                        );
+                    } catch (UnsupportedOperationException ex) {
+                        throw unsupportedArgumentType(position, countFunc);
+                    }
                 }
+                // A runtime constant (bind variable) is read at cursor open. DOUBLE and FLOAT pass
+                // isConvertibleFrom() as narrowing casts, but their getLong() throws, so reject them now.
+                final short countTypeTag = ColumnType.tagOf(countFunc.getType());
+                if (countTypeTag == ColumnType.DOUBLE || countTypeTag == ColumnType.FLOAT) {
+                    throw unsupportedArgumentType(position, countFunc);
+                }
+                return new CursorFunction(new LongSequenceCursorFactory(METADATA, countFunc));
             }
 
             if (
@@ -84,38 +92,68 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
                             && ColumnType.isSameOrBuiltInWideningCast((seedLoFunc = args.getQuick(1)).getType(), ColumnType.LONG)
                             && ColumnType.isSameOrBuiltInWideningCast((seedHiFunc = args.getQuick(2)).getType(), ColumnType.LONG)
             ) {
+                if (countFunc.isConstant() && seedLoFunc.isConstant() && seedHiFunc.isConstant()) {
+                    return new CursorFunction(
+                            new SeedingLongSequenceCursorFactory(
+                                    METADATA,
+                                    countFunc.getLong(null),
+                                    seedLoFunc.getLong(null),
+                                    seedHiFunc.getLong(null)
+                            )
+                    );
+                }
                 return new CursorFunction(
-                        new SeedingLongSequenceCursorFactory(
-                                METADATA,
-                                countFunc.getLong(null),
-                                seedLoFunc.getLong(null),
-                                seedHiFunc.getLong(null)
-                        )
+                        new SeedingLongSequenceCursorFactory(METADATA, countFunc, seedLoFunc, seedHiFunc)
                 );
             }
         }
         throw SqlException.position(position).put("invalid arguments");
     }
 
+    // Untyped bind variables become LONG rather than the default STRING, which the seeded
+    // arm's widening check would reject.
+    @Override
+    public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) {
+        return ColumnType.LONG;
+    }
+
+    private static SqlException unsupportedArgumentType(int position, Function countFunc) {
+        return SqlException.position(position).put("argument type ")
+                .put(ColumnType.nameOf(countFunc.getType())).put(" is not supported");
+    }
+
     private static class LongSequenceCursorFactory extends AbstractRecordCursorFactory {
-        private final LongSequenceRecordCursor cursor;
+        // null when the count is a compile-time constant; otherwise read at every cursor open
+        private final Function countFunc;
+        private final LongSequenceRecordCursor cursor = new LongSequenceRecordCursor();
 
         public LongSequenceCursorFactory(RecordMetadata metadata, long recordCount) {
             super(metadata);
-            this.cursor = new LongSequenceRecordCursor(Math.max(0L, recordCount));
+            this.countFunc = null;
+            cursor.of(recordCount);
         }
 
-        // The produced relation is always 1..N; deterministic by construction.
-        @Override
-        public boolean isNonDeterministic() {
-            return false;
+        public LongSequenceCursorFactory(RecordMetadata metadata, Function countFunc) {
+            super(metadata);
+            this.countFunc = countFunc;
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            if (countFunc != null) {
+                countFunc.init(null, executionContext);
+                cursor.of(countFunc.getLong(null));
+            }
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
+        }
+
+        // The produced relation is always 1..N; with a constant N it is deterministic by
+        // construction, while a bind variable N can change between opens.
+        @Override
+        public boolean isNonDeterministic() {
+            return countFunc != null;
         }
 
         @Override
@@ -126,7 +164,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.type("long_sequence");
-            sink.meta("count").val(cursor.recordCount);
+            if (countFunc != null) {
+                sink.meta("count").val(countFunc);
+            } else {
+                sink.meta("count").val(cursor.recordCount);
+            }
         }
     }
 
@@ -160,11 +202,10 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         private final LongSequenceRecord recordA = new LongSequenceRecord();
         private final LongSequenceRecord recordB = new LongSequenceRecord();
-        private final long recordCount;
         private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+        private long recordCount;
 
-        public LongSequenceRecordCursor(long recordCount) {
-            this.recordCount = recordCount;
+        public LongSequenceRecordCursor() {
             this.recordA.of(0);
         }
 
@@ -211,34 +252,63 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         public void toTop() {
             recordA.of(0);
         }
+
+        // Clamps a negative or NULL (Long.MIN_VALUE) count to an empty sequence.
+        void of(long recordCount) {
+            this.recordCount = Math.max(0L, recordCount);
+        }
     }
 
     private static class SeedingLongSequenceCursorFactory extends AbstractRecordCursorFactory {
-        private final LongSequenceRecordCursor cursor;
-        private final Rnd rnd;
-        private final long seedHi;
-        private final long seedLo;
+        // null when every argument is a compile-time constant; otherwise read at every cursor open
+        private final Function countFunc;
+        private final LongSequenceRecordCursor cursor = new LongSequenceRecordCursor();
+        private final Rnd rnd = new Rnd();
+        private final Function seedHiFunc;
+        private final Function seedLoFunc;
+        private long seedHi;
+        private long seedLo;
 
         public SeedingLongSequenceCursorFactory(RecordMetadata metadata, long recordCount, long seedLo, long seedHi) {
             super(metadata);
-            this.cursor = new LongSequenceRecordCursor(Math.max(0L, recordCount));
-            this.rnd = new Rnd(this.seedLo = seedLo, this.seedHi = seedHi);
+            this.countFunc = null;
+            this.seedLoFunc = null;
+            this.seedHiFunc = null;
+            cursor.of(recordCount);
+            this.seedLo = seedLo;
+            this.seedHi = seedHi;
         }
 
-        // The produced relation is always 1..N and the rnd seeds are fixed constructor arguments
-        // reset on every open, so even downstream seeded rnd_* draws are reproducible.
-        @Override
-        public boolean isNonDeterministic() {
-            return false;
+        public SeedingLongSequenceCursorFactory(RecordMetadata metadata, Function countFunc, Function seedLoFunc, Function seedHiFunc) {
+            super(metadata);
+            this.countFunc = countFunc;
+            this.seedLoFunc = seedLoFunc;
+            this.seedHiFunc = seedHiFunc;
         }
 
         @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            rnd.reset(this.seedLo, this.seedHi);
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            if (countFunc != null) {
+                countFunc.init(null, executionContext);
+                seedLoFunc.init(null, executionContext);
+                seedHiFunc.init(null, executionContext);
+                cursor.of(countFunc.getLong(null));
+                seedLo = seedLoFunc.getLong(null);
+                seedHi = seedHiFunc.getLong(null);
+            }
+            rnd.reset(seedLo, seedHi);
             executionContext.setRandom(rnd);
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
+        }
+
+        // The produced relation is always 1..N and the rnd seeds reset on every open, so with
+        // constant arguments even downstream seeded rnd_* draws are reproducible. A bind variable
+        // argument can change between opens.
+        @Override
+        public boolean isNonDeterministic() {
+            return countFunc != null;
         }
 
         @Override
@@ -249,9 +319,15 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.type("long_sequence");
-            sink.meta("count").val(cursor.recordCount);
-            sink.meta("seedLo").val(seedLo);
-            sink.meta("seedHi").val(seedHi);
+            if (countFunc != null) {
+                sink.meta("count").val(countFunc);
+                sink.meta("seedLo").val(seedLoFunc);
+                sink.meta("seedHi").val(seedHiFunc);
+            } else {
+                sink.meta("count").val(cursor.recordCount);
+                sink.meta("seedLo").val(seedLo);
+                sink.meta("seedHi").val(seedHi);
+            }
         }
     }
 

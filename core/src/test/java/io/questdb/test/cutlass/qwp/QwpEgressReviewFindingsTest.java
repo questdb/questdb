@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
@@ -221,7 +222,7 @@ public class QwpEgressReviewFindingsTest {
                 p = QwpVarint.encode(p, Long.MIN_VALUE);
                 int total = (int) (p - buf);
 
-                QwpEgressRequestDecoder decoder = new QwpEgressRequestDecoder();
+                QwpEgressRequestDecoder decoder = new QwpEgressRequestDecoder(new DefaultCairoConfiguration("."));
                 try {
                     long credit = decoder.decodeCredit(buf, total);
                     Assert.fail("decodeCredit accepted a negative budget (" + credit

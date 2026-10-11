@@ -274,6 +274,9 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
                         0,
                         0
                 );
+            } catch (Throwable th) {
+                LOG.critical().$("could not import [importId=").$hexPadded(task.getCopyID()).$(", error=").$(th).I$();
+                updateStatus(CopyImportTask.NO_PHASE, CopyImportTask.STATUS_FAILED, th.getMessage(), 0, 0, 0);
             } finally {
                 requestSubSeq.done(cursor);
                 copyImportContext.clear();

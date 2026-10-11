@@ -158,6 +158,36 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAtTimeZone() throws SqlException {
+        x("ts 'UTC' to_timezone", "ts at time zone 'UTC'");
+        x("ts tz to_timezone", "ts at time zone tz");
+        x("t.ts 'EST' to_timezone", "t.ts at time zone 'EST'");
+        x("'x' timestamp :: 'EST' to_timezone", "'x'::timestamp at time zone 'EST'");
+        x("1 ts 'UTC' to_timezone +", "1 + ts at time zone 'UTC'");
+        x("ts z to_timezone 1 +", "ts at time zone z + 1");
+        x("ts 'a' to_timezone 'b' to_timezone", "ts at time zone 'a' at time zone 'b'");
+        x("now 'a' to_timezone 'b' to_timezone", "now() at time zone 'a' at time zone 'b'");
+        x("ts 1 [] 'EST' to_timezone", "ts[1] at time zone 'EST'");
+        x("ts 2 'EST' to_timezone *", "ts * 2 at time zone 'EST'");
+        x("ts z upper to_timezone", "ts at time zone upper(z)");
+        x("ts 'EST' to_timezone string cast", "cast(ts at time zone 'EST' as string)");
+    }
+
+    @Test
+    public void testAtTimeZoneDoubleColonBindsTighter() throws SqlException {
+        // PostgreSQL rule: '::' binds tighter than AT TIME ZONE, so a cast written
+        // directly after the zone applies to the zone, not to the converted timestamp
+        x("ts z varchar :: to_timezone", "ts at time zone z::varchar");
+        x("now 'EST' string :: to_timezone", "now() at time zone 'EST'::string");
+        x("now 'EST' to_timezone string ::", "(now() at time zone 'EST')::string");
+    }
+
+    @Test
+    public void testAtTimeZoneMissingZone() {
+        assertFail("(ts at time zone)", 4, "too few arguments for 'to_timezone'");
+    }
+
+    @Test
     public void testBetweenConstantAndSelect() {
         assertFail(
                 "x between select and 10",
@@ -623,6 +653,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testCastGeoHashCastStrWithCharsPrecision() throws SqlException {
         x("'sp052w92' geohash6c cast", "cast('sp052w92' as geohash(6c))");
+    }
+
+    @Test
+    public void testCastGeoHashColonCastFollowedByAlias() throws SqlException {
+        x("'u33d' geohash4c ::", "'u33d'::geohash(4c) x");
+        x("'u33d' geohash20b ::", "'u33d'::geohash(20b) x");
+    }
+
+    @Test
+    public void testCastGeoHashColonCastFollowedByString() {
+        assertFail("'u33d'::geohash(1c) 'x'", 20, "dangling expression");
     }
 
     @Test
@@ -1364,6 +1405,43 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(". is great", 2, "IS [NOT] not allowed here");
         assertFail("column is $1", 7, "IS must be followed by NULL, TRUE or FALSE");
         assertFail("column is", 7, "IS must be followed by [NOT] NULL");
+    }
+
+    @Test
+    public void testIsNullAfterArraySubscriptAndParameterizedCast() throws SqlException {
+        x("arr 1 [] NULL =", "arr[1] IS NULL");
+        x("arr 1 2 : [] NULL =", "arr[1:2] IS NULL");
+        x("a decimal_6_2 :: NULL =", "a::decimal(6,2) IS NULL");
+        x("a geohash3c :: NULL !=", "a::geohash(3c) IS NOT NULL");
+        x("a double[] :: NULL =", "a::double[] IS NULL");
+        x("arr 1 [] TRUE =", "arr[1] IS TRUE");
+        assertFail("a + is null", 4, "IS [NOT] not allowed here");
+        assertFail("f(a, is null)", 5, "IS [NOT] not allowed here");
+        assertFail("arr[ is null]", 5, "IS [NOT] not allowed here");
+    }
+
+    @Test
+    public void testIsNullAfterArraySubscriptAndParameterizedCastQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (arr DOUBLE[], d DECIMAL(5,2), g GEOHASH(4c))");
+            execute("INSERT INTO ta VALUES (ARRAY[1.0], 1.5::DECIMAL(5,2), #u33d), (null, null, null)");
+            assertQuery("SELECT count() FROM ta WHERE arr[1] IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count() FROM ta WHERE arr[1] IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count() FROM ta WHERE d::DECIMAL(6,2) IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count() FROM ta WHERE g::GEOHASH(3c) IS NOT NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+        });
     }
 
     @Test

@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.PlanDependencies;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -49,6 +51,7 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
     // 2. Upper 32 bits: PostgresSQL OIDs in BigEndian. This combines types a client sent us in a PARSE message with the
     //                   types SQL Compiled derived from the SQL. Type from the PARSE message have a priority.
     private final LongList outPgParameterTypes = new LongList();
+    private final PlanDependencies planDependencies = new PlanDependencies();
     // sqlTag is the value we will be returning back to the client
     private final String sqlTag;
     // sqlType is the value determined by the SQL Compiler
@@ -60,13 +63,15 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
             short sqlType,
             String sqlTag,
             @Transient IntList inPgParameterTypeOIDs,
-            @Transient LongList outPgParameterTypes
+            @Transient LongList outPgParameterTypes,
+            @Transient PlanDependencies planDependencies
     ) {
         this.factory = factory;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
         this.inPgParameterTypeOIDs.addAll(inPgParameterTypeOIDs);
         this.outPgParameterTypes.addAll(outPgParameterTypes);
+        this.planDependencies.copyFrom(planDependencies);
     }
 
     @Override
@@ -93,5 +98,9 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
 
     public short getSqlType() {
         return sqlType;
+    }
+
+    public boolean isPlanCurrent(CairoEngine engine) {
+        return planDependencies.isCurrent(engine);
     }
 }

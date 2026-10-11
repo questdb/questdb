@@ -27,6 +27,8 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class BooleanAdapter extends AbstractTypeAdapter {
@@ -47,7 +49,8 @@ public final class BooleanAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putBool(column, SqlKeywords.isTrueKeyword(value));
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws NumericException {
+        // BOOLEAN has no null value, so the 'null' literal imports as false
+        row.putBool(column, !SqlKeywords.isNullKeyword(value) && SqlUtil.parseBoolean(value));
     }
 }

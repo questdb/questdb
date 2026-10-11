@@ -121,6 +121,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public static final int SYNC_DESC_NONE = 0;
     public static final int SYNC_DESC_PARAMETER_DESCRIPTION = 2;
     public static final int SYNC_DESC_ROW_DESCRIPTION = 1;
+    // the ParameterDescription of a Describe Statement is out, its RowDescription is next
+    public static final int SYNC_DESC_STATEMENT_ROW_DESCRIPTION = 3;
     // message type + message length + column count
     private static final int DATA_ROW_HEADER_SIZE = Byte.BYTES + Integer.BYTES + Short.BYTES;
     private static final int ERROR_TAIL_MAX_SIZE = 23;
@@ -176,6 +178,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //    and we have to respect this. Thus, if a PARSE message contains a type VARCHAR then
     //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both native and wire types.
     private final LongList outParameterTypeDescriptionTypes;
+    // holds the SQL text of an entry that outlives the connection's SQL text store
+    private final StringSink ownedSqlText = new StringSink();
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
@@ -184,17 +188,41 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
     boolean isCopy;
+    // PGConnectionContext.enqueue() and dequeue() keep this in step with the pipeline queue
+    boolean isQueued;
+    // index of the batch whose Bind stored the parameter values, until a sync of this entry
+    // converts them; a later batch that only closes or describes the entry does not convert them
+    private long bindBatchIndex = -1;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
+    // set on an entry that stands for a repeated Execute of this portal: at Sync the portal
+    // sends the rows of that Execute from its own cursor
+    private PGPipelineEntry continuedPortal;
     private RecordCursor cursor;
     private boolean empty;
     private boolean error = false;
     private int errorMessagePosition;
+    // true when this COMMIT ran in a failed transaction: it rolled back and answers ROLLBACK
+    private boolean isCommitOfFailedTransaction;
+    // true while a continued Execute runs after an earlier Execute of the portal sent its last row
+    private boolean isContinuedPastEnd;
+    // true for DEALLOCATE ALL, which has no preparedStatementNameToDeallocate
+    private boolean isDeallocateAll;
+    // true when the message of this entry broke the wire protocol (SQLSTATE 08P01)
+    private boolean isProtocolViolationError;
+    // true while tai belongs to the statement this copy was made from: the copy must not free,
+    // pool or cache it
+    private boolean isTaiBorrowed;
+    // true when this execution failed because the transaction had already failed (SQLSTATE 25P02)
+    private boolean isTransactionAbortedError;
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
+    // set when a sync of this portal failed while its continuations were still queued, so that
+    // the sync after the last continuation still treats the portal as failed
+    private boolean hasDeferredSyncError;
     private int msgBindParameterValueCount;
-    private short msgBindSelectFormatCodeCount = 0;
+    private int msgBindSelectFormatCodeCount = 0;
     private Utf8String namedPortal;
     private Utf8String namedStatement;
     private Operation operation = null;
@@ -206,6 +234,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private long parameterValueArenaLo;
     private long parameterValueArenaPtr = 0;
     private PGPipelineEntry parentPreparedStatementPipelineEntry;
+    // the queued entries whose continuedPortal is this entry
+    private int pendingContinuationCount;
     private boolean portal = false;
     // the name of the prepared statement as used by "deallocate" SQL
     // not to be confused with prepared statements that come on the
@@ -289,7 +319,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
             tasCache.put(sqlText, tas);
             tas = null;
-        } else if (tai != null) {
+        } else if (tai != null && !isTaiBorrowed) {
             taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             tai = null;
@@ -321,17 +351,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // this makes it easier to check if a particular field has been cleared or not.
         // One exception to this rule are fields which are guarded by !isCopy condition
 
+        tai = isTaiBorrowed ? null : Misc.free(tai);
+        isTaiBorrowed = false;
         if (!isCopy) {
-            tai = Misc.free(tai);
             operation = Misc.free(operation);
             if (compiledQuery != null) {
                 Misc.free(compiledQuery.getUpdateOperation());
             }
         } else {
             // if we are a copy, we do not own operations -> we cannot close them
-            // so we just null them out and let the original entry close them
-            tai = null;
+            // so we just null them out and let the original entry close them;
+            // the pooled entry must not keep the original's compiled query either
             operation = null;
+            compiledQuery = null;
         }
 
         errorMessageSink.clear();
@@ -343,12 +375,21 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         pgResultSetColumnTypes.clear();
         namedPortals.clear();
         isCopy = false;
+        isQueued = false;
+        bindBatchIndex = -1;
         cacheHit = false;
+        continuedPortal = null;
         cursor = Misc.free(cursor);
         error = false;
         empty = false;
         errorMessagePosition = 0;
         factory = Misc.free(factory);
+        hasDeferredSyncError = false;
+        isCommitOfFailedTransaction = false;
+        isContinuedPastEnd = false;
+        isDeallocateAll = false;
+        isProtocolViolationError = false;
+        isTransactionAbortedError = false;
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
         outResendResumePoint = -1;
@@ -360,6 +401,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // no need to set lo and hi to 0, as they are not used after the pointer is freed
         }
         parentPreparedStatementPipelineEntry = null;
+        pendingContinuationCount = 0;
         portal = false;
         namedPortal = null;
         namedStatement = null;
@@ -480,6 +522,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    // Compiles the SQL text of a SELECT whose description is unknown, so that a Describe
+    // reports its current columns or the compile error. A failed compile leaves no factory
+    // on the entry, as a failed Execute does.
+    public void compileDescription(
+            SqlExecutionContext sqlExecutionContext,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws PGMessageProcessingException {
+        try {
+            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, false);
+        } catch (Throwable e) {
+            tas = Misc.free(tas);
+            factory = null;
+            throw e;
+        }
+    }
+
     public void compileNewSQL(
             CharSequence sqlText,
             CairoEngine engine,
@@ -583,6 +641,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return sqlType;
     }
 
+    // A SELECT without a factory and without result columns has no RowDescription until
+    // a Describe or its next Execute compiles the factory.
+    public boolean isDescriptionKnown() {
+        return factory != null || pgResultSetColumnTypes.size() > 0 || !hasResultSet();
+    }
+
     public boolean isError() {
         return error;
     }
@@ -607,48 +671,38 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return stateExec;
     }
 
+    // lo is the start of the parameter format codes, which processBind() has bounds-checked
     public void msgBindCopyParameterFormatCodes(
             long lo,
-            long msgLimit,
-            short parameterFormatCodeCount,
-            short parameterValueCount
+            int parameterFormatCodeCount,
+            int parameterValueCount
     ) throws PGMessageProcessingException {
-        this.msgBindParameterValueCount = parameterValueCount;
-
-        // Format codes pertain the parameter values sent in the same "bind" message.
-        // When parameterFormatCodeCount is 1, it means all values are sent either all text or all binary. Any other
-        // value for the parameterFormatCodeCount assumes that format is defined per value (doh). When
-        // we have more formats than values - we ignore extra formats quietly. On other hand,
-        // when we receive fewer formats than values - we assume that remaining values are
-        // send by the client as string.
-
-        // this would set all codes to 0 (in the bitset)
+        if (parameterFormatCodeCount > 1 && parameterFormatCodeCount != parameterValueCount) {
+            throw kaput().put("bind message has ").put(parameterFormatCodeCount)
+                    .put(" parameter formats but ").put(parameterValueCount).put(" parameters");
+        }
+        final int parameterCount = getBindParameterCount();
+        if (parameterValueCount < parameterCount) {
+            throw kaput().put("bind message supplies ").put(parameterValueCount)
+                    .put(" parameters, but prepared statement requires ").put(parameterCount);
+        }
+        // 0 = text, 1 = binary; a single code applies to every value
         this.msgBindParameterFormatCodes.clear();
-        if (parameterFormatCodeCount > 0) {
-            if (parameterFormatCodeCount == 1) {
-                // all are the same
-                short code = getShort(lo, msgLimit, "could not read parameter formats");
-                // all binary? when string (0) - leave the bitset unset
-                if (code == 1) {
-                    // set all bits, indicating binary
-                    for (int i = 0; i < parameterValueCount; i++) {
-                        this.msgBindParameterFormatCodes.set(i);
-                    }
-                }
-            } else {
-                // Process all formats provided by the client. Should the client provide fewer
-                // formats than the value count, we will assume the rest is string.
-                if (lo + Short.BYTES * parameterFormatCodeCount <= msgLimit) {
-                    for (int i = 0; i < parameterFormatCodeCount; i++) {
-                        if (getShortUnsafe(lo + i * Short.BYTES) == 1) {
-                            this.msgBindParameterFormatCodes.set(i);
-                        }
+        for (int i = 0; i < parameterFormatCodeCount; i++) {
+            final short code = getShortUnsafe(lo + (long) i * Short.BYTES);
+            if (code == 1) {
+                if (parameterFormatCodeCount == 1) {
+                    for (int j = 0; j < parameterValueCount; j++) {
+                        this.msgBindParameterFormatCodes.set(j);
                     }
                 } else {
-                    throw kaput().put("invalid format code count [value=").put(parameterFormatCodeCount).put(']');
+                    this.msgBindParameterFormatCodes.set(i);
                 }
+            } else if (code != 0) {
+                throw kaput().put("unsupported format code: ").put(code);
             }
         }
+        this.msgBindParameterValueCount = parameterValueCount;
     }
 
     public long msgBindCopyParameterValuesArea(long lo, long msgLimit) throws PGMessageProcessingException {
@@ -667,34 +721,30 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 parameterValueArenaLo = parameterValueArenaPtr;
                 parameterValueArenaHi = parameterValueArenaPtr + sz;
             }
-            long len = Math.min(valueAreaSize, msgLimit);
-            Vect.memcpy(parameterValueArenaLo, lo, len);
-            if (len < valueAreaSize) {
-                parameterValueArenaLo += len;
-                // todo: create "receive" state machine in the context, so that client messages can be split
-                //       across multiple recv buffers
-                throw PGMessageProcessingException.INSTANCE;
-            } else {
-                parameterValueArenaLo = parameterValueArenaPtr;
-            }
+            Vect.memcpy(parameterValueArenaPtr, lo, valueAreaSize);
+            parameterValueArenaLo = parameterValueArenaPtr;
         }
         return lo + valueAreaSize;
     }
 
-    public void msgBindCopySelectFormatCodes(long lo, short selectFormatCodeCount) {
+    // lo is the start of the result format codes, which processBind() has bounds-checked
+    public void msgBindCopySelectFormatCodes(long lo, int selectFormatCodeCount) throws PGMessageProcessingException {
         // Select format codes are switches between binary and text representation of the
         // result set. They are only applicable to the result set and SQLs that compile into a factory.
-        msgBindSelectFormatCodes.clear();
-        msgBindSelectFormatCodeCount = selectFormatCodeCount;
         // Note: use hasResultSet() instead of "factory != null" because when a prepared statement
         // is reused via copyIfExecuted(), the new entry has factory=null (copyOf doesn't copy it),
         // but sqlType is copied correctly. The factory will be set later during execution.
-        if (hasResultSet() && selectFormatCodeCount > 0) {
-            for (int i = 0; i < selectFormatCodeCount; i++) {
-                if (getShortUnsafe(lo) == 1) {
+        final boolean hasResultSet = hasResultSet();
+        msgBindSelectFormatCodes.clear();
+        msgBindSelectFormatCodeCount = selectFormatCodeCount;
+        for (int i = 0; i < selectFormatCodeCount; i++) {
+            final short code = getShortUnsafe(lo + (long) i * Short.BYTES);
+            if (code == 1) {
+                if (hasResultSet) {
                     msgBindSelectFormatCodes.set(i);
                 }
-                lo += Short.BYTES;
+            } else if (code != 0) {
+                throw kaput().put("unsupported format code: ").put(code);
             }
         }
     }
@@ -710,11 +760,20 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             @Transient DirectUtf8String directUtf8String,
             @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
             @Transient SCSequence tempSequence,
-            Consumer<? super Utf8Sequence> namedStatementDeallocator
+            Consumer<? super Utf8Sequence> namedStatementDeallocator,
+            Runnable allNamedStatementsDeallocator
     ) throws PGMessageProcessingException {
         // do not execute anything, that has been parse-executed
         if (stateParseExecuted) {
             stateParseExecuted = false;
+            return transactionState;
+        }
+        if (transactionState == ERROR_TRANSACTION && !empty
+                && sqlType != CompiledQuery.COMMIT && sqlType != CompiledQuery.ROLLBACK) {
+            // PostgreSQL rejects every statement of a failed transaction until COMMIT or ROLLBACK
+            isTransactionAbortedError = true;
+            getErrorMessageSink().put("current transaction is aborted, commands ignored until end of transaction block");
+            bindVariableCharacterStore.clear();
             return transactionState;
         }
         sqlExecutionContext.containsSecret(sqlTextHasSecret);
@@ -744,24 +803,39 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     break;
                 case CompiledQuery.INSERT:
                 case CompiledQuery.INSERT_AS_SELECT:
-                    msgExecuteInsert(sqlExecutionContext, transactionState, pendingWriters, writerSource, taiPool);
+                    msgExecuteInsert(sqlExecutionContext, pendingWriters, writerSource, taiPool);
                     break;
                 case CompiledQuery.UPDATE:
-                    msgExecuteUpdate(sqlExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
+                    msgExecuteUpdate(sqlExecutionContext, pendingWriters, tempSequence, taiPool);
                     break;
                 case CompiledQuery.ALTER:
-                    msgExecuteDDL(sqlExecutionContext, transactionState, tempSequence, taiPool);
+                    msgExecuteDDL(sqlExecutionContext, tempSequence, taiPool);
                     break;
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
                     // network protocol. Reply format out of 'execute' message is
                     // different from that of 'close' message.
-                    namedStatementDeallocator.accept(preparedStatementNameToDeallocate);
+                    if (isDeallocateAll) {
+                        allNamedStatementsDeallocator.run();
+                    } else {
+                        namedStatementDeallocator.accept(preparedStatementNameToDeallocate);
+                    }
                     break;
                 case CompiledQuery.BEGIN:
                     return IN_TRANSACTION;
                 case CompiledQuery.COMMIT:
-                    commit(pendingWriters);
+                    if (transactionState == ERROR_TRANSACTION) {
+                        // PostgreSQL ends a failed transaction at COMMIT with a rollback
+                        rollback(pendingWriters);
+                        isCommitOfFailedTransaction = true;
+                        return IMPLICIT_TRANSACTION;
+                    }
+                    try {
+                        commit(pendingWriters);
+                    } catch (PGMessageProcessingException ignore) {
+                        // commit() rolled back the writers and recorded the error on this entry;
+                        // a failed COMMIT ends the transaction, as in PostgreSQL
+                    }
                     return IMPLICIT_TRANSACTION;
                 case CompiledQuery.ROLLBACK:
                     rollback(pendingWriters);
@@ -827,7 +901,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // we want to see a full stack trace in server logs and log it as critical
                 LOG.critical().$("error in pgwire execute, ex=").$(th).$();
             } else {
-                LOG.error().$(getErrorMessageSink()).$();
+                LOG.error().$safe(getErrorMessageSink()).$();
             }
         } finally {
             // after execute is complete, bind variable values have been used and no longer needed in the cache
@@ -859,58 +933,42 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      * @param pendingWriters      per connection write cache to be used by "insert" SQL. This is also part of the
      *                            optional "execute"
      * @param utf8Sink            the response buffer
+     * @return true when this sync sent an ErrorResponse, whether the error came before the sync or during it
      * @throws NoSpaceLeftInResponseBufferException exception is thrown when sync runs out of space in the
      *                                              response buffer. When this happens the caller has to flush the buffer
      *                                              and call sync again, unless the flush was ineffective (had 0 bytes to flush).
      *                                              The latter means that the response buffer is too small for an atomic write
      *                                              and the protocol has to error out.
      */
-    public void msgSync(
+    public boolean msgSync(
             SqlExecutionContext sqlExecutionContext,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             PGResponseSink utf8Sink
     ) throws NoSpaceLeftInResponseBufferException, PeerDisconnectedException {
+        // Resets done by this entry, such as the one in outError(), must never rewind
+        // into the previous entry's finished output, e.g. its CommandComplete.
+        utf8Sink.bookmark();
         if (isError()) {
             completePendingMessageOnError(sqlExecutionContext, utf8Sink);
+            // The messages that succeeded before the failed one still get their replies. This
+            // runs before closeSuspendedCursor(), which forgets how much of a RowDescription
+            // the peer already received.
+            outRepliesBeforeExecute(utf8Sink);
             closeSuspendedCursor();
+            utf8Sink.bookmark();
             outError(utf8Sink, pendingWriters);
         } else {
             switch (stateSync) {
                 case SYNC_PARSE:
-                    if (stateParse) {
-                        outParseComplete(utf8Sink);
-                    }
-                    stateSync = SYNC_BIND;
                 case SYNC_BIND:
-                    if (stateBind) {
-                        outBindComplete(utf8Sink);
-                    }
-                    stateSync = SYNC_DESCRIBE;
                 case SYNC_DESCRIBE:
-                    switch (stateDesc) {
-                        case SYNC_DESC_PARAMETER_DESCRIPTION:
-                            // named prepared statement
-                            outParameterTypeDescription(utf8Sink);
-                            // row description can be sent in parts
-                            // do not resend parameter description
-                            stateDesc = SYNC_DESC_ROW_DESCRIPTION;
-                            // fall through
-                        case SYNC_DESC_ROW_DESCRIPTION:
-                            // portal
-                            if (factory != null) {
-                                outRowDescription(utf8Sink);
-                            } else {
-                                outNoData(utf8Sink);
-                            }
-                            break;
-                    }
-                    stateSync = SYNC_COMPUTE_CURSOR_SIZE;
+                    outRepliesBeforeExecute(utf8Sink);
                 case SYNC_COMPUTE_CURSOR_SIZE:
                 case SYNC_DATA:
                     // state goes deeper
-                    if (empty && !isPreparedStatement() && !portal) {
-                        // strangely, Java driver does not need the server to produce
-                        // empty query if his query was "prepared"
+                    if (empty && stateExec) {
+                        // PostgreSQL answers an Execute or a simple Query of an empty query
+                        // with EmptyQueryResponse, and nothing else of an empty query
                         outEmptyQuery(utf8Sink);
                         stateSync = SYNC_DONE;
                     } else {
@@ -920,6 +978,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 case CompiledQuery.EXPLAIN:
                                 case CompiledQuery.SELECT:
                                 case CompiledQuery.PSEUDO_SELECT:
+                                    if (isContinuedPastEnd) {
+                                        // PostgreSQL answers an Execute of a portal that has no rows left with "SELECT 0"
+                                        outCommandComplete(utf8Sink, 0);
+                                        stateSync = SYNC_DONE;
+                                        break;
+                                    }
                                     // This is a long response (data set) and because of
                                     // this we are entering the interruptible state machine here. In that,
                                     // this call may end up in an exception and the code will have to be re-entered
@@ -946,7 +1010,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                     // create table is just "OK"
                                     utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
                                     long addr = utf8Sink.skipInt();
-                                    utf8Sink.put(sqlTag).put((byte) 0);
+                                    utf8Sink.put(isCommitOfFailedTransaction ? TAG_ROLLBACK : sqlTag).put((byte) 0);
                                     utf8Sink.putLen(addr);
                                     stateSync = SYNC_DONE;
                                     break;
@@ -957,6 +1021,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case SYNC_DATA_SUSPENDED:
                     // ignore these, they are set by outCursor() call and should be processed outside of this
                     // switch statement
+                case SYNC_DONE:
+                    // the reply to this entry's Execute is already in the sink; a re-entry after a
+                    // CloseComplete or ErrorResponse overflow writes only what follows it
                     break;
                 default:
                     assert false;
@@ -972,9 +1039,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     queryMemoryTracker = null;
                     stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
+                    stateSync = SYNC_DONE;
                     break;
                 case SYNC_DATA_SUSPENDED:
                     outPortalSuspended(utf8Sink);
+                    stateSync = SYNC_DONE;
                     // Keep cursor alive for both named and unnamed portals so the
                     // client can send another Execute to fetch the next batch.
                     // The cursor is freed when data is exhausted, the portal is
@@ -992,9 +1061,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
         }
 
+        // both branches above send an ErrorResponse exactly when the entry is in error here,
+        // and clearState() forgets the error
+        final boolean hasSentError = isError();
+        // this sync converted the bind values or reported why it could not
+        bindBatchIndex = -1;
         // after the pipeline entry is synchronized we should prepare it for the next
         // execution iteration, in case the entry is a prepared statement or a portal
         clearState();
+        return hasSentError;
     }
 
     public void ofCachedInsert(CharSequence utf16SqlText, TypesAndInsert tai) {
@@ -1003,6 +1078,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlType = tai.getSqlType();
         this.cacheHit = true;
         this.tai = tai;
+        this.isTaiBorrowed = false;
         this.outParameterTypeDescriptionTypes.clear();
         this.outParameterTypeDescriptionTypes.addAll(tai.getPgOutParameterTypes());
     }
@@ -1079,15 +1155,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 throw kaput().put(e);
             }
         }
-
-        // these types must reply with row description message
-        // when used via the simple query protocol
-        if (cq.getType() == CompiledQuery.SELECT
-                || cq.getType() == CompiledQuery.EXPLAIN
-                || cq.getType() == CompiledQuery.PSEUDO_SELECT
-        ) {
-            setStateDesc(SYNC_DESC_ROW_DESCRIPTION);
-        }
     }
 
     public void rollback(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) {
@@ -1126,8 +1193,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.parentPreparedStatementPipelineEntry = preparedStatementPipelineEntry;
     }
 
+    public void setProtocolViolationError() {
+        isProtocolViolationError = true;
+    }
+
     public void setReturnRowCountLimit(int rowCountLimit) {
         this.sqlReturnRowCountLimit = rowCountLimit;
+    }
+
+    public void setBindBatchIndex(long bindBatchIndex) {
+        this.bindBatchIndex = bindBatchIndex;
     }
 
     public void setStateBind(boolean stateBind) {
@@ -1284,34 +1359,35 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void completePendingMessageOnError(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
             throws PeerDisconnectedException {
-        if (!outResendRecordHeader) {
-            // The peer already received this message's header. Finish its remaining fields
+        // outRepliesBeforeExecute() finishes a RowDescription whose header the peer already received
+        if (!outResendRecordHeader && stateSync == SYNC_DATA) {
+            // The peer already received this DataRow's header. Finish its remaining fields
             // before writing ErrorResponse, even if reacquiring query admission failed.
             // No cursor advance or new result row is allowed during this completion.
-            if (stateSync == SYNC_DESCRIBE) {
-                outRowDescription(utf8Sink);
-            } else {
-                assert stateSync == SYNC_DATA;
-                assert outResendCursorRecord;
-                sqlExecutionContext.setCancelledFlag(queryCancellation);
-                sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
-                try {
-                    outRecord(sqlExecutionContext, utf8Sink, cursor.getRecord(), factory.getMetadata().getColumnCount());
-                } catch (PGMessageProcessingException e) {
-                    // A second failure while finishing the message leaves no valid position
-                    // for an ErrorResponse. Disconnect instead of corrupting the frame.
-                    LOG.error().$("could not complete pgwire message [error=").$(e.getFlyweightMessage()).I$();
-                    throw PeerDisconnectedException.INSTANCE;
-                } finally {
-                    // Admission was not reacquired, so owner unmount cannot detach allocations
-                    // made by retained projections. This also runs before another partial send.
-                    MemoryTracker.detachResourceMemoryCurrentThread();
-                }
+            assert outResendCursorRecord;
+            sqlExecutionContext.setCancelledFlag(queryCancellation);
+            sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
+            try {
+                outRecord(sqlExecutionContext, utf8Sink, cursor.getRecord(), factory.getMetadata().getColumnCount());
+            } catch (PGMessageProcessingException e) {
+                // A second failure while finishing the message leaves no valid position
+                // for an ErrorResponse. Disconnect instead of corrupting the frame.
+                LOG.error().$("could not complete pgwire message [error=").$safe(e.getFlyweightMessage()).I$();
+                throw PeerDisconnectedException.INSTANCE;
+            } finally {
+                // Admission was not reacquired, so owner unmount cannot detach allocations
+                // made by retained projections. This also runs before another partial send.
+                MemoryTracker.detachResourceMemoryCurrentThread();
             }
         }
     }
 
     private void copyOf(PGPipelineEntry blueprint) {
+        // a statement taken from the select cache fills its result columns only when it first
+        // sends them; the blueprint has executed, so its factory describes the result
+        if (blueprint.pgResultSetColumnTypes.size() == 0) {
+            blueprint.copyPgResultSetColumnTypesAndNames();
+        }
         this.msgParseParameterTypeOIDs.clear();
         this.msgParseParameterTypeOIDs.addAll(blueprint.msgParseParameterTypeOIDs);
 
@@ -1329,15 +1405,26 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.isCopy = true;
         this.cacheHit = blueprint.cacheHit;
         this.empty = blueprint.empty;
+        this.isDeallocateAll = blueprint.isDeallocateAll;
+        if (blueprint.preparedStatementNameToDeallocate != null) {
+            // own copy of the name: the pool may reuse the blueprint while this copy runs
+            utf8StringSink.clear();
+            utf8StringSink.put(blueprint.preparedStatementNameToDeallocate);
+            this.preparedStatementNameToDeallocate = utf8StringSink;
+        }
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
         this.sqlTag = blueprint.sqlTag;
         this.sqlText = blueprint.sqlText;
+        // the blueprint's text may live in the connection's SQL text store or in the
+        // blueprint's own sink, and the copy can outlive both
+        ownSqlText();
         this.sqlType = blueprint.sqlType;
         this.sqlTextHasSecret = blueprint.sqlTextHasSecret;
+        // the copy borrows the statement's insert; it compiles its own factory and TypesAndSelect
         this.tai = blueprint.tai;
-        this.tas = blueprint.tas;
+        this.isTaiBorrowed = blueprint.tai != null;
     }
 
     private void copyPgResultSetColumnTypesAndNames() {
@@ -1469,6 +1556,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    // Closes the UPDATE operation and forgets it, so the next run compiles the text again.
+    // UpdateOperation.close() tells the writer to skip the operation if its queue still holds it.
+    private void dropUpdateOperation() {
+        Misc.free(compiledQuery.getUpdateOperation());
+        compiledQuery.ofUpdate(null);
+    }
+
     private void ensureCompiledQuery() {
         if (compiledQuery == null) {
             compiledQuery = new CompiledQueryImpl(engine);
@@ -1484,6 +1578,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(", sizeActual=").put(sizeActual)
                 .put(", variableIndex=").put(variableIndex)
                 .put(']');
+    }
+
+    // A Bind must supply at least this many values: the declared Parse types, or the bind
+    // variables the compiled plan defines, whichever is more. PostgreSQL counts the highest $n
+    // in the text instead; that $n may sit in a column the optimiser drops, or in a plan a
+    // simple Query cached, so this count can be lower, and a Bind may carry extra values,
+    // which copyParameterValuesToBindVariableService() ignores
+    private int getBindParameterCount() {
+        return Math.max(msgParseParameterTypeOIDs.size(), outParameterTypeDescriptionTypes.size());
     }
 
     // Used to estimate the size of the whole DataRow message, header included, to be reported to the
@@ -1633,12 +1736,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return 1;
     }
 
-    private boolean hasResultSet() {
-        return sqlType == CompiledQuery.SELECT
-                || sqlType == CompiledQuery.EXPLAIN
-                || sqlType == CompiledQuery.PSEUDO_SELECT;
-    }
-
     private boolean isTextFormat() {
         return msgBindSelectFormatCodeCount == 0 || (msgBindSelectFormatCodeCount == 1 && !msgBindSelectFormatCodes.get(0));
     }
@@ -1654,7 +1751,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
                 lo += Integer.BYTES;
                 if (valueSize > 0) {
+                    if (valueSize > msgLimit - lo) {
+                        throw kaput().put("insufficient data left in message");
+                    }
                     lo += valueSize;
+                } else if (valueSize < -1) {
+                    throw kaput().put("invalid parameter value length [variableIndex=").put(j)
+                            .put(", valueSize=").put(valueSize).put(']');
                 }
             }
             return lo - l;
@@ -1664,87 +1767,81 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void msgExecuteDDL(
             SqlExecutionContext sqlExecutionContext,
-            int transactionState,
             SCSequence tempSequence,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool
     ) throws SqlException, PGMessageProcessingException {
-        if (transactionState != ERROR_TRANSACTION) {
-            engine.getMetrics().pgWireMetrics().markStart();
-            // execute against writer from the engine, synchronously (null sequence)
-            try {
-                ensureCompiledQuery();
-                for (int attempt = 1; ; attempt++) {
-                    try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
-                        // this doesn't actually wait, because the call is synchronous
-                        fut.await();
-                        sqlAffectedRowCount = fut.getAffectedRowsCount();
-                        break;
-                    } catch (TableReferenceOutOfDateException e) {
-                        Misc.free(compiledQuery.getUpdateOperation());
-                        if (attempt == maxRecompileAttempts) {
-                            throw e;
-                        }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+        engine.getMetrics().pgWireMetrics().markStart();
+        // execute against writer from the engine, synchronously (null sequence)
+        try {
+            ensureCompiledQuery();
+            for (int attempt = 1; ; attempt++) {
+                try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                    // this doesn't actually wait, because the call is synchronous
+                    fut.await();
+                    sqlAffectedRowCount = fut.getAffectedRowsCount();
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    Misc.free(compiledQuery.getUpdateOperation());
+                    if (attempt == maxRecompileAttempts) {
+                        throw e;
                     }
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                 }
-            } finally {
-                engine.getMetrics().pgWireMetrics().markComplete();
             }
+        } finally {
+            engine.getMetrics().pgWireMetrics().markComplete();
         }
     }
 
     private void msgExecuteInsert(
             SqlExecutionContext sqlExecutionContext,
-            int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
             //    around heaps of state in very long call stacks
             WriterSource writerSource,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool
     ) throws SqlException, PGMessageProcessingException {
-        switch (transactionState) {
-            case IMPLICIT_TRANSACTION:
-                // fall through, there is no difference between implicit and explicit transaction at this stage
-            case IN_TRANSACTION: {
-                sqlExecutionContext.setCacheHit(cacheHit);
-                engine.getMetrics().pgWireMetrics().markStart();
+        sqlExecutionContext.setCacheHit(cacheHit);
+        engine.getMetrics().pgWireMetrics().markStart();
+        try {
+            for (int attempt = 1; ; attempt++) {
+                if (tai == null) {
+                    // a stale insert was dropped below, or on an earlier run whose recompile
+                    // failed; recompile from the text, as msgExecuteSelect() does for a null factory
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                }
+                final InsertOperation insertOp = tai.getInsert();
+                InsertMethod m;
                 try {
-                    for (int attempt = 1; ; attempt++) {
-                        final InsertOperation insertOp = tai.getInsert();
-                        InsertMethod m;
-                        try {
-                            m = insertOp.createMethod(sqlExecutionContext, writerSource);
-                            try {
-                                sqlAffectedRowCount = m.execute(sqlExecutionContext);
-                                TableWriterAPI writer = m.popWriter();
-                                pendingWriters.put(writer.getTableToken(), writer);
-                            } catch (Throwable th) {
-                                TableWriterAPI w = m.popWriter();
-                                if (w != null) {
-                                    pendingWriters.remove(w.getTableToken());
-                                }
-                                Misc.free(w);
-                                throw th;
-                            }
-                            break;
-                        } catch (TableReferenceOutOfDateException e) {
-                            tai = Misc.free(tai);
-                            if (attempt == maxRecompileAttempts) {
-                                throw e;
-                            }
-                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                    try {
+                        sqlAffectedRowCount = m.execute(sqlExecutionContext);
+                        TableWriterAPI writer = m.popWriter();
+                        pendingWriters.put(writer.getTableToken(), writer);
+                    } catch (Throwable th) {
+                        TableWriterAPI w = m.popWriter();
+                        if (w != null) {
+                            pendingWriters.remove(w.getTableToken());
                         }
+                        Misc.free(w);
+                        throw th;
                     }
-                } finally {
-                    engine.getMetrics().pgWireMetrics().markComplete();
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    if (isTaiBorrowed) {
+                        // the statement's insert stays with the statement, which recompiles it on its next run
+                        tai = null;
+                        isTaiBorrowed = false;
+                    } else {
+                        tai = Misc.free(tai);
+                    }
+                    if (attempt == maxRecompileAttempts) {
+                        throw e;
+                    }
                 }
             }
-            break;
-            case ERROR_TRANSACTION:
-                // when transaction is in error state, skip execution
-                break;
-            default:
-                assert false : "unknown transaction state: " + transactionState;
+        } finally {
+            engine.getMetrics().pgWireMetrics().markComplete();
         }
     }
 
@@ -1805,71 +1902,79 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void msgExecuteUpdate(
             SqlExecutionContext sqlExecutionContext,
-            int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             SCSequence tempSequence,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool
     ) throws SqlException, PGMessageProcessingException {
-        if (transactionState != ERROR_TRANSACTION) {
-            engine.getMetrics().pgWireMetrics().markStart();
-            // execute against writer from the engine, synchronously (null sequence)
-            ensureCompiledQuery();
-            try {
-                for (int attempt = 1; ; attempt++) {
-                    try {
-                        UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
-                        TableToken tableToken = updateOperation.getTableToken();
-                        final int index = pendingWriters.keyIndex(tableToken);
-                        if (index < 0) {
-                            updateOperation.withContext(sqlExecutionContext);
-                            // cached writers to remain in the list until transaction end
-                            @SuppressWarnings("resource")
-                            TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
-                            // Demote write-fence for the parked-writer UPDATE, mirroring the sibling
-                            // commit(pendingWriters) fence. The UPDATE implicitly commits the parked
-                            // writer mid-transaction (commit() + apply() below) -- so the explicit COMMIT
-                            // fence never sees these writes. Acquire the writer was done while PRIMARY; a
-                            // demote landing before commit()/apply() would externalize an unreplicated
-                            // change the drain never waited on. Hold the role-switch READ lock across an
-                            // authoritative in-lock re-check and the commit()/apply(): either the flip ran
-                            // first (we see read-only and refuse, rolling back the parked writers) or this
-                            // runs fully as PRIMARY while the flip's write acquire waits for the read hold.
+        engine.getMetrics().pgWireMetrics().markStart();
+        // execute against writer from the engine, synchronously (null sequence)
+        ensureCompiledQuery();
+        try {
+            for (int attempt = 1; ; attempt++) {
+                try {
+                    if (compiledQuery.getUpdateOperation() == null) {
+                        // dropUpdateOperation() retired the operation of an earlier run
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                    }
+                    UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
+                    TableToken tableToken = updateOperation.getTableToken();
+                    final int index = pendingWriters.keyIndex(tableToken);
+                    if (index < 0) {
+                        updateOperation.withContext(sqlExecutionContext);
+                        // cached writers to remain in the list until transaction end
+                        @SuppressWarnings("resource")
+                        TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
+                        // Demote write-fence for the parked-writer UPDATE, mirroring the sibling
+                        // commit(pendingWriters) fence. The UPDATE implicitly commits the parked
+                        // writer mid-transaction (commit() + apply() below) -- so the explicit COMMIT
+                        // fence never sees these writes. Acquire the writer was done while PRIMARY; a
+                        // demote landing before commit()/apply() would externalize an unreplicated
+                        // change the drain never waited on. Hold the role-switch READ lock across an
+                        // authoritative in-lock re-check and the commit()/apply(): either the flip ran
+                        // first (we see read-only and refuse, rolling back the parked writers) or this
+                        // runs fully as PRIMARY while the flip's write acquire waits for the read hold.
+                        if (engine.isReadOnlyMode()) {
+                            rollback(pendingWriters);
+                            throw CairoException.readOnlyAccess();
+                        }
+                        final Lock lock = engine.getRoleSwitchReadLock();
+                        lock.lock();
+                        try {
                             if (engine.isReadOnlyMode()) {
                                 rollback(pendingWriters);
                                 throw CairoException.readOnlyAccess();
                             }
-                            final Lock lock = engine.getRoleSwitchReadLock();
-                            lock.lock();
-                            try {
-                                if (engine.isReadOnlyMode()) {
-                                    rollback(pendingWriters);
-                                    throw CairoException.readOnlyAccess();
-                                }
-                                // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
-                                fireParkedUpdateMintObserver();
-                                tableWriterAPI.commit();
-                                sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
-                            } finally {
-                                lock.unlock();
-                            }
-                        } else {
-                            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
-                                fut.await();
-                                sqlAffectedRowCount = fut.getAffectedRowsCount();
+                            // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
+                            fireParkedUpdateMintObserver();
+                            tableWriterAPI.commit();
+                            sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
+                        } finally {
+                            lock.unlock();
+                        }
+                    } else {
+                        try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                            fut.await();
+                            sqlAffectedRowCount = fut.getAffectedRowsCount();
+                        } finally {
+                            if (updateOperation.isExecutingAsync()) {
+                                // The busy writer queued the operation, so it cannot run again. Closing it
+                                // now also makes the writer skip it when the wait timed out, instead of
+                                // running it after the client got the error.
+                                dropUpdateOperation();
                             }
                         }
-                        break;
-                    } catch (TableReferenceOutOfDateException e) {
-                        Misc.free(compiledQuery.getUpdateOperation());
-                        if (attempt == maxRecompileAttempts) {
-                            throw e;
-                        }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                     }
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    dropUpdateOperation();
+                    if (attempt == maxRecompileAttempts) {
+                        throw e;
+                    }
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                 }
-            } finally {
-                engine.getMetrics().pgWireMetrics().markComplete();
             }
+        } finally {
+            engine.getMetrics().pgWireMetrics().markComplete();
         }
     }
 
@@ -2566,6 +2671,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
             utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgresSQL here
             utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
+        } else if (isTransactionAbortedError) {
+            utf8Sink.putZ("25P02"); // SQLSTATE = in_failed_sql_transaction
+        } else if (isProtocolViolationError) {
+            utf8Sink.putZ("08P01"); // SQLSTATE = protocol_violation
         } else {
             utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
         }
@@ -2604,6 +2713,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putIntDirect(pgType);
         }
         utf8Sink.putLen(offset);
+        // msgSync() moves stateDesc past the ParameterDescription, so a later overflow
+        // must not reset the sink to before it
+        utf8Sink.bookmark();
     }
 
     private void outRecord(
@@ -2907,12 +3019,62 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         sqlReturnRowCount++;
     }
 
+    // Sends the replies of the Parse, Bind and Describe messages of this entry that msgSync()
+    // has not sent yet, and moves stateSync past them. msgSync() calls it again after a send
+    // buffer overflow, and it resumes where the overflow stopped it.
+    private void outRepliesBeforeExecute(PGResponseSink utf8Sink) {
+        switch (stateSync) {
+            case SYNC_PARSE:
+                if (stateParse) {
+                    outParseComplete(utf8Sink);
+                }
+                stateSync = SYNC_BIND;
+            case SYNC_BIND:
+                if (stateBind) {
+                    outBindComplete(utf8Sink);
+                }
+                stateSync = SYNC_DESCRIBE;
+            case SYNC_DESCRIBE:
+                if (error && !isDescriptionKnown()) {
+                    // The failed Execute dropped the factory of this row-returning statement
+                    // before anything copied its result columns. The ErrorResponse answers
+                    // the Describe; NoData would tell the client that the statement returns no rows.
+                    stateSync = SYNC_COMPUTE_CURSOR_SIZE;
+                    break;
+                }
+                switch (stateDesc) {
+                    case SYNC_DESC_PARAMETER_DESCRIPTION:
+                        // named prepared statement
+                        outParameterTypeDescription(utf8Sink);
+                        // row description can be sent in parts
+                        // do not resend parameter description
+                        stateDesc = SYNC_DESC_STATEMENT_ROW_DESCRIPTION;
+                        // fall through
+                    case SYNC_DESC_STATEMENT_ROW_DESCRIPTION:
+                    case SYNC_DESC_ROW_DESCRIPTION:
+                        // portal
+                        // the result columns outlive the factory: cacheIfPossible() frees the
+                        // factory of a statement it cannot cache, and a copy has no factory
+                        if (factory != null || pgResultSetColumnTypes.size() > 0) {
+                            outRowDescription(utf8Sink);
+                        } else {
+                            outNoData(utf8Sink);
+                        }
+                        break;
+                }
+                stateSync = SYNC_COMPUTE_CURSOR_SIZE;
+        }
+    }
+
     private void outRowDescription(PGResponseSink utf8Sink) {
         if (pgResultSetColumnTypes.size() == 0) {
             copyPgResultSetColumnTypesAndNames();
         }
 
         final int n = pgResultSetColumnTypes.size() / 2;
+        // PostgreSQL does not know the result formats of a statement and describes every
+        // column as text; the formats of a Bind apply only to its portal
+        final boolean isStatementDescription = stateDesc == SYNC_DESC_STATEMENT_ROW_DESCRIPTION;
         long messageLengthAddress = 0;
         if (outResendColumnIndex == 0 && outResendRecordHeader) {
             utf8Sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
@@ -2941,7 +3103,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
                 // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
                 // format code
-                utf8Sink.putNetworkShort(getPgResultSetColumnFormatCode(i)); // format code
+                utf8Sink.putNetworkShort(isStatementDescription && typeFlag != ColumnType.BINARY ? 0 : getPgResultSetColumnFormatCode(i)); // format code
                 utf8Sink.bookmark();
                 outResendColumnIndex++;
             }
@@ -3164,6 +3326,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             if (fn != null) {
                 int type = fn.getType();
+                if (type == ColumnType.BOOLEAN && valueSize == 0) {
+                    // PHP/PDO encodes false as an empty text parameter. Preserve this PGWire input.
+                    bindVariableService.setBoolean(variableIndex, false);
+                    return;
+                }
                 if (type == ColumnType.VARCHAR) {
                     final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
                     boolean ascii = switch (sequenceType) {
@@ -3296,7 +3463,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             BindVariableService bindVariableService,
             int type
     ) throws PGMessageProcessingException, SqlException {
-        assert valueSize >= 4 * Short.BYTES;
+        if (valueSize < 4 * Short.BYTES) {
+            throw kaput().put("bad parameter value length [sizeRequired=").put(4 * Short.BYTES)
+                    .put(", sizeActual=").put(valueSize)
+                    .put(", variableIndex=").put(variableIndex)
+                    .put(']');
+        }
 
         // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
         // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
@@ -3364,7 +3536,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         selectIsCacheable = true;
         switch (sqlType) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                // fall-through
+                // PostgreSQL tags CREATE TABLE AS "SELECT <rows written>"
+                operation = cq.getOperation();
+                sqlTag = TAG_SELECT;
+                break;
             case CompiledQuery.DROP:
                 // fall-through
             case CompiledQuery.CREATE_MAT_VIEW:
@@ -3383,7 +3558,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlType,
                         TAG_EXPLAIN,
                         msgParseParameterTypeOIDs,
-                        outParameterTypeDescriptionTypes
+                        outParameterTypeDescriptionTypes,
+                        cq.getPlanDependencies()
                 );
                 selectIsCacheable = cq.isCacheable();
                 break;
@@ -3395,7 +3571,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlType,
                         sqlTag,
                         msgParseParameterTypeOIDs,
-                        outParameterTypeDescriptionTypes
+                        outParameterTypeDescriptionTypes,
+                        cq.getPlanDependencies()
                 );
                 selectIsCacheable = cq.isCacheable();
                 break;
@@ -3403,7 +3580,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // the PSEUDO_SELECT comes from a "copy" SQL, which is why
                 // we do not intend to cache it. The fact we don't have
                 // TypesAndSelect instance here should be enough to tell the
-                // system not to cache.
+                // system not to cache. COPY replies with a result set, and
+                // clients recognize a result set by the SELECT tag.
                 sqlTag = TAG_PSEUDO_SELECT;
                 factory = cq.getRecordCursorFactory();
                 break;
@@ -3411,13 +3589,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.INSERT_AS_SELECT:
                 final InsertOperation insertOp = cq.popInsertOperation();
                 tai = taiPool.pop();
+                isTaiBorrowed = false;
                 sqlTag = sqlType == CompiledQuery.INSERT ? TAG_INSERT : TAG_INSERT_AS_SELECT;
                 tai.of(
                         insertOp,
                         sqlType,
                         sqlTag,
                         msgParseParameterTypeOIDs,
-                        outParameterTypeDescriptionTypes
+                        outParameterTypeDescriptionTypes,
+                        cq.getPlanDependencies()
                 );
                 break;
             case CompiledQuery.UPDATE:
@@ -3433,11 +3613,20 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.SET:
                 sqlTag = TAG_SET;
                 break;
+            case CompiledQuery.EMPTY:
+                // the text holds only whitespace, comments or ';'
+                empty = true;
+                break;
             case CompiledQuery.DEALLOCATE:
-                utf8StringSink.clear();
-                utf8StringSink.put(cq.getStatementName());
-                this.preparedStatementNameToDeallocate = utf8StringSink;
-                sqlTag = TAG_DEALLOCATE;
+                isDeallocateAll = cq.isDeallocateAll();
+                if (isDeallocateAll) {
+                    sqlTag = TAG_DEALLOCATE_ALL;
+                } else {
+                    utf8StringSink.clear();
+                    utf8StringSink.put(cq.getStatementName());
+                    this.preparedStatementNameToDeallocate = utf8StringSink;
+                    sqlTag = TAG_DEALLOCATE;
+                }
                 break;
             case CompiledQuery.BEGIN:
                 sqlTag = TAG_BEGIN;
@@ -3566,6 +3755,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      */
     void clearState() {
         error = false;
+        isCommitOfFailedTransaction = false;
+        isContinuedPastEnd = false;
+        isProtocolViolationError = false;
+        isTransactionAbortedError = false;
         stalePlanError = false;
         stateSync = SYNC_PARSE;
         stateParse = false;
@@ -3714,6 +3907,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    /**
+     * Drops the statement and portal names of an entry that DEALLOCATE removed while the
+     * entry is still queued in the current batch. Unlike setStateClosed(), this leaves
+     * stateClosed alone, so the entry sends no CloseComplete.
+     */
+    void detachName() {
+        namedStatement = null;
+        namedPortal = null;
+        portal = false;
+    }
+
     void endSqlExecutionOwner() {
         sqlExecutionOwner.end();
     }
@@ -3730,6 +3934,24 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (cursor != null && !error) {
             resumeSqlExecutionOwner();
         }
+    }
+
+    // Copies the SQL text into storage this entry owns. syncPipeline() clears the connection's
+    // SQL text store at every Sync and Flush, and the next message reuses its flyweights.
+    void ownSqlText() {
+        if (sqlText != null && sqlText != ownedSqlText && !(sqlText instanceof String)) {
+            ownedSqlText.clear();
+            ownedSqlText.put(sqlText);
+            sqlText = ownedSqlText;
+        }
+    }
+
+    // Returns a copy of the text that this entry owns, for a compile that starts from the
+    // text of another entry.
+    CharSequence ownSqlTextCopyOf(CharSequence text) {
+        ownedSqlText.clear();
+        ownedSqlText.put(text);
+        return ownedSqlText;
     }
 
     void parkSqlExecutionOwner() {
@@ -3772,6 +3994,62 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    // Runs the next queued Execute of this portal at Sync: it fetches up to that Execute's row
+    // limit from the cursor the earlier Executes left open.
+    void continueExecute(PGPipelineEntry continuation) {
+        assert continuation.continuedPortal == this && pendingContinuationCount > 0;
+        continuation.continuedPortal = null;
+        pendingContinuationCount--;
+        sqlReturnRowCountLimit = continuation.sqlReturnRowCountLimit;
+        stateExec = true;
+        isContinuedPastEnd = cursor == null;
+    }
+
+    // Called when a sync of this portal failed and continuations still follow it in the queue.
+    void deferSyncError() {
+        hasDeferredSyncError = true;
+    }
+
+    // Drops the link of a continuation that sends an error in place of the portal's rows.
+    void dropContinuedPortal() {
+        continuedPortal.pendingContinuationCount--;
+        continuedPortal = null;
+    }
+
+    PGPipelineEntry getContinuedPortal() {
+        return continuedPortal;
+    }
+
+    boolean hasPendingContinuation() {
+        return pendingContinuationCount > 0;
+    }
+
+    boolean hasResultSet() {
+        return sqlType == CompiledQuery.SELECT
+                || sqlType == CompiledQuery.EXPLAIN
+                || sqlType == CompiledQuery.PSEUDO_SELECT;
+    }
+
+    boolean isEmpty() {
+        return empty;
+    }
+
+    // Makes this fresh entry stand for another Execute of portal while an earlier Execute of it
+    // still waits for Sync. One portal has one cursor, so the rows come from the portal itself.
+    void ofContinuation(PGPipelineEntry portal, int rowCountLimit) {
+        continuedPortal = portal;
+        portal.pendingContinuationCount++;
+        sqlReturnRowCountLimit = rowCountLimit;
+        stateExec = true;
+    }
+
+    // Returns whether an earlier sync of this portal in the batch failed, and clears the flag.
+    boolean takeDeferredSyncError() {
+        final boolean hasError = hasDeferredSyncError;
+        hasDeferredSyncError = false;
+        return hasError;
+    }
+
     void copyStateFrom(PGPipelineEntry that) {
         stateParse = that.stateParse;
         stateBind = that.stateBind;
@@ -3783,6 +4061,67 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     PGMessageProcessingException getMessageProcessingException() {
         getErrorMessageSink();
         return messageProcessingException;
+    }
+
+    /**
+     * Hands the replies this entry owes to its Parse, Bind, Describe and Close messages
+     * to replyEntry, which sends them at this entry's position in the batch. The entry
+     * keeps its bind values, so a later Execute still runs it.
+     */
+    void moveRepliesBeforeExecuteTo(PGPipelineEntry replyEntry) {
+        replyEntry.stateParse = stateParse;
+        replyEntry.stateBind = stateBind;
+        replyEntry.stateDesc = stateDesc;
+        replyEntry.stateClosed = stateClosed;
+        if (stateDesc != SYNC_DESC_NONE) {
+            copyDescriptionTo(replyEntry);
+        }
+        clearState();
+    }
+
+    /**
+     * Gives replyEntry what it needs to send this entry's ParameterDescription and
+     * RowDescription. msgSync() applies the Bind's result format codes only to a portal's
+     * RowDescription.
+     */
+    void copyDescriptionTo(PGPipelineEntry replyEntry) {
+        replyEntry.outParameterTypeDescriptionTypes.addAll(outParameterTypeDescriptionTypes);
+        if (pgResultSetColumnTypes.size() == 0) {
+            copyPgResultSetColumnTypesAndNames();
+        }
+        if (pgResultSetColumnTypes.size() > 0) {
+            replyEntry.pgResultSetColumnTypes.addAll(pgResultSetColumnTypes);
+            replyEntry.pgResultSetColumnNames.addAll(pgResultSetColumnNames);
+            replyEntry.msgBindSelectFormatCodeCount = msgBindSelectFormatCodeCount;
+            for (int i = 0, n = Math.max(1, msgBindSelectFormatCodeCount); i < n; i++) {
+                if (msgBindSelectFormatCodes.get(i)) {
+                    replyEntry.msgBindSelectFormatCodes.set(i);
+                }
+            }
+        }
+    }
+
+    boolean hasPendingDescribe() {
+        return stateDesc != SYNC_DESC_NONE;
+    }
+
+    boolean isDescriptionMovable() {
+        return stateDesc == SYNC_DESC_NONE || isDescriptionKnown();
+    }
+
+    boolean isStateBind() {
+        return stateBind;
+    }
+
+    // syncPipelineEntry() calls this when the reply that msgSync() is writing does not fit an
+    // empty send buffer. The ErrorResponse takes the place of that reply and of the replies
+    // owed after it before the Execute, so msgSync() must not write that reply again. A
+    // RowDescription whose header the peer already received cannot be replaced, and
+    // msgSync() still finishes it.
+    void skipUnsendableReply() {
+        if ((stateSync == SYNC_PARSE || stateSync == SYNC_BIND || stateSync == SYNC_DESCRIBE) && outResendRecordHeader) {
+            stateSync = SYNC_COMPUTE_CURSOR_SIZE;
+        }
     }
 
     boolean isDirty() {
@@ -3846,6 +4185,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     boolean populateBindingServiceForSync(SqlExecutionContext sqlExecutionContext,
+                                          long batchIndex,
                                           CharacterStore bindVariableCharacterStore,
                                           @Transient DirectUtf8String directUtf8String,
                                           @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws PGMessageProcessingException, SqlException {
@@ -3857,7 +4197,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         //    See: https://github.com/questdb/questdb/issues/6123 and CheckBindVarsInBatchedQueriesAreConsistent C# test in the Compat module
 
         // INSERTs, UPDATE, ALTER, etc. use binding variables at the EXEC time only -> we don't have to populate it before SYNC
-        if (!hasResultSet() || isError()) {
+        // The values feed the rows of an Execute, and a Sync reports a bad value of a Bind in its own
+        // batch. A later batch that only closes or describes the entry must not convert them again.
+        if ((!stateExec && bindBatchIndex != batchIndex) || !hasResultSet() || isError()) {
             return false;
         }
         copyParameterValuesToBindVariableService(

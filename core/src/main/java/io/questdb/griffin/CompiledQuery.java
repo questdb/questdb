@@ -125,6 +125,12 @@ public interface CompiledQuery {
 
     Operation getOperation();
 
+    /**
+     * Returns the tables and views that the last compiled SELECT plan reads, with the
+     * versions it was compiled against. The compiler owns and reuses the instance.
+     */
+    PlanDependencies getPlanDependencies();
+
     RecordCursorFactory getRecordCursorFactory();
 
     String getSqlText();
@@ -141,6 +147,13 @@ public interface CompiledQuery {
     UpdateOperation getUpdateOperation();
 
     boolean isCacheable();
+
+    /**
+     * Returns true for DEALLOCATE ALL, which has no statement name.
+     *
+     * @return true when the DEALLOCATE statement releases every named prepared statement
+     */
+    boolean isDeallocateAll();
 
     /**
      * Returns and move ownership of the current insertion operation.

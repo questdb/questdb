@@ -676,6 +676,54 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSetBooleanToStrPostgresSpellings() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.BOOLEAN, 0);
+            for (String value : new String[]{"t", "1", " YES ", "on", "y", "TRUE"}) {
+                bindVariableService.setStr(0, "f");
+                bindVariableService.setStr(0, value);
+                Assert.assertTrue(value, bindVariableService.getFunction(0).getBool(null));
+                bindVariableService.setVarchar(0, new Utf8String("0"));
+                bindVariableService.setVarchar(0, new Utf8String(value));
+                Assert.assertTrue(value, bindVariableService.getFunction(0).getBool(null));
+            }
+            for (String value : new String[]{"f", "0", "off", "n", "No", "FALSE"}) {
+                bindVariableService.setStr(0, "t");
+                bindVariableService.setStr(0, value);
+                Assert.assertFalse(value, bindVariableService.getFunction(0).getBool(null));
+                bindVariableService.setVarchar(0, new Utf8String("1"));
+                bindVariableService.setVarchar(0, new Utf8String(value));
+                Assert.assertFalse(value, bindVariableService.getFunction(0).getBool(null));
+            }
+            bindVariableService.setStr(0, "t");
+            bindVariableService.setStr(0, null);
+            Assert.assertFalse(bindVariableService.getFunction(0).getBool(null));
+            bindVariableService.setVarchar(0, new Utf8String("t"));
+            bindVariableService.setVarchar(0, null);
+            Assert.assertFalse(bindVariableService.getFunction(0).getBool(null));
+        });
+    }
+
+    @Test
+    public void testSetBooleanToStrRejectsInvalidText() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.define(0, ColumnType.BOOLEAN, 0);
+            try {
+                bindVariableService.setStr(0, "xyz");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `xyz` [STRING -> BOOLEAN]");
+            }
+            try {
+                bindVariableService.setVarchar(0, new Utf8String("2"));
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `2` [VARCHAR -> BOOLEAN]");
+            }
+        });
+    }
+
+    @Test
     public void testSetByteToByte() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.define(0, ColumnType.BYTE, 0);

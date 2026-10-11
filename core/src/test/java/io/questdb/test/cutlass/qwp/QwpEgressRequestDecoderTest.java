@@ -797,6 +797,25 @@ public class QwpEgressRequestDecoderTest {
     }
 
     @Test
+    public void testRejectsBindCountAboveLimit() throws Exception {
+        // the decoder defines a bind variable for each value, so it rejects more values than
+        // cairo.sql.max.bind.variables (128 by default) before it defines any
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 129);
+            try {
+                decoder.decodeQueryRequest(buf, len, bindVars);
+                Assert.fail("expected QwpParseException for 129 binds");
+            } catch (QwpParseException expected) {
+                TestUtils.assertContains(
+                        expected.getFlyweightMessage(),
+                        "QUERY_REQUEST: bind_count exceeds cairo.sql.max.bind.variables [count=129, max=128]"
+                );
+            }
+            Assert.assertEquals(0, bindVars.getIndexedVariableCount());
+        });
+    }
+
+    @Test
     public void testRejectsMalformedSqlUtf8() throws Exception {
         runWithBuf(64, (buf, bindVars, decoder) -> {
             byte[] malformedSql = {'S', 'E', 'L', 'E', 'C', 'T', ' ', '1', (byte) 0xC3};
@@ -1001,10 +1020,6 @@ public class QwpEgressRequestDecoderTest {
         });
     }
 
-    private static BindVariableServiceImpl newBindVars() {
-        return new BindVariableServiceImpl(new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath()));
-    }
-
     /**
      * Allocates a native buffer, pre-writes a QUERY_REQUEST scaffold for N binds with
      * a fixed 8-byte SQL and bind_count = N, runs the callback, and frees the buffer.
@@ -1012,8 +1027,9 @@ public class QwpEgressRequestDecoderTest {
      */
     private static void runWithBuf(int bufSize, DecoderBody body) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            BindVariableServiceImpl bindVars = newBindVars();
-            QwpEgressRequestDecoder decoder = new QwpEgressRequestDecoder();
+            DefaultTestCairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
+            BindVariableServiceImpl bindVars = new BindVariableServiceImpl(configuration);
+            QwpEgressRequestDecoder decoder = new QwpEgressRequestDecoder(configuration);
             long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 body.run(buf, bindVars, decoder);

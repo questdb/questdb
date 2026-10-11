@@ -22,28 +22,32 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectUtf8Sequence;
 
-public final class BadTimestampAdapter extends TimestampAdapter {
+/**
+ * Writes text into an existing DATE column when the detected type is not a date format.
+ * Parses the text like INSERT's implicit VARCHAR to DATE cast (epoch millis, ISO with
+ * variable precision and offsets, PG date forms) and throws ImplicitCastException on
+ * text the cast rejects, so the importer counts it as a column error.
+ */
+public final class DateCastAdapter extends AbstractTypeAdapter {
 
-    public static final BadTimestampAdapter INSTANCE = new BadTimestampAdapter();
+    public static final DateCastAdapter INSTANCE = new DateCastAdapter();
 
-    private BadTimestampAdapter() {
-    }
-
-    @Override
-    public long getTimestamp(DirectUtf8Sequence value) {
-        return Numbers.LONG_NULL;
+    private DateCastAdapter() {
     }
 
     @Override
     public int getType() {
-        return ColumnType.TIMESTAMP_MICRO;
+        return ColumnType.DATE;
     }
 
     @Override
@@ -53,6 +57,7 @@ public final class BadTimestampAdapter extends TimestampAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putTimestamp(column, Numbers.LONG_NULL);
+        // the implicit cast rejects the 'null' keyword, which the numeric adapters store as NULL
+        row.putDate(column, SqlKeywords.isNullKeyword(value) ? Numbers.LONG_NULL : SqlUtil.implicitCastVarcharAsDate(value));
     }
 }

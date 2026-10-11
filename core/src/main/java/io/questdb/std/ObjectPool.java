@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Single-threaded object pool based on ObjList. The goal is to optimise intermediate allocation of objects.
@@ -63,6 +64,11 @@ public class ObjectPool<T extends Mutable> implements Mutable {
 
     public int getPos() {
         return pos;
+    }
+
+    @TestOnly
+    public int getSize() {
+        return size;
     }
 
     public T next() {

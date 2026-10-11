@@ -34,6 +34,7 @@ import io.questdb.cutlass.pgwire.PGPipelineEntry;
 import io.questdb.cutlass.pgwire.TypesAndSelect;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanDependencies;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.AbstractEmptyCatalogueFunctionFactory;
 import io.questdb.std.IntList;
@@ -342,7 +343,8 @@ public class PGResultFormatCodesTest extends BasePGTest {
                     CompiledQuery.SELECT,
                     "SELECT",
                     inParameterTypes,
-                    outParameterTypes
+                    outParameterTypes,
+                    new PlanDependencies()
             );
             try (PGPipelineEntry entry = new PGPipelineEntry(engine)) {
                 try {
@@ -360,7 +362,8 @@ public class PGResultFormatCodesTest extends BasePGTest {
                     CompiledQuery.SELECT,
                     "SELECT",
                     inParameterTypes,
-                    outParameterTypes
+                    outParameterTypes,
+                    new PlanDependencies()
             );
             try (PGPipelineEntry entry = new PGPipelineEntry(engine)) {
                 try {

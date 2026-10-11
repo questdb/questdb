@@ -53,6 +53,48 @@ tests:
       - action: execute
         query: "DROP TABLE IF EXISTS pos_table;"
 
+  - name: Test Insert As Select Row Count
+    description: INSERT ... SELECT reports the inserted row count (command tag INSERT 0 n).
+    prepare:
+      - action: execute
+        query: "CREATE TABLE insert_select_table (a INT);"
+    steps:
+      - action: execute
+        query: "INSERT INTO insert_select_table SELECT x::int FROM long_sequence(3);"
+        expect:
+          result:
+            - [ 3 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS insert_select_table;"
+
+  - name: Test Copy Cancel Returns Rows
+    description: COPY replies with a result set under the SELECT command tag, so clients return its rows.
+    # the asyncpg and nodejs-postgres runners return rows only for statements that start with SELECT
+    exclude: [ "asyncpg", "nodejs-postgres" ]
+    steps:
+      - action: query
+        query: "COPY 'abcdef0123456789' CANCEL;"
+        expect:
+          result:
+            - [ "abcdef0123456789", "unknown" ]
+
+  - name: Test Cast Parameter Takes Cast Target Type
+    description: An untyped parameter in a cast takes the cast's target type, as in PostgreSQL.
+    steps:
+      - action: query
+        query: "SELECT $[1]::TIMESTAMP ts, $[2]::BOOLEAN b, $[3]::LONG l;"
+        parameters:
+          - value: "2024-01-01T00:00:00.000000Z"
+            type: "TIMESTAMP"
+          - value: "true"
+            type: "BOOLEAN"
+          - value: "9007199254740993"
+            type: "INT8"
+        expect:
+          result:
+            - [ "2024-01-01T00:00:00.000000Z", True, 9007199254740993 ]
+
   - name: Test Query Nanoseconds
     description: Test inserting and selecting data to a table with nanoseconds column.
     prepare:

@@ -710,6 +710,44 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTextToArray3dWideTableAllCopierTypes() throws Exception {
+        // a 3-D array column type exceeds Short.MAX_VALUE, the generated copiers must pass it to the
+        // text-to-array cast intact; 600 LONG columns make the chunked copier split the copy method
+        assertMemoryLeak(() -> {
+            final int longColumnCount = 600;
+            StringBuilder columns = new StringBuilder();
+            StringBuilder values = new StringBuilder();
+            for (int i = 0; i < longColumnCount; i++) {
+                columns.append('c').append(i).append(" LONG, ");
+                values.append("x, ");
+            }
+            execute("CREATE TABLE dst (" + columns + "a DOUBLE[][][], v DOUBLE[][][])");
+            for (int copierType : COPIER_TYPES) {
+                setCopierType(copierType);
+                execute("TRUNCATE TABLE dst");
+                execute("INSERT INTO dst SELECT " + values + "'{{{7.0,8.0}}}', '{{{9.0},{10.0}}}'::VARCHAR FROM long_sequence(1)");
+                assertExceptionNoLeakCheck(
+                        "INSERT INTO dst SELECT " + values + "'{7.0,8.0}', NULL::VARCHAR FROM long_sequence(1)",
+                        -1,
+                        "inconvertible value: `{7.0,8.0}` [STRING -> DOUBLE[][][]]"
+                );
+                assertExceptionNoLeakCheck(
+                        "INSERT INTO dst SELECT " + values + "NULL::STRING, '{7.0,8.0}'::VARCHAR FROM long_sequence(1)",
+                        -1,
+                        "inconvertible value: `{7.0,8.0}` [VARCHAR -> DOUBLE[][][]]"
+                );
+                assertQuery("SELECT c0, a, v FROM dst")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                c0\ta\tv
+                                1\t[[[7.0,8.0]]]\t[[[9.0],[10.0]]]
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testTransferDecimalIntoNonDecimalTargetRejected() {
         // RowAsserter fails on any put, so a silent write into a non-decimal column is caught too.
         // Zero is what clears transferDecimal's precision guard, leaving the storage switch to reject.

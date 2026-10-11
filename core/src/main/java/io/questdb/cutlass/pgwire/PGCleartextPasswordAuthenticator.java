@@ -44,8 +44,10 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static io.questdb.cutlass.pgwire.PGConnectionContext.dumpBuffer;
@@ -59,9 +61,16 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     private static final Log LOG = LogFactory.getLog(PGCleartextPasswordAuthenticator.class);
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
+    private static final byte MESSAGE_TYPE_NEGOTIATE_PROTOCOL_VERSION = 'v';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
     private static final byte MESSAGE_TYPE_PASSWORD_MESSAGE = 'p';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
+    private static final String NO_USER_MESSAGE = "no user name specified in startup packet";
+    private static final int PASSWORD_REQUEST_SIZE = 1 + 2 * Integer.BYTES;
+    private static final String PROTOCOL_OPTION_PREFIX = "_pq_.";
+    // processStartupMessage() writes NegotiateProtocolVersion and one of these replies in one
+    // flush: the password request or the no-user FATAL, whichever is larger
+    private static final int STARTUP_REPLY_MAX_SIZE = Math.max(PASSWORD_REQUEST_SIZE, fatalResponseSize("28000", NO_USER_MESSAGE));
     private final BuildInformation buildInformation;
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
@@ -132,14 +141,18 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
 
     @Override
     public int denyAccess(CharSequence message) throws AuthenticatorException {
-        prepareErrorResponse(message);
-        state = State.WRITE_AND_AUTH_FAILURE;
+        prepareFatalResponse("28000", message);
         return handleIO();
     }
 
     @Override
     public byte getAuthType() {
         return authType;
+    }
+
+    @TestOnly
+    public int getCharacterStorePoolSize() {
+        return characterStore.getPoolSize();
     }
 
     public CharSequence getPrincipal() {
@@ -220,7 +233,11 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
                 }
             }
         } catch (PGMessageProcessingException e) {
-            throw AuthenticatorException.INSTANCE;
+            // Every throw site runs before the authenticator prepares a reply, so the send
+            // buffer is empty. From WRITE_AND_AUTH_FAILURE, handleIO() only writes and
+            // disconnects, and cannot throw this exception again.
+            prepareFatalResponse("08P01", "invalid startup or password message");
+            return handleIO();
         }
     }
 
@@ -253,8 +270,30 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         return handleIO();
     }
 
+    // Returns the size of the ErrorResponse that prepareFatalResponse() writes for ASCII text.
+    private static int fatalResponseSize(String sqlState, String errorMessage) {
+        return 1 + Integer.BYTES
+                + 1 + sqlState.length() + 1
+                + 1 + errorMessage.length() + 1
+                + 1 + "FATAL".length() + 1
+                + 1;
+    }
+
     private static int getIntUnsafe(long address) {
         return Numbers.bswap(Unsafe.getInt(address));
+    }
+
+    private static boolean isProtocolOptionName(long lo, long hi) {
+        final int prefixLen = PROTOCOL_OPTION_PREFIX.length();
+        if (hi - lo < prefixLen) {
+            return false;
+        }
+        for (int i = 0; i < prefixLen; i++) {
+            if (Unsafe.getByte(lo + i) != PROTOCOL_OPTION_PREFIX.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private int availableToRead() {
@@ -294,17 +333,20 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         responseSink.putInt(circuitBreaker.getSecret());
     }
 
-    private void prepareErrorResponse(CharSequence errorMessage) {
+    // Prepares a FATAL ErrorResponse and moves to WRITE_AND_AUTH_FAILURE, which writes
+    // it and disconnects.
+    private void prepareFatalResponse(CharSequence sqlState, CharSequence errorMessage) {
         sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = sink.skip();
         sink.put('C');
-        sink.encodeUtf8Z("00000");
+        sink.encodeUtf8Z(sqlState);
         sink.put('M');
         sink.encodeUtf8Z(errorMessage);
         sink.put('S');
-        sink.encodeUtf8Z("ERROR");
+        sink.encodeUtf8Z("FATAL");
         sink.put((char) 0);
         sink.putLen(addr);
+        state = State.WRITE_AND_AUTH_FAILURE;
     }
 
     private void prepareGssResponse() {
@@ -331,6 +373,25 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         sink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
         sink.putInt(Integer.BYTES * 2);
         sink.putInt(3);
+    }
+
+    private void prepareNegotiateProtocolVersion(long propertiesLo, long msgLimit, int protocolOptionCount) throws PGMessageProcessingException {
+        sink.put(MESSAGE_TYPE_NEGOTIATE_PROTOCOL_VERSION);
+        final long addr = sink.skip();
+        sink.putInt(INIT_STARTUP_MESSAGE);
+        sink.putInt(protocolOptionCount);
+        long lo = propertiesLo;
+        while (lo < msgLimit - 1) {
+            final long nameLo = lo;
+            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name");
+            final long valueHi = PGConnectionContext.getUtf8StrSize(nameHi + 1, msgLimit, "malformed property value");
+            lo = valueHi + 1;
+            if (isProtocolOptionName(nameLo, nameHi)) {
+                sink.putNonAscii(nameLo, nameHi);
+                sink.put((byte) 0);
+            }
+        }
+        sink.putLen(addr);
     }
 
     private void prepareParams(ResponseSink sink, CharSequence name, CharSequence value) {
@@ -378,7 +439,8 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         // Reject negative and absurdly large values before any pointer arithmetic.
         if (msgLen < Integer.BYTES * 2 || msgLen > recvBufEnd - recvBufStart) {
             LOG.error().$("bad init message length [msgLen=").$(msgLen).$(']').$();
-            throw PGMessageProcessingException.INSTANCE;
+            prepareFatalResponse("08P01", "invalid length of startup packet");
+            return SocketAuthenticator.OK;
         }
         if (msgLen > availableToRead) {
             return SocketAuthenticator.NEEDS_READ;
@@ -390,9 +452,15 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
 
         switch (protocol) {
             case INIT_STARTUP_MESSAGE:
-                processStartupMessage(msgLen);
+                processStartupMessage(msgLen, false);
                 break;
             case INIT_CANCEL_REQUEST:
+                // Like PostgreSQL, accept only an exact-size CancelRequest (length, code, pid, secret)
+                // and close any other with no reply.
+                if (msgLen != 4 * Integer.BYTES) {
+                    LOG.error().$("bad cancel request length [msgLen=").$(msgLen).$(']').$();
+                    return SocketAuthenticator.NEEDS_DISCONNECT;
+                }
                 processCancelMessage();
                 return SocketAuthenticator.NEEDS_DISCONNECT;
             case INIT_SSL_REQUEST:
@@ -406,8 +474,14 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
                 state = State.WRITE_AND_EXPECT_INIT_MESSAGE;
                 break;
             default:
+                if ((protocol >>> 16) == 3) {
+                    // Like PostgreSQL, a newer 3.x minor version is negotiated down to 3.0
+                    processStartupMessage(msgLen, true);
+                    break;
+                }
                 LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
-                throw PGMessageProcessingException.INSTANCE;
+                prepareFatalResponse("0A000", "unsupported frontend protocol");
+                break;
         }
         return SocketAuthenticator.OK;
     }
@@ -418,14 +492,19 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             return SocketAuthenticator.NEEDS_READ;
         }
         byte msgType = Unsafe.getByte(recvBufReadPos);
-        assert msgType == MESSAGE_TYPE_PASSWORD_MESSAGE;
+        if (msgType != MESSAGE_TYPE_PASSWORD_MESSAGE) {
+            LOG.error().$("unexpected message during authentication [type=").$(msgType).$(']').$();
+            prepareFatalResponse("08P01", "expected password response");
+            return SocketAuthenticator.OK;
+        }
 
         int msgLen = getIntUnsafe(recvBufReadPos + 1);
         // msgLen includes itself (4 bytes) + at least a 1-byte null-terminated password.
         // Reject negative and absurdly large values before any pointer arithmetic.
         if (msgLen < Integer.BYTES + 1 || msgLen > recvBufEnd - recvBufStart - 1) {
             LOG.error().$("bad password message length [msgLen=").$(msgLen).$(']').$();
-            throw PGMessageProcessingException.INSTANCE;
+            prepareFatalResponse("08P01", "invalid password packet size");
+            return SocketAuthenticator.OK;
         }
         long msgLimit = (recvBufReadPos + msgLen + 1); // +1 for the type byte which is not included in msgLen
         if (recvBufWritePos < msgLimit) {
@@ -435,64 +514,112 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         // at this point we have a full message available ready to be processed
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
-        long hi = PGConnectionContext.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length", null);
+        long hi = PGConnectionContext.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length");
         authType = verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos));
         if (authType != AUTH_TYPE_NONE) {
             recvBufReadPos = msgLimit;
             state = State.AUTH_SUCCESS;
         } else {
-            LOG.info().$("bad password for user [user=").$(username).$(']').$();
-            prepareErrorResponse("invalid username/password");
-            state = State.WRITE_AND_AUTH_FAILURE;
+            // the user name is client text: encode it to UTF-8 so $safe() escapes control chars
+            final Utf8StringSink userUtf8 = Misc.getThreadLocalUtf8Sink();
+            userUtf8.put(username);
+            LOG.info().$("bad password for user [user=").$safe(userUtf8).$(']').$();
+            prepareFatalResponse("28P01", "invalid username/password");
         }
         return SocketAuthenticator.OK;
     }
 
-    private void processStartupMessage(int msgLen) throws PGMessageProcessingException {
+    private void processStartupMessage(int msgLen, boolean isNewerMinorRequested) throws PGMessageProcessingException {
         long msgLimit = (recvBufStart + msgLen);
-        long lo = recvBufReadPos;
+        final long propertiesLo = recvBufReadPos;
+        long lo = propertiesLo;
+        // Like PostgreSQL, a repeated user property overrides the earlier one. The loop records
+        // the bounds of the last value and copies it once, so repeated user properties do not
+        // take a pooled CharacterStore entry each.
+        long userLo = 0;
+        long userHi = 0;
+        boolean hasUser = false;
+        // A repeated options property overrides the earlier one too. The loop records the bounds
+        // of the last value and applies it once, so the server logs an invalid value once.
+        long optionsLo = 0;
+        long optionsHi = 0;
+        boolean hasOptions = false;
+        // Like PostgreSQL, the server does not apply _pq_. protocol options and lists their names
+        // in NegotiateProtocolVersion.
+        int protocolOptionCount = 0;
+        // type, length, protocol version and option count
+        long negotiateProtocolVersionSize = 1 + 3 * Integer.BYTES;
 
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
             final long nameLo = lo;
-            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name", null);
+            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name");
             final long valueLo = nameHi + 1;
-            final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value", null);
+            final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value");
             lo = valueHi + 1;
 
-            // store user
-            if (PGKeywords.isUser(nameLo, nameHi - nameLo)) {
-                CharacterStoreEntry e = characterStore.newEntry();
-                e.put(dus.of(valueLo, valueHi, false));
-                this.username = e.toImmutable();
+            if (isProtocolOptionName(nameLo, nameHi)) {
+                protocolOptionCount++;
+                negotiateProtocolVersionSize += nameHi - nameLo + 1;
             }
-            boolean parsed = true;
+            if (PGKeywords.isUser(nameLo, nameHi - nameLo)) {
+                userLo = valueLo;
+                userHi = valueHi;
+                hasUser = true;
+            }
             if (PGKeywords.isOptions(nameLo, nameHi - nameLo)) {
-                if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
-                    try {
-                        dus.of(valueLo + 21, valueHi, false);
-                        long statementTimeout = Numbers.parseLong(dus);
-                        optionsListener.setSqlTimeout(statementTimeout);
-                    } catch (NumericException ex) {
-                        parsed = false;
-                    }
-                } else {
-                    parsed = false;
+                optionsLo = valueLo;
+                optionsHi = valueHi;
+                hasOptions = true;
+            }
+            LOG.debug().$("property [name=").$safe(dus.of(nameLo, nameHi, false))
+                    .$(", value=").$safe(dus.of(valueLo, valueHi, false))
+                    .$(']').$();
+        }
+        if (isNewerMinorRequested || protocolOptionCount > 0) {
+            // write before compactRecvBuf() moves the option names
+            if (negotiateProtocolVersionSize + STARTUP_REPLY_MAX_SIZE > sendBufEnd - sendBufWritePos) {
+                LOG.error().$("startup reply does not fit send buffer [protocolOptionCount=").$(protocolOptionCount)
+                        .$(", sendBufferSize=").$(sendBufEnd - sendBufStart)
+                        .$(']').$();
+                recvBufReadPos = msgLimit;
+                compactRecvBuf();
+                prepareFatalResponse("08P01", "invalid startup packet");
+                return;
+            }
+            prepareNegotiateProtocolVersion(propertiesLo, msgLimit, protocolOptionCount);
+        }
+        if (hasOptions) {
+            // apply before compactRecvBuf() moves the bytes optionsLo and optionsHi point to
+            boolean isParsed = false;
+            if (PGKeywords.startsWithTimeoutOption(optionsLo, optionsHi - optionsLo)) {
+                try {
+                    dus.of(optionsLo + 21, optionsHi, false);
+                    long statementTimeout = Numbers.parseLong(dus);
+                    optionsListener.setSqlTimeout(statementTimeout);
+                    isParsed = true;
+                } catch (NumericException ignore) {
                 }
             }
-            if (parsed) {
-                LOG.debug().$("property [name=").$(dus.of(nameLo, nameHi, false))
-                        .$(", value=").$(dus.of(valueLo, valueHi, false))
-                        .$(']').$();
-            } else {
-                LOG.info().$("invalid property [name=").$safe(dus.of(nameLo, nameHi, false))
-                        .$(", value=").$(dus.of(valueLo, valueHi, false))
+            if (!isParsed) {
+                LOG.info().$("invalid property [name=options, value=").$safe(dus.of(optionsLo, optionsHi, false))
                         .$(']').$();
             }
         }
         characterStore.clear();
+        if (hasUser) {
+            // copy before compactRecvBuf() moves the bytes userLo and userHi point to
+            CharacterStoreEntry e = characterStore.newEntry();
+            e.put(dus.of(userLo, userHi, false));
+            this.username = e.toImmutable();
+        }
         recvBufReadPos = msgLimit;
         compactRecvBuf();
+        if (username == null) {
+            LOG.error().$("no user name in startup message").$();
+            prepareFatalResponse("28000", NO_USER_MESSAGE);
+            return;
+        }
         prepareLoginResponse();
         state = State.WRITE_AND_EXPECT_PASSWORD_MESSAGE;
     }

@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public final class ShortAdapter extends AbstractTypeAdapter {
@@ -49,6 +50,15 @@ public final class ShortAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        row.putShort(column, SqlKeywords.isNullKeyword(value) ? (short) 0 : (short) Numbers.parseInt(value));
+        if (SqlKeywords.isNullKeyword(value)) {
+            row.putShort(column, (short) 0);
+            return;
+        }
+        // Numbers.parseShort() rejects the '+' sign and '_' separators that CSV import accepts
+        final int parsed = Numbers.parseInt(value);
+        if (parsed < Short.MIN_VALUE || parsed > Short.MAX_VALUE) {
+            throw NumericException.INSTANCE;
+        }
+        row.putShort(column, (short) parsed);
     }
 }

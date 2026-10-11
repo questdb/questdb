@@ -161,6 +161,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public RecordCursorFactory generateSelect(
+                IQueryModel queryModel,
+                SqlExecutionContext executionContext,
+                boolean generateProgressLogger
+        ) throws SqlException {
+            return delegate.generateSelect(queryModel, executionContext, generateProgressLogger);
+        }
+
+        @Override
         public RecordCursorFactory generateSelectWithRetries(
                 IQueryModel queryModel,
                 @Nullable InsertModel insertModel,

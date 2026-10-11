@@ -28,10 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
@@ -59,7 +59,7 @@ import io.questdb.std.ObjList;
  * Otherwise falls back to a coordinate-based nD path that handles arbitrary
  * strides (transpose, slicing, broadcasting) and mismatched shapes.
  */
-public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction implements MultiArgFunction {
+public abstract class AbstractDoubleArrayElemFunction extends WeakDimsArrayFunction implements MultiArgFunction {
 
     /**
      * The variadic DOUBLE[] arguments.
@@ -87,7 +87,8 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
      */
     protected int[] maxShape;
     /**
-     * Number of array dimensions; 0 until resolved from weak dims.
+     * Number of array dimensions; 0 until resolved from weak dims, and 0 at execution
+     * when every argument is a NULL bind variable that still has weak dims.
      */
     protected int nDims;
     /**
@@ -95,20 +96,24 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
      */
     protected int[] outStrides;
 
-    protected AbstractDoubleArrayElemFunction(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
+    protected AbstractDoubleArrayElemFunction(
+            CairoConfiguration configuration,
+            ObjList<Function> args,
+            int resolvedDims,
+            int position
+    ) {
         this.args = args;
+        this.position = position;
         this.nDims = resolvedDims;
+        this.arrayOut = new DirectArray(configuration);
         if (resolvedDims > 0) {
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resolvedDims);
-            this.maxShape = new int[resolvedDims];
-            this.coords = new int[resolvedDims];
-            this.inputShape = new int[resolvedDims];
-            this.outStrides = new int[resolvedDims];
+            this.arrayOut.setType(type);
+            allocateScratch(resolvedDims);
         } else {
+            // init() resolves the dims once the bind variables have values
             this.type = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
         }
-        this.arrayOut = new DirectArray(configuration);
-        this.arrayOut.setType(type);
     }
 
     @Override
@@ -124,6 +129,9 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
 
     @Override
     public ArrayView getArray(Record rec) {
+        if (nDims == 0) {
+            return ArrayConstant.NULL;
+        }
         boolean canUseFlatPath = scanInputs(rec);
 
         long totalFlatLen = 1;
@@ -155,22 +163,27 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         MultiArgFunction.super.init(symbolTableSource, executionContext);
+        // Bind variables get their dims only now, so the compile-time check in
+        // validateArgsAndResolveDims() cannot cover them. The accumulation paths
+        // rely on every non-NULL input having exactly nDims dims.
         int resolvedDims = 0;
         for (int i = 0, n = args.size(); i < n; i++) {
             int d = ColumnType.decodeWeakArrayDimensionality(args.getQuick(i).getType());
             if (d > 0) {
+                if (resolvedDims > 0 && resolvedDims != d) {
+                    throw SqlException.$(position, "dimension mismatch");
+                }
                 resolvedDims = d;
-                break;
             }
         }
+        this.nDims = resolvedDims;
         if (resolvedDims > 0) {
-            this.nDims = resolvedDims;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resolvedDims);
             this.arrayOut.setType(type);
-            this.maxShape = new int[resolvedDims];
-            this.coords = new int[resolvedDims];
-            this.inputShape = new int[resolvedDims];
-            this.outStrides = new int[resolvedDims];
+            if (maxShape == null || maxShape.length != resolvedDims) {
+                allocateScratch(resolvedDims);
+            }
+            validateAssignedType();
         }
     }
 
@@ -231,6 +244,13 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         }
     }
 
+    private void allocateScratch(int dims) {
+        this.maxShape = new int[dims];
+        this.coords = new int[dims];
+        this.inputShape = new int[dims];
+        this.outStrides = new int[dims];
+    }
+
     /**
      * Evaluates all arguments once, caching views in {@link #cachedViews}.
      * Populates {@link #maxShape} with the per-dimension max across non-null inputs.
@@ -249,7 +269,9 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         boolean canUseFlatPath = true;
         for (int i = 0; i < n; i++) {
             ArrayView a = args.getQuick(i).getArray(rec);
-            if (a == null || a.isNull()) {
+            // an empty input has no elements to accumulate; leaving it out of maxShape
+            // and the accumulation loops keeps them from reading elements it lacks
+            if (a == null || a.isNull() || a.isEmpty()) {
                 cachedViews.setQuick(i, null);
                 continue;
             }

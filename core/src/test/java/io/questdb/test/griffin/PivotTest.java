@@ -25,9 +25,24 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class PivotTest extends AbstractSqlParserTest {
+    private static final String PIVOT_STALE_READER_EXPECTED = """
+            grp\tx\ty
+            A\t1\t2
+            B\t3\tnull
+            """;
+    private static final String PIVOT_STALE_READER_QUERY = "SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT c FROM cats) GROUP BY grp) ORDER BY grp";
 
     public static String ddlCities = """
             CREATE TABLE cities (
@@ -1167,6 +1182,65 @@ public class PivotTest extends AbstractSqlParserTest {
                     )
                     """)
                     .fails(66, "PIVOT IN subquery must return exactly one column, got 2");
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryStaleReaderRetriesWholeQuery() throws Exception {
+        // The IN subquery's reader goes stale during planning; the retry must re-plan the
+        // whole PIVOT query, not re-parse the text held by another compiler.
+        assertMemoryLeak(() -> {
+            createPivotStaleReaderTables();
+            try (StaleCatsReaderOnceContext context = new StaleCatsReaderOnceContext()) {
+                assertQuery(PIVOT_STALE_READER_QUERY)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withContext(context)
+                        .returns(PIVOT_STALE_READER_EXPECTED);
+                Assert.assertTrue(context.hasInjected);
+            }
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryStaleReaderRetryIgnoresPooledCompilerText() throws Exception {
+        // The pooled compilers last compiled an unrelated SELECT. A retry that re-parses a pooled
+        // compiler's text would take that SELECT's values as the PIVOT column list.
+        assertMemoryLeak(() -> {
+            createPivotStaleReaderTables();
+            final ObjList<SqlCompiler> compilers = new ObjList<>();
+            try {
+                for (int i = 0; i < 8; i++) {
+                    final SqlCompiler compiler = engine.getSqlCompiler();
+                    compilers.add(compiler);
+                    Misc.free(compiler.compile("SELECT 'zzz' c FROM long_sequence(1)", sqlExecutionContext).getRecordCursorFactory());
+                }
+            } finally {
+                Misc.freeObjList(compilers);
+            }
+            try (StaleCatsReaderOnceContext context = new StaleCatsReaderOnceContext()) {
+                assertQuery(PIVOT_STALE_READER_QUERY)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withContext(context)
+                        .returns(PIVOT_STALE_READER_EXPECTED);
+                Assert.assertTrue(context.hasInjected);
+            }
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryStaleReaderRetryInCreateTableAs() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotStaleReaderTables();
+            try (StaleCatsReaderOnceContext context = new StaleCatsReaderOnceContext()) {
+                execute("CREATE TABLE p AS (" + PIVOT_STALE_READER_QUERY + ")", context);
+                Assert.assertTrue(context.hasInjected);
+            }
+            assertQuery("SELECT * FROM p ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PIVOT_STALE_READER_EXPECTED);
         });
     }
 
@@ -4139,5 +4213,31 @@ public class PivotTest extends AbstractSqlParserTest {
                             US\t8579\t8783\t9510
                             """);
         });
+    }
+
+    private static void createPivotStaleReaderTables() throws Exception {
+        execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT)");
+        execute("INSERT INTO data VALUES ('A', 'x', 1), ('A', 'y', 2), ('B', 'x', 3)");
+        execute("CREATE TABLE cats (c SYMBOL)");
+        execute("INSERT INTO cats VALUES ('x'), ('y')");
+    }
+
+    // Reports the reader of table "cats" as out of date once, which makes the compiler retry.
+    private static class StaleCatsReaderOnceContext extends SqlExecutionContextImpl {
+        private boolean hasInjected;
+
+        private StaleCatsReaderOnceContext() {
+            super(engine, 1);
+            with(AllowAllSecurityContext.INSTANCE);
+        }
+
+        @Override
+        public TableReader getReader(TableToken token, long version) {
+            if (token.getTableName().equals("cats") && !hasInjected) {
+                hasInjected = true;
+                throw TableReferenceOutOfDateException.of(token);
+            }
+            return super.getReader(token, version);
+        }
     }
 }

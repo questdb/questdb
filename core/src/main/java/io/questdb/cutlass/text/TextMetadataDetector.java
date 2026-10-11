@@ -25,14 +25,15 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -51,7 +52,8 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
     private final int defaultColumnType;
-    private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
+    // user-supplied column types match header names ignoring case, as column names do
+    private final LowerCaseCharSequenceObjHashMap<TypeAdapter> schemaColumns = new LowerCaseCharSequenceObjHashMap<>();
     private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
     private final LowerCaseCharSequenceHashSet uniqueColumnNames = new LowerCaseCharSequenceHashSet();
@@ -59,6 +61,8 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private int fieldCount;
     private boolean forceHeader = false;
     private boolean header = false;
+    // lines the lexer sent to onFields(); lines it rejected never arrive here
+    private long lineCount;
     private CharSequence tableName;
 
     public TextMetadataDetector(
@@ -79,6 +83,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         _histogram.clear();
         fieldCount = 0;
         header = false;
+        lineCount = 0;
         columnTypes.clear();
         schemaColumns.clear();
         forceHeader = false;
@@ -89,18 +94,17 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         Misc.free(utf8Sink);
     }
 
-    public void evaluateResults(long lineCount, long errorCount) {
+    public void evaluateResults() {
         // try to calculate types counting all rows
         // if all types come up as strings, reduce lineCount by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
-        if ((calcTypes(lineCount - errorCount, true) && !calcTypes(lineCount - errorCount - 1, false)) || forceHeader) {
+        if ((calcTypes(lineCount, true) && !calcTypes(lineCount - 1, false)) || forceHeader) {
             // copy headers
             header = true;
         } else {
             LOG.info()
                     .$("no header [table=").$safe(tableName)
                     .$(", lineCount=").$(lineCount)
-                    .$(", errorCount=").$(errorCount)
                     .$(", forceHeader=").$(forceHeader)
                     .$(']').$();
         }
@@ -129,6 +133,14 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
 
             if (!uniqueColumnNames.add(columnNames.getQuick(i))) {
                 throw TextException.$("duplicate column name found [no=").put(i).put(",name=").put(columnNames.get(i)).put(']');
+            }
+        }
+
+        // give each timestamp column its own copy of the shared probe: the importers recompile
+        // a column's adapter to the precision of the existing column
+        for (int i = 0; i < fieldCount; i++) {
+            if (columnTypes.getQuick(i) instanceof TimestampAdapter probe) {
+                columnTypes.setQuick(i, typeManager.nextTimestampAdapter(probe));
             }
         }
 
@@ -167,6 +179,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             seedFields(fieldCount);
             stashPossibleHeader(values, fieldCount);
         }
+        lineCount++;
 
         int count = typeManager.getProbeCount();
         for (int i = 0; i < fieldCount; i++) {
@@ -182,6 +195,27 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
                 }
             }
         }
+    }
+
+    /**
+     * Resolves a column name, e.g. the TIMESTAMP option, against file column names ignoring case,
+     * the way file columns map to table columns. File column names are unique ignoring case.
+     */
+    static int indexOfColumnName(ObjList<CharSequence> names, CharSequence name) {
+        return indexOfColumnName(names, names.size(), name);
+    }
+
+    /**
+     * Same as {@link #indexOfColumnName(ObjList, CharSequence)}, searching only the first
+     * {@code count} names.
+     */
+    static int indexOfColumnName(ObjList<CharSequence> names, int count, CharSequence name) {
+        for (int i = 0; i < count; i++) {
+            if (Chars.equalsIgnoreCase(names.getQuick(i), name)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**

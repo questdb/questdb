@@ -55,6 +55,7 @@ import java.sql.PreparedStatement;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
@@ -165,6 +166,117 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                                 1970-01-01T00:00:03.000000Z\t5
                                 1970-01-01T00:00:04.000000Z\t5
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateQueuedTwiceByNamedStatement() throws Exception {
+        // A named statement runs twice while the test owns the writer. Each run queues its
+        // UPDATE, the test ticks the writer to run it, and each run counts its rows.
+        assertMemoryLeak(() -> {
+            try (
+                    PGServer server = createPGServer(1);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                execute("create table t as (select timestamp_sequence(0, 1000000) ts, 0 as x from long_sequence(3)) timestamp(ts) partition by DAY");
+                // a negative prepare threshold makes the driver use a named statement from the first run
+                try (
+                        Connection connection = getConnection(Mode.EXTENDED, server.getPort(), true, -1);
+                        PreparedStatement update = connection.prepareStatement("UPDATE t SET x = x + 1");
+                        TableWriter lockedWriter = getWriter("t")
+                ) {
+                    for (int i = 0; i < 2; i++) {
+                        final AtomicInteger updatedCount = new AtomicInteger(-1);
+                        final AtomicReference<Throwable> error = new AtomicReference<>();
+                        final Thread updater = new Thread(() -> {
+                            try {
+                                updatedCount.set(update.executeUpdate());
+                            } catch (Throwable th) {
+                                error.set(th);
+                            }
+                        });
+                        updater.start();
+                        while (updater.isAlive()) {
+                            lockedWriter.tick();
+                            Os.pause();
+                        }
+                        updater.join();
+                        if (error.get() != null) {
+                            throw new AssertionError("run " + i, error.get());
+                        }
+                        Assert.assertEquals(3, updatedCount.get());
+                    }
+                }
+                assertQuery("select x from t").noLeakCheck().returnsOnce("x\n2\n2\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateTimeoutNamedStatementDoesNotRunLater() throws Exception {
+        // A named statement outlives the Sync. Its UPDATE times out in the queue of a busy
+        // writer. Freeing the writer must not run it, and the statement must still run again.
+        assertMemoryLeak(() -> {
+            try (
+                    PGServer server = createPGServer(1);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                execute("create table t as (select timestamp_sequence(0, 1000000) ts, 0 as x from long_sequence(3)) timestamp(ts) partition by DAY");
+                // a negative prepare threshold makes the driver use a named statement from the first run
+                try (
+                        Connection connection = getConnection(Mode.EXTENDED, server.getPort(), true, -1);
+                        PreparedStatement update = connection.prepareStatement("UPDATE t SET x = x + 1")
+                ) {
+                    final TableWriter lockedWriter = getWriter("t");
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "Timeout expired");
+                    } finally {
+                        // runs the commands queued on the writer, on this thread
+                        lockedWriter.close();
+                    }
+                    assertQuery("select x from t").noLeakCheck().returnsOnce("x\n0\n0\n0\n");
+
+                    Assert.assertEquals(3, update.executeUpdate());
+                    Assert.assertEquals(3, update.executeUpdate());
+                }
+                assertQuery("select x from t").noLeakCheck().returnsOnce("x\n2\n2\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateTimeoutUnnamedStatementDoesNotRunLater() throws Exception {
+        // The unnamed statement outlives the Sync. Its UPDATE times out in the queue of a busy
+        // writer, and the client sends nothing else. Freeing the writer must not run it.
+        assertMemoryLeak(() -> {
+            try (
+                    PGServer server = createPGServer(1);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                execute("create table t as (select timestamp_sequence(0, 1000000) ts, 0 as x from long_sequence(3)) timestamp(ts) partition by DAY");
+                try (
+                        Connection connection = getConnection(server.getPort(), false, true);
+                        PreparedStatement update = connection.prepareStatement("UPDATE t SET x = 4")
+                ) {
+                    final TableWriter lockedWriter = getWriter("t");
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "Timeout expired");
+                    } finally {
+                        // runs the commands queued on the writer, on this thread
+                        lockedWriter.close();
+                    }
+                    assertQuery("select x from t").noLeakCheck().returnsOnce("x\n0\n0\n0\n");
+                }
             }
         });
     }

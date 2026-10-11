@@ -29,7 +29,11 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.Chars;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -40,6 +44,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.StaleTableStatusExecutionContext;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -384,6 +390,30 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateNameCollisionLostRace() throws Exception {
+        // A session whose name lookup ran before another session registered the name passes the
+        // up-front check, and the shared create helper then reports that it created nothing. The
+        // collision must still get the up-front kind check: an error for a table or a view, a
+        // no-op for an existing live view.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE lv (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertCreateLiveViewLostRaceRejected();
+            execute("DROP TABLE lv");
+            execute("CREATE VIEW lv AS (SELECT ts, x FROM base)");
+            assertCreateLiveViewLostRaceRejected();
+            execute("DROP VIEW lv");
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            executeCreateLiveViewWithStaleNameLookup();
+            Assert.assertTrue(engine.getTableTokenIfExists("lv").isLiveView());
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCreateNameNormalization() throws Exception {
         // CREATE LIVE VIEW normalizes its target name exactly like CREATE TABLE and
         // CREATE MATERIALIZED VIEW: an unquoted SQL keyword is rejected, a quoted keyword
@@ -634,6 +664,24 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                     engine.getLiveViewRegistry().getViewInstance("lv"));
             Assert.assertTrue("the name must still resolve to a live view",
                     engine.getTableTokenIfExists("lv").isLiveView());
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateTableOverLiveViewNameLostRaceRejected() throws Exception {
+        // CREATE TABLE IF NOT EXISTS whose name check ran before the live view was created
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                staleContext.executeDdl("CREATE TABLE IF NOT EXISTS lv (x INT)");
+                Assert.fail("expected CREATE TABLE IF NOT EXISTS over a live view name to be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "live view with the requested name already exists");
+            }
+            Assert.assertTrue(engine.getTableTokenIfExists("lv").isLiveView());
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -1186,6 +1234,45 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                     "wrong message [msg=" + e.getFlyweightMessage() + ", ifNotExists=" + ifNotExists + ']',
                     Chars.contains(e.getFlyweightMessage(), "table or view with the requested name already exists")
             );
+        }
+    }
+
+    private void assertCreateLiveViewLostRaceRejected() throws Exception {
+        try {
+            executeCreateLiveViewWithStaleNameLookup();
+            Assert.fail("expected name-collision reject");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "table or view with the requested name already exists");
+        }
+    }
+
+    // Runs CREATE LIVE VIEW IF NOT EXISTS lv in a session whose first lookup of the name "lv"
+    // ran before another session registered that name.
+    private void executeCreateLiveViewWithStaleNameLookup() throws Exception {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                SqlExecutionContextImpl staleContext = new SqlExecutionContextImpl(engine, 1) {
+                    private boolean isNameLookedUp;
+
+                    @Override
+                    public TableToken getTableTokenIfExists(CharSequence tableName) {
+                        if (!isNameLookedUp && Chars.equalsIgnoreCase(tableName, "lv")) {
+                            isNameLookedUp = true;
+                            return null;
+                        }
+                        return super.getTableTokenIfExists(tableName);
+                    }
+                }
+        ) {
+            staleContext.with(sqlExecutionContext.getSecurityContext(), bindVariableService);
+            final CompiledQuery cq = compiler.compile(
+                    "CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 1s START FROM NOW AS " +
+                            "SELECT ts, x, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base",
+                    sqlExecutionContext
+            );
+            try (Operation op = cq.getOperation()) {
+                compiler.execute(op, staleContext);
+            }
         }
     }
 

@@ -59,9 +59,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.postgresql.util.PSQLException;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.BindException;
+import java.nio.charset.StandardCharsets;
 import java.sql.Array;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -432,6 +434,84 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 Os.sleep(100);
             }
         }
+    }
+
+    // Bind with text parameter values and no result format codes, so every column is text
+    protected static byte[] pgBind(String portal, String statement, String... textParameterValues) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, portal);
+        putPgString(body, statement);
+        putPgShort(body, 0);
+        putPgShort(body, textParameterValues.length);
+        for (String value : textParameterValues) {
+            final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+            putPgInt(body, bytes.length);
+            body.writeBytes(bytes);
+        }
+        putPgShort(body, 0);
+        return pgMessage('B', body);
+    }
+
+    protected static byte[] pgClose(char kind, String name) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(kind);
+        putPgString(body, name);
+        return pgMessage('C', body);
+    }
+
+    protected static byte[] pgDescribe(char kind, String name) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(kind);
+        putPgString(body, name);
+        return pgMessage('D', body);
+    }
+
+    protected static byte[] pgExecute(String portal, int maxRows) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, portal);
+        putPgInt(body, maxRows);
+        return pgMessage('E', body);
+    }
+
+    protected static byte[] pgMessage(char type, ByteArrayOutputStream body) {
+        final ByteArrayOutputStream message = new ByteArrayOutputStream();
+        message.write(type);
+        putPgInt(message, body.size() + Integer.BYTES);
+        message.writeBytes(body.toByteArray());
+        return message.toByteArray();
+    }
+
+    protected static byte[] pgMessages(byte[]... messages) {
+        final ByteArrayOutputStream batch = new ByteArrayOutputStream();
+        for (byte[] message : messages) {
+            batch.writeBytes(message);
+        }
+        return batch.toByteArray();
+    }
+
+    protected static byte[] pgParse(String name, String sql) {
+        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        putPgString(body, name);
+        putPgString(body, sql);
+        putPgShort(body, 0);
+        return pgMessage('P', body);
+    }
+
+    protected static void putPgInt(ByteArrayOutputStream sink, int value) {
+        sink.write(value >>> 24);
+        sink.write(value >>> 16);
+        sink.write(value >>> 8);
+        sink.write(value);
+    }
+
+    protected static void putPgShort(ByteArrayOutputStream sink, int value) {
+        sink.write(value >>> 8);
+        sink.write(value);
+    }
+
+    protected static void putPgString(ByteArrayOutputStream sink, String value) {
+        sink.writeBytes(value.getBytes(StandardCharsets.UTF_8));
+        sink.write(0);
     }
 
     protected void assertWithPgServer(

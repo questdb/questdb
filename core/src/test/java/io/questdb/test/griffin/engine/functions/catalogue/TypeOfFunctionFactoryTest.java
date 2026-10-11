@@ -122,6 +122,21 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTypeOfArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE arr (a DOUBLE[], b DOUBLE[][])");
+            execute("INSERT INTO arr VALUES (ARRAY[1.0], ARRAY[[1.0]])");
+            assertQuery("SELECT typeOf(a) ta, typeOf(b) tb, typeOf(ARRAY[[[1.0]]]) t3, typeOf(null::DOUBLE[]) tn FROM arr")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ta\ttb\tt3\ttn
+                            DOUBLE[]\tDOUBLE[][]\tDOUBLE[][][]\tDOUBLE[]
+                            """);
+        });
+    }
+
+    @Test
     public void testTypeOfDecimal() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table dec (d8 decimal(2,1), d16 decimal(4,0), d32 decimal(9,3), d64 decimal(18,2), d128 decimal(38,10), d256 decimal(76,20))");
@@ -169,6 +184,25 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("typeOf\n" + ColumnType.nameOf(type) + "\n");
         }
+    }
+
+    @Test
+    public void testTypeOfLong128AndTextArray() throws Exception {
+        assertQuery("SELECT typeOf(to_long128(1, 2)) l, typeOf(current_schemas(false)) s")
+                .expectSize()
+                .returns("""
+                        l\ts
+                        LONG128\ttext[]
+                        """);
+    }
+
+    @Test
+    public void testTypeOfWeakDimsArrayBind() throws Exception {
+        // a * $1 types $1 as an array with weak dimensionality, so the name depends on the bound value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE arr (a DOUBLE[])");
+            assertExceptionNoLeakCheck("SELECT typeOf(a * $1) FROM arr", 16, "bind variables are not supported");
+        });
     }
 
     private void assertSyntaxError(String sql) throws Exception {

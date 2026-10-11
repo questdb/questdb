@@ -699,6 +699,51 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportSkipLevRejectsLinesWithExtraValues() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    final String request = PostHeader.replace("POST /upload?name=trips HTTP", "POST /upload?fmt=json&forceHeader=true&skipLev=true&delimiter=%2C&name=t HTTP") +
+                            """
+                                    --------------------------27d997ca93d2689d\r
+                                    Content-Disposition: form-data; name="data"; filename="t.csv"\r
+                                    Content-Type: application/octet-stream\r
+                                    \r
+                                    a,b\r
+                                    1,2,3\r
+                                    4,5,6\r
+                                    """ +
+                            REQUEST_FOOTER;
+                    new SendAndReceiveRequestBuilder().execute(
+                            request,
+                            """
+                                    HTTP/1.1 200 OK\r
+                                    Server: questDB/1.0\r
+                                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                    Transfer-Encoding: chunked\r
+                                    Content-Type: application/json; charset=utf-8\r
+                                    \r
+                                    cd\r
+                                    {"status":"OK","location":"t","rowsRejected":2,"rowsImported":0,"header":true,"partitionBy":"NONE","columns":[{"name":"a","type":"CHAR","size":2,"errors":0},{"name":"b","type":"CHAR","size":2,"errors":0}]}\r
+                                    00\r
+                                    \r
+                                    """
+                    );
+
+                    drainWalQueue(engine);
+                    assertQuery("SELECT * FROM t")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("a\tb\n");
+                });
+    }
+
+    @Test
     public void testImportSymbolIndexedFromSchema() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -807,6 +852,56 @@ public class ImportIODispatcherTest extends AbstractTest {
                         Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts"));
                         Assert.assertFalse(meta.isColumnIndexed(4));
                     }
+                });
+    }
+
+    @Test
+    public void testImportTimestampOptionMatchesHeaderIgnoringCase() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    // timestamp=TS names the file column ts, and the new table takes the header's spelling
+                    final String request = PostHeader.replace("POST /upload?name=trips HTTP", "POST /upload?name=tab&timestamp=TS&fmt=json HTTP") +
+                            """
+                                    --------------------------27d997ca93d2689d\r
+                                    Content-Disposition: form-data; name="data"; filename="tab.csv"\r
+                                    Content-Type: application/octet-stream\r
+                                    \r
+                                    v,ts\r
+                                    1,2023-11-14T22:13:20.000001Z\r
+                                    2,2023-11-14T22:13:21.000002Z\r
+                                    """ +
+                            REQUEST_FOOTER;
+                    new SendAndReceiveRequestBuilder().execute(
+                            request,
+                            """
+                                    HTTP/1.1 200 OK\r
+                                    Server: questDB/1.0\r
+                                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                    Transfer-Encoding: chunked\r
+                                    Content-Type: application/json; charset=utf-8\r
+                                    \r
+                                    e5\r
+                                    {"status":"OK","location":"tab","rowsRejected":0,"rowsImported":2,"header":true,"partitionBy":"NONE","timestamp":"ts","columns":[{"name":"v","type":"INT","size":4,"errors":0},{"name":"ts","type":"TIMESTAMP","size":8,"errors":0}]}\r
+                                    00\r
+                                    \r
+                                    """
+                    );
+
+                    assertQuery("SELECT v, ts FROM tab")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    v\tts
+                                    1\t2023-11-14T22:13:20.000001Z
+                                    2\t2023-11-14T22:13:21.000002Z
+                                    """);
                 });
     }
 
@@ -1107,13 +1202,123 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportWithDesignatedTimestampHeaderInOtherCaseIntoExistingTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (v INT, ts2 TIMESTAMP) TIMESTAMP(ts2) PARTITION BY DAY BYPASS WAL",
+                            sqlExecutionContext
+                    );
+
+                    // the file header TS2 maps to the designated timestamp ts2 ignoring case
+                    final String request = PostHeader.replace("POST /upload?name=trips HTTP", "POST /upload?name=tab&fmt=json HTTP") +
+                            """
+                                    --------------------------27d997ca93d2689d\r
+                                    Content-Disposition: form-data; name="data"; filename="tab.csv"\r
+                                    Content-Type: application/octet-stream\r
+                                    \r
+                                    TS2,v\r
+                                    2023-11-14T22:13:20.000001Z,1\r
+                                    2023-11-14T22:13:21.000002Z,2\r
+                                    """ +
+                            REQUEST_FOOTER;
+                    new SendAndReceiveRequestBuilder().execute(
+                            request,
+                            """
+                                    HTTP/1.1 200 OK\r
+                                    Server: questDB/1.0\r
+                                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                    Transfer-Encoding: chunked\r
+                                    Content-Type: application/json; charset=utf-8\r
+                                    \r
+                                    e6\r
+                                    {"status":"OK","location":"tab","rowsRejected":0,"rowsImported":2,"header":true,"partitionBy":"DAY","timestamp":"ts2","columns":[{"name":"v","type":"INT","size":4,"errors":0},{"name":"ts2","type":"TIMESTAMP","size":8,"errors":0}]}\r
+                                    00\r
+                                    \r
+                                    """
+                    );
+
+                    assertQuery("SELECT v, ts2 FROM tab")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts2")
+                            .expectSize()
+                            .returns("""
+                                    v\tts2
+                                    1\t2023-11-14T22:13:20.000001Z
+                                    2\t2023-11-14T22:13:21.000002Z
+                                    """);
+                });
+    }
+
+    @Test
+    public void testImportWithTimestampNotDesignatedIntoExistingTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (v INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts2) PARTITION BY DAY BYPASS WAL",
+                            sqlExecutionContext
+                    );
+
+                    // the existing table's designated timestamp ts2 wins, and ts imports as a regular column
+                    final String request = PostHeader.replace("POST /upload?name=trips HTTP", "POST /upload?name=tab&timestamp=ts&fmt=json HTTP") +
+                            """
+                                    --------------------------27d997ca93d2689d\r
+                                    Content-Disposition: form-data; name="data"; filename="tab.csv"\r
+                                    Content-Type: application/octet-stream\r
+                                    \r
+                                    v,ts,ts2\r
+                                    1,2023-11-14T22:13:20.000001Z,2024-01-01T00:00:00.000000Z\r
+                                    2,2023-11-14T22:13:21.000002Z,2024-01-02T00:00:00.000000Z\r
+                                    """ +
+                            REQUEST_FOOTER;
+                    new SendAndReceiveRequestBuilder().execute(
+                            request,
+                            """
+                                    HTTP/1.1 200 OK\r
+                                    Server: questDB/1.0\r
+                                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                                    Transfer-Encoding: chunked\r
+                                    Content-Type: application/json; charset=utf-8\r
+                                    \r
+                                    0152\r
+                                    {"status":"OK","location":"tab","rowsRejected":0,"rowsImported":2,"header":true,"partitionBy":"DAY","timestamp":"ts2","warnings":["Existing table timestamp column is used"],"columns":[{"name":"v","type":"INT","size":4,"errors":0},{"name":"ts","type":"TIMESTAMP","size":8,"errors":0},{"name":"ts2","type":"TIMESTAMP","size":8,"errors":0}]}\r
+                                    00\r
+                                    \r
+                                    """
+                    );
+
+                    assertQuery("SELECT v, ts, ts2 FROM tab")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts2")
+                            .expectSize()
+                            .returns("""
+                                    v\tts\tts2
+                                    1\t2023-11-14T22:13:20.000001Z\t2024-01-01T00:00:00.000000Z
+                                    2\t2023-11-14T22:13:21.000002Z\t2024-01-02T00:00:00.000000Z
+                                    """);
+                });
+    }
+
+    @Test
     public void testImportWithWrongPartitionBy() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((_, _) -> {
+                .run((engine, sqlExecutionContext) -> {
                     String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
@@ -1134,6 +1339,40 @@ public class ImportIODispatcherTest extends AbstractTest {
                             .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
 
                     new SendAndReceiveRequestBuilder().execute(request, WarningValidImportResponse1);
+
+                    // the table has no designated timestamp, so Pickup_DateTime imports as a regular column
+                    assertQuery("SELECT Pickup_DateTime FROM trips")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    Pickup_DateTime
+                                    2017-02-01T00:30:00.000000Z
+                                    2017-02-01T00:40:00.000000Z
+                                    2017-02-01T00:50:00.000000Z
+                                    2017-02-01T00:51:00.000000Z
+                                    2017-02-01T01:41:00.000000Z
+                                    2017-02-01T02:00:00.000000Z
+                                    2017-02-01T03:53:00.000000Z
+                                    2017-02-01T04:44:00.000000Z
+                                    2017-02-01T05:05:00.000000Z
+                                    2017-02-01T06:54:00.000000Z
+                                    2017-02-01T07:45:00.000000Z
+                                    2017-02-01T08:45:00.000000Z
+                                    2017-02-01T09:46:00.000000Z
+                                    2017-02-01T10:54:00.000000Z
+                                    2017-02-01T11:45:00.000000Z
+                                    2017-02-01T11:45:00.000000Z
+                                    2017-02-01T11:45:00.000000Z
+                                    2017-02-01T12:26:00.000000Z
+                                    2017-02-01T12:55:00.000000Z
+                                    2017-02-01T13:47:00.000000Z
+                                    2017-02-01T14:05:00.000000Z
+                                    2017-02-01T14:58:00.000000Z
+                                    2017-02-01T15:33:00.000000Z
+                                    2017-02-01T15:45:00.000000Z
+                                    """);
                 });
     }
 

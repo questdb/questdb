@@ -56,7 +56,8 @@ public class DoubleArrayElemMaxGroupByFunctionFactory implements FunctionFactory
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new DoubleArrayElemMaxGroupByFunction(args.getQuick(0), configuration);
+        final Function arg = AbstractDoubleArrayElemAggGroupByFunction.rejectWeakDimsArg(args.getQuick(0), argPositions.getQuick(0));
+        return new DoubleArrayElemMaxGroupByFunction(arg, configuration);
     }
 
     private static final class DoubleArrayElemMaxGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {

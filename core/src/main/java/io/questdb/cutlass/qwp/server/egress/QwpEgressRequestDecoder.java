@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.qwp.server.egress;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
@@ -60,6 +62,7 @@ public class QwpEgressRequestDecoder {
      */
     public final StringSink selectCacheKey = new StringSink();
     public final StringSink sql = new StringSink();
+    private final CairoConfiguration configuration;
     /**
      * Reusable sink passed to {@link BindVariableService#setStr}. The
      * implementation copies the value out, so we can safely reuse this
@@ -87,6 +90,10 @@ public class QwpEgressRequestDecoder {
      * into. Holding it as a field removes the {@code boolean[1]} allocation per bind.
      */
     private boolean bindIsNull;
+
+    public QwpEgressRequestDecoder(CairoConfiguration configuration) {
+        this.configuration = configuration;
+    }
 
     /**
      * Builds the select-cache key for the just-decoded request. Returns the SQL
@@ -197,6 +204,17 @@ public class QwpEgressRequestDecoder {
         p += varintScratch.bytesRead;
         if (bindCount < 0 || bindCount > QwpConstants.MAX_COLUMNS_PER_TABLE) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("QUERY_REQUEST: bind_count out of range: ").put(bindCount);
+        }
+        // the loop below defines a bind variable for each value, so the limit on the bind
+        // variables of a statement applies to the bind count
+        final int maxBindVariables = configuration.getSqlMaxBindVariables();
+        if (bindCount > maxBindVariables) {
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA)
+                    .put("QUERY_REQUEST: bind_count exceeds ")
+                    .put(PropertyKey.CAIRO_SQL_MAX_BIND_VARIABLES.getPropertyPath())
+                    .put(" [count=").put(bindCount)
+                    .put(", max=").put(maxBindVariables)
+                    .put(']');
         }
 
         bindVars.clear();

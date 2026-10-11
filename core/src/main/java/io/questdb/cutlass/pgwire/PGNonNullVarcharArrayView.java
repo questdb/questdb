@@ -152,6 +152,11 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
         isAsciis.setPos(elementCount);
         long ptr = lo;
         for (int i = 0; i < elementCount; i++) {
+            if (hi - ptr < Integer.BYTES) {
+                throw PGMessageProcessingException.instance(pipelineEntry)
+                        .put("unexpected array size [expected=").put(hi - lo)
+                        .put(", elementIndex=").put(i).put(']');
+            }
             int elementLenBE = Unsafe.getInt(ptr);
             // -1 indicates NULL element
             if (elementLenBE == -1) {
@@ -160,6 +165,11 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
                 ptr += Integer.BYTES;
             } else {
                 int elementLen = Numbers.bswap(elementLenBE);
+                if (elementLen < 0 || elementLen > hi - ptr - Integer.BYTES) {
+                    throw PGMessageProcessingException.instance(pipelineEntry)
+                            .put("invalid array element length [elementIndex=").put(i)
+                            .put(", length=").put(elementLen).put(']');
+                }
                 elementOffsets.setQuick(i, ptr);
                 isAsciis.setQuick(i, isAscii(ptr + Integer.BYTES, elementLen));
                 ptr += Integer.BYTES + elementLen;

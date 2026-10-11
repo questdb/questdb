@@ -32,7 +32,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.ColumnConversionOffsetSink;
 import io.questdb.griffin.ConvertersNative;
 import io.questdb.griffin.DecimalUtil;
-import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -946,7 +946,8 @@ public class ColumnTypeConverter {
     }
 
     private static void str2Boolean(CharSequence str, MemoryA mem) {
-        mem.putBool(str != null && SqlKeywords.isTrueKeyword(str));
+        // Same as CAST(str as BOOLEAN): unparseable text and null are false
+        mem.putBool(SqlUtil.parseBooleanQuiet(str));
     }
 
     private static void str2Byte(CharSequence str, MemoryA memoryCMARW) {

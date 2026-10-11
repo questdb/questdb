@@ -956,6 +956,17 @@ public interface CairoConfiguration {
 
     int getSqlMapMaxResizes();
 
+    /**
+     * Caps the indexed bind variables that one statement can define from client input: the
+     * highest {@code $n} in SQL text, the parameter types of a PGWire Parse message, and the
+     * bind values of a QWP query. Bind variables live in per-connection pools that never
+     * shrink, so the cap bounds the heap that a connection can hold on to. The setting is
+     * reloadable, so callers read it on every use rather than cache it.
+     *
+     * @return the maximum number of indexed bind variables per statement
+     */
+    int getSqlMaxBindVariables();
+
     int getSqlMaxNegativeLimit();
 
     int getSqlModelPoolCapacity();

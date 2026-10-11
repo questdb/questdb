@@ -91,7 +91,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // hot path does a single int probe (no Utf8 hashing / equality). Grows but never
     // shrinks; freed on connection close.
     private final QwpEgressConnSymbolDict connSymbolDict = new QwpEgressConnSymbolDict();
-    private final QwpEgressRequestDecoder decoder = new QwpEgressRequestDecoder();
+    private final QwpEgressRequestDecoder decoder;
     // Reused consumer sequence handed to CompiledQuery.execute for async ALTER /
     // DDL operations. Subscribed to the engine's message bus on first use;
     // cleared between queries (the sequence object itself is reused).
@@ -294,6 +294,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public QwpEgressProcessorState(CairoConfiguration cairoConfiguration) {
         this.cairoConfiguration = cairoConfiguration;
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
+        this.decoder = new QwpEgressRequestDecoder(cairoConfiguration);
         // Pick up any test-only default overrides active at construction time
         // so tests that need tiny soft caps don't have to reach into every
         // per-connection state instance.

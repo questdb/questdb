@@ -65,7 +65,8 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new DoubleArrayElemAvgGroupByFunction(args.getQuick(0), configuration);
+        final Function arg = AbstractDoubleArrayElemAggGroupByFunction.rejectWeakDimsArg(args.getQuick(0), argPositions.getQuick(0));
+        return new DoubleArrayElemAvgGroupByFunction(arg, configuration);
     }
 
     /**

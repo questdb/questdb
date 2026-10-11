@@ -6493,12 +6493,13 @@ public class SqlParser {
         }
 
         // src has a suffix. it could be an array suffix. consider 'float8[][]' -> 'double[][]'
-        if (rem % 2 == 0) {
+        if (rem % 2 == 0 && rem / 2 <= ColumnType.ARRAY_NDIMS_LIMIT) {
             // suffix must be even, since square brackets come in pairs
             int dims = rem / 2;
             String suffix = ColumnType.ARRAY_DIM_SUFFIX[dims];
             if (Chars.endsWith(token, suffix)) {
-                typeNode.token = ColumnType.nameOf(ColumnType.encodeArrayType(type, dims));
+                // FunctionParser rejects unsupported element types with a SqlException
+                typeNode.token = ColumnType.nameOf(ColumnType.encodeArrayType(type, dims, false));
                 return true;
             }
         }

@@ -52,8 +52,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private boolean cacheable;
     private boolean done;
     private InsertOperation insertOp;
+    private boolean isDeallocateAll;
     private boolean isExecutedAtParseTime;
     private Operation operation;
+    private PlanDependencies planDependencies;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
     private String sqlStatement;
@@ -93,6 +95,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.alterOp = null;
         this.updateOp = null;
         this.statementName = null;
+        this.isDeallocateAll = false;
         this.operation = null;
         this.cacheable = false;
         this.isExecutedAtParseTime = false;
@@ -178,6 +181,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
+    public PlanDependencies getPlanDependencies() {
+        return planDependencies;
+    }
+
+    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         return recordCursorFactory;
     }
@@ -205,6 +213,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     @Override
     public boolean isCacheable() {
         return cacheable;
+    }
+
+    @Override
+    public boolean isDeallocateAll() {
+        return isDeallocateAll;
     }
 
     public void ofAlter(AlterOperation alterOp) {
@@ -294,6 +307,14 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofDeallocate(CharSequence statementName) {
         this.statementName = Chars.toString(statementName);
+        this.isDeallocateAll = false;
+        of(DEALLOCATE);
+        this.isExecutedAtParseTime = false;
+    }
+
+    public void ofDeallocateAll() {
+        this.statementName = null;
+        this.isDeallocateAll = true;
         of(DEALLOCATE);
         this.isExecutedAtParseTime = false;
     }
@@ -404,6 +425,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         InsertOperation op = insertOp;
         this.insertOp = null;
         return op;
+    }
+
+    public void setPlanDependencies(PlanDependencies planDependencies) {
+        this.planDependencies = planDependencies;
     }
 
     @Override

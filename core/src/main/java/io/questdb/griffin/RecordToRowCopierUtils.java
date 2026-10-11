@@ -1228,7 +1228,7 @@ public class RecordToRowCopierUtils {
                         switch (toColumnTypeTag) {
                             case ColumnType.ARRAY:
                                 asm.invokeInterface(rGetStrA);
-                                asm.iconst(toColumnType);
+                                asm.ldc(toColumnType_0 + i * 2);
                                 asm.invokeStatic(validateArrayDimensionsAndTransferColString);
                                 break;
                             case ColumnType.STRING:
@@ -1328,7 +1328,7 @@ public class RecordToRowCopierUtils {
                                 break;
                             case ColumnType.ARRAY:
                                 asm.invokeInterface(rGetVarchar);
-                                asm.iconst(toColumnType);
+                                asm.ldc(toColumnType_0 + i * 2);
                                 asm.invokeStatic(validateArrayDimensionsAndTransferColVarchar);
                                 break;
                             case ColumnType.STRING:
@@ -2435,7 +2435,7 @@ public class RecordToRowCopierUtils {
                             // Initial stack: [rowWriter, toColumnIndex, parser, record, fromColumnIndex]
                             asm.invokeInterface(rGetVarchar);
                             // Stack: [rowWriter, toColumnIndex, parser, varchar]
-                            asm.iconst(toColumnType);
+                            asm.ldc(toColumnType_0 + i * 2);
                             // Stack: [rowWriter, toColumnIndex, parser, varchar, toColumnType]
                             asm.invokeStatic(validateArrayDimensionsAndTransferColVarchar);
                             // Stack: []
@@ -2535,7 +2535,7 @@ public class RecordToRowCopierUtils {
                             // Initial stack: [rowWriter, toColumnIndex, parser, record, fromColumnIndex]
                             asm.invokeInterface(rGetStrA);
                             // Stack: [rowWriter, toColumnIndex, parser, string]
-                            asm.iconst(toColumnType);
+                            asm.ldc(toColumnType_0 + i * 2);
                             // Stack: [rowWriter, toColumnIndex, parser, string, toColumnType]
                             asm.invokeStatic(validateArrayDimensionsAndTransferColString);
                             // Stack: []

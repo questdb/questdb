@@ -34,7 +34,6 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.UndefinedFunction;
 import io.questdb.std.BinarySequence;
@@ -1466,8 +1465,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
         final int type = function.getType();
         switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN ->
-                    ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
+            case ColumnType.BOOLEAN -> ((BooleanBindVariable) function).value = SqlUtil.implicitCastStrAsBoolean(value);
             case ColumnType.BYTE -> ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);
             case ColumnType.SHORT -> ((ShortBindVariable) function).value = SqlUtil.implicitCastStrAsShort(value);
             case ColumnType.CHAR -> ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);
@@ -1558,7 +1556,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         final int functionType = function.getType();
         switch (ColumnType.tagOf(functionType)) {
             case ColumnType.BOOLEAN:
-                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
+                ((BooleanBindVariable) function).value = SqlUtil.implicitCastVarcharAsBoolean(value);
                 break;
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = SqlUtil.implicitCastVarcharAsByte(value);

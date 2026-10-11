@@ -35,6 +35,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
@@ -163,9 +164,8 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         this.arg = arg;
         this.type = arg.getType();
         this.maxArrayElementCount = configuration.maxArrayElementCount();
-        // Weak-dim array types (bind variables with unresolved dimensionality) cannot
-        // reach GROUP BY aggregate args: column refs always carry strong dims, UNION
-        // rejects array bind variables, and data binding resolves dims before execution.
+        // The factories reject weak-dims arguments via rejectWeakDimsArg(), since PG wire
+        // compiles at Parse, before Bind resolves the dims of an array bind variable.
         // decodeArrayDimensionality asserts dims > 0 as a safety net.
         this.nDims = ColumnType.decodeArrayDimensionality(type);
         this.headerSize = Integer.BYTES * (1 + nDims);
@@ -522,6 +522,19 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         if (to > from) {
             Vect.setMemoryDouble(dataPtr + from * Double.BYTES, Double.NaN, to - from);
         }
+    }
+
+    /**
+     * Rejects an array argument whose type has weak dims, such as a PG wire array bind variable
+     * or an expression over one. The dims of such an argument stay unknown until Bind, but a
+     * GROUP BY aggregate sizes its state and fixes its output type from the dims at compile time.
+     * Factories call this from {@code newInstance()}, before constructing the function.
+     */
+    static Function rejectWeakDimsArg(Function arg, int argPosition) throws SqlException {
+        if (ColumnType.decodeWeakArrayDimensionality(arg.getType()) == -1) {
+            throw SqlException.position(argPosition).put("array bind variable argument is not supported");
+        }
+        return arg;
     }
 
     /**

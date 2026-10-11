@@ -67,7 +67,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         int outerDimLen = args == null ? 0 : args.size();
         if (outerDimLen == 0) {
-            return ArrayConstant.emptyUntyped(1);
+            return ArrayConstant.emptyUntyped(1, position);
         }
         Function arg0 = args.getQuick(0);
         int arg0Pos = argPositions.getQuick(0);
@@ -163,6 +163,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         // Arguments aren't all FunctionArrayFunctions, treat them generically as some kind of array functions.
         return new ArrayFunctionArrayFunction(
                 configuration,
+                position,
                 new ObjList<>(args),
                 new IntList(argPositions),
                 commonElemType,
@@ -198,9 +199,11 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         private final @NotNull IntList argPositions;
         private final @NotNull ObjList<Function> args;
         private final DirectArray arrayOut;
+        private final int position;
 
         public ArrayFunctionArrayFunction(
                 @NotNull CairoConfiguration configuration,
+                int position,
                 @NotNull ObjList<Function> args,
                 @NotNull IntList argPositions,
                 int commonElemType,
@@ -210,6 +213,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 this.type = ColumnType.encodeArrayType(ColumnType.tagOf(commonElemType), nestedNDims + 1);
                 this.args = args;
                 this.argPositions = argPositions;
+                this.position = position;
                 this.arrayOut = new DirectArray(configuration);
                 arrayOut.setType(type);
             } catch (Throwable th) {
@@ -224,7 +228,10 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void assignType(int type, BindVariableService bindVariableService) {
+        public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+            if (!ColumnType.isArray(type)) {
+                throw SqlException.inconvertibleTypes(position, ColumnType.ARRAY, type);
+            }
             this.type = type;
             arrayOut.setType(type);
         }

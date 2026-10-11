@@ -27,6 +27,7 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.std.Decimal256;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectUtf16Sink;
@@ -42,6 +43,20 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
         this.utf16Sink = utf16Sink;
     }
 
+    @Override
+    public long getTimestamp(DirectUtf8Sequence value) throws Exception {
+        return getTimestamp(value, utf16Sink);
+    }
+
+    @Override
+    public long getTimestamp(DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
+        utf16Sink.clear();
+        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
+            throw Utf8Exception.INSTANCE;
+        }
+        return format.parse(utf16Sink, locale);
+    }
+
     public TimestampUtf8Adapter of(DateFormat format, DateLocale locale, String pattern) {
         this.format = format;
         this.locale = locale;
@@ -50,12 +65,22 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
+    public boolean probe(DirectUtf8Sequence text) {
         utf16Sink.clear();
-        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
-            throw Utf8Exception.INSTANCE;
+        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(text.lo(), text.hi(), utf16Sink)) {
+            return false;
         }
-        row.putDate(column, format.parse(utf16Sink, locale));
+        try {
+            format.parse(utf16Sink, locale);
+            return true;
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
+        row.putDate(column, getTimestamp(value, utf16Sink));
     }
 
     @Override

@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -58,6 +59,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
@@ -763,6 +765,189 @@ public class CreateTableTest extends AbstractCairoTest {
             }
 
             assertEquals(tableCount, getTablesInRegistrySize());
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectIfNotExistsReExecuteReportsZeroRows() throws Exception {
+        // pgwire re-executes one compiled operation for a prepared statement; the second run
+        // finds the table and writes nothing, so it must not report the first run's count
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery cq = compiler.compile("CREATE TABLE IF NOT EXISTS t AS (SELECT x FROM long_sequence(7))", sqlExecutionContext);
+                try (Operation op = cq.getOperation()) {
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                        fut.await();
+                        assertEquals(7, fut.getAffectedRowsCount());
+                    }
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                        fut.await();
+                        assertEquals(0, fut.getAffectedRowsCount());
+                    }
+                }
+            }
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            7
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectIfNotExistsLostRaceBypassWal() throws Exception {
+        assertCreateTableAsSelectIfNotExistsLostRace("BYPASS WAL");
+    }
+
+    @Test
+    public void testCreateTableAsSelectIfNotExistsLostRaceCopyErrorKeepsTable() throws Exception {
+        // the loser's SELECT does not fit the winner's table; the loser must not drop that table
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                assertEquals(0, staleContext.executeDdlAffectedRows(
+                        "CREATE TABLE IF NOT EXISTS t AS (SELECT 'abc' x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                ));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectIfNotExistsLostRaceToViewFails() throws Exception {
+        // the loser must not write its rows through the view's token
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW t AS (SELECT ts, x FROM b)");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                assertCreateLostRaceFails(
+                        staleContext,
+                        "CREATE TABLE IF NOT EXISTS t AS (SELECT x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                        "view or materialized view with the requested name already exists"
+                );
+            }
+            assertTrue(engine.getTableTokenIfExists("t").isView());
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectIfNotExistsLostRaceWal() throws Exception {
+        assertCreateTableAsSelectIfNotExistsLostRace("WAL");
+    }
+
+    @Test(timeout = 60_000)
+    public void testCreateTableIfNotExistsBacksOffWhileDropHoldsPools() throws Exception {
+        // while a non-WAL DROP holds the pools of the table directory, CREATE TABLE IF NOT EXISTS
+        // must sleep between lock attempts instead of spinning: every failed attempt logs an error
+        assertMemoryLeak(() -> {
+            final TableToken droppingToken = CreateNameRaceTestUtils.newDroppingNonWalTableToken(configuration, "t");
+            final long creatorThreadId = Thread.currentThread().getId();
+            final AtomicInteger lockBusyCount = new AtomicInteger();
+            engine.setPoolListener((factoryType, thread, _, event, _, _) -> {
+                if (factoryType == PoolListener.SRC_TABLE_METADATA && event == PoolListener.EV_LOCK_BUSY && thread == creatorThreadId) {
+                    lockBusyCount.incrementAndGet();
+                }
+            });
+            try {
+                CreateNameRaceTestUtils.runWhileDropHoldsPools(engine, droppingToken, 200, () -> execute("CREATE TABLE IF NOT EXISTS t (x INT)"));
+            } finally {
+                engine.setPoolListener(null);
+            }
+            assertTrue("lock attempts while the pools were held: " + lockBusyCount.get(), lockBusyCount.get() <= 20);
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test(timeout = 60_000)
+    public void testCreateTableIfNotExistsFailsWhenPoolsStayLocked() throws Exception {
+        // the create waits for the pools of the new table directory for spinLockTimeout at most,
+        // and it gives the reserved name back when it gives up
+        spinLockTimeout = 100;
+        assertMemoryLeak(() -> {
+            final TableToken droppingToken = CreateNameRaceTestUtils.newDroppingNonWalTableToken(configuration, "t");
+            CreateNameRaceTestUtils.runWhileDropHoldsPools(engine, droppingToken, 30_000, () -> {
+                try {
+                    execute("CREATE TABLE IF NOT EXISTS t (x INT)");
+                    fail("CREATE TABLE IF NOT EXISTS must not succeed without creating the table");
+                } catch (SqlException ignore) {
+                }
+                assertNull(engine.getTableTokenIfExists("t"));
+            });
+
+            execute("CREATE TABLE t (x INT)");
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateTableIfNotExistsLostRaceToViewFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE VIEW v AS (SELECT ts, x FROM b)");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, sum(x) x FROM b SAMPLE BY 1h) PARTITION BY DAY");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                final String expectedMessage = "view or materialized view with the requested name already exists";
+                assertCreateLostRaceFails(staleContext, "CREATE TABLE IF NOT EXISTS v (x INT)", expectedMessage);
+                assertCreateLostRaceFails(staleContext, "CREATE TABLE IF NOT EXISTS mv (x INT)", expectedMessage);
+                assertCreateLostRaceFails(staleContext, "CREATE TABLE IF NOT EXISTS v (LIKE b)", expectedMessage);
+            }
+            assertTrue(engine.getTableTokenIfExists("v").isView());
+            assertTrue(engine.getTableTokenIfExists("mv").isMatView());
+        });
+    }
+
+    @Test
+    public void testCreateTableIfNotExistsLostRaceToTableIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("CREATE TABLE b (x INT)");
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                assertFalse(staleContext.executeDdl("CREATE TABLE IF NOT EXISTS t (x INT)"));
+                assertFalse(staleContext.executeDdl("CREATE TABLE IF NOT EXISTS t (LIKE b)"));
+            }
+        });
+    }
+
+    @Test(timeout = 60_000)
+    public void testCreateTableIfNotExistsWaitsForDropToReleasePools() throws Exception {
+        // a non-WAL DROP gives the name back before it releases the pools of the table
+        // directory; a CREATE TABLE IF NOT EXISTS in that window must wait and create the table
+        assertMemoryLeak(() -> {
+            final TableToken droppingToken = CreateNameRaceTestUtils.newDroppingNonWalTableToken(configuration, "t");
+            CreateNameRaceTestUtils.runWhileDropHoldsPools(engine, droppingToken, 200, () -> execute("CREATE TABLE IF NOT EXISTS t (x INT)"));
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 
@@ -1616,6 +1801,15 @@ public class CreateTableTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertCreateLostRaceFails(StaleTableStatusExecutionContext staleContext, String ddl, String expectedMessage) {
+        try {
+            staleContext.executeDdl(ddl);
+            fail("expected a name collision [ddl=" + ddl + ']');
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
+    }
+
     private static int getTablesInRegistrySize() {
         ObjHashSet<TableToken> bucket = new ObjHashSet<>();
         engine.getTableTokens(bucket, true);
@@ -1693,6 +1887,28 @@ public class CreateTableTest extends AbstractCairoTest {
                 assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "indexes are supported only for SYMBOL columns: x");
             }
+        });
+    }
+
+    private void assertCreateTableAsSelectIfNotExistsLostRace(String walClause) throws Exception {
+        // the session checked the name before another session created table t; it must leave
+        // that table alone: no rows copied into it, no second writer, no drop
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            try (StaleTableStatusExecutionContext staleContext = new StaleTableStatusExecutionContext(engine)) {
+                assertEquals(0, staleContext.executeDdlAffectedRows(
+                        "CREATE TABLE IF NOT EXISTS t AS (SELECT x, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY " + walClause
+                ));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
         });
     }
 

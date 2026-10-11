@@ -39,7 +39,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -996,8 +996,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private boolean convertVarToBool(int encoded, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
-        return cs != null && SqlKeywords.isTrueKeyword(cs);
+        return SqlUtil.parseBooleanQuiet(readVarValueForConversion(encoded & 0xFF, columnIndex));
     }
 
     private byte convertVarToByte(int encoded, int columnIndex) {

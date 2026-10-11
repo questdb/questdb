@@ -42,8 +42,11 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.cutlass.text.CopyImportTask;
+import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
+import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.TextImportException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -64,8 +67,13 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -87,10 +95,49 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class ParallelCsvFileImporterTest extends AbstractCairoTest {
+    private static final String LONG_TIMESTAMP_CSV = "long-timestamp.csv";
+    private static final String LONG_TIMESTAMP_ROWS_AFTER_4 = """
+            v
+            0
+            1
+            2
+            3
+            200
+            201
+            202
+            203
+            204
+            205
+            206
+            207
+            208
+            209
+            """;
     private static final Rnd rnd = new Rnd();
     private static final String stringTypeName = ColumnType.nameOf(ColumnType.VARCHAR);
+    private static final String TS_V_DDL = "CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
+    private static final String UNTERMINATED_CSV = "unterminated.csv";
+    private static final String UNTERMINATED_ROWS = """
+            v
+            0
+            1
+            2
+            3
+            4
+            200
+            201
+            202
+            203
+            204
+            205
+            206
+            207
+            208
+            209
+            """;
 
     @Override
     @Before
@@ -307,6 +354,66 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     """);
                 }
         );
+    }
+
+    @Test
+    public void testImportBooleanPgSpellingsSkipRow() throws Exception {
+        // BOOLEAN accepts the PostgreSQL spellings, keeps 'null' as false and counts garbage as an error.
+        // The CSV must exist before executeWithPool(), see writeNanosBoundsCsv().
+        final File dir = temp.newFolder("bool-spellings" + System.nanoTime());
+        final String fileName = "bool-spellings.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        b,ts
+                        t,1970-01-01T00:00:00.000000Z
+                        1,1970-01-01T00:00:01.000000Z
+                        yes,1970-01-01T00:00:02.000000Z
+                        on,1970-01-01T00:00:03.000000Z
+                        TRUE,1970-01-01T00:00:04.000000Z
+                        f,1970-01-01T00:00:05.000000Z
+                        0,1970-01-01T00:00:06.000000Z
+                        no,1970-01-01T00:00:07.000000Z
+                        off,1970-01-01T00:00:08.000000Z
+                        false,1970-01-01T00:00:09.000000Z
+                        null,1970-01-01T00:00:10.000000Z
+                        garbage,1970-01-01T00:00:11.000000Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ROW);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(1, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT b, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            b\tts
+                            true\t1970-01-01T00:00:00.000000Z
+                            true\t1970-01-01T00:00:01.000000Z
+                            true\t1970-01-01T00:00:02.000000Z
+                            true\t1970-01-01T00:00:03.000000Z
+                            true\t1970-01-01T00:00:04.000000Z
+                            false\t1970-01-01T00:00:05.000000Z
+                            false\t1970-01-01T00:00:06.000000Z
+                            false\t1970-01-01T00:00:07.000000Z
+                            false\t1970-01-01T00:00:08.000000Z
+                            false\t1970-01-01T00:00:09.000000Z
+                            false\t1970-01-01T00:00:10.000000Z
+                            """);
+        });
     }
 
     @Test
@@ -646,6 +753,161 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testImportExistingDateTimestampColumnsSkipRow() throws Exception {
+        // text the detector types as LONG, TIMESTAMP or VARCHAR parses into existing DATE/TIMESTAMP columns like
+        // INSERT's implicit cast; an unparseable value skips the row. The CSV must exist before executeWithPool().
+        final File dir = temp.newFolder("existing-date-columns" + System.nanoTime());
+        final String fileName = "existing-date-columns.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        d,d2,t,tn,ts
+                        1700000000000,2023-11-14T22:13:20.123456Z,2023-11-14,2023-11-14T22:13:20+01:00,2023-11-14T00:00:00.000000Z
+                        1700000000001,2023-11-14T22:13:21.000000Z,abc,null,2023-11-14T00:00:01.000000Z
+                        1700000000002,2023-11-14T22:13:22.000000Z,2023-11-15,null,2023-11-14T00:00:02.000000Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (d DATE, d2 DATE, t TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ROW);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(1, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT d, d2, t, tn, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            d\td2\tt\ttn\tts
+                            2023-11-14T22:13:20.000Z\t2023-11-14T22:13:20.123Z\t2023-11-14T00:00:00.000000Z\t2023-11-14T21:13:20.000000000Z\t2023-11-14T00:00:00.000000Z
+                            2023-11-14T22:13:20.002Z\t2023-11-14T22:13:22.000Z\t2023-11-15T00:00:00.000000Z\t\t2023-11-14T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingDesignatedTimestampDateFormatFails() throws Exception {
+        // a UTF-8 DATE input format cannot feed the designated timestamp: the import fails upfront
+        // instead of rejecting every row
+        final String fileName = "designated-date-format.csv";
+        executeWithInputFormats(
+                """
+                        {
+                          "date": [{"format": "dd.MM.yyyy", "utf8": true}],
+                          "timestamp": [{"format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz", "utf8": false}]
+                        }""",
+                fileName,
+                """
+                        v,ts
+                        1,14.11.2023
+                        2,15.11.2023
+                        """,
+                0,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    execute(compiler, "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
+                        importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                        Assert.fail("UTF-8 DATE format into designated timestamp must fail");
+                    } catch (TextImportException e) {
+                        Assert.assertEquals("column is not a timestamp [no=1, name='ts']", e.getMessage());
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testImportExistingDesignatedTimestampNsWithTimestampColumn() throws Exception {
+        // the TIMESTAMP_NS designated timestamp must not switch the TIMESTAMP column to nanos.
+        // The CSV must exist before executeWithPool().
+        final File dir = temp.newFolder("designated-timestamp-ns" + System.nanoTime());
+        final String fileName = "designated-timestamp-ns.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        t,ts
+                        2023-11-14T22:13:20.000001Z,2023-11-14T22:13:20.000000Z
+                        2023-11-14T22:13:20.123456Z,2023-11-14T22:13:21.000001Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (t TIMESTAMP, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_COL);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(0, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT t, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            t\tts
+                            2023-11-14T22:13:20.000001Z\t2023-11-14T22:13:20.000000000Z
+                            2023-11-14T22:13:20.123456Z\t2023-11-14T22:13:21.000001000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testImportExistingTimestampAndTimestampNsColumns() throws Exception {
+        // columns detected with the same timestamp format each keep their own precision.
+        // The CSV must exist before executeWithPool().
+        final File dir = temp.newFolder("timestamp-and-timestamp-ns" + System.nanoTime());
+        final String fileName = "timestamp-and-timestamp-ns.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        d,tn,t,ts
+                        2023-11-14T22:13:20.000000Z,2023-11-14T22:13:20.000001Z,2023-11-14T22:13:20.000001Z,2023-11-14T00:00:00.000000Z
+                        2023-11-14T22:13:20.123456Z,2023-11-14T22:13:20.123456Z,2023-11-14T22:13:20.123456Z,2023-11-14T00:00:01.000000Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (d DATE, tn TIMESTAMP_NS, t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_COL);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(0, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT d, tn, t, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            d\ttn\tt\tts
+                            2023-11-14T22:13:20.000Z\t2023-11-14T22:13:20.000001000Z\t2023-11-14T22:13:20.000001Z\t2023-11-14T00:00:00.000000Z
+                            2023-11-14T22:13:20.123Z\t2023-11-14T22:13:20.123456000Z\t2023-11-14T22:13:20.123456Z\t2023-11-14T00:00:01.000000Z
+                            """);
+        });
     }
 
     @Test
@@ -1002,14 +1264,14 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileFailsWhenTimestampColumnIsMissingInInputFile() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab37 ( tstmp timestamp, line string, d double, description string ) timestamp(tstmp) partition by day;", sqlExecutionContext);
+                    execute(compiler, "create table tab37 ( line string, t1 timestamp, d double, description string, tstmp timestamp ) timestamp(tstmp) partition by day;", sqlExecutionContext);
 
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab37", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
                         Assert.fail();
                     } catch (Exception e) {
-                        TestUtils.assertContains(e.getMessage(), "invalid timestamp column [name='ts']");
+                        TestUtils.assertContains(e.getMessage(), "designated timestamp column is not in the file [column=tstmp]");
                     }
                 }
         );
@@ -1221,7 +1483,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileWithHeaderButInputPartitionByNotMatchingTargetTables() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab45 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
+                    execute(compiler, "create table tab45 ( s string, ts timestamp, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab45", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) -1, "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1262,7 +1524,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableIsNotPartitioned() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab46 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
+                    execute(compiler, "create table tab46 ( s string, ts timestamp, d double, i int ) timestamp(ts);", sqlExecutionContext);
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab46", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1293,7 +1555,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileWithHeaderButTargetTableIsNotPartitioned2() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab47 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
+                    execute(compiler, "create table tab47 ( s string, ts timestamp, d double, i int ) timestamp(ts);", sqlExecutionContext);
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab47", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1589,8 +1851,8 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportIntoNonEmptyTableReturnsError() throws Exception {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-                    execute(compiler, "create table tab52 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
-                    execute(compiler, "insert into tab52 select cast(x as timestamp), 'a', x, x from long_sequence(10);", sqlExecutionContext);
+                    execute(compiler, "create table tab52 ( s string, ts timestamp, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
+                    execute(compiler, "insert into tab52 select 'a', cast(x as timestamp), x, x from long_sequence(10);", sqlExecutionContext);
 
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("tab52", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
@@ -1616,6 +1878,127 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testImportLongQuotedTimestampAcrossBufferEndAbortsWithSkipAll() throws Exception {
+        // a timestamp too long for the indexer's roll buffer aborts an ON ERROR ABORT import the way an
+        // unparsable timestamp inside one read buffer does
+        writeLongTimestampCsv(4, true, false);
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.of("tab", LONG_TIMESTAMP_CSV, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ALL);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+                Assert.fail("import is expected to fail under SKIP_ALL");
+            } catch (TextImportException e) {
+                TestUtils.assertContains(
+                        e.getMessage(),
+                        "import failed [phase=indexing, msg=`timestamp column value too long [line=4, column=0, maxLength=100]`]"
+                );
+            }
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT v FROM tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n");
+        });
+    }
+
+    @Test
+    public void testImportLongQuotedTimestampAcrossBufferEndSkipsOneRow() throws Exception {
+        // the timestamp field is already longer than the roll buffer when the read buffer ends
+        writeLongTimestampCsv(4, true, false);
+        assertImportSkipsLongTimestampRow(14, LONG_TIMESTAMP_ROWS_AFTER_4);
+    }
+
+    @Test
+    public void testImportLongQuotedTimestampAcrossBufferEndSkipsOneRowAndQuotedValues() throws Exception {
+        // a quoted value after the rejected row checks the index offsets of the rows that follow it
+        writeLongTimestampCsv(4, true, true);
+        assertImportSkipsLongTimestampRow(14, LONG_TIMESTAMP_ROWS_AFTER_4);
+    }
+
+    @Test
+    public void testImportLongQuotedTimestampOverflowingRollBufferSkipsOneRow() throws Exception {
+        // the timestamp field fits the roll buffer when the read buffer ends and outgrows it later
+        writeLongTimestampCsv(7, true, false);
+        assertImportSkipsLongTimestampRow(
+                17,
+                """
+                        v
+                        0
+                        1
+                        2
+                        3
+                        4
+                        5
+                        6
+                        200
+                        201
+                        202
+                        203
+                        204
+                        205
+                        206
+                        207
+                        208
+                        209
+                        """
+        );
+    }
+
+    @Test
+    public void testImportLongUnquotedTimestampAcrossBufferEndSkipsOneRow() throws Exception {
+        writeLongTimestampCsv(4, false, false);
+        assertImportSkipsLongTimestampRow(14, LONG_TIMESTAMP_ROWS_AFTER_4);
+    }
+
+    @Test
+    public void testImportNarrowTypesSkipRow() throws Exception {
+        // a row with one bad BYTE, SHORT, CHAR or LONG256 value is skipped rather than stored wrapped or
+        // truncated. The CSV must exist before executeWithPool(), see writeNanosBoundsCsv().
+        final File dir = temp.newFolder("narrow-types" + System.nanoTime());
+        final String fileName = "narrow-types.csv";
+        TestUtils.writeStringToFile(
+                new File(dir, fileName),
+                """
+                        by,sh,ch,l256,ts
+                        128,1,a,0x01,1970-01-01T00:00:00.000000Z
+                        1,32_768,a,0x01,1970-01-01T00:00:01.000000Z
+                        1,1,ab,0x01,1970-01-01T00:00:02.000000Z
+                        1,1,\uD83D\uDE00,0x01,1970-01-01T00:00:03.000000Z
+                        1,1,a,zz,1970-01-01T00:00:04.000000Z
+                        1,1,a,0x,1970-01-01T00:00:05.000000Z
+                        +12,-1_000,\u20AC,1234,1970-01-01T00:00:06.000000Z
+                        -128,-32768,\"\"\"\",0Xab,1970-01-01T00:00:07.000000Z
+                        """
+        );
+        inputRoot = dir.getAbsolutePath();
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (by BYTE, sh SHORT, ch CHAR, l256 LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                    }
+                });
+                importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ROW);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(6, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT by, sh, ch, l256, ts FROM tab")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            by\tsh\tch\tl256\tts
+                            12\t-1000\t\u20AC\t0x1234\t1970-01-01T00:00:06.000000Z
+                            -128\t-32768\t"\t0xab\t1970-01-01T00:00:07.000000Z
+                            """);
+        });
     }
 
     @Test
@@ -1945,6 +2328,187 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportUnterminatedLastLineAloneInNewDayWithOneWorker() throws Exception {
+        // one worker imports every partition with one lexer, the unterminated line is the only line of its partition
+        writeUnterminatedCsv(unterminatedRows(true) + "\n2024-01-03T00:00:00.000000Z,300");
+        assertImportsUnterminatedLastLine(TS_V_DDL, 1, 16, 0, "SELECT v FROM tab", UNTERMINATED_ROWS + "300\n");
+    }
+
+    @Test
+    public void testImportUnterminatedLastLineMissingQuoteCountsError() throws Exception {
+        writeUnterminatedCsv(unterminatedRows(true) + "\n2024-01-02T00:00:10.000000Z,\"300");
+        assertImportsUnterminatedLastLine(TS_V_DDL, 4, 15, 1, "SELECT v FROM tab", UNTERMINATED_ROWS);
+    }
+
+    @Test
+    public void testImportUnterminatedLastLineTimestampFirst() throws Exception {
+        writeUnterminatedCsv(unterminatedRows(true));
+        assertImportsUnterminatedLastLine(TS_V_DDL, 4, 15, 0, "SELECT v FROM tab", UNTERMINATED_ROWS);
+    }
+
+    @Test
+    public void testImportUnterminatedLastLineTimestampNotLast() throws Exception {
+        writeUnterminatedCsv(unterminatedRows(false));
+        assertImportsUnterminatedLastLine(
+                "CREATE TABLE tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                4,
+                15,
+                0,
+                "SELECT v FROM tab",
+                UNTERMINATED_ROWS
+        );
+    }
+
+    @Test
+    public void testImportUnterminatedLastLineWithBadValueAbortsWithSkipAll() throws Exception {
+        writeUnterminatedCsv(unterminatedRows(true) + "\n2024-01-02T00:00:10.000000Z,notint");
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, TS_V_DDL, sqlExecutionContext);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.of("tab", UNTERMINATED_CSV, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ALL);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+                Assert.fail("import is expected to fail under SKIP_ALL");
+            } catch (TextImportException e) {
+                TestUtils.assertContains(e.getMessage(), "import failed [phase=partition_import, msg=`bad syntax");
+            }
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT v FROM tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n");
+        });
+    }
+
+    @Test
+    public void testImportUnterminatedLongLastLine() throws Exception {
+        // the unterminated line is longer than the lexer's roll buffer limit, and the import merges it with a later
+        // row of the same day
+        writeUnterminatedCsv(
+                "ts,s,v\n"
+                        + "2024-01-01T00:00:01.000000Z,a,1\n"
+                        + "2024-01-01T00:00:09.000000Z,b,2\n"
+                        + "2024-01-01T00:00:05.000000Z," + "x".repeat(20_000) + ",3"
+        );
+        assertImportsUnterminatedLastLine(
+                "CREATE TABLE tab (ts TIMESTAMP, s VARCHAR, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                1,
+                3,
+                0,
+                "SELECT length(s) len, v FROM tab",
+                """
+                        len\tv
+                        1\t1
+                        20000\t3
+                        1\t2
+                        """
+        );
+    }
+
+    @Test
+    public void testImportUnterminatedQuotedLastLine() throws Exception {
+        writeUnterminatedCsv("""
+                s,ts,v
+                "a,1","2024-01-02T00:00:09.000000Z","210"
+                "b,2","2024-01-02T00:00:01.000000Z","201"
+                "x,9","2024-01-02T00:00:05.000000Z","209\""""
+        );
+        assertImportsUnterminatedLastLine(
+                "CREATE TABLE tab (s VARCHAR, ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                1,
+                3,
+                0,
+                "SELECT s, v FROM tab",
+                """
+                        s\tv
+                        b,2\t201
+                        x,9\t209
+                        a,1\t210
+                        """
+        );
+    }
+
+    @Test
+    public void testImportUtf8DateFormatNonAscii() throws Exception {
+        // the coordinator detects a "utf8": true DATE format from localized non-ASCII month names
+        final String fileName = "utf8-date-format.csv";
+        executeWithInputFormats(
+                """
+                        {
+                          "date": [{"format": "d MMM y", "locale": "fr-FR", "utf8": true}],
+                          "timestamp": [{"format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz", "utf8": false}]
+                        }""",
+                fileName,
+                """
+                        v,d,ts
+                        1,3 f\u00e9vr. 2017,2023-11-14T22:13:20.000000Z
+                        2,10 d\u00e9c. 2018,2023-11-15T22:13:21.000000Z
+                        """,
+                0,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 1)) {
+                        importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                    }
+                    refreshTablesInBaseEngine();
+                    assertQuery("SELECT v, d, ts FROM tab")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    v\td\tts
+                                    1\t2017-02-03T00:00:00.000Z\t2023-11-14T22:13:20.000000Z
+                                    2\t2018-12-10T00:00:00.000Z\t2023-11-15T22:13:21.000000Z
+                                    """);
+                }
+        );
+    }
+
+    @Test
+    public void testImportUtf8TimestampFormatDesignatedWithWorkers() throws Exception {
+        // each COPY worker decodes a "utf8": true designated timestamp into its own UTF-16 sink;
+        // workers sharing the adapter's sink garble the timestamps they parse at the same time
+        final int rowCount = 10_000;
+        final long firstMicros = 1_672_531_200_000_000L; // 2023-01-01T00:00:00Z
+        final long stepMicros = 3_153_600_001L; // spreads the rows over a year of DAY partitions
+        final DateFormat format = MicrosFormatFactory.INSTANCE.get("d MMM yyyy HH:mm:ss.SSSUUU");
+        final DateLocale locale = DateLocaleFactory.INSTANCE.getLocale("fr-FR");
+        final StringSink csv = new StringSink();
+        csv.put("v,ts\n");
+        for (int i = 0; i < rowCount; i++) {
+            csv.put(i).put(',');
+            format.format(firstMicros + i * stepMicros, locale, null, csv);
+            csv.put('\n');
+        }
+        final String fileName = "utf8-timestamp-format.csv";
+        executeWithInputFormats(
+                """
+                        {
+                          "date": [{"format": "yyyy-MM-dd", "utf8": false}],
+                          "timestamp": [{"format": "d MMM yyyy HH:mm:ss.SSSUUU", "locale": "fr-FR", "utf8": true}]
+                        }""",
+                fileName,
+                csv,
+                2,
+                (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
+                        importer.setMinChunkSize(1);
+                        importer.of("tab", fileName, 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
+                        importer.process(AllowAllSecurityContext.INSTANCE);
+                    }
+                    refreshTablesInBaseEngine();
+                    assertQuery("SELECT count() total, sum(CASE WHEN ts::LONG = 1_672_531_200_000_000 + v * 3_153_600_001 THEN 1 ELSE 0 END) matching FROM tab")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    total\tmatching
+                                    10000\t10000
+                                    """);
+                }
+        );
+    }
+
+    @Test
     public void testImportVarcharDoubleQuotes() throws Exception {
         executeWithPool(
                 2,
@@ -2159,9 +2723,6 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                     """
                                             bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
                                             false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
-                                            false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
-                                            false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
-                                            false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
                                             true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
                                             """ //date format discovery is flawed
                                     //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values
@@ -2886,7 +3447,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                         "IsoDate",
                                         "yyyy-MM-ddTHH:mm:ss.SSSZ",
                                         false,
-                                        128
+                                        129
                                 );
                             }
                         }
@@ -3022,6 +3583,76 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 .anyMatch(stackTraceElement -> stackTraceElement.getClassName().endsWith(klass));
     }
 
+    /**
+     * Returns a CSV of 15 rows over two days, v=0..4 and v=200..209, with no line end after the last row.
+     */
+    private static String unterminatedRows(boolean isTimestampFirst) {
+        final StringBuilder csv = new StringBuilder(isTimestampFirst ? "ts,v" : "v,ts");
+        for (int i = 0; i < 15; i++) {
+            final String ts = i < 5 ? "2024-01-01T00:00:0" + i + ".000000Z" : "2024-01-02T00:00:0" + (i - 5) + ".000000Z";
+            final int v = i < 5 ? i : 195 + i;
+            csv.append('\n').append(isTimestampFirst ? ts + "," + v : v + "," + ts);
+        }
+        return csv.toString();
+    }
+
+    private void assertImportSkipsLongTimestampRow(long expectedRowsImported, String expectedValues) throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, "CREATE TABLE tab (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            final AtomicLong finishedRowsImported = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                        finishedRowsImported.set(rowsImported);
+                    }
+                });
+                importer.of("tab", LONG_TIMESTAMP_CSV, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ROW);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(1, finishedErrors.get());
+            Assert.assertEquals(expectedRowsImported, finishedRowsImported.get());
+            refreshTablesInBaseEngine();
+            assertQuery("SELECT v FROM tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedValues);
+        });
+    }
+
+    private void assertImportsUnterminatedLastLine(
+            String ddl,
+            int workerCount,
+            long expectedRowsHandled,
+            long expectedErrors,
+            String query,
+            String expected
+    ) throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            execute(compiler, ddl, sqlExecutionContext);
+            final AtomicLong finishedErrors = new AtomicLong(-1);
+            final AtomicLong finishedRowsHandled = new AtomicLong(-1);
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, workerCount)) {
+                importer.setStatusReporter((phase, status, msg, rowsHandled, rowsImported, errors) -> {
+                    if (status == CopyImportTask.STATUS_FINISHED && phase == CopyImportTask.NO_PHASE) {
+                        finishedErrors.set(errors);
+                        finishedRowsHandled.set(rowsHandled);
+                    }
+                });
+                importer.of("tab", UNTERMINATED_CSV, 1, PartitionBy.DAY, (byte) ',', "ts", null, true, null, Atomicity.SKIP_ROW);
+                importer.process(AllowAllSecurityContext.INSTANCE);
+            }
+            Assert.assertEquals(expectedRowsHandled, finishedRowsHandled.get());
+            Assert.assertEquals(expectedErrors, finishedErrors.get());
+            refreshTablesInBaseEngine();
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
     private void assertSkipsOutOfBoundsNanosTimestampRow(int atomicity) throws Exception {
         final String fileName = writeNanosBoundsCsv();
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
@@ -3057,6 +3688,49 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
      * root or the fresh folder depending on whether a pool worker or the work-stealing caller
      * picks it up.
      */
+    /**
+     * Writes a CSV with {@code rowsBefore} good rows, one row whose timestamp is 150 bytes long and
+     * straddles the end of the first 256-byte read buffer, and ten good rows with v=200..209. Sets
+     * the copy buffer size to 256 and points {@link #inputRoot} at the new folder. Callers must
+     * invoke this before {@code executeWithPool()}, see {@link #writeNanosBoundsCsv()}.
+     */
+    private void writeLongTimestampCsv(int rowsBefore, boolean isTimestampQuoted, boolean isValueQuoted) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 256);
+        final StringBuilder csv = new StringBuilder("ts,v\n");
+        for (int i = 0; i < rowsBefore; i++) {
+            csv.append("2023-11-14T00:00:0").append(i).append(".000000Z,").append(i).append('\n');
+        }
+        final String longTimestamp = "x".repeat(150);
+        if (isTimestampQuoted) {
+            csv.append('"').append(longTimestamp).append('"');
+        } else {
+            csv.append(longTimestamp);
+        }
+        csv.append(",100\n");
+        for (int i = 0; i < 10; i++) {
+            csv.append("2023-11-14T00:01:0").append(i).append(".000000Z,");
+            if (isValueQuoted && i == 3) {
+                csv.append("\"20").append(i).append('"');
+            } else {
+                csv.append("20").append(i);
+            }
+            csv.append('\n');
+        }
+        final File dir = temp.newFolder("long-timestamp" + System.nanoTime());
+        TestUtils.writeStringToFile(new File(dir, LONG_TIMESTAMP_CSV), csv.toString());
+        inputRoot = dir.getAbsolutePath();
+    }
+
+    /**
+     * Writes {@code csv} to {@link #UNTERMINATED_CSV} in a new folder and points {@link #inputRoot} at it. Callers
+     * must invoke this before {@code executeWithPool()}, see {@link #writeNanosBoundsCsv()}.
+     */
+    private void writeUnterminatedCsv(String csv) throws Exception {
+        final File dir = temp.newFolder("unterminated" + System.nanoTime());
+        TestUtils.writeStringToFile(new File(dir, UNTERMINATED_CSV), csv);
+        inputRoot = dir.getAbsolutePath();
+    }
+
     private String writeNanosBoundsCsv() throws Exception {
         final File dir = temp.newFolder("nanos-bounds" + System.nanoTime());
         final String fileName = "nanos-bounds.csv";
@@ -3645,6 +4319,38 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             TextImportRunnable runnable
     ) throws Exception {
         executeWithPool(workerCount, queueCapacity, TestFilesFacadeImpl.INSTANCE, runnable);
+    }
+
+    // writes the input formats file and the CSV file into a new import root, then runs the import
+    // on an engine whose COPY and text loader read that root
+    private void executeWithInputFormats(
+            String inputFormatsJson,
+            String fileName,
+            CharSequence csv,
+            int workerCount,
+            TextImportRunnable runnable
+    ) throws Exception {
+        final File dir = temp.newFolder("input-formats" + System.nanoTime());
+        TestUtils.writeStringToFile(new File(dir, "text_loader.json"), inputFormatsJson);
+        TestUtils.writeStringToFile(new File(dir, fileName), csv.toString());
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration(dir.getAbsolutePath());
+        final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public CharSequence getSqlCopyInputRoot() {
+                return dir.getAbsolutePath();
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputWorkRoot() {
+                return ParallelCsvFileImporterTest.inputWorkRoot;
+            }
+
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        assertMemoryLeak(() -> execute(workerCount > 0 ? new TestWorkerPool(workerCount) : null, runnable, configuration1));
     }
 
     protected void executeWithPool(

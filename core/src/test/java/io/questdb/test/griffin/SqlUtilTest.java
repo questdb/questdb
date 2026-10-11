@@ -31,13 +31,19 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InvalidColumnException;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.griffin.engine.functions.cast.CastStrToBooleanFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToBooleanFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.model.QueryColumn;
@@ -45,6 +51,8 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -753,6 +761,126 @@ public class SqlUtilTest {
         Assert.assertEquals(0, SqlUtil.implicitCastLongAsByte(Numbers.LONG_NULL));
         Assert.assertEquals(Numbers.INT_NULL, SqlUtil.implicitCastLongAsInt(Numbers.LONG_NULL));
         Assert.assertEquals(0, SqlUtil.implicitCastLongAsShort(Numbers.LONG_NULL));
+    }
+
+    @Test
+    public void testParseBoolean() throws NumericException {
+        final String[] trueValues = {
+                "t", "tr", "tru", "true", "TRUE", "TrUe", "y", "ye", "yes", "YES", "on", "ON", "1",
+                " true ", "\t\n\r\f\u000byes\t\n\r\f\u000b"
+        };
+        for (String value : trueValues) {
+            Assert.assertTrue(value, SqlUtil.parseBoolean(value));
+            Assert.assertTrue(value, SqlUtil.parseBoolean(new Utf8String(value)));
+        }
+        final String[] falseValues = {
+                "f", "fa", "fal", "fals", "false", "FALSE", "n", "no", "NO", "of", "off", "OFF", "0", " off "
+        };
+        for (String value : falseValues) {
+            Assert.assertFalse(value, SqlUtil.parseBoolean(value));
+            Assert.assertFalse(value, SqlUtil.parseBoolean(new Utf8String(value)));
+        }
+        final String[] invalidValues = {
+                "", " ", "o", "truee", "yess", "noo", "offf", "onn", "2", "10", "01", "00", "-1", "1.0",
+                "t r", "\u0011", "\u0010", "\u00a0t", "nope"
+        };
+        for (String value : invalidValues) {
+            try {
+                SqlUtil.parseBoolean(value);
+                Assert.fail(value);
+            } catch (NumericException ignore) {
+            }
+            try {
+                SqlUtil.parseBoolean(new Utf8String(value));
+                Assert.fail(value);
+            } catch (NumericException ignore) {
+            }
+        }
+    }
+
+    @Test
+    public void testParseBooleanQuiet() throws NumericException {
+        final String[] trueValues = {
+                "t", "tr", "tru", "true", "TRUE", "TrUe", "y", "ye", "yes", "YES", "on", "ON", "1",
+                " true ", "\t\n\r\f\u000byes\t\n\r\f\u000b"
+        };
+        final String[] falseValues = {
+                "f", "fa", "fal", "fals", "false", "FALSE", "n", "no", "NO", "of", "off", "OFF", "0", " off "
+        };
+        for (String[] values : new String[][]{trueValues, falseValues}) {
+            for (String value : values) {
+                Assert.assertEquals(value, SqlUtil.parseBoolean(value), SqlUtil.parseBooleanQuiet(value));
+                final Utf8String utf8Value = new Utf8String(value);
+                Assert.assertEquals(value, SqlUtil.parseBoolean(utf8Value), SqlUtil.parseBooleanQuiet(utf8Value));
+            }
+        }
+        final String[] invalidValues = {
+                "", " ", "o", "truee", "yess", "noo", "offf", "onn", "2", "10", "01", "00", "-1", "1.0",
+                "t r", "\u0011", "\u0010", "\u00a0t", "nope"
+        };
+        for (String value : invalidValues) {
+            Assert.assertFalse(value, SqlUtil.parseBooleanQuiet(value));
+            Assert.assertFalse(value, SqlUtil.parseBooleanQuiet(new Utf8String(value)));
+        }
+        Assert.assertFalse(SqlUtil.parseBooleanQuiet((CharSequence) null));
+        Assert.assertFalse(SqlUtil.parseBooleanQuiet((Utf8Sequence) null));
+    }
+
+    @Test
+    public void testParseBooleanQuietDoesNotAllocate() throws Exception {
+        final String[] values = {"", "nope"};
+        final Utf8String[] utf8Values = {new Utf8String(""), new Utf8String("nope")};
+        final int[] valueIndex = new int[1];
+        final ObjList<Function> strArgs = new ObjList<>();
+        strArgs.add(new StrFunction() {
+            @Override
+            public CharSequence getStrA(Record rec) {
+                return values[valueIndex[0]];
+            }
+
+            @Override
+            public CharSequence getStrB(Record rec) {
+                return values[valueIndex[0]];
+            }
+        });
+        final ObjList<Function> varcharArgs = new ObjList<>();
+        varcharArgs.add(new VarcharFunction() {
+            @Override
+            public Utf8Sequence getVarcharA(Record rec) {
+                return utf8Values[valueIndex[0]];
+            }
+
+            @Override
+            public Utf8Sequence getVarcharB(Record rec) {
+                return utf8Values[valueIndex[0]];
+            }
+        });
+        final Function strCast = new CastStrToBooleanFunctionFactory().newInstance(0, strArgs, null, null, null);
+        final Function varcharCast = new CastVarcharToBooleanFunctionFactory().newInstance(0, varcharArgs, null, null, null);
+        try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+            int trueCount = 0;
+            for (int i = 0; i < 20_000; i++) {
+                valueIndex[0] = i & 1;
+                if (strCast.getBool(null) || varcharCast.getBool(null)) {
+                    trueCount++;
+                }
+            }
+            long minAllocatedBytes = Long.MAX_VALUE;
+            for (int round = 0; round < 5; round++) {
+                final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                for (int i = 0; i < 10_000; i++) {
+                    valueIndex[0] = i & 1;
+                    if (strCast.getBool(null) || varcharCast.getBool(null)) {
+                        trueCount++;
+                    }
+                }
+                minAllocatedBytes = Math.min(minAllocatedBytes,
+                        threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore);
+            }
+            Assert.assertEquals(0, trueCount);
+            Assert.assertEquals(0, minAllocatedBytes);
+        }
     }
 
     @Test

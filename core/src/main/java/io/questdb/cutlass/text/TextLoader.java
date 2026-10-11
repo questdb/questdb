@@ -343,7 +343,7 @@ public class TextLoader implements Closeable, Mutable {
                 forceHeaders
         );
         parse(lo, hi, textAnalysisMaxLines, textMetadataDetector);
-        textMetadataDetector.evaluateResults(getParsedLineCount(), getErrorLineCount());
+        textMetadataDetector.evaluateResults();
         restart(textMetadataDetector.isHeader());
 
         prepareTable(

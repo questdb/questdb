@@ -2273,6 +2273,52 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTextToBooleanUsesCastSpellings() throws Exception {
+        // ALTER COLUMN TYPE BOOLEAN must parse text exactly like s::BOOLEAN:
+        // PostgreSQL spellings become true, garbage and NULL become false.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                for (String source : new String[]{"STRING", "VARCHAR", "SYMBOL"}) {
+                    execute("CREATE TABLE ta (s " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                    execute("""
+                            INSERT INTO ta VALUES
+                            ('t',       '2024-01-01T00:00:00.000000Z'),
+                            ('1',       '2024-01-01T00:00:01.000000Z'),
+                            ('yes',     '2024-01-01T00:00:02.000000Z'),
+                            (' ON ',    '2024-01-01T00:00:03.000000Z'),
+                            ('true',    '2024-01-01T00:00:04.000000Z'),
+                            ('f',       '2024-01-01T00:00:05.000000Z'),
+                            ('0',       '2024-01-01T00:00:06.000000Z'),
+                            ('no',      '2024-01-01T00:00:07.000000Z'),
+                            ('garbage', '2024-01-01T00:00:08.000000Z'),
+                            (NULL,      '2024-01-01T00:00:09.000000Z')""");
+                    drainWalQueue();
+                    execute("ALTER TABLE ta ALTER COLUMN s TYPE BOOLEAN");
+                    drainWalQueue();
+
+                    assertQuery("SELECT s FROM ta")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    s
+                                    true
+                                    true
+                                    true
+                                    true
+                                    true
+                                    false
+                                    false
+                                    false
+                                    false
+                                    false
+                                    """);
+                    execute("DROP TABLE ta");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTimestampConversionInvalid() throws Exception {
         assertFailure("alter table x alter column timestamp type long", 42, "cannot change type of designated timestamp column");
     }

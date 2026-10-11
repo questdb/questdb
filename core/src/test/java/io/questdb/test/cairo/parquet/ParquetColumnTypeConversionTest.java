@@ -2848,6 +2848,64 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * Text to BOOLEAN on a parquet partition must parse like s::BOOLEAN on both the lazy
+     * read path (PageFrameMemoryRecord) and CONVERT PARTITION TO NATIVE
+     * (ParquetColumnTypeConverter): PostgreSQL spellings become true, garbage and NULL false.
+     */
+    @Test
+    public void testTextToBooleanUsesCastSpellings() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    s\tts
+                    true\t2024-01-01T00:00:00.000000Z
+                    true\t2024-01-01T00:00:01.000000Z
+                    true\t2024-01-01T00:00:02.000000Z
+                    true\t2024-01-01T00:00:03.000000Z
+                    true\t2024-01-01T00:00:04.000000Z
+                    false\t2024-01-01T00:00:05.000000Z
+                    false\t2024-01-01T00:00:06.000000Z
+                    false\t2024-01-01T00:00:07.000000Z
+                    false\t2024-01-01T00:00:08.000000Z
+                    false\t2024-01-01T00:00:09.000000Z
+                    true\t2024-01-02T00:00:00.000000Z
+                    """;
+            for (String source : new String[]{"STRING", "VARCHAR", "SYMBOL"}) {
+                try {
+                    execute("CREATE TABLE pt (s " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("""
+                            INSERT INTO pt VALUES
+                            ('t',       '2024-01-01T00:00:00.000000Z'),
+                            ('1',       '2024-01-01T00:00:01.000000Z'),
+                            ('yes',     '2024-01-01T00:00:02.000000Z'),
+                            (' ON ',    '2024-01-01T00:00:03.000000Z'),
+                            ('true',    '2024-01-01T00:00:04.000000Z'),
+                            ('f',       '2024-01-01T00:00:05.000000Z'),
+                            ('0',       '2024-01-01T00:00:06.000000Z'),
+                            ('no',      '2024-01-01T00:00:07.000000Z'),
+                            ('garbage', '2024-01-01T00:00:08.000000Z'),
+                            (NULL,      '2024-01-01T00:00:09.000000Z'),
+                            ('y',       '2024-01-02T00:00:00.000000Z')""");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt ALTER COLUMN s TYPE BOOLEAN");
+                    drainWalQueue();
+
+                    // lazy conversion over the parquet partition
+                    assertQuery("SELECT s, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+
+                    // materialized conversion when the partition returns to native
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    drainWalQueue();
+                    assertQuery("SELECT s, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+                } finally {
+                    tryDrop("pt");
+                }
+            }
+        });
+    }
+
+    /**
      * Pins lazy VARCHAR/STRING -> TIMESTAMP_NS conversion on a parquet partition.
      * The partition stays in parquet (no CONVERT PARTITION TO NATIVE), so reads
      * go through PageFrameMemoryRecord.convertVarToTimestamp. That path must
