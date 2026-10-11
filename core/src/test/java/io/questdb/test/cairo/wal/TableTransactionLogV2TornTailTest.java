@@ -212,6 +212,28 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseSeedOnAReplicaThenPromotionKeepsDownloadedRecords() throws Exception {
+        // REBASE WAL INTO on a replica seeds txns 1-2 through the replica's own sequencer, with checksums; the
+        // downloader then appends an older primary's records without one. The node promoted from that replica must
+        // keep them all: the replica never starts the field, so the promoted node trusts every record, and its own
+        // first append starts the field above them.
+        assertMemoryLeak(() -> {
+            final String dir = "rebased";
+            writeLog(dir, 2, CommitMode.ADAPTIVE, 0, LocalDurabilityPolicy.REPLICA_SKIP);
+            Assert.assertEquals("the replica's seed must not start the field", 0, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+            for (int slot = 0; slot < 2; slot++) {
+                Assert.assertNotEquals("a seed record carries a checksum", 0, readLong(partFile(dir, 0), (long) slot * RS + RESERVED_OFFSET));
+            }
+            appendAsDownloader(dir, 100);
+            Assert.assertEquals(102, reopen(dir, adaptive(10_000))[0]);
+            Assert.assertEquals(102, reopen(dir, adaptive(0))[0]);
+            appendLog(dir, 3, adaptive(0));
+            Assert.assertEquals(106, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+            Assert.assertEquals(105, reopen(dir, adaptive(10_000))[0]);
+        });
+    }
+
+    @Test
     public void testRecordsPastTheTailAreZeroed() throws Exception {
         // An append that crashed before the header counted its record, or a checkpoint restore that lowered the max
         // txn, leaves whole records past the tail. A record written over one and torn could show it whole.
@@ -315,6 +337,23 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
         patch(headerFile(dir), 0, header);
     }
 
+    // Appends count records as a node that keeps the log durable itself.
+    private void appendLog(String dir, int count, CairoConfiguration config) {
+        try (Path path = new Path()) {
+            path.of(root).concat(dir);
+            final TableTransactionLogV2 v2 = new TableTransactionLogV2(config, PART, DefaultWalDirectoryPolicy.INSTANCE);
+            try {
+                v2.open(path);
+                final long lastTxn = v2.lastTxn();
+                for (long txn = lastTxn + 1; txn <= lastTxn + count; txn++) {
+                    addEntry(v2, txn);
+                }
+            } finally {
+                v2.close();
+            }
+        }
+    }
+
     private String headerFile(String dir) {
         return root + "/" + dir + "/" + WalUtils.TXNLOG_FILE_NAME;
     }
@@ -355,10 +394,14 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     private void writeLog(String dir, int count, int mode, long windowUs) {
+        writeLog(dir, count, mode, windowUs, LocalDurabilityPolicy.ALWAYS_ON);
+    }
+
+    private void writeLog(String dir, int count, int mode, long windowUs, LocalDurabilityPolicy policy) {
         try (Path path = new Path()) {
             path.of(root).concat(dir);
             configuration.getFilesFacade().mkdir(path.$(), configuration.getMkDirMode());
-            final TableTransactionLogV2 v2 = new TableTransactionLogV2(withMode(mode, windowUs), PART, DefaultWalDirectoryPolicy.INSTANCE);
+            final TableTransactionLogV2 v2 = new TableTransactionLogV2(withMode(mode, windowUs), PART, DefaultWalDirectoryPolicy.INSTANCE, policy);
             try {
                 v2.create(path, 1L);
                 v2.open(path);
