@@ -1512,8 +1512,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    // Folds a narrowing fill literal into the aggregate's type with INSERT's implicit-cast rules;
-    // null when INSERT would not narrow it either.
+    // Folds a narrowing numeric fill literal into BYTE, SHORT, INT, LONG or FLOAT with INSERT's
+    // implicit-cast rules; null for non-constants and other targets (e.g. TIMESTAMP -> DATE).
     private static Function narrowFillConstant(Function fillFunc, int fillType, int targetColType) {
         if (!fillFunc.isConstant()) {
             return null;
