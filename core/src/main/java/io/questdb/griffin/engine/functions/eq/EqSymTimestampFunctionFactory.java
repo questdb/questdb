@@ -161,6 +161,12 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            clear();
+        }
+
+        @Override
         public boolean isThreadSafe() {
             return false;
         }
@@ -186,6 +192,9 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
             long timestampConstant = right.getTimestamp(null);
             this.innerFunc = new VarSymbolConstTimestampFunction(left, right, timestampConstant, driver);
+            if (negated) {
+                innerFunc.setNegated();
+            }
         }
     }
 

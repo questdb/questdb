@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.PlanSink;
@@ -52,14 +53,18 @@ import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.griffin.engine.functions.test.TestWorkerCloneFunctionFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedAtom;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
+import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedAtom;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
@@ -84,6 +89,53 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         super.setUp();
+    }
+
+    @Test
+    public void testHorizonJoinSlaveFilterInitFailurePreservesPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP) TIMESTAMP(ts)");
+            final RuntimeException initFailure = new RuntimeException("filter init");
+            final RuntimeException cursorClosedFailure = new RuntimeException("filter cursor close");
+            final CountingBooleanFunction filter = new CountingBooleanFunction(null);
+            filter.initFailure = initFailure;
+            filter.cursorClosedFailure = cursorClosedFailure;
+            final ObjList<GroupByFunction> groups = new ObjList<>();
+            groups.add(new CountingGroupByFunction(null));
+            try (RecordCursorFactory factory = new HorizonJoinNotKeyedRecordCursorFactory(
+                    configuration, new BytecodeAssembler(), new GenericRecordMetadata(),
+                    new JoinRecordMetadata(configuration, 0), select("trades"), select("quotes"), filter,
+                    new long[]{0}, 0, groups, 1, null, null, null, 1, null, null, new int[0], new int[0]
+            )) {
+                Assert.assertSame(initFailure, Assert.assertThrows(RuntimeException.class, () -> factory.getCursor(sqlExecutionContext)));
+                Assert.assertArrayEquals(new Throwable[]{cursorClosedFailure}, initFailure.getSuppressed());
+                Assert.assertEquals(1, filter.initCount);
+                Assert.assertEquals(1, filter.cursorClosedCount);
+                Assert.assertEquals(0, filter.closeCount);
+                filter.initFailure = null;
+                filter.cursorClosedFailure = null;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+                Assert.assertEquals(2, filter.initCount);
+                Assert.assertEquals(2, filter.cursorClosedCount);
+            }
+            Assert.assertEquals(2, filter.cursorClosedCount);
+            Assert.assertEquals(1, filter.closeCount);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSlaveFilterPartialInitCleanup() throws Exception {
+        assertMemoryLeak(() -> {
+            for (boolean isMulti : new boolean[]{false, true}) {
+                for (boolean hasOwnerInitFailure : new boolean[]{false, true}) {
+                    assertHorizonSlaveFilterPartialInitCleanup(isMulti, hasOwnerInitFailure);
+                }
+            }
+        });
     }
 
     @Test
@@ -665,31 +717,15 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                 Assert.assertEquals(29, ((SqlException) failure).getPosition());
                 TestUtils.assertContains(failure.getMessage(), "HORIZON JOIN requires offset configuration");
                 Assert.assertEquals(TestFaultFunctionFactory.created(), TestFaultFunctionFactory.closeCalls());
-                Assert.assertEquals(10, TestFaultFunctionFactory.created());
+                // HORIZON retains one interpreted owner filter per pending slave.
+                // Worker clones are compiled only after the join passes validation.
+                Assert.assertEquals(2, TestFaultFunctionFactory.created());
                 Assert.assertArrayEquals(
                         new Throwable[]{
-                                TestFaultFunctionFactory.closeFailure(1),
-                                TestFaultFunctionFactory.closeFailure(6)
+                                TestFaultFunctionFactory.closeFailure(0),
+                                TestFaultFunctionFactory.closeFailure(1)
                         },
                         failure.getSuppressed()
-                );
-                Assert.assertArrayEquals(
-                        new Throwable[]{
-                                TestFaultFunctionFactory.closeFailure(2),
-                                TestFaultFunctionFactory.closeFailure(3),
-                                TestFaultFunctionFactory.closeFailure(4),
-                                TestFaultFunctionFactory.closeFailure(0)
-                        },
-                        failure.getSuppressed()[0].getSuppressed()
-                );
-                Assert.assertArrayEquals(
-                        new Throwable[]{
-                                TestFaultFunctionFactory.closeFailure(7),
-                                TestFaultFunctionFactory.closeFailure(8),
-                                TestFaultFunctionFactory.closeFailure(9),
-                                TestFaultFunctionFactory.closeFailure(5)
-                        },
-                        failure.getSuppressed()[1].getSuppressed()
                 );
                 Assert.assertEquals(0, engine.getBusyReaderCount());
             } finally {
@@ -2109,6 +2145,11 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         final CountingFactory masterFactory = new CountingFactory(timestampMetadata(), null, masterFailure);
         final CountingFactory firstSlaveFactory = new CountingFactory(timestampMetadata(), primary, slaveFailure);
         final CountingFactory secondSlaveFactory = new CountingFactory(timestampMetadata(), null, null);
+        final CountingBooleanFunction slaveFilter = new CountingBooleanFunction(null);
+        final CountingBooleanFunction workerSlaveFilter = new CountingBooleanFunction(null);
+        final ObjList<Function> perWorkerSlaveFilters = new ObjList<>();
+        perWorkerSlaveFilters.add(workerSlaveFilter);
+        perWorkerSlaveFilters.add(new CountingBooleanFunction(null));
         final CountingBooleanFunction ownerFilter = new CountingBooleanFunction(ownerFilterFailure);
         final CountingBooleanFunction workerFilter0 = new CountingBooleanFunction(workerFilterFailure);
         final CountingBooleanFunction workerFilter1 = new CountingBooleanFunction(null);
@@ -2136,6 +2177,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                 final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
                 slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, 1, null, null));
                 slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, 1, null, null));
+                slaveStates.getQuick(0).setFilter(slaveFilter);
+                slaveStates.getQuick(0).setPerWorkerFilters(perWorkerSlaveFilters);
                 new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
                         new BytecodeAssembler(),
@@ -2158,6 +2201,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         2
                 );
             } else {
+                resources.setSlaveFilters(slaveFilter, perWorkerSlaveFilters);
                 new AsyncHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
                         new BytecodeAssembler(),
@@ -2194,6 +2238,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             Assert.assertSame(groupByFailure, masterFailure.getSuppressed()[1]);
         }
 
+        Assert.assertEquals(1, slaveFilter.closeCount);
+        Assert.assertEquals(1, workerSlaveFilter.closeCount);
         Assert.assertEquals(1, ownerFilter.closeCount);
         Assert.assertEquals(1, workerFilter0.closeCount);
         Assert.assertEquals(1, workerFilter1.closeCount);
@@ -2224,6 +2270,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         final CountingCompiledFilter compiledFilter = new CountingCompiledFilter(compiledFilterFailure);
         final CountingMemory bindMemory = new CountingMemory(bindMemoryFailure);
         final CountingBooleanFunction bindFunction = new CountingBooleanFunction(bindFunctionFailure);
+        final CountingBooleanFunction slaveFilter = new CountingBooleanFunction(null);
+        final CountingBooleanFunction workerSlaveFilter = new CountingBooleanFunction(null);
+        final ObjList<Function> perWorkerSlaveFilters = new ObjList<>();
+        perWorkerSlaveFilters.add(workerSlaveFilter);
         final CountingBooleanFunction ownerFilter = new CountingBooleanFunction(ownerFilterFailure);
         final CountingBooleanFunction workerFilter = new CountingBooleanFunction(workerFilterFailure);
         final ObjList<GroupByFunction> ownerGroups = new ObjList<>();
@@ -2251,6 +2301,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                 workerFilters
         );
 
+        resources.setSlaveFilters(slaveFilter, perWorkerSlaveFilters);
         try {
             new AsyncHorizonJoinNotKeyedRecordCursorFactory(
                     configuration,
@@ -2297,6 +2348,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             );
         }
 
+        Assert.assertEquals(1, slaveFilter.closeCount);
+        Assert.assertEquals(1, workerSlaveFilter.closeCount);
         Assert.assertEquals(1, masterFactory.closeCount);
         Assert.assertEquals(1, slaveFactory.closeCount);
         Assert.assertEquals(1, ownerGroup.closeCount);
@@ -2407,6 +2460,76 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         execute(compiler, "insert into asks values (0, 'A', 200.0)", ctx);
     }
 
+    private void assertHorizonSlaveFilterPartialInitCleanup(boolean isMulti, boolean hasOwnerInitFailure) throws Exception {
+        final RuntimeException initFailure = new RuntimeException("filter init");
+        final RuntimeException clearFailure = new RuntimeException("aggregate clear");
+        final RuntimeException ownerCloseFailure = new RuntimeException("owner cursor close");
+        final RuntimeException workerCloseFailure = new RuntimeException("worker cursor close");
+        final CountingFactory slaveFactory = new CountingFactory(timestampMetadata(), null, null);
+        final CountingBooleanFunction ownerFilter = new CountingBooleanFunction(null);
+        final CountingBooleanFunction workerFilter0 = new CountingBooleanFunction(null);
+        final CountingBooleanFunction workerFilter1 = new CountingBooleanFunction(null);
+        ownerFilter.cursorClosedFailure = ownerCloseFailure;
+        workerFilter0.cursorClosedFailure = workerCloseFailure;
+        (hasOwnerInitFailure ? ownerFilter : workerFilter1).initFailure = initFailure;
+        final ObjList<Function> workerFilters = new ObjList<>(workerFilter0, workerFilter1);
+        final CountingGroupByFunction group = new CountingGroupByFunction(null);
+        final ObjList<GroupByFunction> groups = new ObjList<>(group);
+        final ObjList<HorizonJoinSlaveState> states = new ObjList<>();
+        final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, null, null, null, null, null);
+        final StatefulAtom atom;
+        if (isMulti) {
+            final HorizonJoinSlaveState state = new HorizonJoinSlaveState(slaveFactory, 1, 1, null, 1, null, null);
+            state.setFilter(ownerFilter);
+            state.setPerWorkerFilters(workerFilters);
+            states.add(state);
+            atom = new AsyncMultiHorizonJoinNotKeyedAtom(
+                    new BytecodeAssembler(), configuration, states, null, new Class[1], new Class[1],
+                    0, new long[]{0}, 1, new int[0], new int[0], groups, resources, 2
+            );
+        } else {
+            resources.setSlaveFilters(ownerFilter, workerFilters);
+            atom = new AsyncHorizonJoinNotKeyedAtom(
+                    new BytecodeAssembler(), configuration, slaveFactory, 0, new long[]{0}, 1,
+                    null, null, null, 1, null, null, new int[0], new int[0], groups, resources, 1, 1, 2
+            );
+        }
+        try (atom) {
+            Assert.assertSame(initFailure, Assert.assertThrows(RuntimeException.class, () -> {
+                if (isMulti) {
+                    ((AsyncMultiHorizonJoinNotKeyedAtom) atom).initSlaveTimeFrameCursors(sqlExecutionContext, 0, null, null, null);
+                } else {
+                    ((AsyncHorizonJoinNotKeyedAtom) atom).initTimeFrameCursors(sqlExecutionContext, null, null, null);
+                }
+            }));
+            Assert.assertEquals(1, ownerFilter.initCount);
+            Assert.assertEquals(hasOwnerInitFailure ? 0 : 1, workerFilter0.initCount);
+            Assert.assertEquals(hasOwnerInitFailure ? 0 : 1, workerFilter1.initCount);
+            group.clearFailure = clearFailure;
+            Assert.assertSame(clearFailure, Assert.assertThrows(RuntimeException.class, atom::clear));
+            Assert.assertArrayEquals(new Throwable[]{ownerCloseFailure, workerCloseFailure}, clearFailure.getSuppressed());
+            Assert.assertEquals(1, ownerFilter.cursorClosedCount);
+            Assert.assertEquals(1, workerFilter0.cursorClosedCount);
+            Assert.assertEquals(1, workerFilter1.cursorClosedCount);
+            Assert.assertEquals(0, ownerFilter.closeCount);
+            group.clearFailure = null;
+            atom.clear();
+            Assert.assertEquals(1, ownerFilter.cursorClosedCount);
+            Assert.assertEquals(1, workerFilter0.cursorClosedCount);
+            Assert.assertEquals(1, workerFilter1.cursorClosedCount);
+        } finally {
+            Misc.freeObjList(states);
+            if (!isMulti) {
+                Misc.free(slaveFactory);
+            }
+            Misc.free(group);
+            Misc.free(resources);
+        }
+        Assert.assertEquals(1, ownerFilter.closeCount);
+        Assert.assertEquals(1, workerFilter0.closeCount);
+        Assert.assertEquals(1, workerFilter1.closeCount);
+    }
+
     private static GenericRecordMetadata timestampMetadata() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
@@ -2417,6 +2540,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     private static class CountingBooleanFunction extends BooleanFunction {
         private final RuntimeException closeFailure;
         private int closeCount;
+        private int cursorClosedCount;
+        private RuntimeException cursorClosedFailure;
+        private int initCount;
+        private RuntimeException initFailure;
 
         private CountingBooleanFunction(RuntimeException closeFailure) {
             this.closeFailure = closeFailure;
@@ -2431,8 +2558,24 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         }
 
         @Override
+        public void cursorClosed() {
+            cursorClosedCount++;
+            if (cursorClosedFailure != null) {
+                throw cursorClosedFailure;
+            }
+        }
+
+        @Override
         public boolean getBool(io.questdb.cairo.sql.Record rec) {
             return true;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            initCount++;
+            if (initFailure != null) {
+                throw initFailure;
+            }
         }
     }
 
@@ -2520,10 +2663,18 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
 
     private static class CountingGroupByFunction extends CountLongConstGroupByFunction {
         private final RuntimeException closeFailure;
+        private RuntimeException clearFailure;
         private int closeCount;
 
         private CountingGroupByFunction(RuntimeException closeFailure) {
             this.closeFailure = closeFailure;
+        }
+
+        @Override
+        public void clear() {
+            if (clearFailure != null) {
+                throw clearFailure;
+            }
         }
 
         @Override
