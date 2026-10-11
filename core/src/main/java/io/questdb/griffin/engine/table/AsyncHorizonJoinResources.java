@@ -24,6 +24,8 @@ public final class AsyncHorizonJoinResources implements QuietCloseable {
     private @Nullable ObjList<Function> perWorkerFilters;
     private @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions;
+    private @Nullable ObjList<Function> perWorkerSlaveFilters;
+    private @Nullable Function slaveFilter;
 
     public AsyncHorizonJoinResources(
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
@@ -62,7 +64,16 @@ public final class AsyncHorizonJoinResources implements QuietCloseable {
         filter = null;
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFilters);
         perWorkerFilters = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFilter);
+        slaveFilter = null;
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveFilters);
+        perWorkerSlaveFilters = null;
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    public void setSlaveFilters(@Nullable Function slaveFilter, @Nullable ObjList<Function> perWorkerSlaveFilters) {
+        this.slaveFilter = slaveFilter;
+        this.perWorkerSlaveFilters = perWorkerSlaveFilters;
     }
 
     @Nullable ObjList<Function> getBindVarFunctions() {
@@ -128,6 +139,18 @@ public final class AsyncHorizonJoinResources implements QuietCloseable {
     @Nullable ObjList<ObjList<Function>> takePerWorkerKeyFunctions() {
         final ObjList<ObjList<Function>> value = perWorkerKeyFunctions;
         perWorkerKeyFunctions = null;
+        return value;
+    }
+
+    @Nullable ObjList<Function> takePerWorkerSlaveFilters() {
+        final ObjList<Function> value = perWorkerSlaveFilters;
+        perWorkerSlaveFilters = null;
+        return value;
+    }
+
+    @Nullable Function takeSlaveFilter() {
+        final Function value = slaveFilter;
+        slaveFilter = null;
         return value;
     }
 
