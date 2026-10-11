@@ -1979,13 +1979,16 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testFrequentCommit() throws Exception {
         assertMemoryLeak(() -> {
             int N = 100000;
+            // SYNC flushes about 20 files on each commit, some 30 ms on a local disk: 100,000 commits would run
+            // for most of an hour, past the test timeout
+            final int commits = configuration.getCommitMode() == CommitMode.SYNC ? 1_000 : N;
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
                 long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 Rnd rnd = new Rnd();
-                for (int i = 0; i < N; i++) {
+                for (int i = 0; i < commits; i++) {
                     ts = populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
                     writer.commit();
                 }
