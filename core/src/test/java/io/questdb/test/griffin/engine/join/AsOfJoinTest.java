@@ -1512,24 +1512,54 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsOfJoinOnKeysSharingColumnMixedTypesFails() throws Exception {
-        // A column repeated across ON keys whose partners have different key types would be
-        // written with a single key type and never match, so the join rejects the query.
+    public void testAsOfJoinOnKeysSharingColumnMixedTypes() throws Exception {
+        // sl.s, sl.t and sl.sy each pair with two master columns whose key types differ. The keys of a
+        // shared column compare the widest type of the group, VARCHAR or TIMESTAMP_NS, so a master row
+        // matches only when both of its columns equal the slave column. Rows checked with DuckDB.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (id INT, sy SYMBOL, s STRING, v VARCHAR, t TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO m VALUES (1, 'A', 'A', 'A', 5::TIMESTAMP, 5_000::TIMESTAMP_NS, 10::TIMESTAMP)");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 'A', 'A', 'A', 5::TIMESTAMP, 5_000::TIMESTAMP_NS, 10::TIMESTAMP),
+                        (2, 'A', 'A', 'B', 5::TIMESTAMP, 6_000::TIMESTAMP_NS, 20::TIMESTAMP),
+                        (3, 'B', 'B', 'B', 7::TIMESTAMP, 7_000::TIMESTAMP_NS, 30::TIMESTAMP)
+                    """);
             execute("CREATE TABLE sl (id INT, sy SYMBOL, s STRING, t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO sl VALUES (10, 'A', 'A', 5::TIMESTAMP, 1::TIMESTAMP)");
+            execute("""
+                    INSERT INTO sl VALUES
+                        (10, 'A', 'A', 5::TIMESTAMP, 1::TIMESTAMP),
+                        (11, 'B', 'B', 7::TIMESTAMP, 2::TIMESTAMP),
+                        (12, 'B', 'B', 6::TIMESTAMP, 3::TIMESTAMP)
+                    """);
 
-            assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.v = sl.s AND m.s = sl.s")
-                    .noLeakCheck()
-                    .fails(48, "join column is compared with columns of different types");
-            assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.t = sl.t AND m.tn = sl.t")
-                    .noLeakCheck()
-                    .fails(48, "join column is compared with columns of different types");
-            assertQuery("SELECT m.id, sl.id FROM m ASOF JOIN sl ON m.sy = sl.sy AND m.v = sl.sy")
-                    .noLeakCheck()
-                    .fails(49, "join column is compared with columns of different types");
+            final String expectedStrings = """
+                    id\tid1
+                    1\t10
+                    2\tnull
+                    3\t12
+                    """;
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT m.id, sl.id FROM m " + join + " JOIN sl ON m.v = sl.s AND m.s = sl.s")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expectedStrings);
+                assertQuery("SELECT m.id, sl.id FROM m " + join + " JOIN sl ON m.sy = sl.sy AND m.v = sl.sy")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expectedStrings);
+                assertQuery("SELECT m.id, sl.id FROM m " + join + " JOIN sl ON m.t = sl.t AND m.tn = sl.t")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                id\tid1
+                                1\t10
+                                2\tnull
+                                3\t11
+                                """);
+            }
         });
     }
 
@@ -4580,10 +4610,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         .returns(expectedSplice);
             }
 
-            // SYMBOL and VARCHAR keys sharing a column still need different encodings
+            // SYMBOL and VARCHAR keys sharing a column compare VARCHAR values
             assertQuery("SELECT t1.id, t2.id FROM t t1 ASOF JOIN t t2 ON t1.s = t2.s AND t1.v = t2.s")
                     .noLeakCheck()
-                    .fails(55, "join column is compared with columns of different types");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedAsOf);
         });
     }
 

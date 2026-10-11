@@ -8324,21 +8324,52 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinOnKeysSharingColumnMixedTypesFails() throws Exception {
-        // s.s1 is compared with the SYMBOL m.s1 and the VARCHAR m.v. Those key positions need
-        // different encodings, but the record copier encodes s.s1 once, so the hash join would never
-        // match: no INNER rows instead of a/a and b/b, and null-extended rows for every outer join.
-        // Each hash join type rejects the query instead.
+    public void testJoinOnKeysSharingColumnMixedTypes() throws Exception {
+        // s.s1 is compared with the SYMBOL m.s1 and the VARCHAR m.v, and s.st with the STRING m.st and
+        // m.v. The record copier encodes the shared column once, so both key positions compare VARCHAR
+        // values, and each hash join type returns the rows of the three equalities in either order:
+        // a/a and b/b match, and the outer joins NULL-extend m's c/x and s's c/c. Rows checked with
+        // DuckDB.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m (s1 SYMBOL, v VARCHAR)");
-            execute("INSERT INTO m VALUES ('a', 'a'), ('b', 'b'), ('c', 'x')");
-            execute("CREATE TABLE s (s1 SYMBOL, v VARCHAR)");
-            execute("INSERT INTO s VALUES ('a', 'a'), ('b', 'b'), ('c', 'c')");
-            for (String join : new String[]{"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"}) {
-                final String query = "SELECT m.s1, m.v, s.s1, s.v FROM m " + join + " s ON s.s1 = m.s1 AND s.v = m.v AND s.s1 = m.v";
-                assertQuery(query)
-                        .noLeakCheck()
-                        .fails(query.indexOf("s.s1 = m.s1"), "join column is compared with columns of different types");
+            execute("CREATE TABLE m (s1 SYMBOL, st STRING, v VARCHAR)");
+            execute("INSERT INTO m VALUES ('a', 'a', 'a'), ('b', 'b', 'b'), ('c', 'c', 'x')");
+            execute("CREATE TABLE s (s1 SYMBOL, st STRING, v VARCHAR)");
+            execute("INSERT INTO s VALUES ('a', 'a', 'a'), ('b', 'b', 'b'), ('c', 'c', 'c')");
+            final String[] joins = {"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"};
+            final String[] expectedRows = {
+                    """
+                    a\ta\ta\ta
+                    b\tb\tb\tb
+                    """,
+                    """
+                    a\ta\ta\ta
+                    b\tb\tb\tb
+                    c\tx\t\t
+                    """,
+                    """
+                    \t\tc\tc
+                    a\ta\ta\ta
+                    b\tb\tb\tb
+                    """,
+                    """
+                    \t\tc\tc
+                    a\ta\ta\ta
+                    b\tb\tb\tb
+                    c\tx\t\t
+                    """
+            };
+            for (String column : new String[]{"s1", "st"}) {
+                final String[] onClauses = {
+                        "s." + column + " = m." + column + " AND s.v = m.v AND s." + column + " = m.v",
+                        "s.v = m.v AND s." + column + " = m.v AND s." + column + " = m." + column
+                };
+                for (String onClause : onClauses) {
+                    for (int i = 0; i < joins.length; i++) {
+                        assertQuery("SELECT m." + column + ", m.v, s." + column + ", s.v FROM m " + joins[i] + " s ON " + onClause + " ORDER BY 1, 2, 3, 4")
+                                .noLeakCheck()
+                                .returns(column + "\tv\t" + column + "1\tv1\n" + expectedRows[i]);
+                    }
+                }
             }
         });
     }

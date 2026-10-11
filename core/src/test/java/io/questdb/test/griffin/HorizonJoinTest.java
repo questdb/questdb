@@ -2688,24 +2688,45 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHorizonJoinOnSlaveKeySharedByDifferentlyEncodedMasterColumnsRejected() throws Exception {
+    public void testHorizonJoinOnSlaveKeySharedByDifferentlyEncodedMasterColumns() throws Exception {
         // t.a = p.s AND t.v = p.s implies t.a = t.v, which must not filter the left-hand rows that
-        // HORIZON JOIN keeps, so both key pairs remain. The slave key copier writes p.s once, but the
-        // SYMBOL pair and the VARCHAR pair need different encodings.
+        // HORIZON JOIN keeps, so both key pairs remain. The slave key copier writes p.s once, so both
+        // pairs compare VARCHAR values, and only a trade whose a and v are equal matches.
         assertMemoryLeak(() -> {
-            createSlaveSymbolSharedByMasterColumnsTables();
-            execute("ALTER TABLE tm ADD COLUMN v VARCHAR");
+            executeWithRewriteTimestamp("CREATE TABLE tv (id INT, a SYMBOL, v VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE ps (s SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO ps VALUES
+                        ('A', 1.0, '1970-01-01T00:00:00.000001Z'),
+                        ('B', 2.0, '1970-01-01T00:00:00.000002Z')
+                    """);
+            execute("""
+                    INSERT INTO tv VALUES
+                        (1, 'A', 'A', '1970-01-01T00:00:00.000010Z'),
+                        (2, 'B', 'A', '1970-01-01T00:00:00.000020Z'),
+                        (3, 'B', 'B', '1970-01-01T00:00:00.000030Z')
+                    """);
 
-            String sql = "SELECT t.id, avg(p.price) FROM tm AS t HORIZON JOIN ps AS p ON (t.a = p.s AND t.v = p.s) " +
-                    "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id";
-            assertQuery(sql)
+            assertQuery("SELECT t.id, avg(p.price) FROM tv AS t HORIZON JOIN ps AS p ON (t.a = p.s AND t.v = p.s) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
                     .noLeakCheck()
-                    .fails(sql.indexOf("p.s"), "join column is compared with columns of different types");
-            sql = "SELECT t.id, avg(p.price), avg(q.price) FROM tm AS t HORIZON JOIN ps AS p ON (t.a = p.s) " +
-                    "HORIZON JOIN ps AS q ON (t.a = q.s AND t.v = q.s) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id";
-            assertQuery(sql)
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t1.0
+                            2\tnull
+                            3\t2.0
+                            """);
+            assertQuery("SELECT t.id, avg(p.price), avg(q.price) FROM tv AS t HORIZON JOIN ps AS p ON (t.a = p.s) " +
+                    "HORIZON JOIN ps AS q ON (t.a = q.s AND t.v = q.s) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
                     .noLeakCheck()
-                    .fails(sql.indexOf("q.s"), "join column is compared with columns of different types");
+                    .expectSize()
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t1.0\t1.0
+                            2\t2.0\tnull
+                            3\t2.0\t2.0
+                            """);
         });
     }
 

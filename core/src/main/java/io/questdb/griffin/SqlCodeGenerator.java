@@ -2038,6 +2038,115 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private static int findKeyGroup(int[] groups, int position) {
+        while (groups[position] != position) {
+            groups[position] = groups[groups[position]];
+            position = groups[position];
+        }
+        return position;
+    }
+
+    // Record copiers encode a key column once, whatever key positions it occupies. Key positions that
+    // share a slave or master column, directly or through other positions, form a group, and every
+    // position of a group takes the widest key type of the group: strings widen to VARCHAR, or to
+    // STRING when no position compares VARCHAR, and timestamps widen to TIMESTAMP_NS. The widest type
+    // compares the same values as the key type of each pair, so the group keeps the rows of its pairs.
+    private static void unifyRepeatedKeyColumnTypes(
+            ArrayColumnTypes keyTypes,
+            ListColumnFilter slaveKeyColumns,
+            ListColumnFilter masterKeyColumns,
+            RecordMetadata slaveMetadata,
+            RecordMetadata masterMetadata,
+            BitSet writeSymbolAsStringA,
+            BitSet writeSymbolAsStringB,
+            BitSet writeStringAsVarcharA,
+            BitSet writeStringAsVarcharB,
+            BitSet writeTimestampAsNanosA,
+            BitSet writeTimestampAsNanosB
+    ) {
+        final int n = slaveKeyColumns.getColumnCount();
+        if (n < 2) {
+            return;
+        }
+        int[] groups = null;
+        for (int k = 1; k < n; k++) {
+            final int slaveColumnIndex = slaveKeyColumns.getColumnIndexFactored(k);
+            final int masterColumnIndex = masterKeyColumns.getColumnIndexFactored(k);
+            for (int j = 0; j < k; j++) {
+                if (slaveColumnIndex == slaveKeyColumns.getColumnIndexFactored(j)
+                        || masterColumnIndex == masterKeyColumns.getColumnIndexFactored(j)) {
+                    if (groups == null) {
+                        groups = new int[n];
+                        for (int g = 0; g < n; g++) {
+                            groups[g] = g;
+                        }
+                    }
+                    final int rootJ = findKeyGroup(groups, j);
+                    final int rootK = findKeyGroup(groups, k);
+                    if (rootJ != rootK) {
+                        groups[Math.max(rootJ, rootK)] = Math.min(rootJ, rootK);
+                    }
+                }
+            }
+        }
+        if (groups == null) {
+            return;
+        }
+        for (int root = 0; root < n; root++) {
+            if (findKeyGroup(groups, root) != root) {
+                continue;
+            }
+            boolean isStringGroup = true;
+            boolean isTimestampGroup = true;
+            boolean hasVarchar = false;
+            boolean hasDifferentTypes = false;
+            final int rootType = keyTypes.getColumnType(root);
+            for (int k = root; k < n; k++) {
+                if (findKeyGroup(groups, k) == root) {
+                    final int type = keyTypes.getColumnType(k);
+                    isStringGroup &= ColumnType.isSymbol(type) || isString(type) || isVarchar(type);
+                    isTimestampGroup &= isTimestamp(type);
+                    hasVarchar |= isVarchar(type);
+                    hasDifferentTypes |= type != rootType;
+                }
+            }
+            if (!hasDifferentTypes || !(isStringGroup || isTimestampGroup)) {
+                // validateRepeatedKeyColumnTypes() rejects a group it cannot widen
+                continue;
+            }
+            final int groupType = isStringGroup ? (hasVarchar ? VARCHAR : STRING) : TIMESTAMP_NANO;
+            for (int k = root; k < n; k++) {
+                if (findKeyGroup(groups, k) != root) {
+                    continue;
+                }
+                keyTypes.set(k, groupType);
+                final int slaveColumnIndex = slaveKeyColumns.getColumnIndexFactored(k);
+                final int masterColumnIndex = masterKeyColumns.getColumnIndexFactored(k);
+                final int slaveColumnType = slaveMetadata.getColumnType(slaveColumnIndex);
+                final int masterColumnType = masterMetadata.getColumnType(masterColumnIndex);
+                if (isStringGroup) {
+                    writeSymbolAsStringA.set(slaveColumnIndex);
+                    writeSymbolAsStringB.set(masterColumnIndex);
+                    if (groupType == VARCHAR) {
+                        if (!isVarchar(slaveColumnType)) {
+                            writeStringAsVarcharA.set(slaveColumnIndex);
+                        }
+                        if (!isVarchar(masterColumnType)) {
+                            writeStringAsVarcharB.set(masterColumnIndex);
+                        }
+                    }
+                } else {
+                    if (!isTimestampNano(slaveColumnType)) {
+                        writeTimestampAsNanosA.set(slaveColumnIndex);
+                    }
+                    if (!isTimestampNano(masterColumnType)) {
+                        writeTimestampAsNanosB.set(masterColumnIndex);
+                    }
+                }
+            }
+        }
+    }
+
     private static void validateOuterJoinExpressions(IQueryModel model, CharSequence joinType) throws SqlException {
         if (model.getOuterJoinExpressionClause() != null) {
             throw SqlException.$(model.getOuterJoinExpressionClause().position, "unsupported ").put(joinType).put(" join expression ")
@@ -2046,8 +2155,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // Record copiers encode a key column once, whatever key positions it occupies. When one column
-    // is compared with columns of different key types, the positions need different encodings, and
-    // the join would never match.
+    // is compared with columns of different key types that unifyRepeatedKeyColumnTypes() could not
+    // widen to one type, the positions need different encodings, and the join would never match.
     private static void validateRepeatedKeyColumnTypes(
             JoinContext jc,
             ColumnTypes keyTypes,
@@ -5925,6 +6034,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                unifyRepeatedKeyColumnTypes(
+                        asOfJoinKeyTypes,
+                        listColumnFilterA,
+                        listColumnFilterB,
+                        slaveMetadata,
+                        masterMetadata,
+                        asOfWriteSymbolAsStringA,
+                        asOfWriteSymbolAsStringB,
+                        asOfWriteStringAsVarcharA,
+                        asOfWriteStringAsVarcharB,
+                        writeTimestampAsNanosA,
+                        writeTimestampAsNanosB
+                );
                 validateRepeatedKeyColumnTypes(asOfJoinContext, asOfJoinKeyTypes, listColumnFilterA, listColumnFilterB);
                 if (masterSymbolKeyCols != null) {
                     masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
@@ -8907,6 +9029,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
 
+                    unifyRepeatedKeyColumnTypes(
+                            asOfJoinKeyTypes,
+                            listColumnFilterA,
+                            listColumnFilterB,
+                            slaveMeta,
+                            masterMetadata,
+                            asOfWriteSymbolAsStringA,
+                            asOfWriteSymbolAsStringB,
+                            asOfWriteStringAsVarcharA,
+                            asOfWriteStringAsVarcharB,
+                            writeTimestampAsNanosA,
+                            writeTimestampAsNanosB
+                    );
                     validateRepeatedKeyColumnTypes(asOfJoinContext, asOfJoinKeyTypes, listColumnFilterA, listColumnFilterB);
                     if (masterSymbolKeyCols != null) {
                         masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
@@ -14816,6 +14951,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
+        unifyRepeatedKeyColumnTypes(
+                keyTypes,
+                listColumnFilterA,
+                listColumnFilterB,
+                slaveMetadata,
+                masterMetadata,
+                writeSymbolAsStringA,
+                writeSymbolAsStringB,
+                writeStringAsVarcharA,
+                writeStringAsVarcharB,
+                writeTimestampAsNanosA,
+                writeTimestampAsNanosB
+        );
         validateRepeatedKeyColumnTypes(jc, keyTypes, listColumnFilterA, listColumnFilterB);
     }
 
