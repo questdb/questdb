@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
@@ -149,9 +150,13 @@ import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
@@ -1507,6 +1512,67 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    /**
+     * Folds a fill constant into the aggregate's narrower numeric type with the same rules INSERT
+     * applies (SqlUtil.implicitCastXxx), so FILL(1.5) on a LONG aggregate fills 1 and an
+     * out-of-range literal raises ImplicitCastException. Returns null for pairs INSERT does not
+     * narrow either.
+     */
+    private static Function narrowFillConstant(Function fillFunc, int fillType, int targetColType) {
+        if (!fillFunc.isConstant()) {
+            return null;
+        }
+        final short toTag = ColumnType.tagOf(targetColType);
+        switch (ColumnType.tagOf(fillType)) {
+            case ColumnType.DOUBLE -> {
+                final double v = fillFunc.getDouble(null);
+                return switch (toTag) {
+                    case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastDoubleAsByte(v));
+                    case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastDoubleAsShort(v));
+                    case ColumnType.INT -> IntConstant.newInstance(SqlUtil.implicitCastDoubleAsInt(v));
+                    case ColumnType.LONG -> LongConstant.newInstance(SqlUtil.implicitCastDoubleAsLong(v));
+                    case ColumnType.FLOAT -> FloatConstant.newInstance(SqlUtil.implicitCastDoubleAsFloat(v));
+                    default -> null;
+                };
+            }
+            case ColumnType.FLOAT -> {
+                final float v = fillFunc.getFloat(null);
+                return switch (toTag) {
+                    case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastFloatAsByte(v));
+                    case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastFloatAsShort(v));
+                    case ColumnType.INT -> IntConstant.newInstance(SqlUtil.implicitCastFloatAsInt(v));
+                    case ColumnType.LONG -> LongConstant.newInstance(SqlUtil.implicitCastFloatAsLong(v));
+                    default -> null;
+                };
+            }
+            case ColumnType.LONG -> {
+                final long v = fillFunc.getLong(null);
+                return switch (toTag) {
+                    case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastLongAsByte(v));
+                    case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastLongAsShort(v));
+                    case ColumnType.INT -> IntConstant.newInstance(SqlUtil.implicitCastLongAsInt(v));
+                    default -> null;
+                };
+            }
+            case ColumnType.INT -> {
+                final int v = fillFunc.getInt(null);
+                return switch (toTag) {
+                    case ColumnType.BYTE -> ByteConstant.newInstance(SqlUtil.implicitCastIntAsByte(v));
+                    case ColumnType.SHORT -> ShortConstant.newInstance(SqlUtil.implicitCastIntAsShort(v));
+                    default -> null;
+                };
+            }
+            case ColumnType.SHORT -> {
+                return toTag == ColumnType.BYTE
+                        ? ByteConstant.newInstance(SqlUtil.implicitCastShortAsByte(fillFunc.getShort(null)))
+                        : null;
+            }
+            default -> {
+                return null;
+            }
+        }
+    }
+
     private static void prepareMergeUnionAllFactory(RecordCursorFactory factory) {
         if (factory instanceof MergeUnionAllRecordCursorFactory mergeFactory) {
             mergeFactory.prepareCursor();
@@ -1751,15 +1817,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
     // for those.
-    // Narrowing fill pairs with no cast factory that FillRecord can still read: SHORT/CHAR/INT
-    // literals into BYTE/SHORT (FillRecord reads those via getInt) and DOUBLE into FLOAT.
-    private static boolean isFillNarrowingReadable(int fillType, int targetColType) {
-        final short fromTag = ColumnType.tagOf(fillType);
-        final short toTag = ColumnType.tagOf(targetColType);
-        return ((toTag == ColumnType.BYTE || toTag == ColumnType.SHORT) && fromTag >= ColumnType.BYTE && fromTag <= ColumnType.INT)
-                || (fromTag == ColumnType.DOUBLE && toTag == ColumnType.FLOAT);
-    }
-
     private static boolean isFixedSizePrevSlotEligible(int srcTag) {
         return switch (srcTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL128,
@@ -4642,15 +4699,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (cast != null) {
                                     fillValues.setQuick(fillIdx, cast);
                                     fillFunc = cast;
-                                } else if (!ColumnType.isToSameOrWider(fillType, targetColType)
-                                        && !isFillNarrowingReadable(fillType, targetColType)) {
-                                    // Narrowing without a cast factory: FillRecord would read the raw
+                                } else if (!ColumnType.isToSameOrWider(fillType, targetColType)) {
+                                    // Narrowing with no cast factory. FillRecord would read the raw
                                     // constant through a getter the base class does not implement
-                                    // (DoubleFunction.getLong, LongFunction.getInt).
-                                    throw SqlException.$(fillExpr.position,
-                                                    "fill value of type ").put(ColumnType.nameOf(fillType))
-                                            .put(" cannot fill column of type ")
-                                            .put(ColumnType.nameOf(targetColType));
+                                    // (DoubleFunction.getLong), so fold it to the target type here.
+                                    final Function narrowed;
+                                    try {
+                                        narrowed = narrowFillConstant(fillFunc, fillType, targetColType);
+                                    } catch (ImplicitCastException e) {
+                                        throw SqlException.$(fillExpr.position, e.getFlyweightMessage());
+                                    }
+                                    if (narrowed == null) {
+                                        throw SqlException.$(fillExpr.position,
+                                                        "fill value of type ").put(ColumnType.nameOf(fillType))
+                                                .put(" cannot fill column of type ")
+                                                .put(ColumnType.nameOf(targetColType));
+                                    }
+                                    // Null-then-free: if close() throws, the outer catch must not
+                                    // double-close the same instance.
+                                    fillValues.setQuick(fillIdx, null);
+                                    Misc.free(fillFunc);
+                                    fillValues.setQuick(fillIdx, narrowed);
+                                    fillFunc = narrowed;
                                 }
                             }
                             if (fillFunc.isNonDeterministic()) {

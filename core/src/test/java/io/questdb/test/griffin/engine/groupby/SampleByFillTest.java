@@ -2069,30 +2069,48 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillValueRejectedForNarrowingDoubleToLong() throws Exception {
-        // DOUBLE -> LONG passes isConvertibleFrom as a narrowing cast, but no implicit
-        // cast factory covers it; without the compile-time rejection the unwrapped
-        // DoubleConstant reaches FillRecord.getLong and throws UnsupportedOperationException.
-        assertQuery("SELECT ts, count() c FROM t_fv_dbl SAMPLE BY 1m FILL(1.5)")
-                .ddl("CREATE TABLE t_fv_dbl (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
-                .fails(53, "fill value of type DOUBLE cannot fill column of type LONG");
+    public void testFillValueNarrowsDoubleToLong() throws Exception {
+        // DOUBLE -> LONG has no implicit cast factory; the fill constant is folded with the same
+        // rules INSERT applies, so 1.5 fills 1 instead of reaching DoubleFunction.getLong.
+        assertQuery("SELECT ts, count() c FROM t_fv_dbl SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_dbl (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_dbl VALUES (1, '2024-01-01T00:00:00.000000Z'), (3, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tc
+                        2024-01-01T00:00:00.000000Z\t1
+                        2024-01-01T01:00:00.000000Z\t1
+                        2024-01-01T02:00:00.000000Z\t1
+                        """);
     }
 
     @Test
-    public void testFillValueRejectedForNarrowingDoubleToLongInBroadcast() throws Exception {
-        // Broadcast FILL(1.5) over count() (LONG) and sum(DOUBLE): the DOUBLE target is
-        // fine, the LONG target must be the one rejected.
-        assertQuery("SELECT ts, count() c, sum(d) s FROM t_fv_dbl_bc SAMPLE BY 1m FILL(1.5)")
-                .ddl("CREATE TABLE t_fv_dbl_bc (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
-                .fails(66, "fill value of type DOUBLE cannot fill column of type LONG");
+    public void testFillValueNarrowsDoubleToLongInBroadcast() throws Exception {
+        // Broadcast FILL(1.5) over count() (LONG) and sum(DOUBLE): each slot is folded to its own type.
+        assertQuery("SELECT ts, count() c, sum(d) s FROM t_fv_dbl_bc SAMPLE BY 1h FILL(1.5)")
+                .ddl(
+                        "CREATE TABLE t_fv_dbl_bc (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO t_fv_dbl_bc VALUES (1.0, '2024-01-01T00:00:00.000000Z'), (3.0, '2024-01-01T02:00:00.000000Z')"
+                )
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns("""
+                        ts\tc\ts
+                        2024-01-01T00:00:00.000000Z\t1\t1.0
+                        2024-01-01T01:00:00.000000Z\t1\t1.5
+                        2024-01-01T02:00:00.000000Z\t1\t3.0
+                        """);
     }
 
     @Test
-    public void testFillValueRejectedForNarrowingLongToInt() throws Exception {
-        // LONG literal onto an INT aggregate: LongFunction.getInt throws at runtime.
+    public void testFillValueRejectedForOutOfRangeLongToInt() throws Exception {
+        // Same range check INSERT applies when narrowing LONG -> INT.
         assertQuery("SELECT ts, max(i) m FROM t_fv_l2i SAMPLE BY 1m FILL(9223372036854775807)")
                 .ddl("CREATE TABLE t_fv_l2i (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
-                .fails(52, "fill value of type LONG cannot fill column of type INT");
+                .fails(52, "inconvertible value: 9223372036854775807 [LONG -> INT]");
     }
 
     @Test
