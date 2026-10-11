@@ -181,9 +181,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             TableWriter tableWriter,
             FilesFacade ff,
-            boolean isOom
+            Throwable failure
     ) {
-        tableWriter.o3BumpErrorCount(isOom);
+        tableWriter.o3BumpErrorCount(failure);
         if (columnCounter.decrementAndGet() == 0) {
             O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
             O3Utils.close(ff, srcTimestampFd);
@@ -525,7 +525,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("merge var error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            tableWriter.o3BumpErrorCount(e);
             O3CopyJob.unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -1403,7 +1403,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampSize,
                     tableWriter,
                     ff,
-                    CairoException.isCairoOomError(e)
+                    e
             );
             throw e;
         }
@@ -1914,7 +1914,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampSize,
                     tableWriter,
                     ff,
-                    CairoException.isCairoOomError(e)
+                    e
             );
             throw e;
         }
@@ -2030,7 +2030,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -2058,7 +2058,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -2131,7 +2131,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -2238,7 +2238,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("append new partition error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            tableWriter.o3BumpErrorCount(e);
             final FilesFacade ff1 = tableWriter.getFilesFacade();
             O3Utils.unmapAndClose(ff1, dstFixFd, dstFixAddr, dstFixSize);
             O3Utils.unmapAndClose(ff1, dstVarFd, dstVarAddr, dstVarSize);
@@ -2364,7 +2364,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampSize,
                     tableWriter,
                     ff,
-                    CairoException.isCairoOomError(e)
+                    e
             );
             throw e;
         }
@@ -2625,7 +2625,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
             O3Utils.close(ff, dstKFd);
             O3Utils.close(ff, dstVFd);
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            tableWriter.o3BumpErrorCount(e);
             if (columnCounter.decrementAndGet() == 0) {
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 O3Utils.close(ff, srcTimestampFd);
@@ -2902,7 +2902,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -2929,7 +2929,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -2999,7 +2999,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }

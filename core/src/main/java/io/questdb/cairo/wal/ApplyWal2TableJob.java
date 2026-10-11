@@ -784,6 +784,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private void handleWalApplyFailure(TableToken tableToken, Throwable throwable, SeqTxnTracker txnTracker) {
+        // Every apply path ends here: a failed data sync that no handler below has seen stops the engine instead
+        // of suspending the table, so a resumed apply cannot build on pages the kernel dropped
+        if (CairoException.isDataSyncFailure(throwable)
+                && CommitMode.isPowerLossDurable(LocalDurabilityPolicy.resolveCommitMode(config.getCommitMode(), engine.getLocalDurabilityPolicy()))) {
+            engine.handleDataSyncFailure(throwable);
+        }
+
         ErrorTag errorTag;
         String errorMessage;
 
