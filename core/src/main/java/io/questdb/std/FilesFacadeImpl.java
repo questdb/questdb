@@ -212,14 +212,14 @@ public class FilesFacadeImpl implements FilesFacade {
                 return;
             }
             final int errno = errno();
-            throw CairoException.dataSyncFailure(errno, "barrierFsync").put("could not barrierFsync [fd=").put(fd).put(']');
+            throw CairoException.dataSyncFailure(this, errno, "barrierFsync", "could not barrierFsync [fd=" + fd + ']');
         }
         int res = Files.fdatasync(fd);
         if (res == 0) {
             return;
         }
         final int errno = errno();
-        throw CairoException.dataSyncFailure(errno, "fdatasync").put("could not fdatasync [fd=").put(fd).put(']');
+        throw CairoException.dataSyncFailure(this, errno, "fdatasync", "could not fdatasync [fd=" + fd + ']');
     }
 
     @Override
@@ -229,7 +229,7 @@ public class FilesFacadeImpl implements FilesFacade {
             return;
         }
         final int errno = errno();
-        throw CairoException.dataSyncFailure(errno, "syncfs").put("could not syncfs [fd=").put(fd).put(']');
+        throw CairoException.dataSyncFailure(this, errno, "syncfs", "could not syncfs [fd=" + fd + ']');
     }
 
     @Override
@@ -242,14 +242,14 @@ public class FilesFacadeImpl implements FilesFacade {
                 return;
             }
             final int errno = errno();
-            throw CairoException.dataSyncFailure(errno, "fsyncDurable").put("could not fsyncDurable [fd=").put(fd).put(']');
+            throw CairoException.dataSyncFailure(this, errno, "fsyncDurable", "could not fsyncDurable [fd=" + fd + ']');
         }
         int res = Files.fsync(fd);
         if (res == 0) {
             return;
         }
         final int errno = errno();
-        throw CairoException.dataSyncFailure(errno, "fsync").put("could not fsync [fd=").put(fd).put(']');
+        throw CairoException.dataSyncFailure(this, errno, "fsync", "could not fsync [fd=" + fd + ']');
     }
 
     @Override
@@ -302,7 +302,7 @@ public class FilesFacadeImpl implements FilesFacade {
         }
         final int errno = errno();
         close(fd);
-        throw CairoException.dataSyncFailure(errno, "fsyncAndClose").put("could not fsync [fd=").put(fd).put(']');
+        throw CairoException.dataSyncFailure(this, errno, "fsyncAndClose", "could not fsync [fd=" + fd + ']');
     }
 
     @Override
@@ -470,11 +470,10 @@ public class FilesFacadeImpl implements FilesFacade {
             return;
         }
         final int errno = errno();
-        CairoException exception = CairoException.critical(errno);
         if (!async) {
-            exception = CairoException.dataSyncFailure(errno, "msync");
+            throw CairoException.dataSyncFailure(this, errno, "msync", "could not msync");
         }
-        throw exception.put("could not msync");
+        throw CairoException.critical(errno).put("could not msync");
     }
 
     @Override

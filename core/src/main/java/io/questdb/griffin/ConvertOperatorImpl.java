@@ -189,7 +189,7 @@ public class ConvertOperatorImpl implements Closeable {
         if ((checkStatus || dataSyncFailureOperation != null) && asyncProcessingErrorCount.get() > 0) {
             final String dataSyncOperation = dataSyncFailureOperation;
             final CairoException ex = dataSyncOperation != null
-                    ? CairoException.dataSyncFailure(dataSyncFailureErrno, dataSyncOperation)
+                    ? CairoException.dataSyncFailureCarry(dataSyncFailureErrno, dataSyncOperation)
                     : CairoException.critical(0);
             throw ex.put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken())
                     .put(", tableDir=").put(tableWriter.getTableToken().getDirName())

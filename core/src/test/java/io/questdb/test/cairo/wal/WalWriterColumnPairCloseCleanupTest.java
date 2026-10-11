@@ -70,8 +70,7 @@ public class WalWriterColumnPairCloseCleanupTest extends AbstractCairoTest {
                 failNext = false;
                 injected++;
                 injectedAt = sw.toString();
-                throw CairoException.dataSyncFailure(5, "msync")
-                        .put("simulated msync failure during column-pair free");
+                throw CairoException.dataSyncFailure(this, 5, "msync", "simulated msync failure during column-pair free");
             }
             super.msync(addr, len, async);
         }

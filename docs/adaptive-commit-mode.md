@@ -565,10 +565,14 @@ and report it.
 ### 11.2 The server stops after a failed flush
 
 In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs`, `sync_file_range` or synchronous `msync` stops
-the server at once, because the data it was flushing may not be on the disk. So does a failed flush of a conversion to
-non-WAL, in every mode. A parallel COPY whose flush fails first drops the table it created, or empties the existing
-table it imported into, so COPY never reports an import done that is not on the disk (section 11.6 says what it can
-leave behind):
+the server at once, wherever it happens (a table, its WAL, a checkpoint, a COPY's work directory), because the data it
+was flushing, or other data on the same disk, may not be on the disk. So does a failed flush of a conversion to
+non-WAL, in every mode. The server stops at the failed flush itself, before any clean-up, so a parallel COPY never
+reports an import done that is not on the disk, and section 11.6 says what it can leave behind. An Enterprise replica
+follows `nosync` here (the object store holds the durable copy): it reports the error and keeps running. In `nosync`
+and `async` a failed flush fails only the operation that ran it; during the start (a table that leaves `adaptive`, or
+a checkpoint restore) that stops the start, with the flush error in the message and exit code 55: fix the cause and
+start again.
 
 ```
 fatal durability barrier failure [operation=..., errno=..., message=...]
@@ -578,6 +582,11 @@ QuestDB fatal durability failure; hard-halting without writer cleanup [...]
 The process exits with code 55. No acknowledgement was sent for anything the failed flush covered. Fix the cause
 (a full disk, a failing device, an I/O error in the system log), then start again: recovery puts every table back
 at its save point and the WAL apply replays the rest. While the disk keeps failing, every start stops the same way.
+
+A flush that the Rust code runs does not stop the server yet: the Parquet metadata (`_pm`) barriers of an
+out-of-order merge into a Parquet partition or of an ATTACH, and Enterprise cold storage. Its failure fails the
+statement or suspends the table (section 11.3) instead; no acknowledged data is lost, because the `_pm` footer is
+written past the committed size and the retry rewrites it.
 
 ### 11.3 A table is suspended or its save point is late
 
@@ -642,16 +651,15 @@ stays a WAL table with the rows of its save point. The rows after the save point
 A parallel COPY that has not reported its import finished has promised nothing about the rows it was importing, and
 an existing table it imports into must be empty. The steps below therefore never touch rows a table held before.
 
-**After a failed flush stopped the server** (section 11.2), start it again:
+**After a failed flush stopped the server** (section 11.2), start it again. The server stopped at the failed flush,
+before the COPY could clean up, so the table is as the COPY left it:
 
-- A table the COPY created is gone. If it was a non-WAL table, run COPY again. If it was a WAL table, first create it
-  with `CREATE TABLE ... WAL`, then run COPY into it: a COPY that creates a WAL table leaves it without a sequencer
-  (section 7.6).
-- An existing table is empty. If some imported partitions were not attached yet, their `<partition>.attachable`
-  directories are left in the table's directory, and COPY again fails with `could not copy partition file
-  [to=.../<partition>.attachable]`. Delete the `.attachable` directories the failed COPY left, then run COPY again.
-- If the failed flush was the table writer's own (during the attach), the existing table can keep some rows of the
-  failed COPY: `TRUNCATE TABLE`, delete the leftover `.attachable` directories, run COPY again.
+- A table the COPY created is still there and can hold some imported partitions. If it is a non-WAL table, run
+  `DROP TABLE`, then COPY again. If it is a WAL table, follow "A WAL table the COPY created" below.
+- An existing table can hold some imported partitions: run `TRUNCATE TABLE`.
+- Imported partitions that were not attached yet are left as `<partition>.attachable` directories in the table's
+  directory, and COPY again fails with `could not copy partition file [to=.../<partition>.attachable]`: delete the
+  `.attachable` directories the failed COPY left, then run COPY again.
 
 **After a power loss during the COPY** (in `sync`, or into a WAL table it created in `adaptive`):
 

@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
@@ -138,7 +139,24 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return critical(CV_TORN);
     }
 
-    public static CairoException dataSyncFailure(int errno, String operation) {
+    /**
+     * A failed flush ({@code fsync}, {@code fdatasync}, {@code syncfs}, {@code sync_file_range}, a synchronous
+     * {@code msync}, {@code sync}) of a file through {@code ff}, the one way Java code raises one. The failure is
+     * recorded where it is created: every live engine whose files facade is {@code ff} is told at once and stops if
+     * its commit mode requires it, so a path that later drops, counts or wraps the exception cannot lose the stop.
+     */
+    public static CairoException dataSyncFailure(FilesFacade ff, int errno, String operation, CharSequence message) {
+        final CairoException exception = dataSyncFailureCarry(errno, operation).put(message);
+        CairoEngine.recordDataSyncFailure(ff, exception);
+        return exception;
+    }
+
+    /**
+     * A failed flush that {@link #dataSyncFailure(FilesFacade, int, String, CharSequence)} already recorded, raised
+     * again by the code that carries it: a task failure the writer rethrows, the sequencer's fenced frontier. It
+     * does not tell the engines again.
+     */
+    public static CairoException dataSyncFailureCarry(int errno, String operation) {
         CairoException exception = critical(errno);
         exception.dataSyncOperation = operation;
         exception.flags |= FLAG_DATA_SYNC_FAILURE;

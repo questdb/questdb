@@ -395,20 +395,29 @@ root (COPY staging) never marks a table safe. `nosync`, `async` and non-WAL tabl
 
 **The engine stop.** In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs`, `sync_file_range` or
 synchronous `msync` is fatal, because the data it covered may not be on the disk and the next commit would build on
-it. `CairoEngine.poisonOnDataSyncFailure` logs `fatal durability barrier failure [operation=..., errno=...,
-message=...]`, fences writers, acknowledgements and the WAL purge, and `ServerMain` halts the process with exit code
-55 without closing writers (closing them would flush and publish state built on the failed flush). The paths that
-stop the engine include the WAL commit barriers and the batched flush, the save point, the schema-file swap, ADD
-COLUMN, ATTACH of a Parquet partition, ALTER COLUMN TYPE (also when a conversion task on a worker thread fails its
-flush), CONVERT PARTITION TO PARQUET and TO NATIVE (and the squash that runs before TO PARQUET), the native-to-
-Parquet partition switch, the recovery header flush (section 8), a parallel COPY's two flushes and a failed `_txn`
-flush in its attach (after the import's clean-up has dropped a table it created or truncated an existing one;
-section 10), and the Enterprise uploader's start flush. `nosync`
-and `async` keep their previous behaviour on these paths. The flush after the WAL replay before a conversion to
-non-WAL runs in every mode, and so does its stop. The rule is the engine's, not each caller's:
-`CairoEngine.handleDataSyncFailure` stops only when `isDataSyncFailureFatal` holds (a data-sync failure in `sync` or
-`adaptive`) and otherwise returns, so the caller fails the operation as before; the conversion's stop, the only one
-decided for every mode, calls `handleDataSyncFailureInEveryMode`.
+it. The failure is decided where it is created: `CairoException.dataSyncFailure(ff, ...)`, the one Java factory of a
+flush failure, tells every live engine whose files facade is `ff` at once, so a path that later drops, counts or
+wraps the exception (a task's error counter, a job's top-level catch, a wrapper without the cause) cannot lose the
+stop. Each engine decides by `CairoEngine.isDataSyncFailureFatal`: the flag, and the commit mode
+`LocalDurabilityPolicy.resolveCommitMode` resolves for its role, so an Enterprise replica, which resolves `adaptive` to
+`nosync` (the object store holds the durable copy), reports the error and keeps running as on the base release. A
+fatal failure logs `fatal durability barrier failure [operation=..., errno=..., message=...]`, fences writers,
+acknowledgements and the WAL purge, and `ServerMain` halts the process with exit code 55 there, without closing
+writers or running any clean-up (closing them would flush and publish state built on the failed flush). The
+handlers at the catch sites (`handleDataSyncFailure`, `poisonOnDataSyncFailure`) apply the same rule and turn the
+failure into the `CairoError` the caller throws; they no longer test a mode of their own. `nosync` and `async` keep
+their previous behaviour. Two stops do not follow the resolved mode: the flush after the WAL replay before a
+conversion to non-WAL stops in every mode, and the Enterprise promote flush, which runs only in `adaptive`, stops
+even while the replica policy may still be in force; both call `handleDataSyncFailureInEveryMode`.
+`DataSyncFailureModePolicyTest` keeps these rules by source scan, and `DataSyncFailurePropagationTest` fails every
+flush of its workloads in turn.
+
+Known gap (D62): a flush that Rust runs (the Parquet `_pm` barriers in an O3 merge or an ATTACH, Enterprise cold
+storage) reaches Java as a plain error without the flag, so it fails the statement or suspends the table instead of
+stopping the engine. No acknowledged data is lost: the `_pm` footer is written past the committed size and `_txn`
+does not move, so the retry rewrites the same region. One Java flush also stays outside the
+factory: the final `sync()` of `CHECKPOINT CREATE` checks its own return code and fails the statement, as on the base
+release (it makes the checkpoint durable, not the live tables).
 
 When the stop follows a failed `_txn` flush inside a partition conversion or the partition switch, the error handler
 no longer removes the new partition directory once the `_txn` write has started, so the restart finds the partition

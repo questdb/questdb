@@ -538,8 +538,7 @@ public class TableWriterTest extends AbstractCairoTest {
                             if (isArmed) {
                                 isArmed = false;
                                 super.close(fd);
-                                throw CairoException.dataSyncFailure(5, "fsyncAndClose")
-                                        .put("injected metadata directory fsync failure");
+                                throw CairoException.dataSyncFailure(this, 5, "fsyncAndClose", "injected metadata directory fsync failure");
                             }
                         }
                         super.fsyncAndClose(fd);

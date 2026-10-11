@@ -6341,7 +6341,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 syncfsDirs.add(openedPaths.get(fd));
             }
             if (errorOnSyncfs) {
-                throw CairoException.dataSyncFailure(5, "syncfs").put("could not syncfs [fd=").put(fd).put(']');
+                throw CairoException.dataSyncFailure(this, 5, "syncfs", "could not syncfs [fd=" + fd + ']');
             }
             super.syncfs(fd);
         }

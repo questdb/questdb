@@ -238,9 +238,7 @@ public class TableSequencerImpl implements TableSequencer {
             }
         } catch (CairoException e) {
             // The log is flushed in the append or right after it. A failed flush stops the engine, as on the commit path.
-            if (e.isDataSyncFailure()) {
-                engine.handleDataSyncFailure(e);
-            }
+            engine.handleDataSyncFailure(e);
             throw e;
         }
         metadata.dropTable();

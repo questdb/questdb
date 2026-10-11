@@ -181,8 +181,7 @@ public class TableWriterCloseEpochGuardsTest extends AbstractCairoTest {
             if (failNext) {
                 failNext = false;
                 injected++;
-                throw CairoException.dataSyncFailure(5, "fsync")
-                        .put("simulated fsync failure during close epoch [fd=").put(fd).put(']');
+                throw CairoException.dataSyncFailure(this, 5, "fsync", "simulated fsync failure during close epoch [fd=" + fd + ']');
             }
             super.fsync(fd);
         }

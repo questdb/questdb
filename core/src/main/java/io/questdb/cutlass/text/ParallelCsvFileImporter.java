@@ -747,7 +747,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, metadata.getTimestampType(), partitionBy);
                 writer.attachPartition(timestamp, partition.importedRows);
             } catch (CairoException e) {
-                if (e.isDataSyncFailure() && CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
+                if (cairoEngine.isDataSyncFailureFatal(e)) {
                     // A failed flush in the attach: the caller stops the engine.
                     throw e;
                 }

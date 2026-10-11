@@ -663,7 +663,7 @@ public class SeqTxnTracker {
 
     private void checkFrontierFencedLocked() {
         if (frontierFenced) {
-            throw CairoException.dataSyncFailure(frontierFenceErrno, frontierFenceOperation)
+            throw CairoException.dataSyncFailureCarry(frontierFenceErrno, frontierFenceOperation)
                     .put("durable frontier is fenced by a failed sequencer barrier");
         }
     }

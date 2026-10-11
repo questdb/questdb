@@ -303,7 +303,7 @@ public class SeqTxnTrackerContiguousFrontierTest {
         tracker.registerWriterPending(2, 3);
         tracker.registerWriterPending(3, 5);
         tracker.fenceDurableFrontier(new RuntimeException(
-                CairoException.dataSyncFailure(5, "fdatasync").put("injected sequencer fdatasync failure")));
+                CairoException.dataSyncFailureCarry(5, "fdatasync").put("injected sequencer fdatasync failure")));
         assertTrue("a data-sync failure in the cause chain must fence", tracker.isDurableFrontierFenced());
 
         try {

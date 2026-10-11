@@ -190,6 +190,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -237,6 +238,8 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    // Every engine between construction and close: a failed flush is told to the engines whose files facade ran it.
+    private static final CopyOnWriteArrayList<CairoEngine> LIVE_ENGINES = new CopyOnWriteArrayList<>();
     // Hard cap on TableReferenceOutOfDateException recompile retries in execute(). A
     // healthy table converges in 1-2 retries; an unbounded loop here turns a permanent
     // metadata/token mismatch into a silent infinite hang (see PR #7031 CI timeout).
@@ -428,6 +431,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
+            LIVE_ENGINES.add(this);
             this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
@@ -586,6 +590,22 @@ public class CairoEngine implements Closeable, WriterSource {
         if (f.checkpointFunctionIdentity() == null || f.checkpointDependency() == null) {
             throw SqlException.$(position, "live view checkpoint compiler metadata is missing for window function ")
                     .put(f.getName()).put("()");
+        }
+    }
+
+    /**
+     * Tells every live engine whose files facade is {@code ff} about a failed flush the moment
+     * {@link CairoException#dataSyncFailure} creates it; each decides by its own commit mode
+     * ({@link #isDataSyncFailureFatal(Throwable)}). An engine is scoped by its facade, so a primary and a replica in
+     * one JVM on different facades hear only their own failures. In production the stop halts the process here,
+     * before any caller can retry the flush or lose the error.
+     */
+    static void recordDataSyncFailure(FilesFacade ff, CairoException failure) {
+        // The snapshot iterator allocates, on a failure only.
+        for (CairoEngine engine : LIVE_ENGINES) {
+            if (engine.configuration.getFilesFacade() == ff && engine.isDataSyncFailureFatal(failure)) {
+                engine.poisonEngine(failure);
+            }
         }
     }
 
@@ -1253,9 +1273,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 checkpointAgent.completeRecovery();
             }
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
-                handleDataSyncFailure(th);
-            }
+            handleDataSyncFailure(th);
             throw th;
         }
     }
@@ -1347,6 +1365,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(frameFactory);
         Misc.free(walLocker);
         Misc.free(memoryTrackerProvider);
+        LIVE_ENGINES.remove(this);
     }
 
     @TestOnly
@@ -1385,9 +1404,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             checkpointAgent.completeRecovery();
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
-                handleDataSyncFailure(th);
-            }
+            handleDataSyncFailure(th);
             throw th;
         }
         this.sqlCompilerPool = new SqlCompilerPool(this);
@@ -3862,13 +3879,17 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * True when a failed flush must stop this engine: the failure carries the data-sync flag and the instance's
-     * commit mode promises power-loss durability (SYNC, ADAPTIVE). NOSYNC and ASYNC promise nothing on a power
-     * loss: there a failed flush fails only the operation that ran it, as before adaptive commit. A caller that
-     * does more than stop the engine on a failed flush, such as distressing its writer, keys it on this.
+     * True when a failed flush must stop this engine: the failure carries the data-sync flag and the commit mode
+     * resolved for this engine's role promises power-loss durability (SYNC, ADAPTIVE; a replica resolves ADAPTIVE
+     * to NOSYNC, the object store holding the durable copy). NOSYNC and ASYNC promise nothing on a power loss:
+     * there a failed flush fails only the operation that ran it, as before adaptive commit. This is the one rule;
+     * the failure is decided here when it is created ({@link CairoException#dataSyncFailure}) and again by any
+     * handler it reaches. A caller that does more than stop the engine, such as distressing its writer, keys it on
+     * this.
      */
     public boolean isDataSyncFailureFatal(Throwable failure) {
-        return CommitMode.isPowerLossDurable(configuration.getCommitMode()) && CairoException.isDataSyncFailure(failure);
+        return CommitMode.isPowerLossDurable(LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), localDurabilityPolicy))
+                && CairoException.isDataSyncFailure(failure);
     }
 
     public boolean isDurabilityFailed() {
@@ -4344,10 +4365,7 @@ public class CairoEngine implements Closeable, WriterSource {
             return createTableOrViewOrMatViewUnsecure0(securityContext, mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume, tableKind, deferRegisterName);
         } catch (Throwable th) {
             // The statement wraps the error without its cause: a failed data sync stops the engine here
-            if (CommitMode.isPowerLossDurable(LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), localDurabilityPolicy))
-                    && CairoException.isDataSyncFailure(th)) {
-                handleDataSyncFailure(th);
-            }
+            handleDataSyncFailure(th);
             throw th;
         }
     }
@@ -4424,9 +4442,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                             struct.getPartitionBy()
                                     );
                                 } catch (Throwable e) {
-                                    if (CairoException.isDataSyncFailure(e)) {
-                                        handleDataSyncFailure(e);
-                                    }
+                                    handleDataSyncFailure(e);
                                     CairoException.rethrowCleanupFailure(e);
                                 }
                             }
@@ -4859,7 +4875,8 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.critical().$("fatal durability barrier failure [").$(detail.toString()).$(']').$();
             durabilityFailureHandler.onFailure(detail);
         }
-        return new CairoError(syncFailure);
+        // A handler further up gets the stop error a handler below threw: keep it, with what it carries
+        return failure instanceof CairoError stopError ? stopError : new CairoError(syncFailure);
     }
 
     private TableToken rebaseWalTable0(TableToken oldToken, String suppliedDir, boolean replicaVariant) {

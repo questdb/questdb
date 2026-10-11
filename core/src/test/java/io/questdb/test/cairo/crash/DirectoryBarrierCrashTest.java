@@ -972,7 +972,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                     isArmed = false;
                     failureCount++;
                     // nothing of the new _txn reaches the device
-                    throw CairoException.dataSyncFailure(5, "msync").put("injected msync failure");
+                    throw CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
                 }
                 super.msync(addr, len, async);
             }
@@ -1369,7 +1369,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         @Override
         public void fsync(long fd) {
             if (!isMsync && isFailureDue()) {
-                throw CairoException.dataSyncFailure(5, "fsync").put("injected fsync failure");
+                throw CairoException.dataSyncFailure(this, 5, "fsync", "injected fsync failure");
             }
             super.fsync(fd);
         }
@@ -1379,7 +1379,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             if (!isMsync && isFailureDue()) {
                 // FilesFacadeImpl closes the fd before it throws. So must this fake, or the leak is its own.
                 super.close(fd);
-                throw CairoException.dataSyncFailure(5, "fsyncAndClose").put("injected fsync failure");
+                throw CairoException.dataSyncFailure(this, 5, "fsyncAndClose", "injected fsync failure");
             }
             super.fsyncAndClose(fd);
         }
@@ -1387,7 +1387,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         @Override
         public void msync(long addr, long len, boolean async) {
             if (isMsync && !async && isFailureDue()) {
-                throw CairoException.dataSyncFailure(5, "msync").put("injected msync failure");
+                throw CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
             }
             super.msync(addr, len, async);
         }
@@ -1442,7 +1442,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             if (isArmed && !isWorkerFsyncFailed && Thread.currentThread() != mainThread && isCalledFrom("cthConvertPartitionHandler")) {
                 waitFor(() -> isMainAtSecondPartition);
                 isWorkerFsyncFailed = true;
-                throw CairoException.dataSyncFailure(5, "fsync").put("injected worker fsync failure");
+                throw CairoException.dataSyncFailure(this, 5, "fsync", "injected worker fsync failure");
             }
             super.fsync(fd);
         }

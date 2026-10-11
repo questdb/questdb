@@ -909,8 +909,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     ff.fsyncAndClose(openRO(ff, path.$(), LOG));
                 } catch (CairoException e) {
-                    // NOSYNC and ASYNC promise nothing on a power loss: a failure there is non-critical
-                    if (CommitMode.isPowerLossDurable(effectiveCommitMode) && e.isDataSyncFailure()) {
+                    // Non-critical unless the engine's commit mode stops on a failed flush
+                    if (engine.isDataSyncFailureFatal(e)) {
                         distressed = true;
                         engine.handleDataSyncFailure(e);
                     }
@@ -1112,7 +1112,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             // A command run outside the WAL reports to a statement or, from the command queue, only a message to
             // the thread that sent it: a failed data sync stops the engine here
-            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(th)) {
+            if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 engine.handleDataSyncFailure(th);
             }
@@ -1278,8 +1278,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     ff.fsync(parquetMetaFd);
                                 }
                             } catch (Throwable t) {
-                                // ASYNC promises nothing on a power loss: a failed fsync there only fails the attach
-                                if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(t)) {
+                                // Fails only the attach unless the engine's commit mode stops on a failed flush
+                                if (engine.isDataSyncFailureFatal(t)) {
                                     distressed = true;
                                     engine.handleDataSyncFailure(t);
                                 }
@@ -1297,7 +1297,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     try {
                                         ff.fsyncAndClose(dirFd);
                                     } catch (Throwable failure) {
-                                        if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(failure)) {
+                                        if (engine.isDataSyncFailureFatal(failure)) {
                                             distressed = true;
                                             engine.handleDataSyncFailure(failure);
                                         }
@@ -1548,9 +1548,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // The prepass batch is unpublished: _txn on disk still references the parquet directories, and
             // the next writer open removes the unreferenced native ones as non-attached partitions.
             pendingParquetToNativeConversions.clear();
-            if (CairoException.isDataSyncFailure(th)) {
-                engine.handleDataSyncFailure(th);
-            }
+            engine.handleDataSyncFailure(th);
             throw th;
         } finally {
             // clear temp resources
@@ -1970,9 +1968,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (newPartitionDirLen > 0 && !isTxnWriteStarted && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
             }
-            // ASYNC fsyncs _pm and the partition directory too, but promises nothing on a power loss: a failure
-            // there fails the statement only
-            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(th)) {
+            // Fails only the statement unless the engine's commit mode stops on a failed flush
+            if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 engine.handleDataSyncFailure(th);
             }
@@ -4285,7 +4282,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.error().$("could not remove partition dir [path=").$(other).I$();
             }
             // the stop also keeps the writer's rollback from purging the old version
-            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(e)) {
+            if (engine.isDataSyncFailureFatal(e)) {
                 distressed = true;
                 engine.handleDataSyncFailure(e);
             }
@@ -8481,9 +8478,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", error=").$(e)
                 .I$();
         // The exception below does not keep the cause, so a failed data sync stops the engine here
-        if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(e)) {
-            engine.handleDataSyncFailure(e);
-        }
+        engine.handleDataSyncFailure(e);
         CairoException ex;
         if (e instanceof Sinkable) {
             ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
@@ -10430,7 +10425,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private CairoException o3TaskFailure(int errno) {
         final String operation = o3DataSyncFailureOperation;
         return operation != null
-                ? CairoException.dataSyncFailure(o3DataSyncFailureErrno, operation)
+                ? CairoException.dataSyncFailureCarry(o3DataSyncFailureErrno, operation)
                 : CairoException.critical(errno);
     }
 
@@ -10683,9 +10678,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
         } catch (Throwable e) {
             distressed = true;
-            if (CairoException.isDataSyncFailure(e)) {
-                engine.handleDataSyncFailure(e);
-            }
+            engine.handleDataSyncFailure(e);
             throw e;
         } finally {
             path.trimTo(pathSize);
@@ -16822,7 +16815,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             truncate0(keepSymbolTables);
         } catch (Throwable th) {
             // A non-WAL TRUNCATE reports to the statement: a failed data sync stops the engine here
-            if (CommitMode.isPowerLossDurable(effectiveCommitMode) && CairoException.isDataSyncFailure(th)) {
+            if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 engine.handleDataSyncFailure(th);
             }

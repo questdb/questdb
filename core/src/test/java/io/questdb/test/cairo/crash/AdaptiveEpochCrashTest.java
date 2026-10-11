@@ -730,7 +730,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             engine.releaseAllWalWriters();
             publishSavePoint(s);
             markDurableBaseline();
-            tracker(s).fenceDurableFrontier(CairoException.dataSyncFailure(EIO, "fdatasync"));
+            tracker(s).fenceDurableFrontier(CairoException.dataSyncFailureCarry(EIO, "fdatasync"));
             faultFf.freezeDurableContentUnder(tableDir(s).resolve(WalUtils.SEQ_DIR));
             tryInsertRows(s, 1, 2, false);
             drainWalQueue();
@@ -1477,7 +1477,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                 final byte[] durable = durableContentOf(path);
                 frozenContent.put(path, durable != null ? durable.clone() : new byte[0]);
                 faultedOp = "fsyncDurable of the save point header";
-                throw CairoException.dataSyncFailure(EIO, "fsyncDurable");
+                throw CairoException.dataSyncFailure(this, EIO, "fsyncDurable", "injected");
             }
             super.fsyncDurable(fd);
         }
@@ -1626,7 +1626,7 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             if (faultAtOp > 0 && durabilityOpCount() >= faultAtOp) {
                 faultAtOp = -1;
                 faultedOp = lastDurabilityOp();
-                throw CairoException.dataSyncFailure(EIO, operation);
+                throw CairoException.dataSyncFailure(this, EIO, operation, "injected");
             }
         }
 

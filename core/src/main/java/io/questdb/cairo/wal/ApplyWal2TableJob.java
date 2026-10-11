@@ -747,16 +747,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         try {
             advance(writer, nowMs);
         } catch (CairoException e) {
-            if (e.isDataSyncFailure()) {
-                engine.handleDataSyncFailure(e);
-            }
+            engine.handleDataSyncFailure(e);
             LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
                     .$(", error=").$(e.getFlyweightMessage()).I$();
         } catch (Throwable th) {
             // Let Errors (OOM / writer distress CairoError) propagate; swallow only Exceptions.
-            if (CairoException.isDataSyncFailure(th)) {
-                engine.handleDataSyncFailure(th);
-            }
+            engine.handleDataSyncFailure(th);
             if (th instanceof Exception) {
                 LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
                         .$(", error=").$(th).I$();
@@ -786,10 +782,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private void handleWalApplyFailure(TableToken tableToken, Throwable throwable, SeqTxnTracker txnTracker) {
         // Every apply path ends here: a failed data sync that no handler below has seen stops the engine instead
         // of suspending the table, so a resumed apply cannot build on pages the kernel dropped
-        if (CairoException.isDataSyncFailure(throwable)
-                && CommitMode.isPowerLossDurable(LocalDurabilityPolicy.resolveCommitMode(config.getCommitMode(), engine.getLocalDurabilityPolicy()))) {
-            engine.handleDataSyncFailure(throwable);
-        }
+        engine.handleDataSyncFailure(throwable);
 
         ErrorTag errorTag;
         String errorMessage;

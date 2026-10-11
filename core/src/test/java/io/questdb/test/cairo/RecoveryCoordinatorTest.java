@@ -2789,8 +2789,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     }
                     if (failNext.compareAndSet(true, false)) {
                         super.close(fd);
-                        throw CairoException.dataSyncFailure(5, "fsyncAndClose")
-                                .put("injected recovery directory sync failure");
+                        throw CairoException.dataSyncFailure(this, 5, "fsyncAndClose", "injected recovery directory sync failure");
                     }
                     super.fsyncAndClose(fd);
                 }
@@ -2837,7 +2836,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 @Override
                 public void fsync(long fd) {
                     if (isFailing.get()) {
-                        throw CairoException.dataSyncFailure(5, "fsync").put("injected header flush failure");
+                        throw CairoException.dataSyncFailure(this, 5, "fsync", "injected header flush failure");
                     }
                     super.fsync(fd);
                 }
@@ -2845,7 +2844,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 @Override
                 public void syncfs(long fd) {
                     if (isFailing.get()) {
-                        throw CairoException.dataSyncFailure(5, "syncfs").put("injected header flush failure");
+                        throw CairoException.dataSyncFailure(this, 5, "syncfs", "injected header flush failure");
                     }
                     super.syncfs(fd);
                 }
@@ -3131,7 +3130,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             private void failIfArmed(String path, String operation) {
                 if (path.endsWith(failingFile) && armed.compareAndSet(true, false)) {
                     if (dataSync) {
-                        throw CairoException.dataSyncFailure(5, operation).put("injected flush failure [path=").put(path).put(']');
+                        throw CairoException.dataSyncFailure(this, 5, operation, "injected flush failure [path=" + path + ']');
                     }
                     throw CairoException.critical(5).put("injected plain failure [path=").put(path).put(']');
                 }

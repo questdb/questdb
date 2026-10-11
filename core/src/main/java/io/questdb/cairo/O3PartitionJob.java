@@ -704,6 +704,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // o3BumpErrorCount below must still run to suspend the table.
                         // fsyncAndClose closes the fd even on failure (no leak), and a
                         // non-durable dead tail is harmless -- the next update rewrites it.
+                        // In sync and adaptive the failed flush has already stopped the
+                        // engine where it was raised.
                         long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
                         if (isSync) {
                             ff.fsyncAndClose(fd);

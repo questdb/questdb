@@ -96,7 +96,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine testEngine = new CairoEngine(configuration)) {
                 testEngine.setDurabilityFailureHandler(observed::set);
 
-                CairoException first = CairoException.dataSyncFailure(5, "fdatasync").put("injected data sync failure");
+                CairoException first = CairoException.dataSyncFailureCarry(5, "fdatasync").put("injected data sync failure");
                 try {
                     testEngine.handleDataSyncFailure(first);
                     Assert.fail();
@@ -110,7 +110,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertFalse(testEngine.getDurableAckRegistry().isEnabled());
 
                 try {
-                    testEngine.handleDataSyncFailure(CairoException.dataSyncFailure(28, "fsync"));
+                    testEngine.handleDataSyncFailure(CairoException.dataSyncFailureCarry(28, "fsync"));
                     Assert.fail();
                 } catch (CairoError expected) {
                     // first failure remains authoritative and callback is not invoked again

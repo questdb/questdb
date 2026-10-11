@@ -79,6 +79,57 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointCreateAndRelease() throws Exception {
+        assertEveryFlushFailureStopsEngine(
+                DataSyncFailurePropagationTest::createWalTable,
+                table -> {
+                    try {
+                        execute("CHECKPOINT CREATE");
+                    } finally {
+                        execute("CHECKPOINT RELEASE");
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testCreateAndDropLiveView() throws Exception {
+        assertEveryFlushFailureStopsEngine(
+                DataSyncFailurePropagationTest::createWalTable,
+                table -> {
+                    execute("CREATE LIVE VIEW lv_" + table + " FLUSH EVERY 100ms START FROM NOW AS SELECT ts, s, sum(i) OVER (PARTITION BY s ORDER BY ts RANGE BETWEEN '1' SECOND PRECEDING AND CURRENT ROW) AS c FROM " + table);
+                    execute("DROP LIVE VIEW lv_" + table);
+                }
+        );
+    }
+
+    @Test
+    public void testCreateAndDropView() throws Exception {
+        assertEveryFlushFailureStopsEngine(
+                DataSyncFailurePropagationTest::createWalTable,
+                table -> {
+                    execute("CREATE VIEW v_" + table + " AS (SELECT ts, s FROM " + table + " WHERE i > 2)");
+                    drainWalAndViewQueues();
+                    execute("DROP VIEW v_" + table);
+                    drainWalAndViewQueues();
+                }
+        );
+    }
+
+    @Test
+    public void testCreateAndRefreshMatView() throws Exception {
+        assertEveryFlushFailureStopsEngine(
+                DataSyncFailurePropagationTest::createWalTable,
+                table -> {
+                    execute("CREATE MATERIALIZED VIEW mv_" + table + " AS (SELECT ts, count() c FROM " + table + " SAMPLE BY 1h) PARTITION BY DAY");
+                    drainWalAndMatViewQueues();
+                    insertDays(table, "2024-01-04", 1);
+                    drainWalAndMatViewQueues();
+                }
+        );
+    }
+
+    @Test
     public void testCreateNonWalTable() throws Exception {
         assertEveryFlushFailureStopsEngine(
                 table -> {
@@ -109,6 +160,18 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         assertEveryFlushFailureStopsEngine(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> execute("ALTER TABLE " + table + " ALTER COLUMN i TYPE LONG")
+        );
+    }
+
+    @Test
+    public void testNonWalColumnPurge() throws Exception {
+        assertEveryFlushFailureStopsEngine(
+                DataSyncFailurePropagationTest::createNonWalTable,
+                table -> {
+                    execute("UPDATE " + table + " SET i = i + 1");
+                    engine.releaseAllReaders();
+                    drainPurgeJob();
+                }
         );
     }
 
@@ -144,10 +207,32 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonWalDropAndRenameColumnAndAddIndex() throws Exception {
+        assertEveryFlushFailureStopsEngine(
+                DataSyncFailurePropagationTest::createNonWalTable,
+                table -> {
+                    execute("ALTER TABLE " + table + " RENAME COLUMN v TO v2");
+                    execute("ALTER TABLE " + table + " DROP COLUMN v2");
+                    execute("ALTER TABLE " + table + " ALTER COLUMN s ADD INDEX");
+                }
+        );
+    }
+
+    @Test
     public void testNonWalDropPartition() throws Exception {
         assertEveryFlushFailureStopsEngine(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> execute("ALTER TABLE " + table + " DROP PARTITION LIST '2024-01-01'")
+        );
+    }
+
+    @Test
+    public void testNonWalInsertAcrossPages() throws Exception {
+        // Small pages, so the row API releases (and in sync flushes) pages as it appends.
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 4096);
+        assertEveryFlushFailureStopsEngine(
+                DataSyncFailurePropagationTest::createNonWalTable,
+                table -> insertDays(table, "2024-01-04", 200)
         );
     }
 
@@ -299,11 +384,51 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalDropAndRenameTable() throws Exception {
+        assertEveryFlushFailureStopsEngine(
+                DataSyncFailurePropagationTest::createWalTable,
+                table -> {
+                    // The dropped table's writer is closed by the next apply, outside the workload: a failed flush
+                    // inside a writer close leaves that writer's files open in a test, where nothing halts.
+                    execute("RENAME TABLE " + table + " TO " + table + "_r");
+                    drainWalQueue();
+                    execute("DROP TABLE " + table + "_r");
+                }
+        );
+    }
+
+    @Test
     public void testWalDropPartition() throws Exception {
         assertEveryFlushFailureStopsEngine(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("ALTER TABLE " + table + " DROP PARTITION LIST '2024-01-01'");
+                    drainWalQueue();
+                }
+        );
+    }
+
+    @Test
+    public void testWalFirstInsert() throws Exception {
+        assertEveryFlushFailureStopsEngine(
+                table -> execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL"),
+                table -> {
+                    insertDays(table, "2024-01-01", 1);
+                    drainWalQueue();
+                }
+        );
+    }
+
+    @Test
+    public void testWalInsertAcrossPages() throws Exception {
+        // Small pages, so the WAL writer's row API flips (and in sync flushes) pages as it appends.
+        // Fixed-size columns only: a rollback after a failed page flip of a VARCHAR column crashes the JVM in a test
+        // (production halts at the failed flush first).
+        node1.setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 4096);
+        assertEveryFlushFailureStopsEngine(
+                table -> execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, l LONG) TIMESTAMP(ts) PARTITION BY DAY WAL"),
+                table -> {
+                    execute("INSERT INTO " + table + " SELECT timestamp_sequence('2024-01-01', 60_000_000L), x::INT, x FROM long_sequence(3000)");
                     drainWalQueue();
                 }
         );
@@ -431,7 +556,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public void fdatasync(long fd) {
             if (shouldFail()) {
-                throw CairoException.dataSyncFailure(EIO, "fdatasync").put("injected fdatasync failure");
+                throw CairoException.dataSyncFailure(this, EIO, "fdatasync", "injected fdatasync failure");
             }
             super.fdatasync(fd);
         }
@@ -439,7 +564,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public void fsync(long fd) {
             if (shouldFail()) {
-                throw CairoException.dataSyncFailure(EIO, "fsync").put("injected fsync failure");
+                throw CairoException.dataSyncFailure(this, EIO, "fsync", "injected fsync failure");
             }
             super.fsync(fd);
         }
@@ -448,7 +573,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         public void fsyncAndClose(long fd) {
             if (shouldFail()) {
                 super.close(fd);
-                throw CairoException.dataSyncFailure(EIO, "fsyncAndClose").put("injected fsync failure");
+                throw CairoException.dataSyncFailure(this, EIO, "fsyncAndClose", "injected fsync failure");
             }
             super.fsyncAndClose(fd);
         }
@@ -456,7 +581,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public void msync(long addr, long len, boolean async) {
             if (!async && shouldFail()) {
-                throw CairoException.dataSyncFailure(EIO, "msync").put("injected msync failure");
+                throw CairoException.dataSyncFailure(this, EIO, "msync", "injected msync failure");
             }
             super.msync(addr, len, async);
         }
@@ -480,7 +605,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         @Override
         public void syncfs(long fd) {
             if (shouldFail()) {
-                throw CairoException.dataSyncFailure(EIO, "syncfs").put("injected syncfs failure");
+                throw CairoException.dataSyncFailure(this, EIO, "syncfs", "injected syncfs failure");
             }
             super.syncfs(fd);
         }

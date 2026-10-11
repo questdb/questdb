@@ -174,9 +174,7 @@ public class ViewWalWriter extends WalWriterBase {
             return lastSeqTxn = seqTxn;
         } catch (CairoException e) {
             // The log is flushed in the append or right after it. A failed flush stops the engine, as on the commit path.
-            if (e.isDataSyncFailure()) {
-                sequencer.handleDataSyncFailure(e);
-            }
+            sequencer.handleDataSyncFailure(e);
             throw e;
         }
     }

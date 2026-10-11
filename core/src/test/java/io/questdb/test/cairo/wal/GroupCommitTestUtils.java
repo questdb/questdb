@@ -106,7 +106,7 @@ public final class GroupCommitTestUtils {
             if (armed && p != null && isSequencerFile(p)) {
                 armed = false;
                 injected = true;
-                throw CairoException.dataSyncFailure(5, "fdatasync").put("injected sequencer fdatasync failure");
+                throw CairoException.dataSyncFailure(this, 5, "fdatasync", "injected sequencer fdatasync failure");
             }
         }
 
@@ -130,7 +130,7 @@ public final class GroupCommitTestUtils {
             }
             if (failNext) {
                 failNext = false;
-                throw CairoException.dataSyncFailure(5, "fdatasync").put("injected WAL fdatasync failure");
+                throw CairoException.dataSyncFailure(this, 5, "fdatasync", "injected WAL fdatasync failure");
             }
             super.fdatasync(fd);
         }

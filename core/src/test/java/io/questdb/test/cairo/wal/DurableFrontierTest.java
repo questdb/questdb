@@ -1011,7 +1011,7 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
             if (armed && WalFdatasyncFacade.isSequencerFile(path)) {
                 armed = false;
                 injected = true;
-                throw CairoException.dataSyncFailure(5, operation).put("injected sequencer log flush failure");
+                throw CairoException.dataSyncFailure(this, 5, operation, "injected sequencer log flush failure");
             }
         }
     }

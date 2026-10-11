@@ -1556,7 +1556,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         @Override
         public void fdatasync(long fd) {
             if (takeWritebackError(fdToFile.get(fd), "fdatasync")) {
-                throw CairoException.dataSyncFailure(5, "fdatasync").put("injected writeback error");
+                throw CairoException.dataSyncFailure(this, 5, "fdatasync", "injected writeback error");
             }
             super.fdatasync(fd);
         }
@@ -1588,7 +1588,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         public void msync(long addr, long len, boolean async) {
             countSegmentSync(addrToFile.get(addr), async ? "msyncAsync" : "msyncSync");
             if (!async && takeWritebackError(addrToFile.get(addr), "msync")) {
-                throw CairoException.dataSyncFailure(5, "msync").put("injected writeback error");
+                throw CairoException.dataSyncFailure(this, 5, "msync", "injected writeback error");
             }
             super.msync(addr, len, async);
         }

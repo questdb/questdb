@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
@@ -54,6 +55,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -186,7 +188,7 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
         final boolean durable = CommitMode.isPowerLossDurable(CommitMode.fromString(commitMode));
         try {
             try {
-                engine.handleDataSyncFailure(CairoException.dataSyncFailure(EIO, "fsync").put("injected"));
+                engine.handleDataSyncFailure(CairoException.dataSyncFailureCarry(EIO, "fsync").put("injected"));
                 Assert.assertFalse("a durable mode must stop the engine", durable);
             } catch (CairoError e) {
                 Assert.assertTrue("only a durable mode may stop the engine", durable);
@@ -194,7 +196,7 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
             Assert.assertEquals(durable, engine.isDurabilityFailed());
             engine.resetDurabilityFailure();
 
-            final CairoError poisoned = engine.poisonOnDataSyncFailure(CairoException.dataSyncFailure(EIO, "msync").put("injected"));
+            final CairoError poisoned = engine.poisonOnDataSyncFailure(CairoException.dataSyncFailureCarry(EIO, "msync").put("injected"));
             Assert.assertEquals(durable, poisoned != null);
             Assert.assertEquals(durable, engine.isDurabilityFailed());
             engine.resetDurabilityFailure();
@@ -205,7 +207,7 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
 
             // The stops decided for every mode.
             try {
-                engine.handleDataSyncFailureInEveryMode(CairoException.dataSyncFailure(EIO, "fsync").put("injected"));
+                engine.handleDataSyncFailureInEveryMode(CairoException.dataSyncFailureCarry(EIO, "fsync").put("injected"));
                 Assert.fail("the every-mode stop must stop the engine");
             } catch (CairoError expected) {
                 Assert.assertTrue(engine.isDurabilityFailed());
@@ -217,63 +219,92 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
 
     @Test
     public void testEveryModeStopsAreTheDecidedOnes() throws IOException {
-        // A stop in every mode overrides "nosync and async keep their previous behaviour", so each one needs a
-        // decision: the WAL replay before a conversion to non-WAL (guide sections 8.1 and 11.2).
+        // A stop that does not follow the resolved commit mode needs a decision: the WAL replay before a conversion
+        // to non-WAL, in every mode (guide sections 8.1 and 11.2), and the Enterprise promote flush, which runs only
+        // in adaptive and must stop while the replica's policy may still resolve adaptive to nosync (D60).
         Assume.assumeTrue("one source scan is enough", "nosync".equals(commitMode));
-        final TreeSet<String> callers = new TreeSet<>();
-        for (Path root : sourceRoots()) {
-            try (Stream<Path> files = Files.walk(root)) {
-                for (Path file : (Iterable<Path>) files.filter(p -> p.toString().endsWith(".java"))::iterator) {
-                    if (Files.readString(file).contains(".handleDataSyncFailureInEveryMode(")) {
-                        callers.add(file.getFileName().toString());
-                    }
-                }
-            }
-        }
-        Assert.assertEquals("[TableConverter.java]", callers.toString());
+        Assert.assertEquals(
+                "[TableConverter.java]" + (hasEnterpriseSources() ? "+[EntCairoEngine.java]" : ""),
+                filesUsing(Pattern.compile("handleDataSyncFailureInEveryMode\\("), "void handleDataSyncFailureInEveryMode(")
+        );
     }
 
     @Test
-    public void testStopSideEffectsFollowCommitMode() throws IOException {
-        // A catch that does more than stop the engine on a failed flush (distresses its writer, keeps the error for
-        // later, throws) keys that on the engine's rule or an explicit durable-mode check, never on the raw flag:
-        // in nosync and async the operation must go on to fail as before adaptive commit.
+    public void testFlushFailureRuleLivesInTheEngine() throws IOException {
+        // CairoEngine.isDataSyncFailureFatal is the one rule for a failed flush (D60). The raw flag is read only by
+        // the engine, the exception itself and the code that carries a failure across a task boundary or decides a
+        // stop named above; every other site asks the engine, so it cannot decide by a different mode.
         Assume.assumeTrue("one source scan is enough", "nosync".equals(commitMode));
-        final List<String> offenders = new ArrayList<>();
+        Assert.assertEquals(
+                "[CairoEngine.java, CairoException.java, ConvertOperatorImpl.java, SeqTxnTracker.java, TableConverter.java, "
+                        + "TableWriter.java, WalGroupCommitFlushQueue.java]" + (hasEnterpriseSources() ? "+[EntCairoEngine.java]" : ""),
+                filesUsing(Pattern.compile("isDataSyncFailure\\("), null)
+        );
+        // Every Java flush failure is created by the recording factory (D61); only the code that carries one already
+        // recorded raises it again without telling the engines.
+        Assert.assertEquals(
+                "[CairoException.java, ConvertOperatorImpl.java, SeqTxnTracker.java, TableWriter.java]",
+                filesUsing(Pattern.compile("dataSyncFailureCarry\\("), "CairoException dataSyncFailureCarry(")
+        );
+        // poisonOnDataSyncFailure returns null when the failure is not fatal: each caller is inside a fatal branch.
+        final List<String> unguarded = new ArrayList<>();
         for (Path root : sourceRoots()) {
             try (Stream<Path> files = Files.walk(root)) {
                 for (Path file : (Iterable<Path>) files.filter(p -> p.toString().endsWith(".java"))::iterator) {
                     final List<String> lines = Files.readAllLines(file);
                     for (int i = 0, n = lines.size(); i < n; i++) {
-                        final String condition = lines.get(i).trim();
-                        if (!condition.startsWith("if (") || !condition.endsWith("{")
-                                || !condition.contains("isDataSyncFailure")
-                                || condition.contains("isDataSyncFailureFatal")
-                                || condition.contains("isPowerLossDurable")) {
+                        final String line = lines.get(i);
+                        if (!line.contains("poisonOnDataSyncFailure(") || line.contains("CairoError poisonOnDataSyncFailure(")
+                                || line.trim().startsWith("*") || line.contains("return engine.poisonOnDataSyncFailure(")) {
                             continue;
                         }
-                        int depth = 0;
-                        int statements = 0;
-                        boolean stops = false;
-                        for (int j = i; j < n; j++) {
-                            final String line = lines.get(j).trim();
-                            if (j > i && depth == 1 && line.endsWith(";") && !line.startsWith("//")) {
-                                statements++;
-                            }
-                            stops |= line.contains("handleDataSyncFailure") || line.contains("poisonOnDataSyncFailure(");
-                            depth += count(line, '{') - count(line, '}');
-                            if (depth == 0) {
-                                break;
-                            }
+                        boolean guarded = false;
+                        for (int j = Math.max(0, i - 8); j < i && !guarded; j++) {
+                            guarded = lines.get(j).contains("isDataSyncFailureFatal(");
                         }
-                        if (stops && statements > 1) {
-                            offenders.add(file.getFileName() + ":" + (i + 1));
+                        if (!guarded) {
+                            unguarded.add(file.getFileName() + ":" + (i + 1));
                         }
                     }
                 }
             }
         }
-        Assert.assertEquals("[]", offenders.toString());
+        Assert.assertEquals("[]", unguarded.toString());
+    }
+
+    @Test
+    public void testReplicaAppliedAlterMetaSwapMsync() throws Exception {
+        // A replica's applied ALTER msyncs _meta.swp (MS_SYNC), in every mode.
+        assertReplicaFlushFailure(
+                "_meta.swp",
+                () -> {
+                    execute("CREATE TABLE w (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO w VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                },
+                () -> {
+                    execute("ALTER TABLE w ADD COLUMN c INT");
+                    drainWalQueue();
+                }
+        );
+    }
+
+    @Test
+    public void testReplicaApplyWriterOpenTodoClearMsync() throws Exception {
+        // The apply job's writer open clears _todo_ and msyncs it (MS_SYNC), in every mode.
+        assertReplicaFlushFailure(
+                "_todo_",
+                () -> {
+                    execute("CREATE TABLE w (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO w VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                    engine.releaseAllWriters();
+                },
+                () -> {
+                    execute("INSERT INTO w VALUES ('2024-01-01T00:00:01.000000Z', 2)");
+                    drainWalQueue();
+                }
+        );
     }
 
     @Test
@@ -362,14 +393,84 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
         });
     }
 
-    private static int count(String line, char c) {
-        int count = 0;
-        for (int i = 0, n = line.length(); i < n; i++) {
-            if (line.charAt(i) == c) {
-                count++;
+    /**
+     * Runs {@code apply} on an engine whose save point policy is the replica's (D60), with the first msync of a file
+     * whose path ends with {@code needle} failing. The engine stops exactly where the mode the policy resolves is
+     * durable: on a replica adaptive resolves to nosync, so an adaptive replica reports the error and keeps applying.
+     */
+    private void assertReplicaFlushFailure(
+            String needle,
+            TestUtils.LeakProneCode setup,
+            TestUtils.LeakProneCode apply
+    ) throws Exception {
+        final boolean durable = CommitMode.isPowerLossDurable(
+                LocalDurabilityPolicy.resolveCommitMode(CommitMode.fromString(commitMode), LocalDurabilityPolicy.REPLICA_SKIP)
+        );
+        assertMemoryLeak(ff, () -> {
+            try {
+                setup.run();
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+                ff.arm(needle, MSYNC, 0);
+                try {
+                    apply.run();
+                } catch (Throwable ignore) {
+                    // the statement fails or the apply job suspends the table; the check is on the engine
+                } finally {
+                    ff.disarm();
+                }
+                Assert.assertEquals("the injected flush failure must be reached", 1, ff.failures);
+                Assert.assertEquals(
+                        "a replica stops on a failed flush exactly where its resolved mode is durable [mode=" + commitMode + ']',
+                        durable,
+                        engine.isDurabilityFailed()
+                );
+                if (!durable) {
+                    // The replica keeps applying.
+                    execute("ALTER TABLE w RESUME WAL");
+                    execute("INSERT INTO w (ts, v) VALUES ('2024-01-01T00:00:02.000000Z', 3)");
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM w WHERE v = 3").noRandomAccess().expectSize().returns("count\n1\n");
+                }
+            } finally {
+                ff.disarm();
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+                engine.releaseAllWriters();
+                engine.resetDurabilityFailure();
+            }
+        });
+    }
+
+    /**
+     * The source files, OSS first and then Enterprise ({@code +[...]}), with a line matching {@code token} that is
+     * not a comment and does not contain {@code definition}.
+     */
+    private static String filesUsing(Pattern token, String definition) throws IOException {
+        final StringBuilder result = new StringBuilder();
+        for (Path root : sourceRoots()) {
+            final TreeSet<String> names = new TreeSet<>();
+            try (Stream<Path> files = Files.walk(root)) {
+                for (Path file : (Iterable<Path>) files.filter(p -> p.toString().endsWith(".java"))::iterator) {
+                    for (String line : Files.readAllLines(file)) {
+                        final String trimmed = line.trim();
+                        if (trimmed.startsWith("//") || trimmed.startsWith("*") || (definition != null && line.contains(definition))) {
+                            continue;
+                        }
+                        if (token.matcher(line).find()) {
+                            names.add(file.getFileName().toString());
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!names.isEmpty()) {
+                result.append(result.isEmpty() ? "" : "+").append(names);
             }
         }
-        return count;
+        return result.toString();
+    }
+
+    private static boolean hasEnterpriseSources() {
+        return sourceRoots().size() > 1;
     }
 
     private static String pathToString(LPSZ name) {
@@ -411,7 +512,7 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
         @Override
         public void fdatasync(long fd) {
             if (shouldFail(FSYNC, pathOfFd(fd))) {
-                throw CairoException.dataSyncFailure(EIO, "fdatasync").put("injected fdatasync failure [fd=").put(fd).put(']');
+                throw CairoException.dataSyncFailure(this, EIO, "fdatasync", "injected fdatasync failure [fd=" + fd + ']');
             }
             super.fdatasync(fd);
         }
@@ -419,7 +520,7 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
         @Override
         public void fsync(long fd) {
             if (shouldFail(FSYNC, pathOfFd(fd))) {
-                throw CairoException.dataSyncFailure(EIO, "fsync").put("injected fsync failure [fd=").put(fd).put(']');
+                throw CairoException.dataSyncFailure(this, EIO, "fsync", "injected fsync failure [fd=" + fd + ']');
             }
             super.fsync(fd);
         }
@@ -428,7 +529,7 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
         public void fsyncAndClose(long fd) {
             if (shouldFail(FSYNC, pathOfFd(fd))) {
                 close(fd);
-                throw CairoException.dataSyncFailure(EIO, "fsyncAndClose").put("injected fsync failure [fd=").put(fd).put(']');
+                throw CairoException.dataSyncFailure(this, EIO, "fsyncAndClose", "injected fsync failure [fd=" + fd + ']');
             }
             super.fsyncAndClose(fd);
         }
@@ -459,7 +560,7 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
         @Override
         public void msync(long addr, long len, boolean async) {
             if (!async && shouldFail(MSYNC, pathOfAddress(addr))) {
-                throw CairoException.dataSyncFailure(EIO, "msync").put("could not msync");
+                throw CairoException.dataSyncFailure(this, EIO, "msync", "could not msync");
             }
             super.msync(addr, len, async);
         }

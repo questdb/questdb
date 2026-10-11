@@ -125,11 +125,9 @@ public class RecoveryCoordinator {
                         exits.add(token);
                     }
                 } catch (CairoException | CairoError e) {
-                    if (CairoException.isDataSyncFailure(e)) {
-                        // A writeback failure poisons the process-wide page-cache durability state. Do not
-                        // serve siblings or retry recovery in the same process.
-                        engine.handleDataSyncFailure(e);
-                    }
+                    // A writeback failure poisons the process-wide page-cache durability state. Do not
+                    // serve siblings or retry recovery in the same process.
+                    engine.handleDataSyncFailure(e);
                     // An adaptive table may not be exposed from its possibly non-durable live state.
                     // Abort engine initialization instead of merely suspending WAL apply (readers are not
                     // fenced by sequencer suspension).
@@ -142,9 +140,7 @@ public class RecoveryCoordinator {
                 try {
                     DatabaseCheckpointAgent.syncRestoredState(ff, dir.of(configuration.getDbRoot()), true);
                 } catch (CairoException | CairoError e) {
-                    if (CairoException.isDataSyncFailure(e)) {
-                        engine.handleDataSyncFailure(e);
-                    }
+                    engine.handleDataSyncFailure(e);
                     throw e;
                 }
             }
@@ -170,9 +166,7 @@ public class RecoveryCoordinator {
                     unpinEpoch(engine, token);
                     LOG.info().$("table left adaptive commit mode, its save point is removed [table=").$(token).I$();
                 } catch (CairoException | CairoError e) {
-                    if (CairoException.isDataSyncFailure(e)) {
-                        engine.handleDataSyncFailure(e);
-                    }
+                    engine.handleDataSyncFailure(e);
                     throw e;
                 }
             }

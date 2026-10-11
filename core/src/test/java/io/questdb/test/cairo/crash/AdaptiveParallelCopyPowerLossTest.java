@@ -39,7 +39,6 @@ import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -453,7 +452,7 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                     flushFailed.set(true);
                     failedFlush.clear();
                     failedFlush.put(operation).put(' ').put(fd > -1 ? pathOf(fd) : "");
-                    throw CairoException.dataSyncFailure(5, operation).put("injected [operation=").put(operation).put(']');
+                    throw CairoException.dataSyncFailure(this, 5, operation, "injected [operation=" + operation + ']');
                 }
             }
         };
@@ -507,13 +506,10 @@ public class AdaptiveParallelCopyPowerLossTest extends AbstractAdaptiveCrashTest
                     engine.resetDurabilityFailure();
                 }
                 if (!newTable) {
-                    // The cleanup truncates the existing table, unless the failed flush was the writer's own: that
-                    // leaves the writer unusable, and the table keeps rows of the failed COPY until it is truncated.
+                    // The engine stops at the failed flush, before the importer's cleanup can truncate the existing
+                    // table (production halts there), so the table can keep rows of the failed COPY until it is
+                    // truncated.
                     final String left = rows(engine);
-                    if (Chars.startsWith(failedFlush, "syncfs")) {
-                        // The importer's own flush.
-                        Assert.assertEquals(context + ": the existing table is truncated", "ts\ts\tv\n", left);
-                    }
                     for (String line : left.split("\n")) {
                         Assert.assertTrue(context + ": unexpected row " + line, IMPORTED.contains(line));
                     }
