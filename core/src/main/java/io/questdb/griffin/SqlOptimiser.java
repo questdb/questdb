@@ -1729,7 +1729,9 @@ public class SqlOptimiser implements Mutable {
                     && joinType != IQueryModel.JOIN_ASOF
                     && joinType != IQueryModel.JOIN_LT
                     && joinType != IQueryModel.JOIN_HORIZON;
-            if (!isSlaveOnly || isSlavePreserved || joinFilterBarriers.contains(joinType)) {
+            // A slave-only equality of these joins filters the slave below. HORIZON takes the filter as
+            // its right-hand filter, as it does an explicit right-hand ON conjunct, and keeps one key pair.
+            if (!isSlaveOnly || isSlavePreserved) {
                 // an earlier INNER join key that already enforces the equality makes it redundant
                 final boolean isInnerJoinKey = isInnerJoinKey(parent, ai, an, bi, bn, contextSlaveIndex);
                 if (joinType == IQueryModel.JOIN_LEFT_OUTER
@@ -1770,8 +1772,7 @@ public class SqlOptimiser implements Mutable {
                 }
                 // ASOF, LT, SPLICE and HORIZON joins reject outer join expressions, so they keep
                 // both key pairs unless an INNER join key makes the equality redundant. HORIZON
-                // keeps both pairs even then. It also keeps both pairs for a slave-only equality,
-                // because its slave must stay a bare table scan and cannot take a filter.
+                // keeps both pairs even then.
                 return;
             }
         }

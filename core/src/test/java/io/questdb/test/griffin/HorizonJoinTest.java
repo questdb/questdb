@@ -2156,9 +2156,96 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnMasterKeySharedByDifferentlyEncodedSlaveColumns() throws Exception {
+        // One key copier cannot write a master column for two key encodings. The implied right-hand
+        // equality filters the right-hand rows instead, so one key pair remains. Trade 1 matches price
+        // row 3 on each pair, and no price row has both columns equal to trade 2's key.
+        assertMemoryLeak(() -> {
+            createMasterSymbolSharedBySlaveColumnsTables();
+            executeWithRewriteTimestamp("CREATE TABLE tn (id INT, t TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE pn (t1 TIMESTAMP, t2 TIMESTAMP_NS, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO pn VALUES
+                        ('2024-01-01T00:00:00.000000Z', '2024-01-02T00:00:00.000000000Z', 1.0, '1970-01-01T00:00:00.000001Z'),
+                        ('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000000Z', 2.0, '1970-01-01T00:00:00.000002Z'),
+                        ('2024-01-02T00:00:00.000000Z', '2024-01-01T00:00:00.000000000Z', 3.0, '1970-01-01T00:00:00.000003Z')
+                    """);
+            execute("""
+                    INSERT INTO tn VALUES
+                        (1, '2024-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000010Z'),
+                        (2, '2024-01-02T00:00:00.000000Z', '1970-01-01T00:00:00.000020Z')
+                    """);
+
+            final String expected = """
+                    id\tavg
+                    1\t3.0
+                    2\tnull
+                    """;
+            for (String onClause : new String[]{"t.s = p.a AND t.s = p.v", "p.v = t.s AND p.a = t.s"}) {
+                for (String offsets : new String[]{"RANGE FROM 0s TO 0s STEP 1s", "LIST (0)"}) {
+                    assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                            offsets + " AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining("slave filter: a=v")
+                            .returns(expected);
+                }
+            }
+            // a STRING key next to a VARCHAR key: trade 2 matches price row 1, where str = v = 'B'
+            executeWithRewriteTimestamp("CREATE TABLE st (id INT, s STRING, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            execute("INSERT INTO st SELECT id, s, ts FROM trades");
+            assertQuery("SELECT t.id, avg(p.price) FROM st AS t HORIZON JOIN prices AS p ON (t.s = p.str AND t.s = p.v) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("slave filter: str=v")
+                    .returns("""
+                            id\tavg
+                            1\t3.0
+                            2\t1.0
+                            """);
+            // a TIMESTAMP key next to a TIMESTAMP_NS key
+            assertQuery("SELECT t.id, avg(p.price) FROM tn AS t HORIZON JOIN pn AS p ON (t.t = p.t1 AND t.t = p.t2) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("slave filter: t1=t2")
+                    .returns("""
+                            id\tavg
+                            1\t2.0
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterKeySharedByDifferentlyEncodedSlaveColumnsMultiSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createMasterSymbolSharedBySlaveColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price), avg(q.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.v)
+                    HORIZON JOIN prices AS q ON (t.s = q.a)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("slave filter: a=v")
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t3.0\t3.0
+                            2\tnull\t2.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinOnMasterKeySharedBySlaveColumns() throws Exception {
-        // t.k = p.k AND t.k = p.m implies p.k = p.m. The HORIZON JOIN slave must stay a bare
-        // table scan, so the optimiser keeps both key pairs instead of filtering the slave.
+        // t.k = p.k AND t.k = p.m implies p.k = p.m, which filters the right-hand rows like
+        // the explicit conjunct of testHorizonJoinOnSlaveColumnEqualityFilter. One key pair remains.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (id INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (k INT, m INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
@@ -2197,8 +2284,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     @Test
     public void testHorizonJoinOnMasterSymbolSharedBySlaveColumns() throws Exception {
-        // A master SYMBOL key matched against two slave SYMBOL columns cannot use symbol ids:
-        // SymbolTranslatingRecord translates each master column into one slave symbol table.
+        // t.s = p.a AND t.s = p.b implies p.a = p.b, which filters the right-hand rows, so one
+        // SYMBOL key pair remains.
         assertMemoryLeak(() -> {
             createMasterSymbolSharedBySlaveColumnsTables();
 
@@ -2211,6 +2298,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     """)
                     .noLeakCheck()
                     .expectSize()
+                    .withPlanContaining("slave filter: a=b")
                     .returns("""
                             id\tavg
                             1\t3.0
@@ -2244,7 +2332,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     @Test
     public void testHorizonJoinOnMasterSymbolSharedBySlaveColumnsWithSecondKey() throws Exception {
-        // A repeated master SYMBOL key next to a separate SYMBOL key pair
+        // A master SYMBOL key shared by two slave columns next to a separate SYMBOL key pair
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (s SYMBOL, s2 SYMBOL, id INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (c SYMBOL, a SYMBOL, b SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
@@ -2282,8 +2370,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     @Test
     public void testHorizonJoinOnMasterSymbolSharedBySymbolAndStringColumns() throws Exception {
-        // HORIZON builds its own key types, so a master SYMBOL key matched against a slave SYMBOL
-        // and a slave STRING column compares both pairs as strings.
+        // t.s = p.a AND t.s = p.str implies p.a = p.str, which filters the right-hand rows, so one
+        // key pair remains.
         assertMemoryLeak(() -> {
             createMasterSymbolSharedBySlaveColumnsTables();
 
@@ -2301,41 +2389,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             1\t3.0
                             2\tnull
                             """);
-        });
-    }
-
-    @Test
-    public void testHorizonJoinOnMasterSymbolSharedBySymbolAndVarcharColumnsRejected() throws Exception {
-        // The key copier writes t.s once, but the SYMBOL pair and the VARCHAR pair need
-        // different encodings.
-        assertMemoryLeak(() -> {
-            createMasterSymbolSharedBySlaveColumnsTables();
-
-            final String sql = "SELECT t.id, avg(p.price) " +
-                    "FROM trades AS t " +
-                    "HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.v) " +
-                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
-                    "ORDER BY t.id";
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .fails(sql.indexOf("t.s = p.a"), "join column is compared with columns of different types");
-        });
-    }
-
-    @Test
-    public void testHorizonJoinOnMasterSymbolSharedBySymbolAndVarcharColumnsRejectedMultiSlave() throws Exception {
-        assertMemoryLeak(() -> {
-            createMasterSymbolSharedBySlaveColumnsTables();
-
-            final String sql = "SELECT t.id, avg(p.price), avg(q.price) " +
-                    "FROM trades AS t " +
-                    "HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.v) " +
-                    "HORIZON JOIN prices AS q ON (t.s = q.a) " +
-                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
-                    "ORDER BY t.id";
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .fails(sql.indexOf("t.s = p.a"), "join column is compared with columns of different types");
         });
     }
 
@@ -2482,8 +2535,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     @Test
     public void testHorizonJoinOnSelfJoinMasterSymbolSharedByTwoKeys() throws Exception {
-        // In a self-join t.s = p.s and t.s = p.a pair t.s with two slave SYMBOL columns;
-        // HORIZON compares both pairs as strings.
+        // In a self-join t.s = p.s AND t.s = p.a implies p.s = p.a, which filters the right-hand rows.
         assertMemoryLeak(() -> {
             createSelfJoinSymbolSharedTable();
 
@@ -2633,6 +2685,28 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 1\t1.0
                 2\tnull
                 """);
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveKeySharedByDifferentlyEncodedMasterColumnsRejected() throws Exception {
+        // t.a = p.s AND t.v = p.s implies t.a = t.v, which must not filter the left-hand rows that
+        // HORIZON JOIN keeps, so both key pairs remain. The slave key copier writes p.s once, but the
+        // SYMBOL pair and the VARCHAR pair need different encodings.
+        assertMemoryLeak(() -> {
+            createSlaveSymbolSharedByMasterColumnsTables();
+            execute("ALTER TABLE tm ADD COLUMN v VARCHAR");
+
+            String sql = "SELECT t.id, avg(p.price) FROM tm AS t HORIZON JOIN ps AS p ON (t.a = p.s AND t.v = p.s) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("p.s"), "join column is compared with columns of different types");
+            sql = "SELECT t.id, avg(p.price), avg(q.price) FROM tm AS t HORIZON JOIN ps AS p ON (t.a = p.s) " +
+                    "HORIZON JOIN ps AS q ON (t.a = q.s AND t.v = q.s) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("q.s"), "join column is compared with columns of different types");
+        });
     }
 
     @Test
