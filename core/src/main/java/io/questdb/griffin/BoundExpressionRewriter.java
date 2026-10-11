@@ -25,8 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -392,15 +390,6 @@ public final class BoundExpressionRewriter implements Mutable {
         return flags;
     }
 
-    private static ColumnExpression projectionColumn(ProjectPlan projection, int columnId, int type) {
-        final int index = projection.getOutput().getColumnIndexById(columnId);
-        if (index < 0 || !(projection.getExpressions().getQuick(index) instanceof ColumnExpression column)
-                || column.getDataType() != type) {
-            throw new IllegalArgumentException("column-only projection with unchanged types required");
-        }
-        return column;
-    }
-
     /**
      * The flags of a call whose column arguments were replaced by expressions: their non-determinism, randomness,
      * lack of random access, lack of parallelism and instability carry over to the call.
@@ -521,26 +510,7 @@ public final class BoundExpressionRewriter implements Mutable {
         if (replacement != expression) {
             final PreparedFunctions.Entry entry = prepared.findOwned(expression);
             if (entry != null) {
-                assert PreparedFunctions.hasOnlyReadLeaves(entry) : "prepared leaf is not read by its description";
-                // Validate the entire live closure before changing any leaf.
-                for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-                    final BindableColumn leaf = entry.leaves.getQuick(k);
-                    if (leaf.isOpen()) {
-                        final ColumnExpression column = projectionColumn(projection, leaf.getColumnId(), leaf.getType());
-                        if (leaf instanceof SymbolFunction symbol && symbol.isSymbolTableStatic()
-                                != projection.getInput().getOutput().isSymbolTableStatic(
-                                projection.getInput().getOutput().getColumnIndexById(column.getColumnId()))) {
-                            throw new IllegalArgumentException("bound symbol table capability has changed");
-                        }
-                    }
-                }
-                for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-                    final BindableColumn leaf = entry.leaves.getQuick(k);
-                    if (leaf.isOpen()) {
-                        leaf.setColumnId(projectionColumn(projection, leaf.getColumnId(), leaf.getType()).getColumnId());
-                    }
-                }
-                entry.expression = replacement;
+                prepared.retarget(entry, replacement, projection);
             }
         }
     }
@@ -564,6 +534,15 @@ public final class BoundExpressionRewriter implements Mutable {
             return functions.next().of(call, args, substitutedFlags(call, args));
         }
         return expression;
+    }
+
+    static ColumnExpression projectionColumn(ProjectPlan projection, int columnId, int type) {
+        final int index = projection.getOutput().getColumnIndexById(columnId);
+        if (index < 0 || !(projection.getExpressions().getQuick(index) instanceof ColumnExpression column)
+                || column.getDataType() != type) {
+            throw new IllegalArgumentException("column-only projection with unchanged types required");
+        }
+        return column;
     }
 
     /**

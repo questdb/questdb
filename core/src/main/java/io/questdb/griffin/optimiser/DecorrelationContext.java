@@ -231,7 +231,7 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * Records a carrier of the step for {@link PlanVerifier}, which reads it right after decorrelation; the step's
+     * Records a carrier of the step for {@link DecorrelationVerifier}, which reads it right after decorrelation; the step's
      * carriers stay until {@link #releaseCarriers}.
      */
     void addCarrier(JoinInput step, int columnId) {

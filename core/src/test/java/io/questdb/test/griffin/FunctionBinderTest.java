@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
@@ -1223,6 +1224,33 @@ public class FunctionBinderTest extends AbstractCairoTest {
                 binder.clear();
                 final ColumnExpression reused = (ColumnExpression) binder.bind(literal("value", 0), scan.getOutput(), null, sqlExecutionContext);
                 Assert.assertTrue(reused.isDirectReference());
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionRemapRebuildsSymbolOfChangedStaticCapability() throws Exception {
+        assertMemoryLeak(() -> {
+            final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final ScanPlan scan = new ScanPlan();
+            scan.getOutput().add(7, "value", ColumnType.SYMBOL, true);
+            final ProjectPlan projection = new ProjectPlan().of(scan, 0);
+            projection.getOutput().add(20, "alias", ColumnType.SYMBOL, true);
+            projection.getOutput().setSymbolTableStatic(0, true);
+            projection.getExpressions().add(new ColumnExpression().of(7, ColumnType.SYMBOL, 0));
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                final BoundExpression bound = binder.bind(literal("alias", 0), projection.getOutput(), null, sqlExecutionContext);
+                final ColumnExpression mapped = (ColumnExpression) binder.remapColumns(bound, projection);
+                Assert.assertEquals(7, mapped.getColumnId());
+                try {
+                    binder.instantiate(mapped, scan.getOutput());
+                    Assert.fail("adopted a symbol leaf whose static capability changed");
+                } catch (IllegalStateException e) {
+                    Assert.assertEquals("bound function requires final-layout reconstruction", e.getMessage());
+                }
+                try (Function function = binder.instantiate(mapped, scan.getOutput(), sqlExecutionContext)) {
+                    Assert.assertFalse(((SymbolFunction) function).isSymbolTableStatic());
+                }
             }
         });
     }

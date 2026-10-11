@@ -329,8 +329,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                             if (functionType2 == ColumnType.CURSOR) {
                                 cursorFunctionIndex++;
                             }
-                            lo = Math.min(ceil, timestampDriver.ceilFrom(dynamicValue2, valueType2));
-                            hi = Math.max(floor, timestampDriver.floorFrom(dynamicValue2, valueType2));
+                            lo = timestampDriver.betweenLo(dynamicValue, valueType, dynamicValue2, valueType2);
+                            hi = timestampDriver.betweenHi(dynamicValue, valueType, dynamicValue2, valueType2);
                         } else if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {
                             // The static end of BETWEEN sits in lo and hi, rounded up and down; the dynamic
                             // end may lie on either side of it.

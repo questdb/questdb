@@ -237,6 +237,18 @@ public final class LogicalPlans {
     }
 
     /**
+     * The index of the join input whose output holds the column, or -1 when no input holds it.
+     */
+    public static int findJoinColumnSource(JoinPlan join, int columnId) {
+        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
+            if (join.getInputs().getQuick(i).getSourceOutput().getColumnIndexById(columnId) >= 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * True when a step of the join after its first input is a barrier.
      */
     public static boolean hasBarrierInput(JoinPlan join) {
@@ -493,12 +505,11 @@ public final class LogicalPlans {
      * The index of the join input whose output holds the column.
      */
     public static int joinColumnSource(JoinPlan join, int columnId) {
-        for (int i = 0, n = join.getInputs().size(); i < n; i++) {
-            if (join.getInputs().getQuick(i).getSourceOutput().getColumnIndexById(columnId) >= 0) {
-                return i;
-            }
+        final int source = findJoinColumnSource(join, columnId);
+        if (source < 0) {
+            throw new IllegalStateException("join column is outside its inputs");
         }
-        throw new IllegalStateException("join column is outside its inputs");
+        return source;
     }
 
     /**

@@ -267,27 +267,6 @@ final class OperatorPlanning {
     }
 
     /**
-     * True when the light cached window under the filter selects the filtered rows itself: the filter reads, at its
-     * first position, the BOOLEAN result of the window's sole function, a row-selecting window function SUBSAMPLE
-     * binds as its keep flag, which the projection above the filter drops.
-     */
-    private static boolean isWindowKeepFlag(FilterPlan filter) {
-        final LogicalPlan input = filter.getInput();
-        final WindowPlan window = GeneratedShapes.generatedWindow(input);
-        if (!(filter.getPredicate() instanceof ColumnExpression column) || window == null
-                || window.getAlgorithm() != WindowPlan.Algorithm.CACHED_LIGHT || window.getFunctions().size() != 1
-                || !window.getSpecs().getQuick(0).isSubsampleKeepFlag()) {
-            return false;
-        }
-        final FunctionExpression function = window.getFunctions().getQuick(0);
-        final int functionColumnId = window.getFunctionColumnIds().getQuick(0);
-        final int functionIndex = input instanceof ProjectPlan project ? LogicalPlans.projectedColumnIndex(project, functionColumnId)
-                : input.getOutput().getColumnIndexById(functionColumnId);
-        return functionIndex >= 0 && functionIndex == input.getOutput().getColumnIndexById(column.getColumnId())
-                && (function.getFunctionFlags() & BoundExpression.ROW_SELECTING) != 0 && function.getDataType() == ColumnType.BOOLEAN;
-    }
-
-    /**
      * The aggregate a decorrelation domain re-reads through its shared source, as the generator finds it: under the
      * column projections and the leading branches of the set operations of the source's input.
      */
@@ -397,7 +376,7 @@ final class OperatorPlanning {
                         return false;
                     }
                     for (int i = 0, n = windowJoin.getSteps().size(); i < n; i++) {
-                        if (!(windowJoin.getSteps().getQuick(i).getFilter() instanceof ConstantExpression constant) || constant.getLongValue() != 0) {
+                        if (!windowJoin.getSteps().getQuick(i).isNullExtending()) {
                             return false;
                         }
                     }
@@ -482,21 +461,6 @@ final class OperatorPlanning {
         return isFirstLastShape(sample, timestampIndex, baseTimestampIndex, symbolIndex);
     }
 
-    /**
-     * True when the temporal join step matches on keys: a sole key pairing the designated timestamps of the master
-     * and the slave adds no key.
-     */
-    private boolean isKeyedTemporalJoin(JoinPlan join, int inputIndex, JoinInput step) {
-        final IntList masterKeys = step.getMasterKeyColumnIds();
-        if (masterKeys.size() != 1) {
-            return masterKeys.size() > 0;
-        }
-        final int masterIndex = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput().getColumnIndexById(masterKeys.getQuick(0));
-        final LogicalPlan slave = step.getInput();
-        final int slaveIndex = slave.getOutput().getColumnIndexById(step.getSlaveKeyColumnIds().getQuick(0));
-        return masterIndex != PhysicalProperties.masterTimestampIndex(join, inputIndex) || slaveIndex != timestampIndex(slave);
-    }
-
     private boolean isPageFrameSource(LogicalPlan plan) {
         return PhysicalProperties.supportsPageFrameCursor(plan) == PhysicalProperties.Capability.YES;
     }
@@ -553,14 +517,6 @@ final class OperatorPlanning {
     }
 
     /**
-     * True when the sort's input emits rows in the order of the sort's first key, the input's designated timestamp.
-     */
-    private boolean isTimestampOrdered(SortPlan sort, int keyIndex, int timestampIndex) {
-        return keyIndex == timestampIndex && PhysicalProperties.scanDirection(sort.getInput())
-                == PhysicalProperties.ScanDirection.of(sort.getDirections().getQuick(0));
-    }
-
-    /**
      * Chooses the parallel top-K of a bounded sort, which reads the page frames under its input: it builds at most one
      * projection over itself, see {@link LogicalPlans#parallelTopKProjection}, reads every sort key from the input of
      * that projection, and reads the page frames of that input, or steals its filter. When the projection's input is
@@ -601,7 +557,9 @@ final class OperatorPlanning {
     }
 
     private void planAggregate(AggregatePlan aggregate) throws SqlException {
-        if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
+        final GeneratedShapes.AggregateFactory factory = GeneratedShapes.aggregateFactory(aggregate);
+        if (factory == GeneratedShapes.AggregateFactory.HORIZON) {
+            final HorizonJoinPlan horizon = (HorizonJoinPlan) aggregate.getInput();
             final LogicalPlan master = horizon.getMaster();
             validateConsumedTimestamp(master);
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
@@ -615,7 +573,7 @@ final class OperatorPlanning {
             aggregate.setAlgorithm(horizonAlgorithm(aggregate, horizon.getMaster()));
             return;
         }
-        if (LogicalPlans.isCount(aggregate) || GeneratedShapes.postingDistinctScan(aggregate) != null) {
+        if (factory != GeneratedShapes.AggregateFactory.GROUP_BY) {
             return;
         }
         final LogicalPlan base = GeneratedShapes.aggregateBase(aggregate);
@@ -638,7 +596,7 @@ final class OperatorPlanning {
         final LogicalPlan input = fill.getInput();
         final int timestampIndex = input.getOutput().getColumnIndexById(fill.getTimestampColumnId());
         final FillPlan.Algorithm algorithm;
-        if (input instanceof SampleByPlan sample && sample.getAlgorithm() == SampleByPlan.Algorithm.FILL_NONE) {
+        if (isSampleByRowsFill(fill)) {
             algorithm = FillPlan.Algorithm.SAMPLE_BY_ROWS;
         } else if (timestampIndex(input) == timestampIndex) {
             if (!isRandomAccess(input) && hasPrevReadBack(fill)) {
@@ -660,7 +618,7 @@ final class OperatorPlanning {
         final boolean isParallelEnabled = context.getExecutionContext().isParallelFilterEnabled();
         if (!GeneratedShapes.isFusedFilter(filter)) {
             filter.setAlgorithm(!isFiltering(filter.getPredicate()) ? null
-                    : isWindowKeepFlag(filter) ? FilterPlan.Algorithm.WINDOW_KEEP_FLAG
+                    : GeneratedShapes.isWindowKeepFlag(filter) ? FilterPlan.Algorithm.WINDOW_KEEP_FLAG
                       : isParallelEnabled && isKnownYes(PhysicalProperties.supportsPageFrameCursor(filter.getInput())) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
             return;
         }
@@ -680,6 +638,10 @@ final class OperatorPlanning {
         for (int i = 1, n = ordered.size(); i < n; i++) {
             final JoinInput step = ordered.getQuick(i);
             final LogicalPlan slave = step.getInput();
+            if (step.getJoinType().isRelational()) {
+                planRelationalStep(join, i, step);
+                continue;
+            }
             switch (step.getJoinType()) {
                 case UNNEST -> step.setAlgorithm(JoinInput.Algorithm.UNNEST);
                 case ASOF, LT -> {
@@ -689,27 +651,6 @@ final class OperatorPlanning {
                 case SPLICE -> {
                     validateTimeSeriesOrders(join, i, slave, step.getPosition());
                     step.setAlgorithm(isFullFatJoins ? JoinInput.Algorithm.FULL_FAT_SPLICE : JoinInput.Algorithm.SPLICE);
-                }
-                default -> {
-                    final int markoutIndex = ordered.getQuick(i - 1).getOutput().getColumnIndexById(step.getMarkoutTimestampColumnId());
-                    if (markoutIndex >= 0 && markoutIndex == PhysicalProperties.masterTimestampIndex(join, i)
-                            && PhysicalProperties.masterSupportsRandomAccess(join, i) == PhysicalProperties.Capability.YES
-                            && PhysicalProperties.isLongSequence(slave) == PhysicalProperties.Capability.YES) {
-                        step.setAlgorithm(JoinInput.Algorithm.MARKOUT);
-                    } else if (step.getMasterKeyColumnIds().size() == 0) {
-                        step.setAlgorithm(JoinInput.Algorithm.NESTED_LOOP);
-                    } else {
-                        final boolean isSlaveRandomAccess = step.getJoinType() == JoinKind.LEFT_OUTER && step.getOnResidual() != null
-                                && LogicalPlans.constantTruth(step.getOnResidual()) == 0 || isRandomAccess(slave);
-                        step.setAlgorithm(isSlaveRandomAccess && !isFullFatJoins ? JoinInput.Algorithm.LIGHT_HASH : JoinInput.Algorithm.HASH);
-                        if (step.getMasterSide() == null) {
-                            if (PhysicalProperties.masterSupportsRandomAccess(join, i) == PhysicalProperties.Capability.NO) {
-                                step.setMasterSide(JoinInput.MasterSide.FIXED);
-                            } else {
-                                undecidedSteps.add(step);
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -737,18 +678,16 @@ final class OperatorPlanning {
     private void planLimit(LimitPlan limit) {
         final LogicalPlan limited = limit.getInput();
         if (!LogicalPlans.hasSortUnderStableProjects(limited)) {
-            limit.setApplication(GeneratedShapes.hasNativeFilterInput(limited)
-                    && PhysicalProperties.implementsLimit(limited) == PhysicalProperties.Capability.YES
-                    ? LimitPlan.Application.INPUT : LimitPlan.Application.OPERATOR);
+            limit.setApplication(isInputLimit(limited) ? LimitPlan.Application.INPUT : LimitPlan.Application.OPERATOR);
             return;
         }
         final SortPlan sort = (SortPlan) LogicalPlans.skipProjects(limited);
         final LogicalPlan input = sort.getInput();
         final int keyIndex = input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
-        final boolean isTimestampOrdered = isTimestampOrdered(sort, keyIndex, PhysicalProperties.timestampIndex(input));
+        final boolean isTimestampOrdered = isTimestampOrdered(sort);
         final boolean isOrderDelivered = isAdviceFollowed(input) && GeneratedShapes.hasAdvisedInput(input)
                 || sort.getColumnIds().size() == 1 && isTimestampOrdered;
-        if (GeneratedShapes.hasNativeFilterInput(input) && PhysicalProperties.implementsLimit(input) == PhysicalProperties.Capability.YES) {
+        if (isInputLimit(input)) {
             limit.setApplication(LimitPlan.Application.INPUT);
             sort.setAlgorithm(isOrderDelivered ? SortPlan.Algorithm.INPUT_ORDER : sortAlgorithm(input));
             return;
@@ -767,14 +706,36 @@ final class OperatorPlanning {
             return;
         }
         limit.setApplication(LimitPlan.Application.SORT);
-        final long count = !isTimestampOrdered && hi == null && lo instanceof ConstantExpression loConstant ? LogicalPlans.limitValue(loConstant) : 0;
-        if (count <= 0 || count > Integer.MAX_VALUE) {
+        if (!isTopKLimit(limit, isTimestampOrdered)) {
             sort.setAlgorithm(isTimestampOrdered ? SortPlan.Algorithm.PRESORTED_LIMITED : SortPlan.Algorithm.LIMITED);
         } else if (sort.getColumnIds().size() == 1
                 && PhysicalProperties.supportsLongTopK(input, keyIndex) == PhysicalProperties.Capability.YES) {
             sort.setAlgorithm(SortPlan.Algorithm.LONG_TOP_K);
         } else {
             sort.setAlgorithm(parallelTopK(sort));
+        }
+    }
+
+    private void planRelationalStep(JoinPlan join, int inputIndex, JoinInput step) {
+        final LogicalPlan slave = step.getInput();
+        final int markoutIndex = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput().getColumnIndexById(step.getMarkoutTimestampColumnId());
+        if (markoutIndex >= 0 && markoutIndex == PhysicalProperties.masterTimestampIndex(join, inputIndex)
+                && PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.YES
+                && PhysicalProperties.isLongSequence(slave) == PhysicalProperties.Capability.YES) {
+            step.setAlgorithm(JoinInput.Algorithm.MARKOUT);
+        } else if (step.getMasterKeyColumnIds().size() == 0) {
+            step.setAlgorithm(JoinInput.Algorithm.NESTED_LOOP);
+        } else {
+            final boolean isSlaveRandomAccess = step.getJoinType() == JoinKind.LEFT_OUTER && step.getOnResidual() != null
+                    && LogicalPlans.constantTruth(step.getOnResidual()) == 0 || isRandomAccess(slave);
+            step.setAlgorithm(isSlaveRandomAccess && !isFullFatJoins ? JoinInput.Algorithm.LIGHT_HASH : JoinInput.Algorithm.HASH);
+            if (step.getMasterSide() == null) {
+                if (PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.NO) {
+                    step.setMasterSide(JoinInput.MasterSide.FIXED);
+                } else {
+                    undecidedSteps.add(step);
+                }
+            }
         }
     }
 
@@ -853,7 +814,7 @@ final class OperatorPlanning {
             final int sortedIndex = sort.getOutput().getTimestampIndex();
             sort.setAlgorithm(sortedIndex < 0 || sortedIndex == timestampIndex || !isTimestampRequired
                     ? SortPlan.Algorithm.INPUT_ORDER : SortPlan.Algorithm.TIMESTAMP_DECLARATION);
-        } else if (sort.getColumnIds().size() == 1 && isTimestampOrdered(sort, keyIndex, timestampIndex)) {
+        } else if (sort.getColumnIds().size() == 1 && isTimestampOrdered(sort)) {
             sort.setAlgorithm(SortPlan.Algorithm.INPUT_ORDER);
         } else {
             sort.setAlgorithm(sortAlgorithm(input));
@@ -901,7 +862,7 @@ final class OperatorPlanning {
             final WindowJoinStep step = windowJoin.getSteps().getQuick(i);
             validateTimeSeriesOrders(master, step.getSlave(), step.getPosition());
             validateTimestampAggregates(step.getAggregates(), step.getScope(), masterTimestampIndex, false);
-            if (step.getFilter() instanceof ConstantExpression constant && constant.getLongValue() == 0) {
+            if (step.isNullExtending()) {
                 isFilterStolen = false;
                 continue;
             }
@@ -1037,16 +998,13 @@ final class OperatorPlanning {
      * with constants.
      */
     private SampleByPlan.Algorithm sampleByAlgorithm(SampleByPlan sample, LogicalPlan base) {
-        final ObjList<CharSequence> fill = sample.getFillTokens();
-        final int fillCount = fill.size();
-        if (fillCount == 1 && SqlKeywords.isLinearKeyword(fill.getQuick(0))) {
+        if (isLinearFill(sample)) {
             return SampleByPlan.Algorithm.INTERPOLATE;
         }
         if (isFirstLastIndexScan(sample, base)) {
             return SampleByPlan.Algorithm.FIRST_LAST_INDEX;
         }
-        return fillCount == 0 || fillCount == 1 && SqlKeywords.isNoneKeyword(fill.getQuick(0))
-                ? SampleByPlan.Algorithm.FILL_NONE : SampleByPlan.Algorithm.FILL_VALUE;
+        return isFillNone(sample) ? SampleByPlan.Algorithm.FILL_NONE : SampleByPlan.Algorithm.FILL_VALUE;
     }
 
     private PhysicalProperties.ScanDirection scanDirection(LogicalPlan plan) {
@@ -1074,7 +1032,8 @@ final class OperatorPlanning {
             if (isStolenTemporalFilter(slave)) {
                 return JoinInput.Algorithm.TEMPORAL_STOLEN_FILTER;
             }
-        } else if (isKeyedTemporalJoin(join, inputIndex, step)) {
+        } else if (GeneratedShapes.isKeyedTemporalJoin(step, join.getOrderedInputs().getQuick(inputIndex - 1).getOutput(),
+                PhysicalProperties.masterTimestampIndex(join, inputIndex), timestampIndex(slave))) {
             return JoinInput.Algorithm.TEMPORAL;
         }
         return isKnownYes(PhysicalProperties.supportsTimeFrameCursor(slave)) ? JoinInput.Algorithm.TEMPORAL_TIME_FRAME : JoinInput.Algorithm.TEMPORAL;
@@ -1147,7 +1106,7 @@ final class OperatorPlanning {
             final WindowSpec spec = window.getSpecs().getQuick(i);
             final FunctionExpression function = window.getFunctions().getQuick(i);
             final boolean isSorted = spec.getOrderByColumnIds().size() > 0 && !spec.isOrderDelivered();
-            isStreamed &= !isSorted && (function.getFunctionFlags() & BoundExpression.MULTI_PASS) == 0;
+            isStreamed &= isStreamedWindow(spec, function);
             isLight &= !ColumnType.isVarSize(function.getDataType()) && (!isSorted || isEncodedKey(spec, input));
         }
         return isStreamed ? WindowPlan.Algorithm.STREAMING : isLight ? WindowPlan.Algorithm.CACHED_LIGHT : WindowPlan.Algorithm.CACHED;
@@ -1172,11 +1131,71 @@ final class OperatorPlanning {
     }
 
     /**
+     * True when the SAMPLE BY fills no bucket: it names no FILL, or FILL(NONE).
+     */
+    static boolean isFillNone(SampleByPlan sample) {
+        final ObjList<CharSequence> fill = sample.getFillTokens();
+        return fill.size() == 0 || fill.size() == 1 && SqlKeywords.isNoneKeyword(fill.getQuick(0));
+    }
+
+    /**
      * True when the generator builds a filter for the predicate, which it neither folds nor gates once.
      */
     static boolean isFiltering(BoundExpression predicate) {
         return !LogicalPlans.isConstant(predicate)
                 && (predicate instanceof ColumnExpression || (predicate.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) == 0);
+    }
+
+    /**
+     * True when the factory of the plan applies the LIMIT over it: the access path of the table scan the plan
+     * filters, under any projections, reads only the rows the LIMIT keeps.
+     */
+    static boolean isInputLimit(LogicalPlan plan) {
+        return GeneratedShapes.hasNativeFilterInput(plan) && PhysicalProperties.implementsLimit(plan) == PhysicalProperties.Capability.YES;
+    }
+
+    /**
+     * True when the SAMPLE BY interpolates its empty buckets: FILL(LINEAR).
+     */
+    static boolean isLinearFill(SampleByPlan sample) {
+        final ObjList<CharSequence> fill = sample.getFillTokens();
+        return fill.size() == 1 && SqlKeywords.isLinearKeyword(fill.getQuick(0));
+    }
+
+    /**
+     * True when the fill reads the rows of a SAMPLE BY cursor that fills no bucket itself.
+     */
+    static boolean isSampleByRowsFill(FillPlan fill) {
+        return fill.getInput() instanceof SampleByPlan sample && sample.getAlgorithm() == SampleByPlan.Algorithm.FILL_NONE;
+    }
+
+    /**
+     * True when the window function evaluates in one pass over rows its input delivers in the window's order.
+     */
+    static boolean isStreamedWindow(WindowSpec spec, FunctionExpression function) {
+        return (spec.getOrderByColumnIds().size() == 0 || spec.isOrderDelivered()) && (function.getFunctionFlags() & BoundExpression.MULTI_PASS) == 0;
+    }
+
+    /**
+     * True when the input of the sort emits its rows in the order of the sort's first key: that key is the input's
+     * designated timestamp, in the input's scan direction.
+     */
+    static boolean isTimestampOrdered(SortPlan sort) {
+        final LogicalPlan input = sort.getInput();
+        return input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0)) == PhysicalProperties.timestampIndex(input)
+                && PhysicalProperties.scanDirection(input) == PhysicalProperties.ScanDirection.of(sort.getDirections().getQuick(0));
+    }
+
+    /**
+     * True when a bounded sort under the LIMIT keeps only its first rows by a top-K: the LIMIT is a constant count
+     * {@code 0 < lo <= Integer.MAX_VALUE} without a hi, over an input that does not deliver the sort's order.
+     */
+    static boolean isTopKLimit(LimitPlan limit, boolean isTimestampOrdered) {
+        if (isTimestampOrdered || limit.getHi() != null || !(limit.getLo() instanceof ConstantExpression lo)) {
+            return false;
+        }
+        final long count = LogicalPlans.limitValue(lo);
+        return count > 0 && count <= Integer.MAX_VALUE;
     }
 
     /**

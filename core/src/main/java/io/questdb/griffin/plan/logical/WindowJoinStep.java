@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntList;
@@ -194,6 +195,13 @@ public final class WindowJoinStep implements Mutable {
 
     public boolean isIncludePrevailing() {
         return isIncludePrevailing;
+    }
+
+    /**
+     * True when the step's filter is constant false: the step null-extends every master row instead of joining.
+     */
+    public boolean isNullExtending() {
+        return LogicalPlans.constantTruth(filter) == 0;
     }
 
     public boolean isTableSource() {

@@ -34,14 +34,12 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.FunctionInstantiator;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -92,7 +90,6 @@ import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
@@ -103,34 +100,26 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.ColumnType.*;
-
 final class AggregateFactoryGenerator {
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
     private final FilterFactoryGenerator filterGenerator;
-    private final ObjList<HorizonJoinKeys> horizonKeys = new ObjList<>();
-    private final IntList horizonMasterSymbols;
-    private final IntList horizonSlaveSymbols;
+    private final ObjList<JoinKeyLayout> horizonKeys = new ObjList<>();
 
     AggregateFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
             FilterFactoryGenerator filterGenerator,
             BytecodeAssembler asm,
-            EntityColumnFilter entityColumnFilter,
-            IntList horizonMasterSymbols,
-            IntList horizonSlaveSymbols
+            EntityColumnFilter entityColumnFilter
     ) {
         this.codeGenerator = codeGenerator;
         this.filterGenerator = filterGenerator;
         this.configuration = configuration;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
-        this.horizonMasterSymbols = horizonMasterSymbols;
-        this.horizonSlaveSymbols = horizonSlaveSymbols;
     }
 
     /**
@@ -258,11 +247,6 @@ final class AggregateFactoryGenerator {
         ObjList<Function> recordFunctions = null;
         ObjList<ObjList<GroupByFunction>> workerAggregates = null;
         ObjList<ObjList<Function>> workerKeys = null;
-        ObjList<Function> workerFilters = null;
-        Function ownedFilter = null;
-        CompiledFilter compiledFilter = null;
-        MemoryCARW bindVariableMemory = null;
-        ObjList<Function> bindVariables = null;
         ObjList<ObjList<Function>> sharedRecordFunctions = null;
         boolean isAdopted = false;
         try {
@@ -292,27 +276,29 @@ final class AggregateFactoryGenerator {
                     base, keyTypes.getColumnCount(), keyFunctions, aggregates, stolenFilter != null, executionContext)) {
                 throw new AssertionError("recorded aggregate algorithm differs from the generator's parallel choice");
             }
-            IntHashSet filterIndexes = null;
+            final PreparedFilter filter = isParallel ? stolenFilter : null;
             if (isParallel) {
                 workerAggregates = instantiator.instantiateWorkerAggregates(plan.getAggregates(), plan.getInput().getOutput(), base.getMetadata(), aggregates,
                         executionContext.getSharedQueryWorkerCount(), executionContext);
                 workerKeys = workerKeys(frame, plan, keyFunctions, base.getMetadata(), instantiator, executionContext);
-                if (stolenFilter != null) {
-                    filterGenerator.prepareParallel(stolenFilter, base, instantiator, executionContext);
-                    ownedFilter = stolenFilter.getFilter();
-                    filterIndexes = stolenFilter.getColumns();
-                    workerFilters = stolenFilter.getWorkers();
-                    compiledFilter = stolenFilter.getCompiledFilter();
-                    bindVariableMemory = stolenFilter.getBindVarMemory();
-                    bindVariables = stolenFilter.getBindVarFunctions();
-                    stolenFilter.adopt();
+                if (filter != null) {
+                    filterGenerator.prepareParallel(filter, base, instantiator, executionContext);
                 }
+            }
+            final CompiledFilter compiledFilter = filter != null ? filter.getCompiledFilter() : null;
+            final MemoryCARW bindVariableMemory = filter != null ? filter.getBindVarMemory() : null;
+            final ObjList<Function> bindVariables = filter != null ? filter.getBindVarFunctions() : null;
+            final Function filterFunction = filter != null ? filter.getFilter() : null;
+            final IntHashSet filterIndexes = filter != null ? filter.getColumns() : null;
+            final ObjList<Function> workerFilters = filter != null ? filter.getWorkers() : null;
+            if (filter != null) {
+                filter.adopt();
             }
             isAdopted = true;
             return generateGroupBy(
                     base, metadata, columnFilter, keyTypes, valueTypes, aggregates, workerAggregates,
                     keyFunctions, workerKeys, recordFunctions, compiledFilter, bindVariableMemory,
-                    bindVariables, ownedFilter, filterIndexes, workerFilters, sharedRecordFunctions, isParallel, executionContext
+                    bindVariables, filterFunction, filterIndexes, workerFilters, sharedRecordFunctions, isParallel, executionContext
             );
         } catch (Throwable th) {
             if (!isAdopted) {
@@ -323,13 +309,8 @@ final class AggregateFactoryGenerator {
                 }
                 closeWorkers(workerAggregates, th);
                 closeWorkers(workerKeys, th);
-                Misc.freeObjList(workerFilters, th);
                 Misc.freeObjList(recordFunctions, th);
                 Misc.freeObjList(keyFunctions, th);
-                Misc.free(ownedFilter, th);
-                Misc.free(compiledFilter, th);
-                Misc.free(bindVariableMemory, th);
-                Misc.freeObjList(bindVariables, th);
                 Misc.free(base, th);
             }
             throw th;
@@ -435,71 +416,16 @@ final class AggregateFactoryGenerator {
         }
     }
 
-    private HorizonJoinKeys horizonJoinKeys(HorizonJoinSlave step, OutputSchema masterOutput, RecordMetadata masterMetadata,
-                                            RecordMetadata slaveMetadata) throws SqlException {
-        final IntList masterIds = step.getMasterKeyColumnIds();
-        if (masterIds.size() == 0) {
+    private JoinKeyLayout horizonJoinKeys(HorizonJoinSlave step, OutputSchema masterOutput, RecordMetadata masterMetadata,
+                                          RecordMetadata slaveMetadata) {
+        if (step.getMasterKeyColumnIds().size() == 0) {
             return null;
         }
-        final HorizonJoinKeys keys = new HorizonJoinKeys();
-        final OutputSchema slaveOutput = step.getInput().getOutput();
-        final IntList masterSymbols = horizonMasterSymbols;
-        final IntList slaveSymbols = horizonSlaveSymbols;
-        masterSymbols.clear();
-        slaveSymbols.clear();
-        for (int i = 0, n = masterIds.size(); i < n; i++) {
-            final int masterIndex = masterOutput.getColumnIndexById(masterIds.getQuick(i));
-            final int slaveIndex = slaveOutput.getColumnIndexById(step.getSlaveKeyColumnIds().getQuick(i));
-            keys.masterColumns.add(masterIndex + 1);
-            keys.slaveColumns.add(slaveIndex + 1);
-            final int masterType = masterMetadata.getColumnType(masterIndex);
-            final int slaveType = slaveMetadata.getColumnType(slaveIndex);
-            assert LogicalPlans.isJoinKeyTypeCompatible(masterType, slaveType);
-            if (ColumnType.isVarchar(slaveType) || ColumnType.isVarchar(masterType)) {
-                keys.types.add(ColumnType.VARCHAR);
-                if (ColumnType.isVarchar(slaveType)) {
-                    keys.masterStringAsVarchar.set(masterIndex);
-                } else {
-                    keys.slaveStringAsVarchar.set(slaveIndex);
-                }
-                keys.slaveSymbolAsString.set(slaveIndex);
-                keys.masterSymbolAsString.set(masterIndex);
-            } else if (slaveType == ColumnType.SYMBOL && masterType == ColumnType.SYMBOL) {
-                keys.types.add(ColumnType.SYMBOL);
-                masterSymbols.add(masterIndex);
-                slaveSymbols.add(slaveIndex);
-            } else if (masterType == ColumnType.SYMBOL || slaveType == ColumnType.SYMBOL) {
-                keys.types.add(ColumnType.STRING);
-                keys.slaveSymbolAsString.set(slaveIndex);
-                keys.masterSymbolAsString.set(masterIndex);
-            } else if (ColumnType.isString(slaveType) || ColumnType.isString(masterType)) {
-                keys.types.add(masterType);
-                keys.slaveSymbolAsString.set(slaveIndex);
-                keys.masterSymbolAsString.set(masterIndex);
-            } else if (slaveType != masterType) {
-                keys.types.add(TIMESTAMP_NANO);
-                if (!isTimestampNano(slaveType)) {
-                    keys.slaveTimestampAsNanos.set(slaveIndex);
-                }
-                if (!isTimestampNano(masterType)) {
-                    keys.masterTimestampAsNanos.set(masterIndex);
-                }
-            } else {
-                keys.types.add(slaveType);
-            }
-        }
-        if (masterSymbols.size() > 0) {
-            keys.masterSymbolIndexes = masterSymbols.toArray();
-            keys.slaveSymbolIndexes = slaveSymbols.toArray();
-        }
-        final Class<RecordSink> masterSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, masterMetadata,
-                keys.masterColumns, null, null, keys.masterSymbolAsString, keys.masterStringAsVarchar, keys.masterTimestampAsNanos);
-        final Class<RecordSink> slaveSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, slaveMetadata,
-                keys.slaveColumns, null, null, keys.slaveSymbolAsString, keys.slaveStringAsVarchar, keys.slaveTimestampAsNanos);
-        keys.masterSinkFactory = () -> RecordSinkFactory.getInstance(masterSinkClass, masterMetadata, keys.masterColumns, null,
-                null, keys.masterSymbolAsString, keys.masterStringAsVarchar, keys.masterTimestampAsNanos);
-        keys.slaveSinkFactory = () -> RecordSinkFactory.getInstance(slaveSinkClass, slaveMetadata, keys.slaveColumns, null,
-                null, keys.slaveSymbolAsString, keys.slaveStringAsVarchar, keys.slaveTimestampAsNanos);
+        final JoinKeyLayout keys = new JoinKeyLayout();
+        JoinFactoryGenerator.resolveKeys(masterOutput, step.getMasterKeyColumnIds(), keys.masterIndexes);
+        JoinFactoryGenerator.resolveKeys(step.getInput().getOutput(), step.getSlaveKeyColumnIds(), keys.slaveIndexes);
+        keys.of(masterMetadata, slaveMetadata, keys.masterIndexes, keys.slaveIndexes, false);
+        keys.convertSymbolKeysToInt(masterMetadata, slaveMetadata);
         return keys;
     }
 
@@ -689,8 +615,8 @@ final class AggregateFactoryGenerator {
     }
 
     RecordCursorFactory generateAggregate(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext) throws SqlException {
-        if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
-            return generateHorizonJoin(frame, aggregate, horizon, executionContext);
+        if (GeneratedShapes.aggregateFactory(aggregate) == GeneratedShapes.AggregateFactory.HORIZON) {
+            return generateHorizonJoin(frame, aggregate, (HorizonJoinPlan) aggregate.getInput(), executionContext);
         }
         if (aggregate.getAlgorithm() == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER) {
             return generateStolenFilterGroupBy(frame, aggregate, executionContext);
@@ -815,11 +741,6 @@ final class AggregateFactoryGenerator {
         ObjList<Function> recordFunctions = null;
         ObjList<ObjList<GroupByFunction>> workerAggregates = null;
         ObjList<ObjList<Function>> workerKeys = null;
-        ObjList<Function> workerFilters = null;
-        Function ownedFilter = null;
-        CompiledFilter compiledFilter = null;
-        MemoryCARW bindVariableMemory = null;
-        ObjList<Function> bindVariables = null;
         boolean isAdopted = false;
         try {
             final OutputSchema output = horizon.getOutput();
@@ -857,38 +778,35 @@ final class AggregateFactoryGenerator {
                     && SqlUtil.isParallelismSupported(keyFunctions) && GroupByUtils.isParallelismSupported(aggregates))) {
                 throw new AssertionError("recorded horizon join algorithm differs from the generator's parallel choice");
             }
-            IntHashSet filterIndexes = null;
+            final PreparedFilter filter = isParallel ? stolenFilter : null;
             if (isParallel) {
                 workerAggregates = instantiator.instantiateWorkerAggregates(plan.getAggregates(), plan.getInput().getOutput(), innerMetadata, aggregates,
                         executionContext.getSharedQueryWorkerCount(), executionContext);
                 workerKeys = workerKeys(frame, plan, keyFunctions, innerMetadata, instantiator, executionContext);
-                if (stolenFilter != null) {
-                    filterGenerator.prepareParallel(stolenFilter, master, instantiator, executionContext);
-                    stolenFilter.getColumns().add(masterMetadata.getTimestampIndex());
-                    ownedFilter = stolenFilter.getFilter();
-                    filterIndexes = stolenFilter.getColumns();
-                    workerFilters = stolenFilter.getWorkers();
-                    compiledFilter = stolenFilter.getCompiledFilter();
-                    bindVariableMemory = stolenFilter.getBindVarMemory();
-                    bindVariables = stolenFilter.getBindVarFunctions();
-                    stolenFilter.adopt();
+                if (filter != null) {
+                    filterGenerator.prepareParallel(filter, master, instantiator, executionContext);
+                    filter.getColumns().add(masterMetadata.getTimestampIndex());
                 }
+            }
+            final CompiledFilter compiledFilter = filter != null ? filter.getCompiledFilter() : null;
+            final MemoryCARW bindVariableMemory = filter != null ? filter.getBindVarMemory() : null;
+            final ObjList<Function> bindVariables = filter != null ? filter.getBindVarFunctions() : null;
+            final Function filterFunction = filter != null ? filter.getFilter() : null;
+            final IntHashSet filterIndexes = filter != null ? filter.getColumns() : null;
+            final ObjList<Function> workerFilters = filter != null ? filter.getWorkers() : null;
+            if (filter != null) {
+                filter.adopt();
             }
             isAdopted = true;
             return generateHorizonJoin(horizon, master, slaves, innerMetadata, metadata, columnFilter, keyTypes,
                     valueTypes, aggregates, workerAggregates, keyFunctions, workerKeys, recordFunctions, compiledFilter,
-                    bindVariableMemory, bindVariables, ownedFilter, filterIndexes, workerFilters, isParallel, executionContext);
+                    bindVariableMemory, bindVariables, filterFunction, filterIndexes, workerFilters, isParallel, executionContext);
         } catch (Throwable th) {
             if (!isAdopted) {
                 closeWorkers(workerAggregates, th);
                 closeWorkers(workerKeys, th);
-                Misc.freeObjList(workerFilters, th);
                 Misc.freeObjList(recordFunctions, th);
                 Misc.freeObjList(keyFunctions, th);
-                Misc.free(ownedFilter, th);
-                Misc.free(compiledFilter, th);
-                Misc.free(bindVariableMemory, th);
-                Misc.freeObjList(bindVariables, th);
                 Misc.free(innerMetadata, th);
                 Misc.freeObjList(slaves, th);
                 Misc.free(master, th);
@@ -984,7 +902,7 @@ final class AggregateFactoryGenerator {
                 columnSources[column] = MultiHorizonJoinRecord.SOURCE_SEQUENCE;
                 columnIndices[column] = i;
             }
-            final ObjList<HorizonJoinKeys> keys = horizonKeys;
+            final ObjList<JoinKeyLayout> keys = horizonKeys;
             keys.clear();
             for (int s = 0; s < slaveCount; s++) {
                 final RecordMetadata slaveMetadata = slaves.getQuick(s).getMetadata();
@@ -1000,14 +918,14 @@ final class AggregateFactoryGenerator {
                 master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
             }
             if (slaveCount == 1) {
-                final HorizonJoinKeys key = keys.getQuick(0);
+                final JoinKeyLayout key = keys.getQuick(0);
                 final RecordCursorFactory slave = slaves.getQuick(0);
-                final ArrayColumnTypes joinKeyTypes = key == null ? null : key.types;
-                final int[] masterSymbols = key == null ? null : key.masterSymbolIndexes;
-                final int[] slaveSymbols = key == null ? null : key.slaveSymbolIndexes;
+                final ArrayColumnTypes joinKeyTypes = key == null ? null : key.keyTypes;
+                final int[] masterSymbols = key == null ? null : key.masterSymbolKeys;
+                final int[] slaveSymbols = key == null ? null : key.slaveSymbolKeys;
                 if (!isParallel) {
-                    final RecordSink masterSink = key == null ? null : key.masterSinkFactory.newInstance();
-                    final RecordSink slaveSink = key == null ? null : key.slaveSinkFactory.newInstance();
+                    final RecordSink masterSink = key == null ? null : key.createMasterSink(configuration, asm, masterMetadata);
+                    final RecordSink slaveSink = key == null ? null : key.createSlaveSink(configuration, asm, slave.getMetadata());
                     isAdopted = true;
                     return isKeyed
                             ? new HorizonJoinRecordCursorFactory(configuration, asm, metadata, innerMetadata, master, slave, offsets,
@@ -1019,8 +937,8 @@ final class AggregateFactoryGenerator {
                 }
                 final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(workerGroupByFunctions, workerKeyFunctions,
                         compiledFilter, bindVariableMemory, bindVariables, filter, filterColumnIndexes, workerFilters);
-                final ObjectFactory<RecordSink> masterSinkFactory = key == null ? null : key.masterSinkFactory;
-                final ObjectFactory<RecordSink> slaveSinkFactory = key == null ? null : key.slaveSinkFactory;
+                final ObjectFactory<RecordSink> masterSinkFactory = key == null ? null : key.masterSinkFactory(configuration, asm, masterMetadata);
+                final ObjectFactory<RecordSink> slaveSinkFactory = key == null ? null : key.slaveSinkFactory(configuration, asm, slave.getMetadata());
                 isAdopted = true;
                 return isKeyed
                         ? new AsyncHorizonJoinRecordCursorFactory(configuration, asm, executionContext.getCairoEngine(),
@@ -1039,20 +957,20 @@ final class AggregateFactoryGenerator {
             final int masterTimestampType = masterMetadata.getTimestampType();
             slaveStates = new ObjList<>(slaveCount);
             for (int s = 0; s < slaveCount; s++) {
-                final HorizonJoinKeys key = keys.getQuick(s);
+                final JoinKeyLayout key = keys.getQuick(s);
                 final RecordCursorFactory slave = slaves.getQuick(s);
                 final int slaveTimestampType = slave.getMetadata().getTimestampType();
                 final boolean isScaled = masterTimestampType != slaveTimestampType;
                 if (key != null) {
-                    joinKeyTypes[s] = key.types;
+                    joinKeyTypes[s] = key.keyTypes;
                 }
-                masterSinkFactories.add(key == null ? null : key.masterSinkFactory);
-                slaveSinkFactories.add(key == null ? null : key.slaveSinkFactory);
+                masterSinkFactories.add(key == null ? null : key.masterSinkFactory(configuration, asm, masterMetadata));
+                slaveSinkFactories.add(key == null ? null : key.slaveSinkFactory(configuration, asm, slave.getMetadata()));
                 slaveStates.add(new HorizonJoinSlaveState(slave,
                         isScaled ? ColumnType.getTimestampDriver(masterTimestampType).toNanosScale() : 1,
                         isScaled ? ColumnType.getTimestampDriver(slaveTimestampType).toNanosScale() : 1,
                         joinKeyTypes[s], masterColumnCount,
-                        key == null ? null : key.masterSymbolIndexes, key == null ? null : key.slaveSymbolIndexes));
+                        key == null ? null : key.masterSymbolKeys, key == null ? null : key.slaveSymbolKeys));
                 slaves.setQuick(s, null);
             }
             if (!isParallel) {
@@ -1132,24 +1050,5 @@ final class AggregateFactoryGenerator {
             }
             throw th;
         }
-    }
-
-    /**
-     * Container class to hold the detected parameters of a markout horizon pattern.
-     */
-    private static final class HorizonJoinKeys {
-        private final ListColumnFilter masterColumns = new ListColumnFilter();
-        private final BitSet masterStringAsVarchar = new BitSet();
-        private final BitSet masterSymbolAsString = new BitSet();
-        private final BitSet masterTimestampAsNanos = new BitSet();
-        private final ListColumnFilter slaveColumns = new ListColumnFilter();
-        private final BitSet slaveStringAsVarchar = new BitSet();
-        private final BitSet slaveSymbolAsString = new BitSet();
-        private final BitSet slaveTimestampAsNanos = new BitSet();
-        private final ArrayColumnTypes types = new ArrayColumnTypes();
-        private ObjectFactory<RecordSink> masterSinkFactory;
-        private int[] masterSymbolIndexes;
-        private ObjectFactory<RecordSink> slaveSinkFactory;
-        private int[] slaveSymbolIndexes;
     }
 }

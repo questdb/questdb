@@ -388,76 +388,77 @@ final class WindowFactoryGenerator {
         if (projection != null && executionContext.isLiveViewCompile()) {
             base = renameWindowInput(base, input, projection);
         }
-        final RecordMetadata inputMetadata = base.getMetadata();
-        final int inputCount = inputMetadata.getColumnCount();
-        final OutputSchema output = projection == null ? plan.getOutput() : projection.getOutput();
-        final int outputCount = output.getColumnCount();
-        final IntList sources = new IntList(inputCount + plan.getFunctions().size());
-        for (int i = 0; i < outputCount; i++) {
-            final int columnId = projection == null ? output.getColumnId(i)
-                    : ((ColumnExpression) projection.getExpressions().getQuick(i)).getColumnId();
-            final int inputIndex = input.getColumnIndexById(columnId);
-            sources.add(inputIndex >= 0 ? inputIndex : -plan.getFunctionColumnIds().indexOf(columnId, 0, plan.getFunctionColumnIds().size()) - 1);
-        }
-        for (int i = 0; i < inputCount; i++) {
-            if (sources.indexOf(i, 0, sources.size()) < 0) {
-                sources.add(i);
-            }
-        }
-        final OutputSchema chainSchema = new OutputSchema();
-        final GenericRecordMetadata chainMetadata = new GenericRecordMetadata();
-        final ObjList<TableColumnMetadata> outputColumns = frame.windowOutputColumns;
-        outputColumns.clear();
-        outputColumns.setPos(outputCount);
-        for (int i = 0, n = sources.size(); i < n; i++) {
-            final int source = sources.getQuick(i);
-            if (source >= 0) {
-                final TableColumnMetadata column = inputMetadata.getColumnMetadata(source);
-                chainSchema.add(input.getColumnId(source), input.getColumnName(source), input.getColumnType(source), input.getMetadata(source), true);
-                if (i < outputCount) {
-                    final CharSequence name = output.getColumnName(i);
-                    outputColumns.setQuick(i, projection == null || Chars.equals(name, column.getColumnName()) ? column
-                            : new TableColumnMetadata(Chars.toString(name), column.getColumnType(), column.getIndexType(),
-                            column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
-                }
-                if (sources.indexOf(source, 0, i) < 0) {
-                    chainMetadata.add(i, column);
-                } else {
-                    chainMetadata.add(i, new TableColumnMetadata(uniqueName(column.getColumnName(), chainMetadata, inputMetadata),
-                            column.getColumnType(), column.getIndexType(),
-                            column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
-                }
-                if (source == inputMetadata.getTimestampIndex() && chainMetadata.getTimestampIndex() < 0) {
-                    chainMetadata.setTimestampIndex(i);
-                }
-            } else {
-                final int columnId = plan.getFunctionColumnIds().getQuick(-source - 1);
-                final int index = plan.getOutput().getColumnIndexById(columnId);
-                chainSchema.add(columnId, plan.getOutput().getColumnName(index), plan.getOutput().getColumnType(index), true);
-            }
-        }
-        for (int i = 0, n = sources.size(); i < n; i++) {
-            if (sources.getQuick(i) < 0) {
-                chainMetadata.add(i, new TableColumnMetadata(uniqueName(chainSchema.getColumnName(i), chainMetadata, null),
-                        chainSchema.getColumnType(i), IndexType.NONE, 0, false, null));
-            }
-        }
-        final ArrayColumnTypes keyTypes = frame.windowKeyTypes;
-        final ArrayColumnTypes chainTypes = frame.windowChainTypes;
-        final IntList order = frame.windowOrder;
-        final IntList directions = frame.windowDirections;
-        final ObjList<WindowMapSpec> specs = frame.windowSpecs;
-        final ObjList<WindowFunction> specFunctions = frame.windowSpecFunctions;
-        final ObjList<TableColumnMetadata> windowMetadata = frame.windowMetadata;
         final ObjObjHashMap<IntList, ObjList<WindowFunction>> groups = frame.windowGroups;
         groups.clear();
-        final boolean isLiveView = executionContext.isLiveViewCompile();
         ObjList<Function> functions = null;
         ObjList<WindowFunction> naturalFunctions = null;
         ObjList<Function> partitionFunctions = null;
         WindowFunction pendingWindow = null;
         LiveViewCheckpointRowsPlan rowsPlan = null;
         try {
+            final RecordMetadata inputMetadata = base.getMetadata();
+            final int inputCount = inputMetadata.getColumnCount();
+            final OutputSchema output = projection == null ? plan.getOutput() : projection.getOutput();
+            final int outputCount = output.getColumnCount();
+            final IntList sources = new IntList(inputCount + plan.getFunctions().size());
+            for (int i = 0; i < outputCount; i++) {
+                final int columnId = projection == null ? output.getColumnId(i)
+                        : ((ColumnExpression) projection.getExpressions().getQuick(i)).getColumnId();
+                final int inputIndex = input.getColumnIndexById(columnId);
+                sources.add(inputIndex >= 0 ? inputIndex : -plan.getFunctionColumnIds().indexOf(columnId, 0, plan.getFunctionColumnIds().size()) - 1);
+            }
+            for (int i = 0; i < inputCount; i++) {
+                if (sources.indexOf(i, 0, sources.size()) < 0) {
+                    sources.add(i);
+                }
+            }
+            final OutputSchema chainSchema = frame.windowChainSchema;
+            chainSchema.clear();
+            final GenericRecordMetadata chainMetadata = new GenericRecordMetadata();
+            final ObjList<TableColumnMetadata> outputColumns = frame.windowOutputColumns;
+            outputColumns.clear();
+            outputColumns.setPos(outputCount);
+            for (int i = 0, n = sources.size(); i < n; i++) {
+                final int source = sources.getQuick(i);
+                if (source >= 0) {
+                    final TableColumnMetadata column = inputMetadata.getColumnMetadata(source);
+                    chainSchema.add(input.getColumnId(source), input.getColumnName(source), input.getColumnType(source), input.getMetadata(source), true);
+                    if (i < outputCount) {
+                        final CharSequence name = output.getColumnName(i);
+                        outputColumns.setQuick(i, projection == null || Chars.equals(name, column.getColumnName()) ? column
+                                : new TableColumnMetadata(Chars.toString(name), column.getColumnType(), column.getIndexType(),
+                                column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
+                    }
+                    if (sources.indexOf(source, 0, i) < 0) {
+                        chainMetadata.add(i, column);
+                    } else {
+                        chainMetadata.add(i, new TableColumnMetadata(uniqueName(column.getColumnName(), chainMetadata, inputMetadata),
+                                column.getColumnType(), column.getIndexType(),
+                                column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
+                    }
+                    if (source == inputMetadata.getTimestampIndex() && chainMetadata.getTimestampIndex() < 0) {
+                        chainMetadata.setTimestampIndex(i);
+                    }
+                } else {
+                    final int columnId = plan.getFunctionColumnIds().getQuick(-source - 1);
+                    final int index = plan.getOutput().getColumnIndexById(columnId);
+                    chainSchema.add(columnId, plan.getOutput().getColumnName(index), plan.getOutput().getColumnType(index), true);
+                }
+            }
+            for (int i = 0, n = sources.size(); i < n; i++) {
+                if (sources.getQuick(i) < 0) {
+                    chainMetadata.add(i, new TableColumnMetadata(uniqueName(chainSchema.getColumnName(i), chainMetadata, null),
+                            chainSchema.getColumnType(i), IndexType.NONE, 0, false, null));
+                }
+            }
+            final ArrayColumnTypes keyTypes = frame.windowKeyTypes;
+            final ArrayColumnTypes chainTypes = frame.windowChainTypes;
+            final IntList order = frame.windowOrder;
+            final IntList directions = frame.windowDirections;
+            final ObjList<WindowMapSpec> specs = frame.windowSpecs;
+            final ObjList<WindowFunction> specFunctions = frame.windowSpecFunctions;
+            final ObjList<TableColumnMetadata> windowMetadata = frame.windowMetadata;
+            final boolean isLiveView = executionContext.isLiveViewCompile();
             if (isLiveView) {
                 for (int i = 0, n = plan.getFunctions().size(); i < n; i++) {
                     LiveViewCheckpointFunctionCompiler.validateRange(plan.getSpecs().getQuick(i).getLiveViewDescription(),

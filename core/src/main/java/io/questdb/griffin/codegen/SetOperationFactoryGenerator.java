@@ -137,6 +137,7 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.ColumnType.*;
 
 final class SetOperationFactoryGenerator {
+    private static final MergeUnionAllRecordCursorFactoryBuilder.CastFunctionFactory MERGE_CAST_FACTORY = SetOperationFactoryGenerator::generateMergeCastFunctions;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_ALL_CONSTRUCTOR = ExceptAllRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_ALL_CONSTRUCTOR = IntersectAllRecordCursorFactory::new;
@@ -147,8 +148,6 @@ final class SetOperationFactoryGenerator {
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
     private final SortFactoryGenerator sortGenerator;
-    private SqlExecutionContext mergeCastContext;
-    private final MergeUnionAllRecordCursorFactoryBuilder.CastFunctionFactory mergeCastFactory = this::generateMergeCastFunctions;
 
     SetOperationFactoryGenerator(
             CairoConfiguration configuration,
@@ -181,16 +180,16 @@ final class SetOperationFactoryGenerator {
             // Narrower types are cast to wider types, never the other way around.
             case SHORT -> switch (fromTag) {
                 case BYTE, CHAR, SHORT -> numericColumn(fromTag, i);
-                default -> null;
+                default -> throw unvalidatedCast();
             };
             case CHAR -> switch (fromTag) {
                 case BYTE -> new CastByteToCharFunctionFactory.Func(ByteColumn.newInstance(i));
                 case CHAR -> new CharColumn(i);
-                default -> null;
+                default -> throw unvalidatedCast();
             };
             case INT -> switch (fromTag) {
                 case BYTE, SHORT, CHAR, INT -> numericColumn(fromTag, i);
-                default -> null;
+                default -> throw unvalidatedCast();
             };
             case LONG -> switch (fromTag) {
                 case BYTE, SHORT, CHAR, INT, LONG -> numericColumn(fromTag, i);
@@ -236,10 +235,7 @@ final class SetOperationFactoryGenerator {
             case VARCHAR -> castToVarchar(castFromMetadata, i, fromTag, fromType);
             case INTERVAL -> IntervalColumn.newInstance(i, toType);
             case ARRAY -> castToArray(i, fromTag, fromType, toType, modelPosition);
-            default -> {
-                assert false;
-                yield null;
-            }
+            default -> throw unvalidatedCast();
         };
     }
 
@@ -264,8 +260,7 @@ final class SetOperationFactoryGenerator {
                 assert decodeArrayElementType(toType) == DOUBLE && decodeWeakArrayDimensionality(toType) != -1;
                 return new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType);
             default:
-                assert false;
-                return null;
+                throw unvalidatedCast();
         }
     }
 
@@ -356,7 +351,7 @@ final class SetOperationFactoryGenerator {
                 yield new CastDoubleArrayToStrFunctionFactory.Func(ArrayColumn.newInstance(i, fromType));
             }
             case IPv4 -> new CastIPv4ToStrFunctionFactory.Func(IPv4Column.newInstance(i));
-            default -> null;
+            default -> throw unvalidatedCast();
         };
     }
 
@@ -407,10 +402,7 @@ final class SetOperationFactoryGenerator {
                 }
                 yield new CastDoubleArrayToVarcharFunctionFactory.Func(ArrayColumn.newInstance(i, fromType));
             }
-            default -> {
-                assert false;
-                yield null;
-            }
+            default -> throw unvalidatedCast();
         };
     }
 
@@ -435,10 +427,7 @@ final class SetOperationFactoryGenerator {
                 if (fromTag == NULL) {
                     castFunctions.add(NullConstant.NULL);
                 } else {
-                    final Function function = castColumn(executionContext, castFromMetadata, i, fromTag, fromType, tagOf(toType), toType, modelPosition);
-                    if (function != null) {
-                        castFunctions.add(function);
-                    }
+                    castFunctions.add(castColumn(executionContext, castFromMetadata, i, fromTag, fromType, tagOf(toType), toType, modelPosition));
                 }
             }
             return castFunctions;
@@ -446,6 +435,18 @@ final class SetOperationFactoryGenerator {
             Misc.freeObjList(castFunctions, th);
             throw th;
         }
+    }
+
+    private static ObjList<Function> generateMergeCastFunctions(
+            SqlExecutionContext executionContext,
+            RecordMetadata toMetadata,
+            RecordMetadata fromMetadata,
+            int position
+    ) throws SqlException {
+        for (int i = 0, n = toMetadata.getColumnCount(); i < n; i++) {
+            SetOperationCasts.validateCast(fromMetadata.getColumnType(i), toMetadata.getColumnType(i), fromMetadata.getColumnName(i), position);
+        }
+        return generateCastFunctions(executionContext, toMetadata, fromMetadata, position);
     }
 
     private static Function geoHashColumn(int tag, int i, int type) {
@@ -471,13 +472,6 @@ final class SetOperationFactoryGenerator {
 
     private static IllegalStateException unvalidatedCast() {
         return new IllegalStateException("set operation cast is not validated");
-    }
-
-    private ObjList<Function> generateMergeCastFunctions(RecordMetadata toMetadata, RecordMetadata fromMetadata, int position) throws SqlException {
-        for (int i = 0, n = toMetadata.getColumnCount(); i < n; i++) {
-            SetOperationCasts.validateCast(fromMetadata.getColumnType(i), toMetadata.getColumnType(i), fromMetadata.getColumnName(i), position);
-        }
-        return generateCastFunctions(mergeCastContext, toMetadata, fromMetadata, position);
     }
 
     /**
@@ -569,15 +563,10 @@ final class SetOperationFactoryGenerator {
             if (operation == SetOperationKind.UNION_ALL) {
                 if (mergeDirection != null) {
                     isTransferred = true;
-                    mergeCastContext = executionContext;
-                    try {
-                        return MergeUnionAllRecordCursorFactoryBuilder.build(
-                                metadata, factoryA, positionA, factoryB, positionB,
-                                castFunctionsA, castFunctionsB, mergeDirection == SortDirection.ASCENDING, symbolUnionColumns, mergeCastFactory
-                        );
-                    } finally {
-                        mergeCastContext = null;
-                    }
+                    return MergeUnionAllRecordCursorFactoryBuilder.build(
+                            metadata, factoryA, positionA, factoryB, positionB, castFunctionsA, castFunctionsB,
+                            mergeDirection == SortDirection.ASCENDING, symbolUnionColumns, MERGE_CAST_FACTORY, executionContext
+                    );
                 }
                 isTransferred = true;
                 return new UnionAllRecordCursorFactory(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
@@ -645,7 +634,8 @@ final class SetOperationFactoryGenerator {
             Misc.free(branch, th);
             throw th;
         }
-        return sortGenerator.generateSort(metadata, branch, branchSortKeys, null, null, -1, algorithm == SortPlan.Algorithm.MATERIALIZED);
+        return sortGenerator.generateSort(metadata, branch, branchSortKeys, null, null, -1, configuration.isSqlOrderBySortEnabled(),
+                algorithm == SortPlan.Algorithm.MATERIALIZED);
     }
 
     // Casts back to SYMBOL every union result column that was SYMBOL on all branches (tracked in

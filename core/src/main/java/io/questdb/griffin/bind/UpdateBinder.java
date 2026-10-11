@@ -133,7 +133,7 @@ final class UpdateBinder implements Mutable {
             targetTypes.add(targetType);
             final BoundExpression expression = project.getExpressions().getQuick(i);
             if (targetType >= 0 && expression.getDataType() != targetType) {
-                final Function function = ctx.functionBinder.prepareUpdateAssignment(expression, targetType, executionContext);
+                final Function function = ctx.functionInstantiator.prepareUpdateAssignment(expression, targetType, executionContext);
                 output.setColumnType(i, LogicalPlans.updateColumnType(function.getType(), targetType));
                 output.setSymbolTableStatic(i, function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic());
                 hasConversions = true;

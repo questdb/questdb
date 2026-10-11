@@ -140,13 +140,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 throw e;
             }
 
-            Function function = functionStack.poll();
+            final Function function = functionStack.poll();
             final int position = positionStack.pop();
             assert positionStack.size() == functionStack.size();
-            if (function != null && function.isConstant() && function.extendedOps() == null) {
-                function = resolver.functionToConstant(function, position);
-            }
-            return function;
+            return resolver.foldRoot(function, position);
         } finally {
             if (metadataStack.isEmpty()) {
                 this.metadata = null;
@@ -191,9 +188,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 final int pos = positionStack.pop();
 
                 try {
-                    if (arg != null && arg.isConstant() && arg.extendedOps() == null && !(arg instanceof TypeConstant)) {
-                        arg = resolver.functionToConstant(arg, pos);
-                    }
+                    arg = resolver.foldArgument(arg, pos);
                 } catch (Throwable th) {
                     // these args were already popped from functionStack.
                     // Best-effort cleanup: fold any close() failure into th as suppressed instead
@@ -226,18 +221,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             @Transient IntList argPositions
     ) throws SqlException {
         final ExpressionNode literal = node.paramCount == 2 && node.lhs.type == ExpressionNode.CONSTANT ? node.lhs : null;
-        while (true) {
-            final Function cast = resolver.resolveCast(node.token, args, literal != null ? literal.token : null,
-                    literal != null ? literal.position : 0, sqlExecutionContext);
-            if (cast != null) {
-                return cast;
-            }
-            final FunctionFactoryDescriptor overload = resolver.selectOverload(node.token, node.position, args, argPositions, sqlExecutionContext);
-            if (overload != null) {
-                resolver.coerceArguments(overload, node.position, node.token, args, argPositions, sqlExecutionContext);
-                return resolver.createFunction(overload, node.position, node.token, args, argPositions, sqlExecutionContext);
-            }
+        final Function cast = resolver.resolveCastOrOverload(node.token, node.position, args, argPositions,
+                literal != null ? literal.token : null, literal != null ? literal.position : 0, sqlExecutionContext);
+        if (cast != null) {
+            return cast;
         }
+        final FunctionFactoryDescriptor overload = resolver.getSelectedOverload();
+        resolver.coerceArguments(overload, node.position, node.token, args, argPositions, FunctionResolver.TimestampTextError.INVALID_DATE, sqlExecutionContext);
+        return resolver.createFunction(overload, node.position, node.token, args, argPositions, sqlExecutionContext);
     }
 
     /**

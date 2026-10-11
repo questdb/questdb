@@ -87,6 +87,10 @@ public final class BindScope implements Mutable {
     final IntList pivotIndexes;
     final ObjList<CharSequence> pivotKeyAliases;
     final IntList pivotKeyIndexes;
+    /**
+     * The dateadd calls the binding root's and_offset rewrite wraps the timestamp column in.
+     */
+    final ObjList<ExpressionNode> projectedOffsets = new ObjList<>();
     final IntList projectionAliasIndexes = new IntList();
     final OutputSchema referenceScope = new OutputSchema();
     final IntList sourceProjectionIndexes = new IntList();
@@ -123,7 +127,7 @@ public final class BindScope implements Mutable {
     final ObjList<ExpressionNode> windowSelectExpressions = new ObjList<>();
     final LowerCaseCharSequenceIntHashMap windowSelfReferences = new LowerCaseCharSequenceIntHashMap();
     final LongList withinPrefixes = new LongList();
-    ExpressionNode aggregateRoot;
+    FunctionBinder.BindingRole bindingRole;
     ExpressionNode bindingRoot;
     Subquery boundLowerBound;
     ExpressionNode boundLowerBoundNode;
@@ -131,8 +135,6 @@ public final class BindScope implements Mutable {
     PreparedFunctions.Entry currentPreparation;
     OutputSchema expressionInput;
     CharSequence expressionInputAlias;
-    boolean isBindingGroupByExpression;
-    boolean isBindingPredicate;
     boolean isInsideJoin;
     IntHashSet nativeTimestampIds;
     int nestedWindowPosition;
@@ -140,7 +142,6 @@ public final class BindScope implements Mutable {
     ObjList<ExpressionNode> replacementNodes;
     int timestampSubqueryType;
     LogicalPlan windowInput;
-    ExpressionNode windowRoot;
 
     public BindScope() {
         aggregateOrderExpressions = windowAliasCopies;
@@ -176,6 +177,7 @@ public final class BindScope implements Mutable {
         outerColumnIds.clear();
         outerScopes.clear();
         pivotForAliases.clear();
+        projectedOffsets.clear();
         projectionAliasIndexes.clear();
         referenceScope.clear();
         sourceProjectionIndexes.clear();
@@ -205,7 +207,7 @@ public final class BindScope implements Mutable {
         windowSelectExpressions.clear();
         windowSelfReferences.clear();
         withinPrefixes.clear();
-        aggregateRoot = null;
+        bindingRole = null;
         bindingRoot = null;
         boundLowerBound = null;
         boundLowerBoundNode = null;
@@ -213,8 +215,6 @@ public final class BindScope implements Mutable {
         currentPreparation = null;
         expressionInput = null;
         expressionInputAlias = null;
-        isBindingGroupByExpression = false;
-        isBindingPredicate = false;
         isInsideJoin = false;
         nativeTimestampIds = null;
         nestedWindowPosition = 0;
@@ -222,7 +222,6 @@ public final class BindScope implements Mutable {
         replacementNodes = null;
         timestampSubqueryType = 0;
         windowInput = null;
-        windowRoot = null;
     }
 
     /**

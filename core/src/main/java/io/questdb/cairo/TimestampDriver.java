@@ -119,6 +119,20 @@ public interface TimestampDriver {
     long approxPartitionDuration(int partitionBy);
 
     /**
+     * The last value at the driver's precision that a BETWEEN of two bounds, each of its own type, admits.
+     */
+    default long betweenHi(long from, int fromType, long to, int toType) {
+        return Math.max(floorFrom(from, fromType), floorFrom(to, toType));
+    }
+
+    /**
+     * The first value at the driver's precision that a BETWEEN of two bounds, each of its own type, admits.
+     */
+    default long betweenLo(long from, int fromType, long to, int toType) {
+        return Math.min(ceilFrom(from, fromType), ceilFrom(to, toType));
+    }
+
+    /**
      * Converts a timestamp of another type, or a DATE, to the smallest value of the driver's precision
      * that is not before it; exact when the source is not finer. NULL stays NULL.
      */
@@ -580,6 +594,14 @@ public interface TimestampDriver {
     }
 
     boolean inInterval(long value, int intervalType, Interval interval);
+
+    /**
+     * Whether a timestamp of another type, or a DATE, equals a value of the driver's precision, which
+     * {@link #ceilFrom} then returns.
+     */
+    default boolean isExactFrom(long timestamp, int timestampType) {
+        return ceilFrom(timestamp, timestampType) == floorFrom(timestamp, timestampType);
+    }
 
     long monthsBetween(long hi, long lo);
 

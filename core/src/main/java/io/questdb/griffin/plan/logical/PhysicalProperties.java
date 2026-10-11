@@ -183,17 +183,18 @@ public final class PhysicalProperties {
 
     private static int aggregate(AggregatePlan aggregate) {
         final Capability isKeyed = Capability.of(aggregate.getGroupingExpressions().size() > 0);
-        if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
-            return computed(isKeyed, ScanDirection.FORWARD, capability(derive(horizon.getMaster(), null), LONG_SEQUENCE));
+        final GeneratedShapes.AggregateFactory factory = GeneratedShapes.aggregateFactory(aggregate);
+        if (factory == GeneratedShapes.AggregateFactory.HORIZON) {
+            return computed(isKeyed, ScanDirection.FORWARD, capability(derive(((HorizonJoinPlan) aggregate.getInput()).getMaster(), null), LONG_SEQUENCE));
         }
-        if (GeneratedShapes.postingDistinctScan(aggregate) != null) {
+        if (factory == GeneratedShapes.AggregateFactory.POSTING_DISTINCT) {
             return computed(Capability.NO, ScanDirection.FORWARD, Capability.NO);
         }
         final int input = derive(aggregate.getInput(), null);
         // A shared source the aggregate re-reads hides the base chain of the source.
         final Capability isLongSequence = aggregate.getSharedSource() == null ? capability(input, LONG_SEQUENCE)
                 : and(Capability.UNKNOWN, capability(input, LONG_SEQUENCE));
-        if (LogicalPlans.isCount(aggregate)) {
+        if (factory == GeneratedShapes.AggregateFactory.COUNT) {
             return computed(Capability.NO, ScanDirection.FORWARD, isLongSequence);
         }
         final ScanDirection direction = switch (aggregate.getAlgorithm()) {
@@ -210,8 +211,7 @@ public final class PhysicalProperties {
      * the keyless parallel one only when operator planning counts a consumer that re-reads the aggregate.
      */
     private static Capability aggregateSharedCursors(AggregatePlan aggregate) {
-        if (aggregate.getInput() instanceof HorizonJoinPlan || LogicalPlans.isCount(aggregate)
-                || GeneratedShapes.postingDistinctScan(aggregate) != null) {
+        if (GeneratedShapes.aggregateFactory(aggregate) != GeneratedShapes.AggregateFactory.GROUP_BY) {
             return Capability.NO;
         }
         return switch (aggregate.getAlgorithm()) {
@@ -229,10 +229,11 @@ public final class PhysicalProperties {
      */
     private static int aggregateTimestampIndex(AggregatePlan aggregate) {
         final int timestampIndex = aggregate.getOutput().getTimestampIndex();
-        if (aggregate.getInput() instanceof HorizonJoinPlan || timestampIndex < 0) {
+        final GeneratedShapes.AggregateFactory factory = GeneratedShapes.aggregateFactory(aggregate);
+        if (factory == GeneratedShapes.AggregateFactory.HORIZON || timestampIndex < 0) {
             return timestampIndex;
         }
-        if (LogicalPlans.isCount(aggregate) || GeneratedShapes.postingDistinctScan(aggregate) != null) {
+        if (factory != GeneratedShapes.AggregateFactory.GROUP_BY) {
             return -1;
         }
         if (aggregate.getAlgorithm() == null && aggregate.getGroupingExpressions().size() == 1
@@ -385,13 +386,6 @@ public final class PhysicalProperties {
      */
     private static int forwarded(int timestampIndex, boolean isSource) {
         return !isSource ? timestampIndex : timestampIndex == -1 ? -1 : 0;
-    }
-
-    /**
-     * True when the window join step joins: its filter is not constant false, which null-extends the master instead.
-     */
-    private static boolean isJoiningStep(WindowJoinStep step) {
-        return !(step.getFilter() instanceof ConstantExpression constant) || constant.getLongValue() != 0;
     }
 
     private static Capability isLightLatestBy(LatestByPlan latest) {
@@ -920,7 +914,7 @@ public final class PhysicalProperties {
         final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
         for (int i = 0, n = steps.size(); i < n; i++) {
             final WindowJoinStep step = steps.getQuick(i);
-            if (isJoiningStep(step)) {
+            if (!step.isNullExtending()) {
                 final WindowJoinStep.Algorithm algorithm = step.getAlgorithm();
                 final Capability isSerial = algorithm == null ? Capability.UNKNOWN : Capability.of(algorithm == WindowJoinStep.Algorithm.SERIAL);
                 final ScanDirection direction = algorithm == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
@@ -942,7 +936,7 @@ public final class PhysicalProperties {
         }
         final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
         for (int i = 0, n = steps.size(); i < n; i++) {
-            if (isJoiningStep(steps.getQuick(i))) {
+            if (!steps.getQuick(i).isNullExtending()) {
                 return Capability.NO;
             }
         }
@@ -959,7 +953,7 @@ public final class PhysicalProperties {
         }
         final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
         for (int i = 0, n = steps.size(); i < n; i++) {
-            if (isJoiningStep(steps.getQuick(i))) {
+            if (!steps.getQuick(i).isNullExtending()) {
                 return Capability.NO;
             }
         }

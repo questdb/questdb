@@ -194,9 +194,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     private static void addElement(LongList values, Function func, Record rec, TimestampDriver driver) throws NumericException {
         final int type = elementType(func, rec, driver);
         final long value = elementValue(func, rec, type, driver);
-        final long ceil = driver.ceilFrom(value, type);
-        if (ceil == driver.floorFrom(value, type)) {
-            values.add(ceil);
+        if (driver.isExactFrom(value, type)) {
+            values.add(driver.ceilFrom(value, type));
         }
     }
 

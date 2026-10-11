@@ -140,8 +140,9 @@ import static io.questdb.griffin.SqlKeywords.*;
 
 /**
  * Resolves and constructs functions for every consumer that builds them: literal constants, bind variables and
- * calls. A call resolves in phases over its already-built arguments - {@link #resolveCast}, then
- * {@link #selectOverload}, then {@link #coerceArguments} - and is then constructed by {@link #createFunction} or
+ * calls. A call resolves in phases over its already-built and folded ({@link #foldArgument}) arguments -
+ * {@link #resolveCast}, then {@link #selectOverload}, both driven by {@link #resolveCastOrOverload}, then
+ * {@link #coerceArguments} - and is then constructed by {@link #createFunction} or
  * admitted unconstructed by {@link #admitUnconstructed}. Arguments are functions: constants, columns, and the
  * placeholders of calls left unconstructed. Every phase but {@link #resolveCast} releases the arguments when it
  * fails.
@@ -159,6 +160,7 @@ public class FunctionResolver implements Mutable {
     private final IntList undefinedVariables = new IntList();
     private boolean cursorFunctionInstantiated;
     private int executionRequirementPosition = -1;
+    private FunctionFactoryDescriptor selectedOverload;
 
     public FunctionResolver(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this.configuration = configuration;
@@ -380,14 +382,15 @@ public class FunctionResolver implements Mutable {
         executionRequirements.clear();
         executionRequirementPosition = -1;
         cursorFunctionInstantiated = false;
+        selectedOverload = null;
     }
 
     /**
      * Applies the selected overload's argument coercions in place: the constant variadic check, the types of
      * untyped bind variables (a side effect on the bind variable service, in argument order), NULL substitution,
-     * the conversion of constant text to TIMESTAMP and DATE, and implicit casts, recorded for
-     * {@link #getImplicitConversion}. An operand compared with a scalar sub-query takes no implicit cast. Releases
-     * the arguments on failure.
+     * the conversion of constant text to TIMESTAMP, whose failure the caller's {@code timestampTextError} reports,
+     * and to DATE, and implicit casts, recorded for {@link #getImplicitConversion}. An operand compared with a
+     * scalar sub-query takes no implicit cast. Releases the arguments on failure.
      */
     public void coerceArguments(
             FunctionFactoryDescriptor candidateDescriptor,
@@ -395,6 +398,7 @@ public class FunctionResolver implements Mutable {
             CharSequence name,
             @Nullable @Transient ObjList<Function> args,
             @Nullable @Transient IntList argPositions,
+            TimestampTextError timestampTextError,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final int argCount = args == null ? 0 : args.size();
@@ -483,7 +487,7 @@ public class FunctionResolver implements Mutable {
                             args.set(k, timestampConstant(timestampStr, sigArgType));
                         } catch (NumericException e) {
                             assert argPositions != null;
-                            throw SqlException.invalidDate(timestampStr, argPositions.getQuick(k));
+                            throw timestampTextError.timestampTextError(name, k, timestampStr, argPositions.getQuick(k));
                         }
                     } else if (sigArgTypeTag == ColumnType.DATE) {
                         assert argPositions != null;
@@ -792,6 +796,24 @@ public class FunctionResolver implements Mutable {
     }
 
     /**
+     * The constant a constant call argument folds to; a type operand and any other argument stay as they are.
+     * Releases the argument when the fold fails.
+     */
+    public Function foldArgument(Function function, int position) {
+        return function != null && function.isConstant() && function.extendedOps() == null && !(function instanceof TypeConstant)
+                ? functionToConstant(function, position) : function;
+    }
+
+    /**
+     * The constant a constant expression root folds to; any other root stays as it is. Releases the root when the
+     * fold fails.
+     */
+    public Function foldRoot(Function function, int position) {
+        return function != null && function.isConstant() && function.extendedOps() == null
+                ? functionToConstant(function, position) : function;
+    }
+
+    /**
      * Evaluates a constant function into a constant and closes the function. A conversion error raised by the
      * evaluation carries {@code position}, the position of the call, unless a nested call already positioned it.
      */
@@ -837,6 +859,13 @@ public class FunctionResolver implements Mutable {
      */
     public Class<? extends FunctionFactory> getImplicitConversion(int index) {
         return implicitConversions.getQuiet(index);
+    }
+
+    /**
+     * The overload the last {@link #resolveCastOrOverload} selected, or null when it resolved a CAST.
+     */
+    public FunctionFactoryDescriptor getSelectedOverload() {
+        return selectedOverload;
     }
 
     /**
@@ -929,6 +958,31 @@ public class FunctionResolver implements Mutable {
                 }
             }
         }
+        return null;
+    }
+
+    /**
+     * Resolves the call to a CAST that needs no factory ({@link #resolveCast}), whose function it returns, or else
+     * to the overload {@link #selectOverload} selects, returning null with the overload in
+     * {@link #getSelectedOverload}; resolves again when the selection wraps a sub-query argument as BOOLEAN.
+     */
+    public Function resolveCastOrOverload(
+            CharSequence name,
+            int position,
+            @Nullable @Transient ObjList<Function> args,
+            @Nullable @Transient IntList argPositions,
+            @Nullable CharSequence literal,
+            int literalPosition,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        do {
+            final Function cast = resolveCast(name, args, literal, literalPosition, sqlExecutionContext);
+            if (cast != null) {
+                selectedOverload = null;
+                return cast;
+            }
+            selectedOverload = selectOverload(name, position, args, argPositions, sqlExecutionContext);
+        } while (selectedOverload == null);
         return null;
     }
 
@@ -1635,5 +1689,16 @@ public class FunctionResolver implements Mutable {
         } catch (NumericException e) {
             throw SqlException.$(position, "invalid bind variable index [value=").put(name).put(']');
         }
+    }
+
+    /**
+     * The error {@link #coerceArguments} reports for the constant text argument at {@code index} of the named call
+     * that does not convert to its TIMESTAMP parameter.
+     */
+    @FunctionalInterface
+    public interface TimestampTextError {
+        TimestampTextError INVALID_DATE = (name, index, text, position) -> SqlException.invalidDate(text, position);
+
+        SqlException timestampTextError(CharSequence name, int index, CharSequence text, int position);
     }
 }

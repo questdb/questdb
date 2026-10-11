@@ -214,9 +214,9 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
         // Unicode brackets (if parser somehow accepts them)
         assertQuery("select null::double【】")
-                .fails(13, "invalid constant: double【】");
+                .fails(13, "unsupported cast");
         assertQuery("select null::int〔〕")
-                .fails(13, "invalid constant: int〔〕");
+                .fails(13, "unsupported cast");
 
         // Extreme whitespace variations
         assertQuery("select null::double\t\t\t[]")
@@ -224,7 +224,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
         // NBSP is NOT picked up by Character.isWhitespace()
         assertQuery("select null::int\u00A0[]")
-                .fails(13, "invalid constant: int []"); // Non-breaking space
+                .fails(13, "unsupported cast"); // Non-breaking space
         assertQuery("select null::varchar\u2003[]")
                 .fails(21, "array type requires no whitespace: expected 'varchar[]' but found 'varchar  []'"); // Em space
 
@@ -664,13 +664,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastMissingType2() {
         assertFail("cast(1 as 1)",
                 10,
-                "unsupported cast"
+                "type definition is expected"
         );
     }
 
     @Test
     public void testCastMissingType3() {
-        assertFail("cast(1 as binary)",
+        assertFail("cast(1 as cursor)",
                 10,
                 "unsupported cast"
         );
@@ -726,9 +726,23 @@ public class ExpressionParserTest extends AbstractCairoTest {
             assertQuery("SELECT 1 :: 1").fails(12, "type definition is expected");
             assertQuery("SELECT 1 :: true").fails(12, "type definition is expected");
             assertQuery("SELECT 1 :: [1]").fails(12, "type definition is expected");
-            assertQuery("SELECT 1 :: x").fails(12, "invalid constant: x");
-            assertQuery("SELECT 1 :: $1").fails(12, "invalid constant: $1");
+            assertQuery("SELECT 1 :: x").fails(12, "unsupported cast");
+            assertQuery("SELECT 1 :: $1").fails(12, "unsupported cast");
         });
+    }
+
+    @Test
+    public void testCastAsAcceptsPgTypeAliases() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT CAST(1 AS float8) a, CAST(1 AS int4) b, CAST(1 AS int8) c, CAST(1 AS int2) d, CAST(1 AS float4) e,
+                CAST(1 AS float8[]) f, CAST(1 AS "int") g, CAST(1 / 3.0 AS float) h, (1 / 3.0)::float i, CAST('pg_class' AS regclass) j
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        a\tb\tc\td\te\tf\tg\th\ti\tj
+                        1.0\t1\t1\t1\t1.0\t[1.0]\t1\t0.33333334\t0.3333333333333333\t1259
+                        """));
     }
 
     @Test

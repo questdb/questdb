@@ -100,8 +100,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             }
             return new ConstFunc(
                     arg,
-                    Math.min(driver.ceilFrom(fromTimestamp, fromType), driver.ceilFrom(toTimestamp, toType)),
-                    Math.max(driver.floorFrom(fromTimestamp, fromType), driver.floorFrom(toTimestamp, toType))
+                    driver.betweenLo(fromTimestamp, fromType, toTimestamp, toType),
+                    driver.betweenHi(fromTimestamp, fromType, toTimestamp, toType)
             );
         }
         if (fromType == argType && toType == argType) {

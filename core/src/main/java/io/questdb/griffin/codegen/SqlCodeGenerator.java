@@ -166,17 +166,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final PageFrameReduceTaskFactory reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
             this.filterGenerator = new FilterFactoryGenerator(configuration, characterStore, jitIRMem, reduceTaskFactory, tmpSink,
                     tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpLongs);
-            this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, filterGenerator, asm, entityColumnFilter, tmpIndexes, tmpValues);
+            this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, filterGenerator, asm, entityColumnFilter);
             this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionResolver.getFunctionFactoryCache(), asm,
-                    entityColumnFilter, reduceTaskFactory, tmpSink, tmpIds, tmpMasterKeys, tmpSlaveKeys);
+                    entityColumnFilter, reduceTaskFactory, tmpSink, tmpIds);
             this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, tmpIndexes);
             this.projectionGenerator = new ProjectionFactoryGenerator();
-            this.sampleByGenerator = new SampleByFactoryGenerator(configuration, this, functionResolver, asm, entityColumnFilter,
-                    recordComparatorCompiler);
             this.scanGenerator = new ScanFactoryGenerator(configuration, filterGenerator, latestByGenerator, reduceTaskFactory,
                     planTables);
-            this.sortGenerator = new SortFactoryGenerator(configuration, this, filterGenerator, projectionGenerator, asm, emptySchema, entityColumnFilter,
+            this.sortGenerator = new SortFactoryGenerator(configuration, this, filterGenerator, projectionGenerator, asm, entityColumnFilter,
                     recordComparatorCompiler);
+            this.sampleByGenerator = new SampleByFactoryGenerator(configuration, this, functionResolver, asm, entityColumnFilter, sortGenerator);
             this.setOperationGenerator = new SetOperationFactoryGenerator(configuration, this, sortGenerator, asm, entityColumnFilter);
             this.windowGenerator = new WindowFactoryGenerator(configuration, this, asm, entityColumnFilter, recordComparatorCompiler);
         } catch (Throwable th) {
@@ -402,7 +401,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SortPlan sort -> {
                 return sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION
                         ? declareTimestamp(base, PhysicalProperties.timestampIndex(sort))
-                        : sortGenerator.generate(frame, sort, base, null, null, 0);
+                        : sortGenerator.generate(frame, sort, base, null, null, null);
             }
             case LimitPlan limit -> {
                 if (limit.getApplication() == LimitPlan.Application.INPUT) {
@@ -515,7 +514,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case DistinctPlan distinct -> aggregateGenerator.generateDistinct(frame, distinct, null, executionContext);
             case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getInput()) ->
                     sortGenerator.generateSortedLimit(frame, limit.getInput(), limit, executionContext);
-            case AggregatePlan aggregate when GeneratedShapes.postingDistinctScan(aggregate) != null ->
+            case AggregatePlan aggregate when GeneratedShapes.aggregateFactory(aggregate) == GeneratedShapes.AggregateFactory.POSTING_DISTINCT ->
                     scanGenerator.generatePostingDistinct(frame, aggregate, executionContext);
             case AggregatePlan aggregate -> aggregateGenerator.generateAggregate(frame, aggregate, executionContext);
             case JoinPlan join -> joinGenerator.generateJoin(frame, join, executionContext);

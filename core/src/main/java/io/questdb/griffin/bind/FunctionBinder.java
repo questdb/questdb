@@ -97,9 +97,10 @@ import org.jetbrains.annotations.TestOnly;
  * {@link FunctionResolver}, produces {@link BoundExpression} descriptions and hands each built root to
  * {@link PreparedFunctions}.
  */
-public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalAlgo.Visitor, Mutable {
+public final class FunctionBinder implements CallBinder, FunctionResolver.TimestampTextError, PostOrderTreeTraversalAlgo.Visitor, Mutable {
     private static final int CALL_AGGREGATE_ROOT = 3;
     private static final int CALL_ARGUMENT = 0;
+    private static final int CALL_PROJECTED_OFFSET = 5;
     private static final int CALL_ROOT = 2;
     private static final int CALL_WINDOW_ARGUMENT = 1;
     private static final int CALL_WINDOW_ROOT = 4;
@@ -164,7 +165,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             int preferredType,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return bind(node, null, 0, null, input, inputAlias, preferredType, false, executionContext);
+        return bind(node, BindingRole.SCALAR, input, inputAlias, preferredType, null, null, null, executionContext);
     }
 
     /**
@@ -192,16 +193,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             ObjList<ColumnExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final BindScope scope = ctx.scope();
-        assert scope.replacementNodes == null && replacementNodes.size() == replacementColumns.size();
-        scope.replacementNodes = replacementNodes;
-        scope.replacementColumns = replacementColumns;
-        try {
-            return bind(node, input, inputAlias, preferredType, executionContext);
-        } finally {
-            scope.replacementNodes = null;
-            scope.replacementColumns = null;
-        }
+        return bind(node, BindingRole.SCALAR, input, inputAlias, preferredType, replacementNodes, replacementColumns, null, executionContext);
     }
 
     /**
@@ -213,9 +205,8 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             CharSequence inputAlias,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert node.type == ExpressionNode.FUNCTION && node.windowExpression == null
-                && resolver.getFunctionFactoryCache().isGroupBy(node.token);
-        return (FunctionExpression) bindAggregateRoot(node, input, inputAlias, executionContext);
+        assert isAggregateRoot(node);
+        return (FunctionExpression) bind(node, BindingRole.AGGREGATE, input, inputAlias, ColumnType.UNDEFINED, null, null, null, executionContext);
     }
 
     @Override
@@ -226,7 +217,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             OutputSchema input,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return bind(null, name, position, args, input, null, ColumnType.UNDEFINED, false, executionContext);
+        return bindRoot(null, name, position, args, input, null, ColumnType.UNDEFINED, executionContext);
     }
 
     public BoundExpression bindGroupByExpression(
@@ -235,16 +226,8 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             CharSequence inputAlias,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final BindScope scope = ctx.scope();
-        assert !scope.isBindingGroupByExpression;
-        assert node.type == ExpressionNode.FUNCTION && node.windowExpression == null
-                && resolver.getFunctionFactoryCache().isGroupBy(node.token);
-        scope.isBindingGroupByExpression = true;
-        try {
-            return bindAggregateRoot(node, input, inputAlias, executionContext);
-        } finally {
-            scope.isBindingGroupByExpression = false;
-        }
+        assert isAggregateRoot(node);
+        return bind(node, BindingRole.GROUP_BY_EXPRESSION, input, inputAlias, ColumnType.UNDEFINED, null, null, null, executionContext);
     }
 
     public BoundExpression bindGroupByExpression(
@@ -254,16 +237,8 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             ObjList<ColumnExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final BindScope scope = ctx.scope();
-        assert scope.replacementNodes == null && replacementNodes.size() == replacementColumns.size();
-        scope.replacementNodes = replacementNodes;
-        scope.replacementColumns = replacementColumns;
-        try {
-            return bindGroupByExpression(node, input, null, executionContext);
-        } finally {
-            scope.replacementNodes = null;
-            scope.replacementColumns = null;
-        }
+        assert isAggregateRoot(node);
+        return bind(node, BindingRole.GROUP_BY_EXPRESSION, input, null, ColumnType.UNDEFINED, replacementNodes, replacementColumns, null, executionContext);
     }
 
     /**
@@ -304,16 +279,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             int preferredRootType,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final BindScope scope = ctx.scope();
-        assert !scope.isBindingPredicate;
-        scope.isBindingPredicate = true;
-        scope.nativeTimestampIds = nativeTimestampIds;
-        try {
-            return bind(node, input, inputAlias, preferredRootType, executionContext);
-        } finally {
-            scope.isBindingPredicate = false;
-            scope.nativeTimestampIds = null;
-        }
+        return bind(node, BindingRole.PREDICATE, input, inputAlias, preferredRootType, null, null, nativeTimestampIds, executionContext);
     }
 
     /**
@@ -326,7 +292,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             int targetType,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return bind(node, null, 0, null, input, inputAlias, targetType, true, executionContext);
+        return bind(node, BindingRole.UPDATE_ASSIGNMENT, input, inputAlias, targetType, null, null, null, executionContext);
     }
 
     /**
@@ -344,15 +310,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         if (executionContext.getWindowContext().isEmpty()) {
             throw SqlException.emptyWindowContext(node.position);
         }
-        final BindScope scope = ctx.scope();
-        assert scope.windowRoot == null && scope.aggregateRoot == null && !scope.isBindingPredicate;
-        scope.windowRoot = node;
-        scope.nestedWindowPosition = -1;
-        try {
-            return (FunctionExpression) bind(node, input, inputAlias, executionContext);
-        } finally {
-            scope.windowRoot = null;
-        }
+        return (FunctionExpression) bind(node, BindingRole.WINDOW, input, inputAlias, ColumnType.UNDEFINED, null, null, null, executionContext);
     }
 
     @Override
@@ -414,6 +372,36 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
 
     public boolean isGroupBy(CharSequence name) {
         return resolver.getFunctionFactoryCache().isGroupBy(name);
+    }
+
+    /**
+     * The error of a comparison of a TIMESTAMP with constant text that does not parse as a timestamp. Interval
+     * extraction over a designated timestamp once raised these messages, so a comparison reports them wherever it
+     * binds: {@code =}, {@code !=} and {@code <>} report
+     * {@code invalid timestamp} for a literal, otherwise {@code Invalid date [str=text]}, and for text with
+     * {@code ;} {@code not a timestamp, use IN keyword with intervals} for a literal, otherwise
+     * {@code Not a date, use IN keyword with intervals}; a range comparison reports {@code Invalid date [str=text]}
+     * with a literal quoted; a BETWEEN bound reports a bare {@code Invalid date} for a literal. A comparison of a
+     * DATE, which interval extraction never implements, and any other call report {@code Invalid date [str=text]}.
+     */
+    @Override
+    public SqlException timestampTextError(CharSequence operator, int index, CharSequence text, int position) {
+        final boolean isBetween = SqlKeywords.isBetweenKeyword(operator);
+        if (!isBetween && !isTemporalComparisonOperator(operator)
+                || arguments.getQuick(isBetween ? 0 : 1 - index).getDataType() == ColumnType.DATE) {
+            return SqlException.invalidDate(text, position);
+        }
+        final boolean isLiteral = arguments.getQuick(index) instanceof ConstantExpression constant && IntervalExtractor.isStringLiteral(constant);
+        if (isBetween) {
+            return isLiteral ? SqlException.invalidDate(position) : SqlException.invalidDate(text, position);
+        }
+        if (Chars.equals(operator, '=') || isNotEqualsOperator(operator)) {
+            if (Chars.indexOf(text, ';') >= 0) {
+                return SqlException.$(position, isLiteral ? "not a timestamp, use IN keyword with intervals" : "Not a date, use IN keyword with intervals");
+            }
+            return isLiteral ? SqlException.$(position, "invalid timestamp") : SqlException.invalidDate(text, position);
+        }
+        return isLiteral ? SqlException.position(position).put("Invalid date [str='").put(text).put("']") : SqlException.invalidDate(text, position);
     }
 
     @Override
@@ -585,9 +573,54 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
     }
 
     /**
-     * Binds the expression tree of the node, or, without a node, the named call over already-bound arguments.
+     * Binds the expression tree of the node in its role: the role, the replacement lists and the native timestamp
+     * ids hold for this binding only.
      */
     private BoundExpression bind(
+            ExpressionNode node,
+            BindingRole role,
+            OutputSchema input,
+            CharSequence inputAlias,
+            int preferredType,
+            ObjList<ExpressionNode> replacementNodes,
+            ObjList<ColumnExpression> replacementColumns,
+            IntHashSet nativeTimestampIds,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final BindScope scope = ctx.scope();
+        assert scope.bindingRole == null && (replacementNodes == null || replacementNodes.size() == replacementColumns.size());
+        scope.bindingRole = role;
+        scope.replacementNodes = replacementNodes;
+        scope.replacementColumns = replacementColumns;
+        scope.nativeTimestampIds = nativeTimestampIds;
+        scope.nestedWindowPosition = -1;
+        try {
+            return bindRoot(node, null, 0, null, input, inputAlias, preferredType, executionContext);
+        } finally {
+            scope.bindingRole = null;
+            scope.replacementNodes = null;
+            scope.replacementColumns = null;
+            scope.nativeTimestampIds = null;
+        }
+    }
+
+    /**
+     * Pushes the bound arguments as the operands of the named call, last argument first as a post-order walk visits
+     * them, then resolves the call over them.
+     */
+    private void bindCallArguments(CharSequence name, int position, ObjList<? extends BoundExpression> args) throws SqlException {
+        for (int i = args.size() - 1; i >= 0; i--) {
+            final BoundExpression argument = args.getQuick(i);
+            pushFunction(pushReplacement(argument, argument.getPosition()), argument.getPosition());
+        }
+        pushFunction(resolveCall(name, position, isGroupBy(name) ? CALL_AGGREGATE_ROOT : CALL_ROOT, false, args.size()), position);
+    }
+
+    /**
+     * Binds one root, the expression tree of the node or, without a node, the named call over already-bound
+     * arguments, and hands its built root to the prepared functions.
+     */
+    private BoundExpression bindRoot(
             ExpressionNode node,
             CharSequence callName,
             int callPosition,
@@ -595,7 +628,6 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             OutputSchema input,
             CharSequence inputAlias,
             int preferredType,
-            boolean isUpdateAssignment,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final BindScope scope = ctx.scope();
@@ -610,38 +642,14 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         final int expressionMark = expressionStack.size();
         final int functionMark = functionStack.size();
         final int unconstructedMark = unconstructed.size();
-        final ExpressionNode originalAggregateRoot = scope.aggregateRoot;
-        final ExpressionNode originalWindowRoot = scope.windowRoot;
         final int syntheticNodeMark = ctx.planNodes.syntheticNodes.getPos();
         final int staticTypeMark = ctx.planNodes.staticTypes.getPos();
+        final boolean isUpdateAssignment = scope.bindingRole == BindingRole.UPDATE_ASSIGNMENT;
         try {
             if (node == null) {
                 bindCallArguments(callName, callPosition, callArguments);
             } else {
-                if (isAstRewritable()) {
-                    // DECLARE references may share parser nodes across occurrences.
-                    // Reassociation belongs to this binding, never to that shared AST.
-                    node = ExpressionNode.deepClone(ctx.planNodes.syntheticNodes, node);
-                    if (originalAggregateRoot != null) {
-                        scope.aggregateRoot = node;
-                    }
-                    if (originalWindowRoot != null) {
-                        scope.windowRoot = node;
-                    }
-                }
-                if (scope.isBindingPredicate) {
-                    if (isAstRewritable()) {
-                        rewriteAndOffsets(node);
-                    }
-                    bindTimestampBetweenLowerBound(node, executionContext);
-                }
-                scope.bindingRoot = node;
-                if (isAstRewritable()) {
-                    // Caller-selected group keys refer to exact subtrees. Reassociating
-                    // their ancestors here could move children across that boundary.
-                    node.reassociateConstants(resolver.getConfiguration().getCairoSqlLegacyOperatorPrecedence());
-                }
-                traverseAlgo.traverse(node, this);
+                bindTree(node, executionContext);
             }
             final int rootPosition = positionStack.getLast();
             Function function = foldRoot(popFunction(), rootPosition);
@@ -661,9 +669,9 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
                 finish(function);
             }
             assert expressionStack.size() == expressionMark + 1;
-            entry.expression = expressionStack.getQuick(expressionMark);
+            ctx.preparedFunctions.describe(entry, expressionStack.getQuick(expressionMark));
             assert PreparedFunctions.hasOnlyReadLeaves(entry) : "bound leaf is not read by its description";
-            return entry.expression;
+            return entry.getExpression();
         } catch (Throwable th) {
             // Release partially bound operands best-effort; only completed roots enter this scope.
             for (int i = functionStack.size() - 1; i >= functionMark; i--) {
@@ -675,9 +683,8 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             sqlExecutionContext = previousContext;
             functionStack.setPos(functionMark);
             positionStack.setPos(functionMark);
-            scope.aggregateRoot = originalAggregateRoot;
-            scope.windowRoot = originalWindowRoot;
             scope.bindingRoot = null;
+            scope.projectedOffsets.clear();
             ctx.planNodes.rewindSyntheticNodes(syntheticNodeMark);
             scope.currentPreparation = null;
             scope.boundLowerBound = null;
@@ -694,34 +701,6 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         }
     }
 
-    private BoundExpression bindAggregateRoot(
-            ExpressionNode node,
-            OutputSchema input,
-            CharSequence inputAlias,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        final BindScope scope = ctx.scope();
-        assert scope.aggregateRoot == null && !scope.isBindingPredicate;
-        scope.aggregateRoot = node;
-        try {
-            return bind(node, input, inputAlias, executionContext);
-        } finally {
-            scope.aggregateRoot = null;
-        }
-    }
-
-    /**
-     * Pushes the bound arguments as the operands of the named call, last argument first as a post-order walk visits
-     * them, then resolves the call over them.
-     */
-    private void bindCallArguments(CharSequence name, int position, ObjList<? extends BoundExpression> args) throws SqlException {
-        for (int i = args.size() - 1; i >= 0; i--) {
-            final BoundExpression argument = args.getQuick(i);
-            pushFunction(pushReplacement(argument, argument.getPosition()), argument.getPosition());
-        }
-        pushFunction(resolveCall(name, position, isGroupBy(name) ? CALL_AGGREGATE_ROOT : CALL_ROOT, false, args.size()), position);
-    }
-
     /**
      * Timestamp interval analysis binds a sub-query BETWEEN bound pair low bound first.
      */
@@ -735,6 +714,31 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
     }
 
     /**
+     * Walks the expression tree of the root in post-order, after the rewrites its role applies.
+     */
+    private void bindTree(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
+        if (isAstRewritable()) {
+            // DECLARE references may share parser nodes across occurrences.
+            // Reassociation belongs to this binding, never to that shared AST.
+            node = ExpressionNode.deepClone(ctx.planNodes.syntheticNodes, node);
+        }
+        scope.bindingRoot = node;
+        if (scope.bindingRole == BindingRole.PREDICATE) {
+            if (isAstRewritable()) {
+                rewriteAndOffsets(node);
+            }
+            bindTimestampBetweenLowerBound(node, executionContext);
+        }
+        if (isAstRewritable()) {
+            // Caller-selected group keys refer to exact subtrees. Reassociating
+            // their ancestors here could move children across that boundary.
+            node.reassociateConstants(resolver.getConfiguration().getCairoSqlLegacyOperatorPrecedence());
+        }
+        traverseAlgo.traverse(node, this);
+    }
+
+    /**
      * The leaf mark of the call whose arguments are being bound: its leaves follow it in the preparation.
      */
     private int callLeafMark() {
@@ -744,14 +748,15 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
 
     private int callRole(ExpressionNode node) {
         final BindScope scope = ctx.scope();
-        if (node == scope.windowRoot) {
-            return CALL_WINDOW_ROOT;
-        }
-        if (node == scope.aggregateRoot) {
-            return CALL_AGGREGATE_ROOT;
-        }
         if (node == scope.bindingRoot) {
-            return CALL_ROOT;
+            return switch (scope.bindingRole) {
+                case WINDOW -> CALL_WINDOW_ROOT;
+                case AGGREGATE, GROUP_BY_EXPRESSION -> CALL_AGGREGATE_ROOT;
+                default -> CALL_ROOT;
+            };
+        }
+        if (scope.projectedOffsets.indexOf(node) >= 0) {
+            return CALL_PROJECTED_OFFSET;
         }
         return isWindowArgument(node) ? CALL_WINDOW_ARGUMENT : CALL_ARGUMENT;
     }
@@ -775,8 +780,8 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
                 if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
                     return null;
                 }
-                final long low = Math.min(driver.ceilFrom(lo, loType), driver.ceilFrom(hi, hiType));
-                final long high = Math.max(driver.floorFrom(lo, loType), driver.floorFrom(hi, hiType));
+                final long low = driver.betweenLo(lo, loType, hi, hiType);
+                final long high = driver.betweenHi(lo, loType, hi, hiType);
                 if (low > high) {
                     return BooleanConstant.FALSE;
                 }
@@ -866,9 +871,8 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             }
             try {
                 final long value = temporalConstantValue(args, i, type);
-                final long ceil = driver.ceilFrom(value, type);
-                if (value == Numbers.LONG_NULL || ceil == driver.floorFrom(value, type)) {
-                    replaceTemporalConstant(args, i, ceil, operandType, true);
+                if (value == Numbers.LONG_NULL || driver.isExactFrom(value, type)) {
+                    replaceTemporalConstant(args, i, driver.ceilFrom(value, type), operandType, true);
                     isMatchable = true;
                 } else {
                     Misc.free(args.getQuick(i));
@@ -992,32 +996,6 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         }
     }
 
-    /**
-     * Converts the constant text a temporal comparison or BETWEEN compares with a TIMESTAMP before the resolver
-     * coerces the arguments, so text that is not a timestamp reports the comparison's error
-     * ({@link #timestampTextError}) rather than the resolver's.
-     */
-    private void convertTimestampText(FunctionFactoryDescriptor overload, CharSequence operator, ObjList<Function> args, IntList positions) throws SqlException {
-        final int count = args == null ? 0 : args.size();
-        if (!(count == 2 && isTemporalComparisonOperator(operator) || count == 3 && SqlKeywords.isBetweenKeyword(operator))) {
-            return;
-        }
-        for (int i = 0, n = Math.min(count, overload.getSigArgCount()); i < n; i++) {
-            final int sigArgType = overload.getArgTypeWithFlags(i);
-            final Function arg = args.getQuick(i);
-            if (FunctionFactoryDescriptor.toTypeTag(sigArgType) == ColumnType.TIMESTAMP && arg.isConstant() && isCaseText(ColumnType.tagOf(arg.getType()))) {
-                final CharSequence text = arg.getStrA(null);
-                try {
-                    args.set(i, FunctionResolver.timestampConstant(text, sigArgType));
-                } catch (NumericException e) {
-                    final SqlException exception = timestampTextError(operator, i, text, positions.getQuick(i));
-                    Misc.freeObjList(args, exception);
-                    throw exception;
-                }
-            }
-        }
-    }
-
     private Function createColumn(ExpressionNode node) throws SqlException {
         final BindScope scope = ctx.scope();
         final OutputSchema input = scope.expressionInput;
@@ -1032,15 +1010,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         final int type = input.getColumnType(index);
         final int columnId = input.getColumnId(index);
         final int mark = leafMark();
-        final Function leaf;
-        if (BindableColumn.isBindableType(type)) {
-            final BindableColumn bindable = BindableColumn.newInstance(columnId, type, input.isSymbolTableStatic(index));
-            scope.currentPreparation.leaves.add(bindable);
-            leaf = bindable;
-        } else {
-            leaf = FunctionInstantiator.createColumnFunction(node.position, index, type, input);
-            scope.currentPreparation.isRebuildRequired = true;
-        }
+        final Function leaf = scope.currentPreparation.addColumn(FunctionInstantiator.createColumnLeaf(node.position, columnId, index, type, input));
         push(ctx.planNodes.columns.next().of(columnId, type, node.position), mark);
         return leaf;
     }
@@ -1144,7 +1114,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             for (int i = 0, n = arguments.size(); i < n; i++) {
                 flags |= arguments.getQuick(i).getFunctionFlags() & BoundExpression.NO_PARALLELISM;
             }
-            unconstructed.add(pushCall(name, isSetOperation, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
+            unconstructed.add(pushCall(name, role, isSetOperation, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
                     staticType, flags, position)));
             return ctx.planNodes.staticTypes.next().of(staticType, (flags & BoundExpression.NO_PARALLELISM) == 0);
         }
@@ -1173,7 +1143,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
                 expression = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
                         function.getType(), callFlags(function, arguments), position);
             }
-            pushCall(name, isSetOperation, expression);
+            pushCall(name, role, isSetOperation, expression);
             return function;
         } catch (Throwable th) {
             Misc.free(function, th);
@@ -1192,8 +1162,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
                 scope.outerColumnIds.add(columnId);
                 scope.currentPreparation.isRebuildRequired = true;
                 push(ctx.planNodes.outerColumns.next().of(columnId, type, node.position), leafMark());
-                return BindableColumn.isBindableType(type) ? BindableColumn.newInstance(columnId, type, outer.isSymbolTableStatic(index))
-                        : FunctionInstantiator.createColumnFunction(node.position, index, type, outer);
+                return FunctionInstantiator.createColumnLeaf(node.position, columnId, index, type, outer);
             }
         }
         return null;
@@ -1256,8 +1225,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
     }
 
     private Function foldArgument(int index, Function function, int position) {
-        final Function argument = function != null && function.isConstant() && function.extendedOps() == null
-                && !(function instanceof TypeConstant) ? resolver.functionToConstant(function, position) : function;
+        final Function argument = resolver.foldArgument(function, position);
         try {
             if (argument instanceof ConstantFunction && !(argument instanceof TypeConstant)) {
                 final BoundExpression expression = arguments.getQuick(index);
@@ -1276,8 +1244,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
     }
 
     private Function foldRoot(Function function, int position) {
-        final Function root = function != null && function.isConstant() && function.extendedOps() == null
-                ? resolver.functionToConstant(function, position) : function;
+        final Function root = resolver.foldRoot(function, position);
         try {
             finish(root);
             return root;
@@ -1298,6 +1265,10 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             return intervalText;
         }
         return text;
+    }
+
+    private boolean isAggregateRoot(ExpressionNode node) {
+        return node.type == ExpressionNode.FUNCTION && node.windowExpression == null && isGroupBy(node.token);
     }
 
     private boolean isAstRewritable() {
@@ -1348,7 +1319,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
     }
 
     private boolean isWindowArgument(ExpressionNode node) {
-        final ExpressionNode windowRoot = ctx.scope().windowRoot;
+        final ExpressionNode windowRoot = windowRoot();
         if (windowRoot == null) {
             return false;
         }
@@ -1433,7 +1404,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
                 if (arg instanceof ConstantFunction && !(arg instanceof TypeConstant) && argument instanceof ConstantExpression constant
                         && constant.getDataType() == arg.getType()) {
                     final PreparedFunctions.Entry entry = ctx.preparedFunctions.begin();
-                    entry.expression = constant;
+                    ctx.preparedFunctions.describe(entry, constant);
                     ctx.preparedFunctions.own(entry, arg);
                     args.setQuick(i, null);
                 } else if (arg instanceof BindableColumn leaf && leaf.isOpen() && argument instanceof ColumnExpression column
@@ -1445,7 +1416,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
                     }
                     if (index >= 0) {
                         final PreparedFunctions.Entry entry = ctx.preparedFunctions.begin();
-                        entry.expression = column;
+                        ctx.preparedFunctions.describe(entry, column);
                         entry.leaves.add(leaf);
                         ctx.preparedFunctions.own(entry, leaf);
                         leaves.remove(index);
@@ -1467,11 +1438,11 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         expressionLeafMarks.add(leafMark);
     }
 
-    private BoundExpression pushCall(CharSequence name, boolean isSetOperation, BoundExpression expression) {
+    private BoundExpression pushCall(CharSequence name, int role, boolean isSetOperation, BoundExpression expression) {
         if (isSetOperation && expression instanceof FunctionExpression call && SqlKeywords.isInKeyword(name)) {
             call.markSetOperation();
         }
-        final BoundExpression pushed = name == "dateadd" && expression instanceof FunctionExpression call
+        final BoundExpression pushed = role == CALL_PROJECTED_OFFSET && expression instanceof FunctionExpression call
                 ? ctx.planNodes.functions.next().ofProjectedOffset(call) : expression;
         push(pushed, callLeafMark());
         return pushed;
@@ -1503,15 +1474,8 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             throw new IllegalStateException("bound expression replacement input has changed");
         }
         final int mark = leafMark();
-        final Function leaf;
-        if (BindableColumn.isBindableType(column.getDataType())) {
-            final BindableColumn bindable = BindableColumn.newInstance(column.getColumnId(), column.getDataType(), input.isSymbolTableStatic(index));
-            scope.currentPreparation.leaves.add(bindable);
-            leaf = bindable;
-        } else {
-            leaf = FunctionInstantiator.createColumnFunction(position, index, column.getDataType(), input);
-            scope.currentPreparation.isRebuildRequired = true;
-        }
+        final Function leaf = scope.currentPreparation.addColumn(
+                FunctionInstantiator.createColumnLeaf(position, column.getColumnId(), index, column.getDataType(), input));
         push(ctx.planNodes.columns.next().of(column.getColumnId(), column.getDataType(), position,
                 column.isDirectReference(), column.isCast()), mark);
         return leaf;
@@ -1538,9 +1502,8 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
 
     private void replaceExactTemporalConstant(ObjList<Function> args, int index, int type, int operandType, TimestampDriver driver) throws NumericException {
         final long value = temporalConstantValue(args, index, type);
-        final long ceil = driver.ceilFrom(value, type);
-        if (value != Numbers.LONG_NULL && ceil == driver.floorFrom(value, type)) {
-            replaceTemporalConstant(args, index, ceil, operandType, true);
+        if (value != Numbers.LONG_NULL && driver.isExactFrom(value, type)) {
+            replaceTemporalConstant(args, index, driver.ceilFrom(value, type), operandType, true);
         }
     }
 
@@ -1597,25 +1560,21 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             }
             FunctionResolver.wrapRuntimeConstants(args);
         }
-        FunctionFactoryDescriptor overload;
-        do {
-            if (role == CALL_WINDOW_ROOT) {
-                try {
-                    validateSubsampleArguments(ctx.scope().windowRoot, args, positions);
-                } catch (Throwable th) {
-                    Misc.freeObjList(args, th);
-                    throw th;
-                }
+        if (role == CALL_WINDOW_ROOT) {
+            try {
+                validateSubsampleArguments(ctx.scope().bindingRoot, args, positions);
+            } catch (Throwable th) {
+                Misc.freeObjList(args, th);
+                throw th;
             }
-            final Function cast = resolver.resolveCast(name, args, literal, literalPosition, sqlExecutionContext);
-            if (cast != null) {
-                return cast == args.getQuick(0) ? returnCastArgument(cast, args, position) : captureConstant(cast, position, null);
-            }
-            overload = resolver.selectOverload(name, position, args, positions, sqlExecutionContext);
-        } while (overload == null);
+        }
+        final Function cast = resolver.resolveCastOrOverload(name, position, args, positions, literal, literalPosition, sqlExecutionContext);
+        if (cast != null) {
+            return cast == args.getQuick(0) ? returnCastArgument(cast, args, position) : captureConstant(cast, position, null);
+        }
+        final FunctionFactoryDescriptor overload = resolver.getSelectedOverload();
         validateFactory(overload, role, position, args);
-        convertTimestampText(overload, name, args, positions);
-        resolver.coerceArguments(overload, position, name, args, positions, sqlExecutionContext);
+        resolver.coerceArguments(overload, position, name, args, positions, this, sqlExecutionContext);
         captureImplicitConversions(args, positions);
         return createFunction(overload, name, position, role, isSetOperation, args, positions);
     }
@@ -1747,35 +1706,6 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         return text != null ? IntervalUtils.literalTimestampType(driver, text) : ColumnType.UNDEFINED;
     }
 
-    /**
-     * The error of a comparison of a TIMESTAMP with constant text that does not parse as a timestamp. Interval
-     * extraction over a designated timestamp once raised these messages, so a comparison reports them wherever it
-     * binds: {@code =}, {@code !=} and {@code <>} report
-     * {@code invalid timestamp} for a literal, otherwise {@code Invalid date [str=text]}, and for text with
-     * {@code ;} {@code not a timestamp, use IN keyword with intervals} for a literal, otherwise
-     * {@code Not a date, use IN keyword with intervals}; a range comparison reports {@code Invalid date [str=text]}
-     * with a literal quoted; a BETWEEN bound reports a bare {@code Invalid date} for a literal. A comparison of a
-     * DATE, which interval extraction never implements, and any other call report {@code Invalid date [str=text]}.
-     */
-    private SqlException timestampTextError(CharSequence operator, int index, CharSequence text, int position) {
-        final boolean isBetween = SqlKeywords.isBetweenKeyword(operator);
-        if (!isBetween && !isTemporalComparisonOperator(operator)
-                || arguments.getQuick(isBetween ? 0 : 1 - index).getDataType() == ColumnType.DATE) {
-            return SqlException.invalidDate(text, position);
-        }
-        final boolean isLiteral = arguments.getQuick(index) instanceof ConstantExpression constant && IntervalExtractor.isStringLiteral(constant);
-        if (isBetween) {
-            return isLiteral ? SqlException.invalidDate(position) : SqlException.invalidDate(text, position);
-        }
-        if (Chars.equals(operator, '=') || isNotEqualsOperator(operator)) {
-            if (Chars.indexOf(text, ';') >= 0) {
-                return SqlException.$(position, isLiteral ? "not a timestamp, use IN keyword with intervals" : "Not a date, use IN keyword with intervals");
-            }
-            return isLiteral ? SqlException.$(position, "invalid timestamp") : SqlException.invalidDate(text, position);
-        }
-        return isLiteral ? SqlException.position(position).put("Invalid date [str='").put(text).put("']") : SqlException.invalidDate(text, position);
-    }
-
     private TypeExpression type(Function function, int position) {
         return switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.BOOLEAN, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE,
@@ -1803,7 +1733,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         if (role != CALL_AGGREGATE_ROOT && role != CALL_WINDOW_ROOT && factory.isGroupBy()) {
             final SqlException exception = role != CALL_ROOT
                     ? SqlException.$(position, "Aggregate function cannot be passed as an argument")
-                    : scope.isBindingPredicate ? SqlException.$(position, "boolean expression expected")
+                    : scope.bindingRole == BindingRole.PREDICATE ? SqlException.$(position, "boolean expression expected")
                       : SqlException.$(position, "aggregate functions are not allowed in this context");
             Misc.freeObjList(args, exception);
             throw exception;
@@ -1825,7 +1755,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
             throw exception;
         }
         if (role == CALL_AGGREGATE_ROOT && !factory.isGroupBy()
-                && !(scope.isBindingGroupByExpression && overload.isArrayElementWiseScalar())) {
+                && !(scope.bindingRole == BindingRole.GROUP_BY_EXPRESSION && overload.isArrayElementWiseScalar())) {
             final IllegalStateException exception = new IllegalStateException("aggregate root is bound to a non-aggregate factory");
             Misc.freeObjList(args, exception);
             throw exception;
@@ -1854,7 +1784,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         if (node.type == ExpressionNode.QUERY) {
             return;
         }
-        if (node.windowExpression != null && node != ctx.scope().windowRoot
+        if (node.windowExpression != null && node != windowRoot()
                 || node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.CONSTANT
                 && node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION
                 && node.type != ExpressionNode.BIND_VARIABLE && node.type != ExpressionNode.MEMBER_ACCESS
@@ -1944,6 +1874,11 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         }
     }
 
+    private ExpressionNode windowRoot() {
+        final BindScope scope = ctx.scope();
+        return scope.bindingRole == BindingRole.WINDOW ? scope.bindingRoot : null;
+    }
+
     private ExpressionNode wrapTimestampColumn(ExpressionNode node, CharSequence unit, CharSequence stride, int timestampIndex) {
         if (node == null) {
             return null;
@@ -1961,6 +1896,7 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         dateadd.args.add(node);
         dateadd.args.add(ctx.planNodes.syntheticNodes.next().of(ExpressionNode.CONSTANT, stride, 0, node.position));
         dateadd.args.add(ctx.planNodes.syntheticNodes.next().of(ExpressionNode.CONSTANT, unit, 0, node.position));
+        scope.projectedOffsets.add(dateadd);
         return dateadd;
     }
 
@@ -2095,26 +2031,6 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
         return false;
     }
 
-    /**
-     * Returns a borrowed converted root; its prepared slot retains ownership.
-     */
-    Function prepareUpdateAssignment(BoundExpression expression, int targetType, SqlExecutionContext executionContext) throws SqlException {
-        final PreparedFunctions.Entry entry = ctx.preparedFunctions.findOwned(expression);
-        if (entry == null) {
-            throw new IllegalStateException("UPDATE assignment is not owned");
-        }
-        if (entry.updateTargetType >= 0) {
-            throw new IllegalStateException("UPDATE assignment already prepared");
-        }
-        final int slot = ctx.preparedFunctions.reserve();
-        final Function original = ctx.preparedFunctions.detach(entry);
-        // convertUpdateFunction() frees the original root when the conversion fails
-        final Function function = FunctionInstantiator.convertUpdateFunction(resolver, original, targetType, expression.getPosition(), executionContext);
-        ctx.preparedFunctions.own(entry, slot, function);
-        entry.updateTargetType = targetType;
-        return function;
-    }
-
     BoundExpression toBooleanSubquery(BoundExpression expression) {
         if (expression instanceof CursorExpression cursor && ColumnType.tagOf(cursor.getPlan().getOutput().getColumnCount() == 1
                 ? cursor.getPlan().getOutput().getColumnType(0) : ColumnType.UNDEFINED) == ColumnType.BOOLEAN) {
@@ -2140,5 +2056,17 @@ public final class FunctionBinder implements CallBinder, PostOrderTreeTraversalA
                     .put(" fill is not yet implemented [function=").put(aggregateNode)
                     .put(", class=").put(function.getClass().getName()).put(']');
         }
+    }
+
+    /**
+     * The place of the root a binding binds in its statement, which decides the rules of its calls.
+     */
+    enum BindingRole {
+        AGGREGATE,
+        GROUP_BY_EXPRESSION,
+        PREDICATE,
+        SCALAR,
+        UPDATE_ASSIGNMENT,
+        WINDOW
     }
 }

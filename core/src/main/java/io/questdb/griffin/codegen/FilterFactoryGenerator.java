@@ -167,18 +167,16 @@ final class FilterFactoryGenerator {
         if (filter.isRuntimeConstant()) {
             return new RuntimeConstGateRecordCursorFactory(base, filter);
         }
+        if (!isParallel) {
+            return generateJavaFilter(base, filter, false, null, null, null, 0, false, executionContext);
+        }
         final IntHashSet columns = new IntHashSet();
         try {
-            if (isParallel) {
-                collectColumnIndexes(predicate, input, columns);
-            }
+            collectColumnIndexes(predicate, input, columns);
         } catch (Throwable th) {
             Misc.free(filter, th);
             Misc.free(base, th);
             throw th;
-        }
-        if (!isParallel) {
-            return generateJavaFilter(base, filter, false, null, null, null, 0, false, executionContext);
         }
         final RecordCursorFactory jitFactory = tryGenerateJitFilter(
                 frame, base, filter, columns, executionContext,
@@ -444,27 +442,14 @@ final class FilterFactoryGenerator {
             return null;
         }
         final PreparedFilter jit = frame.pushPreparedFilter();
-        ObjList<Function> workers = null;
-        Function limit = null;
-        final int limitPosition;
         try {
             compileJit(jit, base, predicate, input, executionContext);
-            if (limitCount != null) {
-                limit = instantiator.instantiate(limitCount, input, executionContext);
-                limitPosition = limitCount.getPosition();
-            } else {
-                limitPosition = 0;
-            }
-            LOG.debug().$("JIT enabled for (sub)query [fd=").$(executionContext.getRequestFd()).I$();
-            workers = instantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
-                    executionContext.getSharedQueryWorkerCount(), executionContext);
         } catch (SqlException | LimitOverflowException decline) {
-            Throwable cleanup = Misc.freeBestEffort(null, limit);
-            cleanup = Misc.freeObjListBestEffort(cleanup, workers);
+            Throwable cleanup = null;
             try {
                 frame.popPreparedFilter();
             } catch (Throwable th) {
-                cleanup = Misc.foldCleanupFailure(cleanup, th);
+                cleanup = Misc.foldCleanupFailure(null, th);
             }
             if (cleanup != null) {
                 decline.addSuppressed(cleanup);
@@ -476,6 +461,25 @@ final class FilterFactoryGenerator {
                     .$("JIT cannot be applied to (sub)query [ex=").$safe(decline.getFlyweightMessage())
                     .$(", fd=").$(executionContext.getRequestFd()).I$();
             return null;
+        } catch (Throwable th) {
+            frame.popPreparedFilter(th);
+            Misc.free(filter, th);
+            Misc.free(base, th);
+            throw th;
+        }
+        LOG.debug().$("JIT enabled for (sub)query [fd=").$(executionContext.getRequestFd()).I$();
+        ObjList<Function> workers = null;
+        Function limit = null;
+        final int limitPosition;
+        try {
+            if (limitCount != null) {
+                limit = instantiator.instantiate(limitCount, input, executionContext);
+                limitPosition = limitCount.getPosition();
+            } else {
+                limitPosition = 0;
+            }
+            workers = instantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
+                    executionContext.getSharedQueryWorkerCount(), executionContext);
         } catch (Throwable th) {
             Misc.freeObjList(workers, th);
             Misc.free(limit, th);

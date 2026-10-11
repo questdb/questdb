@@ -62,9 +62,9 @@ import java.io.Closeable;
  * sub-query, which re-enters generation before the outer call finishes, so the generator keeps
  * one frame per nesting depth and passes it explicitly to the operator generators, which keep
  * no state across a nested generation. The frame owns the map key and value types, the two
- * column filters and the symbol-as-string set that an operator fills before it instantiates
- * functions and reads after, so a sub-query generated in between, one frame deeper, cannot
- * overwrite them.
+ * column filters, the symbol-as-string set and the join key layout that an operator fills before
+ * it instantiates functions and reads after, so a sub-query generated in between, one frame
+ * deeper, cannot overwrite them.
  */
 final class GenerationFrame implements Closeable, Mutable {
     final IntList columnReferenceCounts = new IntList();
@@ -73,6 +73,7 @@ final class GenerationFrame implements Closeable, Mutable {
     final TableFunctionSources functionSources;
     final InstantiatedIntervalBounds intervalBounds;
     final IntervalExtractor intervals;
+    final JoinKeyLayout joinKeys;
     final IntList keySlots = new IntList();
     final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     final LongList latestPrefixes = new LongList();
@@ -90,7 +91,9 @@ final class GenerationFrame implements Closeable, Mutable {
     final IntList sharedConsumerCounts = new IntList();
     final ObjList<RecordCursorFactory> sharedFactories = new ObjList<>();
     final ObjList<JoinInput> sharedSources = new ObjList<>();
+    final ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
     final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+    final OutputSchema windowChainSchema = new OutputSchema();
     final ArrayColumnTypes windowChainTypes = new ArrayColumnTypes();
     final IntList windowDirections = new IntList();
     final ObjObjHashMap<IntList, ObjList<WindowFunction>> windowGroups = new ObjObjHashMap<>();
@@ -105,7 +108,6 @@ final class GenerationFrame implements Closeable, Mutable {
     final BitSet writeSymbolAsString = new BitSet();
     private final ObjList<PreparedFilter> preparedFilters = new ObjList<>();
     private final ObjList<TableColumnMetadata> projectionSlotColumns = new ObjList<>();
-    boolean isJoinSlaveInput;
     Function limitHi;
     Function limitLo;
     RecordCursorFactory sharedHeadFactory;
@@ -127,6 +129,7 @@ final class GenerationFrame implements Closeable, Mutable {
         this.functionSources = functionSources;
         this.intervalBounds = new InstantiatedIntervalBounds(functionInstantiator);
         this.intervals = new IntervalExtractor(configuration, tmpSink, tmpLongs);
+        this.joinKeys = new JoinKeyLayout(listColumnFilterA, listColumnFilterB);
         this.overrideIntervals = new IntervalExtractor(configuration, tmpSink, tmpLongs);
     }
 
@@ -141,7 +144,8 @@ final class GenerationFrame implements Closeable, Mutable {
         listColumnFilterB.clear();
         patternArguments.clear();
         writeSymbolAsString.clear();
-        isJoinSlaveInput = false;
+        joinKeys.clear();
+        slaveTypes.clear();
         limitHi = null;
         limitLo = null;
         latestPrefixes.clear();
@@ -156,6 +160,7 @@ final class GenerationFrame implements Closeable, Mutable {
         setOperationHeads.clear();
         setOperationPlans.clear();
         projectionScopeMetadata.clear();
+        windowChainSchema.clear();
         windowChainTypes.clear();
         windowDirections.clear();
         windowGroups.clear();

@@ -73,6 +73,7 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
@@ -106,6 +107,7 @@ public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
+    private static final IntHashSet castTargetTags = new IntHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -115,7 +117,6 @@ public class SqlParser {
     private static final int VIEW_LEXER_INITIAL_POOL_CAPACITY = 16;
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
-    private final AliasBaseSink aliasBaseSink = new AliasBaseSink();
     private final LowerCaseCharSequenceHashSet aliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final CairoEngine cairoEngine;
@@ -461,14 +462,31 @@ public class SqlParser {
         }
     }
 
-    private static void assertCastType(ExpressionNode typeNode, int position) throws SqlException {
+    static boolean isCastTarget(CharSequence typeName) {
+        final short tag = ColumnType.tagOf(Chars.isQuoted(typeName) ? typeName.subSequence(1, typeName.length() - 1) : typeName);
+        return (tag >= ColumnType.BOOLEAN && tag <= ColumnType.BINARY) || castTargetTags.contains(tag)
+                || startsWithDecimalKeyword(typeName) || isNumericKeyword(typeName);
+    }
+
+    /**
+     * Validates a CAST target and maps PostgreSQL type aliases to native type names in place.
+     * A declared-variable reference is left for variable substitution to normalize.
+     */
+    static void normalizeCastType(ExpressionNode typeNode) throws SqlException {
         final boolean isTypeName = typeNode.paramCount == 0
                 && typeNode.queryModel == null
                 && (typeNode.type == ExpressionNode.LITERAL
                 || typeNode.type == ExpressionNode.BIND_VARIABLE
                 || (typeNode.type == ExpressionNode.CONSTANT && (startsWithGeoHashKeyword(typeNode.token) || startsWithDecimalKeyword(typeNode.token))));
         if (!isTypeName) {
-            throw SqlException.$(position, "type definition is expected");
+            throw SqlException.$(typeNode.position, "type definition is expected");
+        }
+        if (typeNode.type == ExpressionNode.CONSTANT || isDeclaredVariableReference(typeNode)) {
+            return;
+        }
+        rewritePgCastType(typeNode);
+        if (!isCastTarget(typeNode.token)) {
+            throw SqlException.$(typeNode.position, "unsupported cast");
         }
     }
 
@@ -512,6 +530,10 @@ public class SqlParser {
             }
         }
         return false;
+    }
+
+    private static boolean isDeclaredVariableReference(ExpressionNode node) {
+        return node.token != null && !node.isQuoted && Chars.startsWith(node.token, '@');
     }
 
     private static boolean isJsonUnnestSupportedType(int type) {
@@ -597,6 +619,57 @@ public class SqlParser {
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
         return sqlParserCallback.parseCreateViewExt(lexer, executionContext, builder, nextToken);
+    }
+
+    private static boolean rewritePgCast0(ExpressionNode typeNode, String srcTypePrefix, short type) {
+        CharSequence token = typeNode.token;
+        if (!Chars.startsWithLowerCase(token, srcTypePrefix)) {
+            return false;
+        }
+
+        int len = token.length();
+        int prefixLen = srcTypePrefix.length();
+        int rem = len - prefixLen;
+
+        if (rem == 0) {
+            // full match. e.g. replacing 'float8' with 'double'
+            typeNode.token = ColumnType.nameOf(type);
+            return true;
+        }
+
+        // src has a suffix. it could be an array suffix. consider 'float8[][]' -> 'double[][]'
+        if (rem % 2 == 0) {
+            // suffix must be even, since square brackets come in pairs
+            int dims = rem / 2;
+            String suffix = ColumnType.ARRAY_DIM_SUFFIX[dims];
+            if (Chars.endsWith(token, suffix)) {
+                typeNode.token = ColumnType.nameOf(ColumnType.encodeArrayType(type, dims));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // rewrites postgres types such as "float8" to our native "double" type
+    // This also applies to array types: "float8[]" -> "double[]"
+    // or "double precision[][]" -> "double[][]"
+    private static void rewritePgCastType(ExpressionNode typeNode) {
+        if (rewritePgCast0(typeNode, "float8", ColumnType.DOUBLE)) {
+            return;
+        }
+        if (rewritePgCast0(typeNode, "float4", ColumnType.FLOAT)) {
+            return;
+        }
+        if (rewritePgCast0(typeNode, "int4", ColumnType.INT)) {
+            return;
+        }
+        if (rewritePgCast0(typeNode, "int8", ColumnType.LONG)) {
+            return;
+        }
+        if (rewritePgCast0(typeNode, "int2", ColumnType.SHORT)) {
+            return;
+        }
+        rewritePgCast0(typeNode, "double precision", ColumnType.DOUBLE);
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
@@ -836,9 +909,7 @@ public class SqlParser {
         int pos = lexer.lastTokenPosition();
         assertNameIsQuotedOrNotAKeyword(tok, pos);
         validateLiteral(pos, tok);
-        final ExpressionNode literal = nextLiteral(GenericLexer.immutableOf(GenericLexer.unquote(tok)), pos);
-        literal.isQuoted = Chars.isQuoted(tok);
-        return rewriteDeclaredVariables(literal, decls, null);
+        return rewriteDeclaredVariables(nextQuotableLiteral(tok, pos), decls, null);
     }
 
     private long expectLong(GenericLexer lexer) throws SqlException {
@@ -944,18 +1015,6 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'zone' expected");
     }
 
-    private @Nullable TableToken findViewNotShadowedByCte(
-            CharSequence tok,
-            LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses
-    ) {
-        final CharSequence name = unquote(tok);
-        if (withClauses.contains(name)) {
-            return null;
-        }
-        final TableToken tt = cairoEngine.getTableTokenIfExists(name);
-        return tt != null && tt.isView() ? tt : null;
-    }
-
     private void generateColumnAlias(GenericLexer lexer, QueryColumn qc, boolean hasFrom) throws SqlException {
         CharSequence token = qc.getAst().token;
         if (qc.getAst().isWildcard() && !hasFrom) {
@@ -966,15 +1025,9 @@ public class SqlParser {
         if (configuration.isColumnAliasExpressionEnabled()) {
             final ExpressionNode ast = qc.getAst();
             final int maxLength = configuration.getColumnAliasGeneratedMaxSize();
-            final boolean isLiteral = ast.type == ExpressionNode.LITERAL;
-            alias = SqlUtil.createExprColumnAlias(
-                    characterStore,
-                    isLiteral ? ast.token : aliasBaseSink.render(characterStore, ast, maxLength),
-                    aliasMap,
-                    aliasSequenceMap,
-                    maxLength,
-                    !isLiteral
-            );
+            alias = ast.type == ExpressionNode.LITERAL
+                    ? SqlUtil.createExprColumnAlias(characterStore, ast.token, aliasMap, aliasSequenceMap, maxLength, false)
+                    : SqlUtil.createExprColumnAlias(characterStore, ast, aliasMap, aliasSequenceMap, maxLength);
         } else {
             if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOfLastUnquoted(token, '.') != -1) {
                 alias = createConstColumnAlias(aliasMap);
@@ -997,10 +1050,30 @@ public class SqlParser {
         return createTableOperationBuilder.getColumnModel(columnName);
     }
 
-    private boolean hasAggregateOrder(QueryModel model) {
-        final FunctionFactoryCache functionFactoryCache = cairoEngine.getFunctionFactoryCache();
+    private boolean hasAggregateOrWindow(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.FUNCTION) {
+            final FunctionFactoryCache functionFactoryCache = cairoEngine.getFunctionFactoryCache();
+            if (node.windowExpression != null || functionFactoryCache.isGroupBy(node.token) || functionFactoryCache.isPureWindowFunction(node.token)) {
+                return true;
+            }
+        }
+        if (node.paramCount < 3) {
+            return hasAggregateOrWindow(node.lhs) || hasAggregateOrWindow(node.rhs);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasAggregateOrWindow(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasAggregateOrWindowOrder(QueryModel model) {
         for (int i = 0, n = model.getOrderBy().size(); i < n; i++) {
-            if (hasGroupByFunc(sqlNodeStack, functionFactoryCache, model.getOrderBy().getQuick(i))) {
+            if (hasAggregateOrWindow(model.getOrderBy().getQuick(i))) {
                 return true;
             }
         }
@@ -1084,6 +1157,12 @@ public class SqlParser {
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
         return SqlUtil.nextLiteral(expressionNodePool, token, position);
+    }
+
+    private ExpressionNode nextQuotableLiteral(CharSequence tok, int position) {
+        final ExpressionNode literal = nextLiteral(unquote(tok), position);
+        literal.isQuoted = Chars.isQuoted(tok);
+        return literal;
     }
 
     private CharSequence notTermTok(GenericLexer lexer) throws SqlException {
@@ -3772,7 +3851,7 @@ public class SqlParser {
             CharSequence tok = optTok(lexer);
             if (tok == null || Chars.equals(tok, ';') || setOperations.excludes(tok)) {
                 lexer.unparseLast();
-                return model == prevModel ? model : wrapAggregateSetOrder(model, prevModel);
+                return model == prevModel ? model : wrapComputedSetOrder(model, prevModel);
             }
 
             if (prevModel.getNestedModel() != null) {
@@ -3836,13 +3915,13 @@ public class SqlParser {
     }
 
     /**
-     * A trailing ORDER BY with an aggregate orders the whole set result by groups of its
-     * rows, so the set operation becomes the source of SELECT * ... ORDER BY ... LIMIT.
+     * A trailing ORDER BY with an aggregate or a window function evaluates it over the whole set
+     * result, so the set operation becomes the source of SELECT * ... ORDER BY ... LIMIT.
      */
     @NotNull
-    private QueryModel wrapAggregateSetOrder(QueryModel model, QueryModel last) throws SqlException {
+    private QueryModel wrapComputedSetOrder(QueryModel model, QueryModel last) throws SqlException {
         final QueryModel ordering = last.getNestedModel();
-        if (ordering == null || !hasAggregateOrder(ordering)) {
+        if (ordering == null || !hasAggregateOrWindowOrder(ordering)) {
             return model;
         }
         final QueryModel from = queryModelPool.next();
@@ -4223,12 +4302,8 @@ public class SqlParser {
                 proposedNested = variableExpr.rhs.queryModel;
             }
 
-            final TableToken tt = findViewNotShadowedByCte(tok, masterModel.getWithClauses());
-            if (tt != null) {
-                compileViewQuery(model, tt, lexer.lastTokenPosition());
-                tok = setModelAliasAndTimestamp(lexer, model);
-                // expect "(" in case of sub-query
-            } else if (Chars.equals(tok, '(') || proposedNested != null) {
+            // expect "(" in case of sub-query
+            if (Chars.equals(tok, '(') || proposedNested != null) {
                 if (proposedNested == null) {
                     proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
                 }
@@ -5011,10 +5086,7 @@ public class SqlParser {
         joinModel.setJoinKeywordPosition(errorPos);
         joinModel.setIsCommaJoin(isCommaJoin);
 
-        final TableToken tt = findViewNotShadowedByCte(tok, parent);
-        if (tt != null) {
-            compileViewQuery(joinModel, tt, lexer.lastTokenPosition());
-        } else if (Chars.equals(tok, '(')) {
+        if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, parent, true, sqlParserCallback, decls));
         } else {
             lexer.unparseLast();
@@ -5050,7 +5122,7 @@ public class SqlParser {
                 // A join nested in a lambda sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)")
                 // leaves the outer operand on the shared arg stack; raise the floor so the drain
                 // cannot consume it, and reject unsupported ON-clause sub-queries at any depth.
-                expressionTreeBuilder.pushArgStackBottom();
+                expressionTreeBuilder.pushJoinOnClause();
                 try {
                     expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback, decls);
                     ExpressionNode expr;
@@ -5097,7 +5169,7 @@ public class SqlParser {
                     expressionTreeBuilder.reset();
                     throw e;
                 } finally {
-                    expressionTreeBuilder.popArgStackBottom();
+                    expressionTreeBuilder.popJoinOnClause();
                 }
                 break;
             default:
@@ -5404,14 +5476,12 @@ public class SqlParser {
             QueryColumn qc = pivotGroupByCols.getQuick(i);
             if (qc.getAlias() == null) {
                 hasNoAlias = true;
-                final int maxLength = configuration.getColumnAliasGeneratedMaxSize();
                 CharSequence alias = SqlUtil.createExprColumnAlias(
                         characterStore,
-                        aliasBaseSink.render(characterStore, qc.getAst(), maxLength),
+                        qc.getAst(),
                         pivotAliasMap,
                         aliasSequenceMap,
-                        maxLength,
-                        true
+                        configuration.getColumnAliasGeneratedMaxSize()
                 );
                 pivotAliasMap.add(alias);
                 qc.setAlias(alias, qc.getAst().position);
@@ -5852,7 +5922,7 @@ public class SqlParser {
         }
 
         // check if it's a decl
-        if (!expr.isQuoted && model.getDecls().contains(expr.token)) {
+        if (isDeclaredVariableReference(expr) && model.getDecls().contains(expr.token)) {
             if (expr.type == ExpressionNode.LITERAL) {
                 // replace it if so
                 expr = model.getDecls().get(expr.token).rhs;
@@ -5909,11 +5979,10 @@ public class SqlParser {
     private void parseTableName(GenericLexer lexer, QueryModel model) throws SqlException {
         CharSequence tok = tok(lexer, "expected a table name");
         tok = sansPublicSchema(tok, lexer);
-        final CharSequence tableName = assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
-        ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, tableName, 0, lexer.lastTokenPosition());
-        tableNameExpr.isQuoted = Chars.isQuoted(tok);
-        tableNameExpr = rewriteDeclaredVariables(tableNameExpr, model.getDecls(), null);
-        model.setTableNameExpr(tableNameExpr);
+        final int position = lexer.lastTokenPosition();
+        final ExpressionNode tableNameExpr = nextQuotableLiteral(tok, position);
+        assertNoDotsAndSlashes(tableNameExpr.token, position);
+        model.setTableNameExpr(rewriteDeclaredVariables(tableNameExpr, model.getDecls(), null));
     }
 
     private char parseTimeUnit(GenericLexer lexer) throws SqlException {
@@ -6564,67 +6633,13 @@ public class SqlParser {
 
     private void rewritePgCast(ExpressionNode node) throws SqlException {
         if (node.type == ExpressionNode.OPERATION && isColonColon(node.token)) {
-            assertCastType(node.rhs, node.rhs.position);
+            // In PG x::float casts x to "double precision" type
+            rewritePgCast0(node.rhs, "float", ColumnType.DOUBLE);
+            normalizeCastType(node.rhs);
             node.token = "cast";
             node.type = ExpressionNode.FUNCTION;
             node.rhs.type = ExpressionNode.CONSTANT;
-            rewritePgCastType(node.rhs);
         }
-    }
-
-    private boolean rewritePgCast0(ExpressionNode typeNode, String srcTypePrefix, short type) {
-        CharSequence token = typeNode.token;
-        if (!Chars.startsWithLowerCase(token, srcTypePrefix)) {
-            return false;
-        }
-
-        int len = token.length();
-        int prefixLen = srcTypePrefix.length();
-        int rem = len - prefixLen;
-
-        if (rem == 0) {
-            // full match. e.g. replacing 'float8' with 'double'
-            typeNode.token = ColumnType.nameOf(type);
-            return true;
-        }
-
-        // src has a suffix. it could be an array suffix. consider 'float8[][]' -> 'double[][]'
-        if (rem % 2 == 0) {
-            // suffix must be even, since square brackets come in pairs
-            int dims = rem / 2;
-            String suffix = ColumnType.ARRAY_DIM_SUFFIX[dims];
-            if (Chars.endsWith(token, suffix)) {
-                typeNode.token = ColumnType.nameOf(ColumnType.encodeArrayType(type, dims));
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // In PG x::float casts x to "double precision" type
-    // also, we have to rewrite postgres types such as "float8" to our native "double" type
-    // All of the above also applies to array types: "float8[]" -> "double[]"
-    // or "double precision[][]" -> "double[][]"
-    private void rewritePgCastType(ExpressionNode typeNode) {
-        if (rewritePgCast0(typeNode, "float", ColumnType.DOUBLE)) {
-            return;
-        }
-        if (rewritePgCast0(typeNode, "float8", ColumnType.DOUBLE)) {
-            return;
-        }
-        if (rewritePgCast0(typeNode, "float4", ColumnType.FLOAT)) {
-            return;
-        }
-        if (rewritePgCast0(typeNode, "int4", ColumnType.INT)) {
-            return;
-        }
-        if (rewritePgCast0(typeNode, "int8", ColumnType.LONG)) {
-            return;
-        }
-        if (rewritePgCast0(typeNode, "int2", ColumnType.SHORT)) {
-            return;
-        }
-        rewritePgCast0(typeNode, "double precision", ColumnType.DOUBLE);
     }
 
     /**
@@ -7250,10 +7265,10 @@ public class SqlParser {
 
         @Override
         public ExpressionNode visit(ExpressionNode node) throws SqlException {
-            final CharSequence token = node.token;
-            if (token == null || node.isQuoted || !Chars.startsWith(token, '@')) {
+            if (!isDeclaredVariableReference(node)) {
                 return node;
             }
+            final CharSequence token = node.token;
             if (exprTargetVariableName != null && Chars.equalsIgnoreCase(token, exprTargetVariableName)) {
                 throw SqlException.$(node.position, "variable cannot reference itself `").put(token).put('`');
             }
@@ -7270,9 +7285,11 @@ public class SqlParser {
         }
 
         private ExpressionNode castTypeOf(ExpressionNode value, int position) throws SqlException {
-            assertCastType(value, position);
-            final ExpressionNode typeNode = expressionNodePool.next().of(ExpressionNode.CONSTANT, value.token, value.precedence, position);
-            rewritePgCastType(typeNode);
+            final ExpressionNode typeNode = expressionNodePool.next().copyFrom(value);
+            typeNode.position = position;
+            rewritePgCast0(typeNode, "float", ColumnType.DOUBLE);
+            normalizeCastType(typeNode);
+            typeNode.type = ExpressionNode.CONSTANT;
             return typeNode;
         }
 
@@ -7287,6 +7304,15 @@ public class SqlParser {
     }
 
     static {
+        castTargetTags.add(ColumnType.UUID);
+        castTargetTags.add(ColumnType.IPv4);
+        castTargetTags.add(ColumnType.VARCHAR);
+        castTargetTags.add(ColumnType.ARRAY);
+        castTargetTags.add(ColumnType.REGCLASS);
+        castTargetTags.add(ColumnType.REGPROCEDURE);
+        castTargetTags.add(ColumnType.ARRAY_STRING);
+        castTargetTags.add(ColumnType.INTERVAL);
+
         tableAliasStop.add("where");
         tableAliasStop.add("latest");
         tableAliasStop.add("join");

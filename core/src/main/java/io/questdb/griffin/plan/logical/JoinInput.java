@@ -223,6 +223,13 @@ public final class JoinInput implements Mutable {
     }
 
     /**
+     * True when operator planning decided the algorithm of the step and the input that drives it.
+     */
+    public boolean isAlgorithmDecided() {
+        return algorithm != null && masterSide != null;
+    }
+
+    /**
      * True when the input reads columns of the inputs before it through {@link OuterColumnExpression}s, as a
      * LATERAL body does; decorrelation rewrites the step into an ordinary one before optimisation.
      */

@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.AliasBaseSink;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -70,7 +69,6 @@ import static io.questdb.griffin.bind.TemporalJoinBinder.windowJoinIndex;
 
 final class PivotBinder implements Mutable {
     private final AggregateBinder aggregateBinder;
-    private final AliasBaseSink aliasBaseSink = new AliasBaseSink();
     private final SqlBinder binder;
     private final CairoConfiguration configuration;
     private final BindContext ctx;
@@ -366,9 +364,8 @@ final class PivotBinder implements Mutable {
 
     private CharSequence pivotAlias(ExpressionNode expression) {
         final BindScope scope = ctx.scope();
-        final int maxLength = configuration.getColumnAliasGeneratedMaxSize();
-        final CharSequence alias = SqlUtil.createExprColumnAlias(ctx.characterStore, aliasBaseSink.render(ctx.characterStore, expression, maxLength),
-                scope.aliases, scope.aliasSequences, maxLength, true);
+        final CharSequence alias = SqlUtil.createExprColumnAlias(ctx.characterStore, expression, scope.aliases, scope.aliasSequences,
+                configuration.getColumnAliasGeneratedMaxSize());
         scope.aliases.add(alias);
         return alias;
     }

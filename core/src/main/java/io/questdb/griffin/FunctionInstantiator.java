@@ -39,7 +39,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.engine.functions.columns.RecordColumn;
@@ -174,25 +173,6 @@ public final class FunctionInstantiator implements Mutable {
         };
     }
 
-    /**
-     * Consumes the input and returns its only owning root.
-     */
-    public static Function convertUpdateFunction(
-            FunctionResolver resolver,
-            Function function,
-            int targetType,
-            int position,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (targetType >= 0 && function.getType() != targetType && !ColumnType.isBuiltInWideningCast(function.getType(), targetType)) {
-            final Function cast = resolver.createImplicitCast(position, function, targetType, executionContext);
-            if (cast != null) {
-                function = cast;
-            }
-        }
-        return targetType == ColumnType.SYMBOL && function instanceof NullConstant ? SymbolConstant.NULL : function;
-    }
-
     public static Function createColumnFunction(int position, int index, int type, OutputSchema input) throws SqlException {
         if (ColumnType.tagOf(type) != ColumnType.RECORD) {
             return FunctionResolver.createColumn(position, index, type, input.isSymbolTableStatic(index));
@@ -206,6 +186,16 @@ public final class FunctionInstantiator implements Mutable {
             metadata.add(new TableColumnMetadata(Chars.toString(record.getColumnName(i)), record.getColumnType(i)));
         }
         return new RecordColumn(index, metadata);
+    }
+
+    /**
+     * The function of a column a prepared root reads: a {@link BindableColumn} leaf the root relocates, or, for a
+     * type without one, a column fixed at its input position, which {@link PreparedFunctions.Entry#addColumn}
+     * makes the root rebuild.
+     */
+    public static Function createColumnLeaf(int position, int columnId, int index, int type, OutputSchema input) throws SqlException {
+        return BindableColumn.isBindableType(type) ? BindableColumn.newInstance(columnId, type, input.isSymbolTableStatic(index))
+                : createColumnFunction(position, index, type, input);
     }
 
     public void beginWorkerClones() {
@@ -235,21 +225,19 @@ public final class FunctionInstantiator implements Mutable {
     /**
      * Transfers the unchanged prepared closure once, after assigning its final
      * input positions. The caller owns the returned function, including on later
-     * cursor-construction failure. This overload requires an owned preparation;
-     * the context-taking overload can reconstruct additional consumers.
+     * cursor-construction failure. This overload requires an owned preparation the
+     * input can adopt; the context-taking overload rebuilds one that requires
+     * reconstruction and can reconstruct additional consumers.
      */
     public Function instantiate(BoundExpression expression, OutputSchema input) {
-        if (hasArrayColumnLayoutDependency(expression)) {
-            throw new IllegalStateException("array column function requires final-layout reconstruction");
-        }
         final PreparedFunctions.Entry entry = prepared.findOwned(expression, -1);
-        if (entry != null) {
-            if (entry.isRebuildRequired || entry.leaves.size() > 0 && requiresReconstruction(expression)) {
-                throw new IllegalStateException("bound function requires final-layout reconstruction");
-            }
-            return adoptPreparation(entry, input, null);
+        if (entry == null) {
+            throw new IllegalStateException("bound function is not owned");
         }
-        throw new IllegalStateException("bound function is not owned");
+        if (!isPreparationCompatible(entry, input, null)) {
+            throw new IllegalStateException("bound function requires final-layout reconstruction");
+        }
+        return adoptPreparation(entry, input);
     }
 
     /**
@@ -319,12 +307,12 @@ public final class FunctionInstantiator implements Mutable {
         final PreparedFunctions.Entry entry = prepared.findOwned(expression, targetType);
         if (entry != null) {
             if (isPreparationCompatible(entry, input, metadata)) {
-                return adoptPreparation(entry, input, metadata);
+                return adoptPreparation(entry, input);
             }
             Misc.free(prepared.detach(entry));
         }
-        return convertUpdateFunction(resolver, instantiate(expression, input, metadata, executionContext),
-                targetType, expression.getPosition(), executionContext);
+        return convertUpdateFunction(instantiate(expression, input, metadata, executionContext), targetType,
+                expression.getPosition(), executionContext);
     }
 
     /**
@@ -495,6 +483,26 @@ public final class FunctionInstantiator implements Mutable {
     }
 
     /**
+     * Converts the owned root of an UPDATE assignment for the target column type in place, so the generator adopts
+     * the converted root ({@link #instantiateUpdateAssignment}). Returns the converted root, which its prepared slot
+     * keeps owning.
+     */
+    public Function prepareUpdateAssignment(BoundExpression expression, int targetType, SqlExecutionContext executionContext) throws SqlException {
+        final PreparedFunctions.Entry entry = prepared.findOwned(expression);
+        if (entry == null) {
+            throw new IllegalStateException("UPDATE assignment is not owned");
+        }
+        if (entry.updateTargetType >= 0) {
+            throw new IllegalStateException("UPDATE assignment already prepared");
+        }
+        final int slot = prepared.reserve();
+        final Function function = convertUpdateFunction(prepared.detach(entry), targetType, expression.getPosition(), executionContext);
+        prepared.own(entry, slot, function);
+        entry.updateTargetType = targetType;
+        return function;
+    }
+
+    /**
      * Builds a call the binder typed without constructing it, under the binding input, when a parent must be
      * constructed while binding; its column leaves join {@code preparation} so the prepared root stays relocatable.
      */
@@ -547,38 +555,16 @@ public final class FunctionInstantiator implements Mutable {
         return !expression.walk(UNRELOCATABLE_CALLS);
     }
 
-    private Function adoptPreparation(PreparedFunctions.Entry entry, OutputSchema input, RecordMetadata metadata) {
-        assert !(entry.expression instanceof FunctionExpression call && call.isWindow()) : "bind-time window function is adopted";
+    /**
+     * Transfers a root {@link #isPreparationCompatible} admitted, its leaves at their input positions.
+     */
+    private Function adoptPreparation(PreparedFunctions.Entry entry, OutputSchema input) {
+        assert !(entry.getExpression() instanceof FunctionExpression call && call.isWindow()) : "bind-time window function is adopted";
         final Function root = prepared.detach(entry);
-        if (root.isConstant()) {
-            return root;
+        if (!root.isConstant()) {
+            entry.relocate(input);
         }
-        try {
-            assert PreparedFunctions.hasOnlyReadLeaves(entry) : "prepared leaf is not read by its description";
-            for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-                final BindableColumn leaf = entry.leaves.getQuick(k);
-                // Audited NULL folds close discarded operands. These are borrows,
-                // never separately owned leaves; a dead leaf needs no input slot.
-                if (leaf.isOpen()) {
-                    final int index = input.getColumnIndexById(leaf.getColumnId());
-                    if (index < 0 || input.getColumnType(index) != leaf.getType()
-                            || metadata != null && metadata.getColumnType(index) != leaf.getType()
-                            || leaf instanceof SymbolFunction symbol && symbol.isSymbolTableStatic() != (metadata == null ? input.isSymbolTableStatic(index) : metadata.isSymbolTableStatic(index))) {
-                        throw new IllegalStateException("bound function input has changed");
-                    }
-                }
-            }
-            for (int k = 0, count = entry.leaves.size(); k < count; k++) {
-                final BindableColumn leaf = entry.leaves.getQuick(k);
-                if (leaf.isOpen()) {
-                    leaf.setColumnIndex(input.getColumnIndexById(leaf.getColumnId()));
-                }
-            }
-            return root;
-        } catch (Throwable th) {
-            Misc.free(root, th);
-            throw th;
-        }
+        return root;
     }
 
     private void closePreparation(BoundExpression expression) {
@@ -586,6 +572,19 @@ public final class FunctionInstantiator implements Mutable {
         if (entry != null) {
             Misc.free(prepared.detach(entry));
         }
+    }
+
+    /**
+     * Consumes the input and returns its only owning root.
+     */
+    private Function convertUpdateFunction(Function function, int targetType, int position, SqlExecutionContext executionContext) throws SqlException {
+        if (targetType >= 0 && function.getType() != targetType && !ColumnType.isBuiltInWideningCast(function.getType(), targetType)) {
+            final Function cast = resolver.createImplicitCast(position, function, targetType, executionContext);
+            if (cast != null) {
+                function = cast;
+            }
+        }
+        return targetType == ColumnType.SYMBOL && function instanceof NullConstant ? SymbolConstant.NULL : function;
     }
 
     private boolean hasSharedBound(BoundExpression expression) {
@@ -619,7 +618,7 @@ public final class FunctionInstantiator implements Mutable {
             if (entry != null) {
                 // A column reference over metadata reads the metadata's column, as a fresh one below does.
                 if (isPreparationCompatible(entry, input, metadata) && (metadata == null || !(expression instanceof ColumnExpression))) {
-                    return adoptPreparation(entry, input, metadata);
+                    return adoptPreparation(entry, input);
                 }
                 Misc.free(prepared.detach(entry));
             }
@@ -635,19 +634,14 @@ public final class FunctionInstantiator implements Mutable {
                 }
                 return FunctionResolver.createColumn(column.getPosition(), index, metadata);
             }
+            if (preparation != null) {
+                return preparation.addColumn(createColumnLeaf(column.getPosition(), column.getColumnId(), index, column.getDataType(), input));
+            }
             if (ColumnType.isArray(column.getDataType()) || !BindableColumn.isBindableType(column.getDataType())) {
-                if (preparation != null) {
-                    preparation.isRebuildRequired = true;
-                }
                 return createColumnFunction(column.getPosition(), index, column.getDataType(), input);
             }
             final BindableColumn leaf = BindableColumn.newInstance(column.getColumnId(), column.getDataType(), input.isSymbolTableStatic(index));
-            if (preparation == null) {
-                leaf.setColumnIndex(index);
-            } else {
-                // Adoption assigns the final input position.
-                preparation.leaves.add(leaf);
-            }
+            leaf.setColumnIndex(index);
             return leaf;
         }
         if (expression instanceof ConstantExpression constant) {
@@ -750,25 +744,10 @@ public final class FunctionInstantiator implements Mutable {
     }
 
     private boolean isPreparationCompatible(PreparedFunctions.Entry entry, OutputSchema input, RecordMetadata metadata) {
-        if (entry.isRebuildRequired || hasArrayColumnLayoutDependency(entry.expression)
-                || entry.leaves.size() > 0 && requiresReconstruction(entry.expression)) {
-            return false;
-        }
-        assert PreparedFunctions.hasOnlyReadLeaves(entry) : "prepared leaf is not read by its description";
-        for (int i = 0, n = entry.leaves.size(); i < n; i++) {
-            final BindableColumn leaf = entry.leaves.getQuick(i);
-            if (leaf.isOpen() && leaf instanceof SymbolFunction symbol) {
-                final int index = input.getColumnIndexById(leaf.getColumnId());
-                if (index < 0 || input.getColumnType(index) != leaf.getType()
-                        || metadata != null && metadata.getColumnType(index) != leaf.getType()) {
-                    throw new IllegalStateException("bound function input has changed");
-                }
-                if (symbol.isSymbolTableStatic() != (metadata == null ? input.isSymbolTableStatic(index) : metadata.isSymbolTableStatic(index))) {
-                    return false;
-                }
-            }
-        }
-        return true;
+        final BoundExpression expression = entry.getExpression();
+        return !hasArrayColumnLayoutDependency(expression)
+                && (entry.leaves.size() == 0 || !requiresReconstruction(expression))
+                && entry.isRelocatable(input, metadata);
     }
 
     // A shared bound reads a TIMESTAMP value, so select the same operator's timestamp overload.

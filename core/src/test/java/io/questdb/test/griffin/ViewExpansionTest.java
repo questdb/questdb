@@ -336,6 +336,19 @@ public class ViewExpansionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewLatestByDeprecatedSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            createViews();
+            assertView("SELECT id, sym FROM lp_view_all LATEST BY sym", sqlExecutionContext, null, """
+                    id	sym
+                    2	A
+                    3	B
+                    4	C
+                    """);
+        });
+    }
+
+    @Test
     public void testViewLocalAndCallerErrorsKeepTheirPositions() throws Exception {
         assertMemoryLeak(() -> {
             createViews();

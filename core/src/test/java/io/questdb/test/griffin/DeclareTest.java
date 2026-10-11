@@ -234,6 +234,10 @@ public class DeclareTest extends AbstractSqlParserTest {
                     .fails(32, "type definition is expected");
             assertQuery("DECLARE @t := int SELECT 1 :: @u")
                     .fails(30, "tried to use undeclared variable `@u`");
+            assertQuery("DECLARE @t := bogus SELECT CAST(1 AS @t)")
+                    .fails(37, "unsupported cast");
+            assertQuery("DECLARE @t := bogus SELECT 1 :: @t")
+                    .fails(32, "unsupported cast");
         });
     }
 

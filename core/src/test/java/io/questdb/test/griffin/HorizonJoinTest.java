@@ -1219,6 +1219,63 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinMasterKeySharedBySymbolAndVarcharKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE hv (v VARCHAR, sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO hv VALUES ('X', 'X', 1, '2024-01-01T00:00:01')");
+            execute("INSERT INTO m VALUES ('X', '2024-01-01T00:00:10')");
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("""
+                        SELECT h.offset, avg(q.px)
+                        FROM m
+                        HORIZON JOIN hv q ON (m.s = q.v AND m.s = q.sym)
+                        LIST (0s) AS h
+                        GROUP BY h.offset
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                offset\tavg
+                                0\t1.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinMasterKeySharedBySymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE h (a SYMBOL, b SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO h VALUES
+                        ('X', 'yy', 7, '2024-01-01T00:00:00'),
+                        ('zz', 'X', 8, '2024-01-01T00:00:00'),
+                        ('X', 'X', 1, '2024-01-01T00:00:01')
+                    """);
+            execute("INSERT INTO m VALUES ('X', '2024-01-01T00:00:10')");
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("""
+                        SELECT h.offset, avg(q.px)
+                        FROM m
+                        HORIZON JOIN h q ON (m.s = q.a AND m.s = q.b)
+                        LIST (0s) AS h
+                        GROUP BY h.offset
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                offset\tavg
+                                0\t1.0
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
@@ -1559,6 +1616,37 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     .returns("""
                             avg\tsum
                             110.0\t30.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedCountOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE p (sym SYMBOL, px DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute(
+                    """
+                            INSERT INTO p VALUES
+                                ('AX', 10, '1970-01-01T00:00:00.000000Z'),
+                                ('BX', 100, '1970-01-01T00:00:01.000000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                                ('AX', '1970-01-01T00:00:01.000000Z'),
+                                ('BX', '1970-01-01T00:00:02.000000Z'),
+                                ('CX', '1970-01-01T00:00:03.000000Z')
+                            """
+            );
+            assertQuery("SELECT count() FROM t HORIZON JOIN p ON (t.sym = p.sym) LIST (0s, 5s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            6
                             """);
         });
     }
@@ -5954,6 +6042,40 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             avg_bid\tavg_ask
                             125.0\t126.0
                             """);
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinMasterKeySharedByTwoKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE h (a SYMBOL, b SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE hv (v VARCHAR, sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO h VALUES
+                        ('X', 'yy', 7, '2024-01-01T00:00:00'),
+                        ('zz', 'X', 8, '2024-01-01T00:00:00'),
+                        ('X', 'X', 1, '2024-01-01T00:00:01')
+                    """);
+            execute("INSERT INTO hv VALUES ('X', 'X', 2, '2024-01-01T00:00:01')");
+            execute("INSERT INTO m VALUES ('X', '2024-01-01T00:00:10')");
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("""
+                        SELECT h.offset, avg(q.px) q_px, avg(r.px) r_px
+                        FROM m
+                        HORIZON JOIN h q ON (m.s = q.a AND m.s = q.b)
+                        HORIZON JOIN hv r ON (m.s = r.v AND m.s = r.sym)
+                        LIST (0s) AS h
+                        GROUP BY h.offset
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                offset\tq_px\tr_px
+                                0\t1.0\t2.0
+                                """);
+            }
         });
     }
 

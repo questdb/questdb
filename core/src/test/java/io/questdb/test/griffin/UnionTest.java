@@ -1258,6 +1258,25 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllOrderByWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT x FROM long_sequence(2) UNION ALL SELECT x + 10 FROM long_sequence(2) ORDER BY -row_number() OVER (ORDER BY x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            12
+                            11
+                            2
+                            1
+                            """);
+            assertQuery("SELECT x, row_number() OVER () r FROM long_sequence(2) UNION ALL SELECT x, row_number() OVER () r FROM long_sequence(2) ORDER BY row_number() OVER ()")
+                    .noLeakCheck()
+                    .fails(129, "window function called in non-window context, make sure to add OVER clause");
+        });
+    }
+
+    @Test
     public void testUnionAllSupportedTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """

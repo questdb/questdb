@@ -32,7 +32,6 @@ import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.InvalidColumnException;
-import io.questdb.griffin.AliasBaseSink;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
@@ -116,7 +115,6 @@ public class SqlUtilTest {
     public void testExprColumnAliasBoundedBaseMatchesFullBase() {
         final Rnd rnd = TestUtils.generateRandom(null);
         final char[] alphabet = {'a', 'b', '.', '"', ' '};
-        final AliasBaseSink aliasBaseSink = new AliasBaseSink();
         final StringSink sink = new StringSink();
         for (int maxLength : new int[]{4, 8, 64}) {
             final CharacterStore fullStore = new CharacterStore(64, 4);
@@ -144,14 +142,7 @@ public class SqlUtilTest {
                 final String base = sink.toString();
                 final ExpressionNode node = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, base, 0, 0);
                 final CharSequence expected = SqlUtil.createExprColumnAlias(fullStore, base, fullAliases, fullSequences, maxLength, true);
-                final CharSequence actual = SqlUtil.createExprColumnAlias(
-                        boundedStore,
-                        aliasBaseSink.render(boundedStore, node, maxLength),
-                        boundedAliases,
-                        boundedSequences,
-                        maxLength,
-                        true
-                );
+                final CharSequence actual = SqlUtil.createExprColumnAlias(boundedStore, node, boundedAliases, boundedSequences, maxLength);
                 TestUtils.assertEquals(base, expected, actual);
                 fullAliases.add(expected);
                 boundedAliases.add(actual);

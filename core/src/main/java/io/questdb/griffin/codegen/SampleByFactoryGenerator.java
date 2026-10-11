@@ -46,7 +46,6 @@ import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
@@ -63,12 +62,7 @@ import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByUtcBoundFunction;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
-import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
-import io.questdb.griffin.engine.orderby.EncodedSortRecordCursorFactory;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
-import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
-import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -107,7 +101,7 @@ final class SampleByFactoryGenerator {
     private final IntList firstLastPositions = new IntList();
     private final FunctionResolver functionResolver;
     private final IntList groupByFunctionPositions = new IntList();
-    private final RecordComparatorCompiler recordComparatorCompiler;
+    private final SortFactoryGenerator sortGenerator;
 
     SampleByFactoryGenerator(
             CairoConfiguration configuration,
@@ -115,14 +109,14 @@ final class SampleByFactoryGenerator {
             FunctionResolver functionResolver,
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
-            RecordComparatorCompiler recordComparatorCompiler
+            SortFactoryGenerator sortGenerator
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
         this.functionResolver = functionResolver;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
-        this.recordComparatorCompiler = recordComparatorCompiler;
+        this.sortGenerator = sortGenerator;
     }
 
     private static void assignUndefinedType(Function func, int type, SqlExecutionContext context) throws SqlException {
@@ -382,68 +376,20 @@ final class SampleByFactoryGenerator {
                 final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
                 listColumnFilterA.clear();
                 listColumnFilterA.add(timestampIndex + 1); // positive = ascending
-                entityColumnFilter.of(sortMetadata.getColumnCount());
                 final int sortStrategy = configuration.getSampleByFillSortStrategy();
-                switch (sortStrategy) {
-                    case SampleBySortStrategy.LIGHT_ENCODED -> {
-                        assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
-                                && groupByFactory.recordCursorSupportsRandomAccess();
-                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
-                        final RecordCursorFactory base = groupByFactory;
-                        groupByFactory = null;
-                        groupByFactory = new EncodedSortLightRecordCursorFactory(
-                                configuration,
-                                sortMetadata,
-                                base,
-                                filterCopy
-                        );
-                    }
-                    case SampleBySortStrategy.FULL_ENCODED -> {
-                        assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
-                        final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter);
-                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
-                        final RecordCursorFactory base = groupByFactory;
-                        groupByFactory = null;
-                        groupByFactory = new EncodedSortRecordCursorFactory(
-                                configuration,
-                                sortMetadata,
-                                base,
-                                recordSink,
-                                filterCopy
-                        );
-                    }
-                    case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
-                        assert groupByFactory.recordCursorSupportsRandomAccess();
-                        final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
-                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
-                        final RecordCursorFactory base = groupByFactory;
-                        groupByFactory = null;
-                        groupByFactory = new SortedLightRecordCursorFactory(
-                                configuration,
-                                sortMetadata,
-                                base,
-                                comparator,
-                                filterCopy
-                        );
-                    }
-                    case SampleBySortStrategy.FULL_RECORDCHAIN -> {
-                        final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter);
-                        final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
-                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
-                        final RecordCursorFactory base = groupByFactory;
-                        groupByFactory = null;
-                        groupByFactory = new SortedRecordCursorFactory(
-                                configuration,
-                                sortMetadata,
-                                base,
-                                recordSink,
-                                comparator,
-                                filterCopy
-                        );
-                    }
+                final boolean isEncoded = switch (sortStrategy) {
+                    case SampleBySortStrategy.LIGHT_ENCODED, SampleBySortStrategy.FULL_ENCODED -> true;
+                    case SampleBySortStrategy.LIGHT_RECORDCHAIN, SampleBySortStrategy.FULL_RECORDCHAIN -> false;
                     default -> throw new IllegalStateException("unknown sample-by fill sort strategy: "
                             + SampleBySortStrategy.toString(sortStrategy));
-                }
+                };
+                final boolean isMaterialized = sortStrategy == SampleBySortStrategy.FULL_ENCODED
+                        || sortStrategy == SampleBySortStrategy.FULL_RECORDCHAIN;
+                assert !isEncoded || SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
+                assert isMaterialized || groupByFactory.recordCursorSupportsRandomAccess();
+                final RecordCursorFactory base = groupByFactory;
+                groupByFactory = null;
+                groupByFactory = sortGenerator.generateSort(sortMetadata, base, listColumnFilterA, null, null, -1, isEncoded, isMaterialized);
             }
 
             if (ParanoiaState.PLAN_PARANOIA_MODE && needsPrevPositioning && !isSampleBySource && !groupByFactory.recordCursorSupportsRandomAccess()) {

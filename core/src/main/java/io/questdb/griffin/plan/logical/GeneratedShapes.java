@@ -59,6 +59,19 @@ public final class GeneratedShapes {
     }
 
     /**
+     * The factory the generator builds for the aggregate.
+     */
+    public static AggregateFactory aggregateFactory(AggregatePlan aggregate) {
+        if (postingDistinctScan(aggregate) != null) {
+            return AggregateFactory.POSTING_DISTINCT;
+        }
+        if (aggregate.getInput() instanceof HorizonJoinPlan) {
+            return AggregateFactory.HORIZON;
+        }
+        return LogicalPlans.isCount(aggregate) ? AggregateFactory.COUNT : AggregateFactory.GROUP_BY;
+    }
+
+    /**
      * The name the generator's factory gives column {@code index} of the plan: a count aggregate, read through
      * filters, names its column {@code count} under any spelling of that name.
      */
@@ -203,6 +216,20 @@ public final class GeneratedShapes {
     }
 
     /**
+     * True when the temporal join step matches on keys: a sole key pairing the master's designated timestamp, at
+     * {@code masterTimestampIndex} of {@code masterOutput}, with the slave's, at {@code slaveTimestampIndex}, adds no
+     * key, and the generator drops it.
+     */
+    public static boolean isKeyedTemporalJoin(JoinInput step, OutputSchema masterOutput, int masterTimestampIndex, int slaveTimestampIndex) {
+        final IntList masterKeys = step.getMasterKeyColumnIds();
+        if (masterKeys.size() != 1) {
+            return masterKeys.size() > 0;
+        }
+        return masterOutput.getColumnIndexById(masterKeys.getQuick(0)) != masterTimestampIndex
+                || step.getInput().getOutput().getColumnIndexById(step.getSlaveKeyColumnIds().getQuick(0)) != slaveTimestampIndex;
+    }
+
+    /**
      * True when the generator builds a projection factory for the plan, which a parallel top-K can build over itself.
      */
     public static boolean isPeelableProjection(LogicalPlan plan) {
@@ -246,6 +273,27 @@ public final class GeneratedShapes {
         final OutputSchema master = windowJoin.getMaster().getOutput();
         final int index = master.getTimestampIndex();
         return index >= 0 && index < readIds.size() && readIds.getQuick(index) == master.getColumnId(index);
+    }
+
+    /**
+     * True when the light cached window under the filter selects the filtered rows itself: the filter reads, at its
+     * first position, the BOOLEAN result of the window's sole function, a row-selecting window function SUBSAMPLE
+     * binds as its keep flag, which the projection above the filter drops.
+     */
+    public static boolean isWindowKeepFlag(FilterPlan filter) {
+        final LogicalPlan input = filter.getInput();
+        final WindowPlan window = generatedWindow(input);
+        if (!(filter.getPredicate() instanceof ColumnExpression column) || window == null
+                || window.getAlgorithm() != WindowPlan.Algorithm.CACHED_LIGHT || window.getFunctions().size() != 1
+                || !window.getSpecs().getQuick(0).isSubsampleKeepFlag()) {
+            return false;
+        }
+        final FunctionExpression function = window.getFunctions().getQuick(0);
+        final int functionColumnId = window.getFunctionColumnIds().getQuick(0);
+        final int functionIndex = input instanceof ProjectPlan project ? LogicalPlans.projectedColumnIndex(project, functionColumnId)
+                : input.getOutput().getColumnIndexById(functionColumnId);
+        return functionIndex >= 0 && functionIndex == input.getOutput().getColumnIndexById(column.getColumnId())
+                && (function.getFunctionFlags() & BoundExpression.ROW_SELECTING) != 0 && function.getDataType() == ColumnType.BOOLEAN;
     }
 
     /**
@@ -472,5 +520,27 @@ public final class GeneratedShapes {
 
     private static LogicalPlan timestampDeclarationBase(LogicalPlan plan) {
         return LogicalPlans.isTimestampDeclarationOnly(plan) ? plan.inputAt(0) : plan;
+    }
+
+    /**
+     * The factory the generator builds for an aggregate, see {@link #aggregateFactory}.
+     */
+    public enum AggregateFactory {
+        /**
+         * The DISTINCT of a single SYMBOL key read from a posting index, see {@link #postingDistinctScan}.
+         */
+        POSTING_DISTINCT,
+        /**
+         * The aggregate over a horizon join, built with the join.
+         */
+        HORIZON,
+        /**
+         * The count of the input rows, see {@link LogicalPlans#isCount}.
+         */
+        COUNT,
+        /**
+         * The GROUP BY by the algorithm operator planning records.
+         */
+        GROUP_BY
     }
 }

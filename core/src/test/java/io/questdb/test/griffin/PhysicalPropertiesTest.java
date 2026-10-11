@@ -789,7 +789,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
             ) {
                 final LogicalPlan plan = compiler.getPlanForTesting();
-                Assert.assertTrue(PlanVerifier.newStandalone().verifyAccessPaths(plan));
+                PlanVerifier.newStandalone().verifyAccessPaths(plan);
                 final Capability isRandomAccess = PhysicalProperties.supportsRandomAccess(plan);
                 final Capability isPageFrameSupported = PhysicalProperties.supportsPageFrameCursor(plan);
                 final Capability isTimeFrameSupported = PhysicalProperties.supportsTimeFrameCursor(plan);

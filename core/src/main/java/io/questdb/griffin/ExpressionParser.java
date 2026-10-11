@@ -75,8 +75,6 @@ public class ExpressionParser {
     private static final Log LOG = LogFactory.getLog(ExpressionParser.class);
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
-    // columnTypes that an expression can be cast into, in addition to the range BOOLEAN…LONG256
-    private static final IntHashSet moreCastTargetTypes = new IntHashSet();
     private static final IntHashSet nonLiteralBranches = new IntHashSet(); // branches that can't be followed by constants
     private final OperatorRegistry activeRegistry;
     private final IntStack argStackDepthStack = new IntStack();
@@ -156,12 +154,6 @@ public class ExpressionParser {
 
     public void setStopOnTopINOperator(boolean stopOnTop) {
         this.stopOnTopINOperator = stopOnTop;
-    }
-
-    private static boolean cannotCastTo(int targetTag, boolean isFromNull) {
-        return (targetTag < ColumnType.BOOLEAN || targetTag > ColumnType.LONG256) &&
-                (!isFromNull || (targetTag != ColumnType.BINARY && targetTag != ColumnType.INTERVAL)) &&
-                !moreCastTargetTypes.contains(targetTag);
     }
 
     private static boolean hasOffset(WindowExpression windowExpr) {
@@ -991,7 +983,6 @@ public class ExpressionParser {
 
     private int processPgTimestampCast(
             ExpressionParserListener listener,
-            boolean isCastingNull,
             CharSequence tok,
             int lastPos,
             int prevBranch,
@@ -1004,8 +995,7 @@ public class ExpressionParser {
         // timestamp with time zone '2005-04-02 12:00:00-07'
 
         // validate type
-        final short columnType = ColumnType.tagOf(prevNode.token);
-        if (cannotCastTo(columnType, isCastingNull)) {
+        if (!SqlParser.isCastTarget(prevNode.token)) {
             throw SqlException.$(prevNode.position, "impossible type cast, invalid type");
         }
         ExpressionNode stringLiteral = SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos);
@@ -1101,7 +1091,6 @@ public class ExpressionParser {
             char thisChar;
             int prevBranch = BRANCH_NONE;
             int thisBranch = BRANCH_NONE;
-            boolean isCastingNull = false;
             int frameListPosition = -1;
             OUT:
             while ((tok = SqlUtil.fetchNext(lexer)) != null) {
@@ -1378,14 +1367,7 @@ public class ExpressionParser {
                                         continue;
                                     }
                                     if (thisWasCast && prevBranch != BRANCH_GEOHASH && prevBranch != BRANCH_DECIMAL) {
-                                        // validate type
-                                        final short castAsTag = ColumnType.tagOf(node.token);
-                                        final boolean isVariable = node.type == ExpressionNode.LITERAL && Chars.startsWith(node.token, '@');
-                                        if (!isVariable && (cannotCastTo(castAsTag, isCastingNull)
-                                                || (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL))
-                                        ) {
-                                            throw SqlException.$(node.position, "unsupported cast");
-                                        }
+                                        SqlParser.normalizeCastType(node);
                                         node.type = ExpressionNode.CONSTANT;
                                     }
                                     argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
@@ -1565,10 +1547,7 @@ public class ExpressionParser {
                                 thisBranch = BRANCH_CAST_AS;
 
                                 // push existing args to the listener
-                                int nodeCount = 0;
                                 while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
-                                    nodeCount++;
-                                    isCastingNull = nodeCount == 1 && SqlKeywords.isNullKeyword(node.token);
                                     argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                 }
                                 if (node != null) {
@@ -1768,7 +1747,7 @@ public class ExpressionParser {
                                     break;
                                 } else {
                                     if (opStack.size() > 0 && prevBranch == BRANCH_LITERAL && thisChar == '\'') {
-                                        argStackDepth = processPgTimestampCast(listener, isCastingNull, tok, lastPos, prevBranch, argStackDepth);
+                                        argStackDepth = processPgTimestampCast(listener, tok, lastPos, prevBranch, argStackDepth);
                                         break;
                                     }
 
@@ -2603,12 +2582,6 @@ public class ExpressionParser {
         caseKeywords.put("when", IDX_WHEN);
         caseKeywords.put("then", IDX_THEN);
         caseKeywords.put("else", IDX_ELSE);
-
-        moreCastTargetTypes.add(ColumnType.UUID);
-        moreCastTargetTypes.add(ColumnType.IPv4);
-        moreCastTargetTypes.add(ColumnType.VARCHAR);
-        moreCastTargetTypes.add(ColumnType.ARRAY);
-        moreCastTargetTypes.add(ColumnType.DECIMAL);
 
         allFunctions.put("<>", "<>all");
         allFunctions.put("!=", "<>all");

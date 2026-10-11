@@ -161,7 +161,7 @@ public final class SqlOptimiser implements Mutable {
         for (int i = 0, n = passes.size(); i < n; i++) {
             final OptimiserPass pass = passes.getQuick(i);
             if (verifier != null && pass.removesDependentSteps()) {
-                verifier.recordOuterJoins(plan);
+                verifier.recordBarrierJoins(plan);
             }
             plan = pass.apply(plan);
             if (pass.removesDependentSteps()) {

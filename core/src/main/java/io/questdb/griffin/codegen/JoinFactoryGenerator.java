@@ -52,7 +52,6 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.PriorityMetadata;
@@ -104,7 +103,6 @@ import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.StringToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
-import io.questdb.griffin.engine.join.SymbolKeyMappingRecordCopier;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.UnnestRecordCursorFactory;
@@ -129,7 +127,6 @@ import io.questdb.griffin.plan.logical.UnnestSpec;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
@@ -156,21 +153,8 @@ final class JoinFactoryGenerator {
     private final FilterFactoryGenerator filterGenerator;
     private final FunctionFactoryCache functionFactoryCache;
     private final IntHashSet intHashSet;
-    private final IntList masterKeyIndexes = new IntList();
-    private final IntList masterSymbolKeyColumns;
     private final PageFrameReduceTaskFactory reduceTaskFactory;
-    private final IntList slaveKeyIndexes = new IntList();
-    private final IntList slaveSymbolKeyColumns;
-    private final ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
     private final IntList slaveValueIndexes = new IntList();
-    private final IntList symbolJoinKeyFlags = new IntList();
-    // a bitset of string/symbol columns forced to be serialised as varchar
-    private final BitSet writeStringAsVarcharA = new BitSet();
-    private final BitSet writeStringAsVarcharB = new BitSet();
-    private final BitSet writeSymbolAsStringB = new BitSet();
-    // bitsets for timestamp conversion to higher precision type
-    private final BitSet writeTimestampAsNanosA = new BitSet();
-    private final BitSet writeTimestampAsNanosB = new BitSet();
 
     JoinFactoryGenerator(
             CairoConfiguration configuration,
@@ -181,9 +165,7 @@ final class JoinFactoryGenerator {
             EntityColumnFilter entityColumnFilter,
             PageFrameReduceTaskFactory reduceTaskFactory,
             StringSink conditionSink,
-            IntHashSet intHashSet,
-            IntList masterSymbolKeyColumns,
-            IntList slaveSymbolKeyColumns
+            IntHashSet intHashSet
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
@@ -194,8 +176,6 @@ final class JoinFactoryGenerator {
         this.reduceTaskFactory = reduceTaskFactory;
         this.conditionSink = conditionSink;
         this.intHashSet = intHashSet;
-        this.masterSymbolKeyColumns = masterSymbolKeyColumns;
-        this.slaveSymbolKeyColumns = slaveSymbolKeyColumns;
     }
 
     private static FunctionExpression findWindowJoinSymbolEquality(BoundExpression predicate, OutputSchema scope, RecordMetadata metadata, int splitIndex) {
@@ -240,16 +220,8 @@ final class JoinFactoryGenerator {
         }
     }
 
-    private static boolean isKeyedTemporalJoin(GenerationFrame frame, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
-        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        final ListColumnFilter listColumnFilterB = frame.listColumnFilterB;
-        // Check if we can simplify ASOF JOIN ON (ts) to ASOF JOIN.
-        if (listColumnFilterA.size() == 1 && listColumnFilterB.size() == 1) {
-            int masterIndex = listColumnFilterB.getColumnIndexFactored(0);
-            int slaveIndex = listColumnFilterA.getColumnIndexFactored(0);
-            return masterIndex != masterMetadata.getTimestampIndex() || slaveIndex != slaveMetadata.getTimestampIndex();
-        }
-        return listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0;
+    private static boolean hasJoinKeys(GenerationFrame frame) {
+        return frame.listColumnFilterA.size() > 0 && frame.listColumnFilterB.size() > 0;
     }
 
     private static boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
@@ -297,17 +269,6 @@ final class JoinFactoryGenerator {
         return isIdentity ? null : columnIndex;
     }
 
-    private static void resolveKeys(OutputSchema input, IntList ids, IntList indexes) {
-        indexes.clear();
-        for (int i = 0, n = ids.size(); i < n; i++) {
-            final int index = input.getColumnIndexById(ids.getQuick(i));
-            if (index < 0) {
-                throw new IllegalStateException("bound join input has changed");
-            }
-            indexes.add(index);
-        }
-    }
-
     /**
      * The master columns this step passes through followed by its aggregate columns.
      */
@@ -351,149 +312,6 @@ final class JoinFactoryGenerator {
         frame.sharedConsumerCounts.add(1);
     }
 
-    private void alignSharedJoinKeyTypes(GenerationFrame frame, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
-        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        final ListColumnFilter listColumnFilterB = frame.listColumnFilterB;
-        final ArrayColumnTypes keyTypes = frame.keyTypes;
-        final BitSet writeSymbolAsStringA = frame.writeSymbolAsString;
-        boolean isChanged = true;
-        while (isChanged) {
-            isChanged = false;
-            for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-                final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
-                final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
-                final int keyType = keyTypes.getColumnType(k);
-                if (keyType == STRING || keyType == ColumnType.SYMBOL) {
-                    if (writeStringAsVarcharA.get(columnIndexA) || writeStringAsVarcharB.get(columnIndexB)) {
-                        keyTypes.set(k, VARCHAR);
-                        if (!isVarchar(slaveMetadata.getColumnType(columnIndexA))) {
-                            writeStringAsVarcharA.set(columnIndexA);
-                        }
-                        if (!isVarchar(masterMetadata.getColumnType(columnIndexB))) {
-                            writeStringAsVarcharB.set(columnIndexB);
-                        }
-                        writeSymbolAsStringA.set(columnIndexA);
-                        writeSymbolAsStringB.set(columnIndexB);
-                        isChanged = true;
-                    } else if (keyType == ColumnType.SYMBOL
-                            && (writeSymbolAsStringA.get(columnIndexA) || writeSymbolAsStringB.get(columnIndexB))) {
-                        keyTypes.set(k, STRING);
-                        writeSymbolAsStringA.set(columnIndexA);
-                        writeSymbolAsStringB.set(columnIndexB);
-                        isChanged = true;
-                    }
-                } else if (isTimestamp(keyType) && !isTimestampNano(keyType)
-                        && (writeTimestampAsNanosA.get(columnIndexA) || writeTimestampAsNanosB.get(columnIndexB))) {
-                    keyTypes.set(k, TIMESTAMP_NANO);
-                    writeTimestampAsNanosA.set(columnIndexA);
-                    writeTimestampAsNanosB.set(columnIndexB);
-                    isChanged = true;
-                }
-            }
-        }
-    }
-
-    /**
-     * Converts SYMBOL-SYMBOL join key pairs from string-based comparison to integer-based
-     * comparison using SymbolTranslatingRecord. For each SYMBOL-SYMBOL pair where both
-     * writeSymbolAsStringB (master) and writeSymbolAsStringA (slave) are currently set
-     * (i.e., non-self-join pairs), this method:
-     * <ul>
-     *   <li>Unsets writeSymbolAsStringB for the master column and writeSymbolAsStringA for the slave column</li>
-     *   <li>Changes the keyTypes entry from STRING to INT</li>
-     *   <li>Collects master/slave column indices into arrays</li>
-     * </ul>
-     * Must be called after createSymbolShortCircuit() and before createRecordCopierMaster/Slave().
-     *
-     * @return null if no SYMBOL-SYMBOL pairs found, otherwise [masterIndices, slaveIndices]
-     */
-    private int @Nullable [][] convertSymbolJoinKeysToInt(
-            GenerationFrame frame,
-            RecordMetadata masterMetadata,
-            RecordMetadata slaveMetadata
-    ) {
-        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        final ListColumnFilter listColumnFilterB = frame.listColumnFilterB;
-        final ArrayColumnTypes keyTypes = frame.keyTypes;
-        final BitSet writeSymbolAsStringA = frame.writeSymbolAsString;
-        final int keyCount = listColumnFilterA.getColumnCount();
-        symbolJoinKeyFlags.setAll(keyCount, 0);
-        for (int k = 0; k < keyCount; k++) {
-            final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
-            final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
-            if (keyTypes.getColumnType(k) == STRING
-                    && masterMetadata.getColumnType(masterColIndex) == ColumnType.SYMBOL
-                    && slaveMetadata.getColumnType(slaveColIndex) == ColumnType.SYMBOL
-                    && masterMetadata.isSymbolTableStatic(masterColIndex)
-                    && slaveMetadata.isSymbolTableStatic(slaveColIndex)
-                    && writeSymbolAsStringB.get(masterColIndex)
-                    && writeSymbolAsStringA.get(slaveColIndex)) {
-                symbolJoinKeyFlags.setQuick(k, 1);
-            }
-        }
-        // SymbolTranslatingRecord keeps one translation per column of the translated side,
-        // which is the master or, after a hash join swap, the slave. A column paired with two
-        // different partner columns needs two translations, so its pairs keep string comparison.
-        for (int k = 0; k < keyCount; k++) {
-            if (symbolJoinKeyFlags.getQuick(k) == 1) {
-                final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
-                final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
-                for (int j = k + 1; j < keyCount; j++) {
-                    if (symbolJoinKeyFlags.getQuick(j) == 1) {
-                        final boolean isSameSlave = listColumnFilterA.getColumnIndexFactored(j) == slaveColIndex;
-                        final boolean isSameMaster = listColumnFilterB.getColumnIndexFactored(j) == masterColIndex;
-                        if (isSameSlave != isSameMaster) {
-                            symbolJoinKeyFlags.setQuick(k, 0);
-                            symbolJoinKeyFlags.setQuick(j, 0);
-                        }
-                    }
-                }
-            }
-        }
-        // Record sinks convert per column, so a column shared with a key pair that keeps
-        // string comparison must keep it in every pair.
-        boolean isChanged = true;
-        while (isChanged) {
-            isChanged = false;
-            for (int k = 0; k < keyCount; k++) {
-                if (symbolJoinKeyFlags.getQuick(k) == 1) {
-                    for (int j = 0; j < keyCount; j++) {
-                        if (symbolJoinKeyFlags.getQuick(j) == 0
-                                && (listColumnFilterA.getColumnIndexFactored(j) == listColumnFilterA.getColumnIndexFactored(k)
-                                || listColumnFilterB.getColumnIndexFactored(j) == listColumnFilterB.getColumnIndexFactored(k))) {
-                            symbolJoinKeyFlags.setQuick(k, 0);
-                            isChanged = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        final IntList masterSymbolKeyCols = masterSymbolKeyColumns;
-        final IntList slaveSymbolKeyCols = slaveSymbolKeyColumns;
-        masterSymbolKeyCols.clear();
-        slaveSymbolKeyCols.clear();
-        for (int k = 0; k < keyCount; k++) {
-            if (symbolJoinKeyFlags.getQuick(k) == 1) {
-                final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
-                final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
-                keyTypes.set(k, ColumnType.INT);
-                masterSymbolKeyCols.add(masterColIndex);
-                slaveSymbolKeyCols.add(slaveColIndex);
-            }
-        }
-        if (masterSymbolKeyCols.size() > 0) {
-            // Unset the bits AFTER the loop, so that a column used by more than one
-            // key pair keeps its bit until the loop has checked every pair
-            for (int i = 0, n = masterSymbolKeyCols.size(); i < n; i++) {
-                writeSymbolAsStringB.unset(masterSymbolKeyCols.getQuick(i));
-                writeSymbolAsStringA.unset(slaveSymbolKeyCols.getQuick(i));
-            }
-            return new int[][]{masterSymbolKeyCols.toArray(), slaveSymbolKeyCols.toArray()};
-        }
-        return null;
-    }
-
     private Plannable createCondition(JoinInput step) {
         conditionSink.clear();
         for (int i = 0, n = step.getMasterKeyColumnIds().size(); i < n; i++) {
@@ -522,11 +340,12 @@ final class JoinFactoryGenerator {
             Plannable joinContext,
             long toleranceInterval
     ) throws SqlException {
-        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        final ListColumnFilter listColumnFilterB = frame.listColumnFilterB;
-        final ArrayColumnTypes keyTypes = frame.keyTypes;
+        final JoinKeyLayout joinKeys = frame.joinKeys;
+        final ListColumnFilter listColumnFilterA = joinKeys.slaveColumns;
+        final ListColumnFilter listColumnFilterB = joinKeys.masterColumns;
+        final ArrayColumnTypes keyTypes = joinKeys.keyTypes;
         final ArrayColumnTypes valueTypes = frame.valueTypes;
-        final ArrayColumnTypes slaveTypes = this.slaveTypes;
+        final ArrayColumnTypes slaveTypes = frame.slaveTypes;
         JoinRecordMetadata metadata = null;
         boolean isTransferred = false;
         try {
@@ -563,7 +382,7 @@ final class JoinFactoryGenerator {
 
             // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
             // so masterCopier writes key columns of master record to a sink
-            RecordSink masterCopier = createRecordCopierMaster(frame, masterMetadata);
+            RecordSink masterCopier = joinKeys.createMasterSink(configuration, asm, masterMetadata);
 
             // This metadata allocates native memory, it has to be closed in case join
             // generation is unsuccessful. The exception can be thrown anywhere between
@@ -660,7 +479,7 @@ final class JoinFactoryGenerator {
             if (masterMetadata.getTimestampIndex() != -1) {
                 metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
             }
-            final RecordSink slaveCopier = createRecordCopierSlave(frame, slaveMetadata);
+            final RecordSink slaveCopier = joinKeys.createSlaveSink(configuration, asm, slaveMetadata);
             final RecordValueSink slaveValueSink = RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB);
             isTransferred = true;
             return generator.create(
@@ -708,38 +527,14 @@ final class JoinFactoryGenerator {
         );
     }
 
-    private @NotNull RecordSink createRecordCopierMaster(GenerationFrame frame, RecordMetadata masterMetadata) {
-        return RecordSinkFactory.getInstance(
-                configuration,
-                asm,
-                masterMetadata,
-                frame.listColumnFilterB,
-                writeSymbolAsStringB,
-                writeStringAsVarcharB,
-                writeTimestampAsNanosB
-        );
-    }
-
-    private @NotNull RecordSink createRecordCopierSlave(GenerationFrame frame, RecordMetadata slaveMetadata) {
-        return RecordSinkFactory.getInstance(
-                configuration,
-                asm,
-                slaveMetadata,
-                frame.listColumnFilterA,
-                frame.writeSymbolAsString,
-                writeStringAsVarcharA,
-                writeTimestampAsNanosA
-        );
-    }
-
     private @NotNull SymbolShortCircuit createSymbolShortCircuit(
             GenerationFrame frame,
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata,
             boolean isSelfJoin
     ) {
-        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        final ListColumnFilter listColumnFilterB = frame.listColumnFilterB;
+        final ListColumnFilter listColumnFilterA = frame.joinKeys.slaveColumns;
+        final ListColumnFilter listColumnFilterB = frame.joinKeys.masterColumns;
         SymbolShortCircuit symbolShortCircuit = NoopSymbolShortCircuit.INSTANCE;
         assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
         SymbolJoinKeyMapping[] mappings = null;
@@ -824,68 +619,6 @@ final class JoinFactoryGenerator {
         return isVectorized;
     }
 
-    private void processJoinKeyTypes(GenerationFrame frame, boolean isSelfJoin, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
-        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        final ListColumnFilter listColumnFilterB = frame.listColumnFilterB;
-        final ArrayColumnTypes keyTypes = frame.keyTypes;
-        final BitSet writeSymbolAsStringA = frame.writeSymbolAsString;
-        // compare types and populate keyTypes
-        keyTypes.clear();
-        writeSymbolAsStringA.clear();
-        writeSymbolAsStringB.clear();
-        writeStringAsVarcharA.clear();
-        writeStringAsVarcharB.clear();
-        writeTimestampAsNanosA.clear();
-        writeTimestampAsNanosB.clear();
-        for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-            // Don't use tagOf(columnType) to compare the types.
-            // Key types have too much exactly except SYMBOL and STRING special case
-            final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
-            final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
-            final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
-            final String columnNameA = slaveMetadata.getColumnName(columnIndexA);
-            final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
-            final String columnNameB = masterMetadata.getColumnName(columnIndexB);
-            assert LogicalPlans.isJoinKeyTypeCompatible(columnTypeB, columnTypeA);
-            if (isVarchar(columnTypeA) || isVarchar(columnTypeB)) {
-                keyTypes.add(VARCHAR);
-                if (isVarchar(columnTypeA)) {
-                    writeStringAsVarcharB.set(columnIndexB);
-                } else {
-                    writeStringAsVarcharA.set(columnIndexA);
-                }
-                writeSymbolAsStringA.set(columnIndexA);
-                writeSymbolAsStringB.set(columnIndexB);
-            } else if (columnTypeB == ColumnType.SYMBOL) {
-                if (isSelfJoin && Chars.equalsIgnoreCase(columnNameA, columnNameB)) {
-                    keyTypes.add(ColumnType.SYMBOL);
-                } else {
-                    keyTypes.add(STRING);
-                    writeSymbolAsStringA.set(columnIndexA);
-                    writeSymbolAsStringB.set(columnIndexB);
-                }
-            } else if (isString(columnTypeA) || isString(columnTypeB)) {
-                keyTypes.add(columnTypeB);
-                writeSymbolAsStringA.set(columnIndexA);
-                writeSymbolAsStringB.set(columnIndexB);
-            } else if (columnTypeA != columnTypeB &&
-                    isTimestamp(columnTypeA) && isTimestamp(columnTypeB)
-            ) {
-                keyTypes.add(TIMESTAMP_NANO);
-                // Mark columns that need conversion to nanoseconds
-                if (!isTimestampNano(columnTypeA)) {
-                    writeTimestampAsNanosA.set(columnIndexA);
-                }
-                if (!isTimestampNano(columnTypeB)) {
-                    writeTimestampAsNanosB.set(columnIndexB);
-                }
-            } else {
-                keyTypes.add(columnTypeB);
-            }
-        }
-        alignSharedJoinKeyTypes(frame, masterMetadata, slaveMetadata);
-    }
-
     /**
      * Consumes the raw factory, including failure. Maps the bound output onto the full-fat layout: master
      * columns, slave value columns, then slave keys. The full-fat map exposes a slave key with its master
@@ -896,6 +629,7 @@ final class JoinFactoryGenerator {
             int masterColumnCount,
             OutputSchema slaveOutput,
             int slaveTimestampIndex,
+            IntList slaveKeyIndexes,
             OutputSchema output
     ) throws SqlException {
         ObjList<Function> functions = null;
@@ -980,6 +714,17 @@ final class JoinFactoryGenerator {
         }
     }
 
+    static void resolveKeys(OutputSchema input, IntList ids, IntList indexes) {
+        indexes.clear();
+        for (int i = 0, n = ids.size(); i < n; i++) {
+            final int index = input.getColumnIndexById(ids.getQuick(i));
+            if (index < 0) {
+                throw new IllegalStateException("bound join input has changed");
+            }
+            indexes.add(index);
+        }
+    }
+
     // Consumes metadata, both inputs and the optional filter on entry.
     RecordCursorFactory createHashJoin(
             GenerationFrame frame,
@@ -995,13 +740,14 @@ final class JoinFactoryGenerator {
         try {
             final RecordMetadata masterMetadata = master.getMetadata();
             final RecordMetadata slaveMetadata = slave.getMetadata();
-            final int[][] symbolKeyIndices = convertSymbolJoinKeysToInt(frame, masterMetadata, slaveMetadata);
-            final RecordSink masterKeyCopier = createRecordCopierMaster(frame, masterMetadata);
-            final RecordSink slaveKeyCopier = createRecordCopierSlave(frame, slaveMetadata);
-            final ArrayColumnTypes keyTypes = frame.keyTypes;
+            final JoinKeyLayout joinKeys = frame.joinKeys;
+            joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
+            final RecordSink masterKeyCopier = joinKeys.masterSink;
+            final RecordSink slaveKeyCopier = joinKeys.slaveSink;
+            final ArrayColumnTypes keyTypes = joinKeys.keyTypes;
             final ArrayColumnTypes valueTypes = frame.valueTypes;
-            final int[] masterSymbolKeyCols = symbolKeyIndices != null ? symbolKeyIndices[0] : null;
-            final int[] slaveSymbolKeyCols = symbolKeyIndices != null ? symbolKeyIndices[1] : null;
+            final int[] masterSymbolKeyCols = joinKeys.masterSymbolKeys;
+            final int[] slaveSymbolKeyCols = joinKeys.slaveSymbolKeys;
 
             final int modelJoinType = SqlCodeGenerator.queryModelJoinType(joinType);
             if (step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH) {
@@ -1324,9 +1070,10 @@ final class JoinFactoryGenerator {
                 }
                 result = createNestedLoopJoin(ownedMetadata, ownedMaster, ownedSlave, joinType, ownedFilter);
             } else {
-                resolveKeys(masterOutput, step.getMasterKeyColumnIds(), masterKeyIndexes);
-                resolveKeys(step.getInput().getOutput(), step.getSlaveKeyColumnIds(), slaveKeyIndexes);
-                prepareJoinKeys(frame, masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, isSelfJoin);
+                final JoinKeyLayout joinKeys = frame.joinKeys;
+                resolveKeys(masterOutput, step.getMasterKeyColumnIds(), joinKeys.masterIndexes);
+                resolveKeys(step.getInput().getOutput(), step.getSlaveKeyColumnIds(), joinKeys.slaveIndexes);
+                joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, isSelfJoin);
                 // Copy before closing: a derived slave may own closeable join metadata.
                 if (joinType == JoinKind.LEFT_OUTER && onFilter != null && onFilter.isConstant() && !onFilter.getBool(null)) {
                     final RecordCursorFactory empty = new EmptyTableRecordCursorFactory(GenericRecordMetadata.copyOfNew(slaveMetadata));
@@ -1419,16 +1166,12 @@ final class JoinFactoryGenerator {
                 masterAlias = null;
                 continue;
             }
-            final boolean wasJoinSlaveInput = frame.isJoinSlaveInput;
-            frame.isJoinSlaveInput = true;
             final RecordCursorFactory slave;
             try {
                 slave = codeGenerator.generate(frame, step.getInput(), executionContext);
             } catch (Throwable th) {
                 Misc.free(master, th);
                 throw th;
-            } finally {
-                frame.isJoinSlaveInput = wasJoinSlaveInput;
             }
             try {
                 addSharedSource(frame, step, slave);
@@ -1475,9 +1218,8 @@ final class JoinFactoryGenerator {
             boolean hasMemoizedHint,
             boolean hasMemoizedDrivebyHint
     ) throws SqlException {
-        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        final ArrayColumnTypes keyTypes = frame.keyTypes;
-        final BitSet writeSymbolAsStringA = frame.writeSymbolAsString;
+        final JoinKeyLayout joinKeys = frame.joinKeys;
+        final ListColumnFilter listColumnFilterA = joinKeys.slaveColumns;
         JoinRecordMetadata joinMetadata = null;
         boolean isTransferred = false;
         try {
@@ -1499,14 +1241,12 @@ final class JoinFactoryGenerator {
             }
 
             joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
-            if (isKeyedTemporalJoin(frame, masterMetadata, slaveMetadata)) {
+            if (hasJoinKeys(frame)) {
                 SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(frame, masterMetadata, slaveMetadata, isSelfJoin);
                 int joinColumnSplit = masterMetadata.getColumnCount();
                 if (stolenFilter != null) {
                     final Function filter = stolenFilter.getFilter();
-                    final int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(frame, masterMetadata, slaveMetadata);
-                    final RecordSink masterKeyCopier = createRecordCopierMaster(frame, masterMetadata);
-                    final RecordSink slaveKeyCopier = createRecordCopierSlave(frame, slaveMetadata);
+                    joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
                     final Record slaveNull = NullRecordFactory.getInstance(slaveMetadata);
                     isTransferred = true;
                     stolenFilter.adopt();
@@ -1514,17 +1254,17 @@ final class JoinFactoryGenerator {
                             configuration,
                             joinMetadata,
                             master,
-                            masterKeyCopier,
+                            joinKeys.masterSink,
                             slave,
-                            slaveKeyCopier,
+                            joinKeys.slaveSink,
                             filter,
                             masterMetadata.getColumnCount(),
                             slaveNull,
                             slaveCrossIndex,
                             slaveMetadata.getTimestampIndex(),
                             toleranceInterval,
-                            filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
-                            filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null
+                            joinKeys.masterSymbolKeys,
+                            joinKeys.slaveSymbolKeys
                     );
                 }
                 if (isTimeFrame) {
@@ -1545,23 +1285,21 @@ final class JoinFactoryGenerator {
                                     toleranceInterval
                             );
                         }
-                        int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(frame, masterMetadata, slaveMetadata);
-                        final RecordSink masterKeyCopier = createRecordCopierMaster(frame, masterMetadata);
-                        final RecordSink slaveKeyCopier = createRecordCopierSlave(frame, slaveMetadata);
+                        joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
                         isTransferred = true;
                         return new AsOfJoinDenseRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
                                 master,
-                                masterKeyCopier,
+                                joinKeys.masterSink,
                                 slave,
-                                slaveKeyCopier,
+                                joinKeys.slaveSink,
                                 joinColumnSplit,
-                                keyTypes,
+                                joinKeys.keyTypes,
                                 condition,
                                 toleranceInterval,
-                                denseSymbolKeyIndices != null ? denseSymbolKeyIndices[0] : null,
-                                denseSymbolKeyIndices != null ? denseSymbolKeyIndices[1] : null
+                                joinKeys.masterSymbolKeys,
+                                joinKeys.slaveSymbolKeys
                         );
                     }
                     if (isSingleSymbolJoin) {
@@ -1600,17 +1338,15 @@ final class JoinFactoryGenerator {
                         // We're falling back to the default Fast scan. We can still optimize one thing:
                         // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                         // For that to work, we need code that maps master symbol key to slave symbol key.
-                        writeSymbolAsStringA.unset(slaveSymbolColumnIndex);
-                        final RecordSink masterKeyCopier = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
-                        final RecordSink slaveKeyCopier = createRecordCopierSlave(frame, slaveMetadata);
+                        joinKeys.prepareSymbolMappingSinks(configuration, asm, slaveMetadata, symbolJoinKeyMapping);
                         isTransferred = true;
                         return new AsOfJoinFastRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
                                 master,
-                                masterKeyCopier,
+                                joinKeys.masterSink,
                                 slave,
-                                slaveKeyCopier,
+                                joinKeys.slaveSink,
                                 joinColumnSplit,
                                 symbolShortCircuit,
                                 condition,
@@ -1619,23 +1355,21 @@ final class JoinFactoryGenerator {
                                 null
                         );
                     } else {
-                        int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(frame, masterMetadata, slaveMetadata);
-                        final RecordSink masterKeyCopier = createRecordCopierMaster(frame, masterMetadata);
-                        final RecordSink slaveKeyCopier = createRecordCopierSlave(frame, slaveMetadata);
+                        joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
                         isTransferred = true;
                         return new AsOfJoinFastRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
                                 master,
-                                masterKeyCopier,
+                                joinKeys.masterSink,
                                 slave,
-                                slaveKeyCopier,
+                                joinKeys.slaveSink,
                                 joinColumnSplit,
-                                fastSymbolKeyIndices != null ? NoopSymbolShortCircuit.INSTANCE : symbolShortCircuit,
+                                joinKeys.masterSymbolKeys != null ? NoopSymbolShortCircuit.INSTANCE : symbolShortCircuit,
                                 condition,
                                 toleranceInterval,
-                                fastSymbolKeyIndices != null ? fastSymbolKeyIndices[0] : null,
-                                fastSymbolKeyIndices != null ? fastSymbolKeyIndices[1] : null
+                                joinKeys.masterSymbolKeys,
+                                joinKeys.slaveSymbolKeys
                         );
                     }
                 }
@@ -1645,22 +1379,17 @@ final class JoinFactoryGenerator {
                     // We're falling back to the default Light scan. We can still optimize one thing:
                     // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                     // For that to work, we need code that maps master symbol key to slave symbol key.
-                    int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                    writeSymbolAsStringA.unset(slaveSymbolColumnIndex);
-                    SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
-                    keyTypes.clear();
-                    keyTypes.add(ColumnType.INT);
-                    final RecordSink masterKeyCopier = new SymbolKeyMappingRecordCopier(joinKeyMapping);
-                    final RecordSink slaveKeyCopier = createRecordCopierSlave(frame, slaveMetadata);
+                    final SymbolJoinKeyMapping joinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
+                    joinKeys.prepareSymbolMappingSinks(configuration, asm, slaveMetadata, joinKeyMapping);
                     isTransferred = true;
                     return new AsOfJoinLightRecordCursorFactory(
                             configuration,
                             joinMetadata,
                             master,
                             slave,
-                            keyTypes,
-                            masterKeyCopier,
-                            slaveKeyCopier,
+                            joinKeys.keyTypes,
+                            joinKeys.masterSink,
+                            joinKeys.slaveSink,
                             joinKeyMapping,
                             joinColumnSplit,
                             condition,
@@ -1669,24 +1398,22 @@ final class JoinFactoryGenerator {
                             null
                     );
                 } else {
-                    int[][] lightSymbolKeyIndices = convertSymbolJoinKeysToInt(frame, masterMetadata, slaveMetadata);
-                    final RecordSink masterKeyCopier = createRecordCopierMaster(frame, masterMetadata);
-                    final RecordSink slaveKeyCopier = createRecordCopierSlave(frame, slaveMetadata);
+                    joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
                     isTransferred = true;
                     return new AsOfJoinLightRecordCursorFactory(
                             configuration,
                             joinMetadata,
                             master,
                             slave,
-                            keyTypes,
-                            masterKeyCopier,
-                            slaveKeyCopier,
+                            joinKeys.keyTypes,
+                            joinKeys.masterSink,
+                            joinKeys.slaveSink,
                             null,
                             joinColumnSplit,
                             condition,
                             toleranceInterval,
-                            lightSymbolKeyIndices != null ? lightSymbolKeyIndices[0] : null,
-                            lightSymbolKeyIndices != null ? lightSymbolKeyIndices[1] : null
+                            joinKeys.masterSymbolKeys,
+                            joinKeys.slaveSymbolKeys
                     );
                 }
             }
@@ -1778,10 +1505,9 @@ final class JoinFactoryGenerator {
             }
 
             joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
-            if (isKeyedTemporalJoin(frame, masterMetadata, slaveMetadata)) {
-                int[][] ltSymbolKeyIndices = convertSymbolJoinKeysToInt(frame, masterMetadata, slaveMetadata);
-                RecordSink masterKeyCopier = createRecordCopierMaster(frame, masterMetadata);
-                RecordSink slaveKeyCopier = createRecordCopierSlave(frame, slaveMetadata);
+            if (hasJoinKeys(frame)) {
+                final JoinKeyLayout joinKeys = frame.joinKeys;
+                joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
                 int columnSplit = masterMetadata.getColumnCount();
                 final ArrayColumnTypes valueTypes = frame.valueTypes;
                 valueTypes.clear();
@@ -1792,15 +1518,15 @@ final class JoinFactoryGenerator {
                         joinMetadata,
                         master,
                         slave,
-                        frame.keyTypes,
+                        joinKeys.keyTypes,
                         valueTypes,
-                        masterKeyCopier,
-                        slaveKeyCopier,
+                        joinKeys.masterSink,
+                        joinKeys.slaveSink,
                         columnSplit,
                         condition,
                         toleranceInterval,
-                        ltSymbolKeyIndices != null ? ltSymbolKeyIndices[0] : null,
-                        ltSymbolKeyIndices != null ? ltSymbolKeyIndices[1] : null
+                        joinKeys.masterSymbolKeys,
+                        joinKeys.slaveSymbolKeys
                 );
             }
 
@@ -1863,8 +1589,9 @@ final class JoinFactoryGenerator {
             }
             // Neither side's timestamp describes the combined SPLICE stream.
             joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, -1);
-            final RecordSink masterKeySink = createRecordCopierMaster(frame, masterMetadata);
-            final RecordSink slaveKeySink = createRecordCopierSlave(frame, slaveMetadata);
+            final JoinKeyLayout joinKeys = frame.joinKeys;
+            final RecordSink masterKeySink = joinKeys.createMasterSink(configuration, asm, masterMetadata);
+            final RecordSink slaveKeySink = joinKeys.createSlaveSink(configuration, asm, slaveMetadata);
             final ArrayColumnTypes valueTypes = frame.valueTypes;
             valueTypes.clear();
             valueTypes.add(LONG); // master previous
@@ -1873,7 +1600,7 @@ final class JoinFactoryGenerator {
             valueTypes.add(LONG); // slave current
             final int columnSplit = masterMetadata.getColumnCount();
             isTransferred = true;
-            return new SpliceJoinLightRecordCursorFactory(configuration, joinMetadata, master, slave, frame.keyTypes,
+            return new SpliceJoinLightRecordCursorFactory(configuration, joinMetadata, master, slave, joinKeys.keyTypes,
                     valueTypes, masterKeySink, slaveKeySink, columnSplit, condition);
         } catch (Throwable th) {
             if (!isTransferred) {
@@ -1909,11 +1636,12 @@ final class JoinFactoryGenerator {
                 throw new IllegalStateException("SPLICE join has an ON residual");
             }
             final boolean isSelfJoin = master.getTableToken() != null && master.getTableToken().equals(slave.getTableToken());
-            resolveKeys(masterOutput, step.getMasterKeyColumnIds(), masterKeyIndexes);
-            resolveKeys(step.getInput().getOutput(), step.getSlaveKeyColumnIds(), slaveKeyIndexes);
-            prepareJoinKeys(frame, masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, isSelfJoin);
+            final JoinKeyLayout joinKeys = frame.joinKeys;
+            resolveKeys(masterOutput, step.getMasterKeyColumnIds(), joinKeys.masterIndexes);
+            resolveKeys(step.getInput().getOutput(), step.getSlaveKeyColumnIds(), joinKeys.slaveIndexes);
+            joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, isSelfJoin);
             // Unlike ASOF/LT, designated-timestamp equality remains an actual SPLICE key.
-            final Plannable condition = masterKeyIndexes.size() == 0 ? null : createCondition(step);
+            final Plannable condition = joinKeys.masterIndexes.size() == 0 ? null : createCondition(step);
             final RecordCursorFactory ownedMaster = master;
             final RecordCursorFactory ownedSlave = slave;
             master = null;
@@ -1951,16 +1679,12 @@ final class JoinFactoryGenerator {
         final PreparedFilter prepared = frame.pushPreparedFilter();
         final RecordCursorFactory factory;
         try {
-            final boolean wasJoinSlaveInput = frame.isJoinSlaveInput;
-            frame.isJoinSlaveInput = true;
             final RecordCursorFactory slave;
             try {
                 slave = codeGenerator.generateStolenFilter(frame, GeneratedShapes.temporalStolenFilter(step.getInput()), prepared, executionContext);
             } catch (Throwable th) {
                 Misc.free(master, th);
                 throw th;
-            } finally {
-                frame.isJoinSlaveInput = wasJoinSlaveInput;
             }
             RecordMetadata slaveMetadata = slave.getMetadata();
             IntList crossIndex = null;
@@ -2008,22 +1732,24 @@ final class JoinFactoryGenerator {
                 throw new IllegalStateException("unsupported logical temporal join type");
             }
             final RecordMetadata masterMetadata = master.getMetadata();
+            final IntList masterKeyIndexes = frame.joinKeys.masterIndexes;
+            final IntList slaveKeyIndexes = frame.joinKeys.slaveIndexes;
             assert masterMetadata.getTimestampIndex() >= 0 && slaveMetadata.getTimestampIndex() >= 0;
             if (step.getOnResidual() != null) {
                 throw new IllegalStateException("temporal join has an ON residual");
             }
             final boolean isSelfJoin = master.getTableToken() != null && master.getTableToken().equals(slave.getTableToken());
-            resolveKeys(masterOutput, step.getMasterKeyColumnIds(), masterKeyIndexes);
-            resolveKeys(step.getInput().getOutput(), step.getSlaveKeyColumnIds(), slaveKeyIndexes);
-            prepareJoinKeys(frame, masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, isSelfJoin);
-            final long toleranceInterval = step.getToleranceInterval();
-            // The sole designated-timestamp pair adds no equality key to a temporal join.
-            if (masterKeyIndexes.size() == 1 && masterKeyIndexes.getQuick(0) == masterMetadata.getTimestampIndex()
-                    && slaveKeyIndexes.getQuick(0) == slaveMetadata.getTimestampIndex()) {
+            final boolean isKeyed = GeneratedShapes.isKeyedTemporalJoin(step, masterOutput, masterMetadata.getTimestampIndex(),
+                    slaveMetadata.getTimestampIndex());
+            if (isKeyed) {
+                resolveKeys(masterOutput, step.getMasterKeyColumnIds(), masterKeyIndexes);
+                resolveKeys(step.getInput().getOutput(), step.getSlaveKeyColumnIds(), slaveKeyIndexes);
+            } else {
                 masterKeyIndexes.clear();
                 slaveKeyIndexes.clear();
-                prepareJoinKeys(frame, masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, isSelfJoin);
             }
+            prepareJoinKeys(frame, masterMetadata, slaveMetadata, masterKeyIndexes, slaveKeyIndexes, isSelfJoin);
+            final long toleranceInterval = step.getToleranceInterval();
             final JoinInput.Algorithm algorithm = step.getAlgorithm();
             final boolean isFullFat = algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL;
             final boolean isTimeFrame = algorithm == JoinInput.Algorithm.TEMPORAL_TIME_FRAME;
@@ -2031,7 +1757,7 @@ final class JoinFactoryGenerator {
                 final boolean isLinear = (step.getHints() & JoinInput.HINT_ASOF_LINEAR) != 0;
                 if (stolenFilter != null ? isLinear || !slave.supportsTimeFrameCursor()
                         : isTimeFrame != (!isLinear && slave.supportsTimeFrameCursor()
-                                          && (joinType == JoinKind.ASOF || !isKeyedTemporalJoin(frame, masterMetadata, slaveMetadata)))) {
+                                          && (joinType == JoinKind.ASOF || !isKeyed))) {
                     throw new AssertionError("recorded temporal join algorithm differs from the slave's time frames");
                 }
             }
@@ -2052,7 +1778,7 @@ final class JoinFactoryGenerator {
                 final RecordCursorFactory raw = result;
                 result = null;
                 result = restoreTemporalOutput(raw, masterMetadata.getColumnCount(), step.getInput().getOutput(),
-                        slaveMetadata.getTimestampIndex(), step.getOutput());
+                        slaveMetadata.getTimestampIndex(), slaveKeyIndexes, step.getOutput());
             }
             if (step.getPostJoinFilter() != null) {
                 final RecordCursorFactory owned = result;
@@ -2299,30 +2025,35 @@ final class JoinFactoryGenerator {
                 joinFilter = instantiator.instantiate(filter, scope, joinMetadata, executionContext);
                 if (joinFilter.isConstant()) {
                     joinFilter.init(null, executionContext);
-                    if (!joinFilter.getBool(null)) {
-                        final RecordCursorFactory nullExtended = master;
-                        master = null;
-                        final RecordCursorFactory factory = columnIndex == null
-                                ? new ExtraNullColumnCursorFactory(outerMetadata, splitIndex, nullExtended)
-                                : new SelectedRecordCursorFactory(outerMetadata, columnIndex, new ExtraNullColumnCursorFactory(innerMetadata, splitIndex, nullExtended));
-                        Throwable failure = Misc.freeBestEffort(null, slave);
-                        failure = Misc.freeBestEffort(failure, joinMetadata);
-                        failure = Misc.freeBestEffort(failure, joinFilter);
-                        failure = Misc.freeBestEffort(failure, windowLoFunc);
-                        failure = Misc.freeBestEffort(failure, windowHiFunc);
-                        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
-                        slave = null;
-                        joinMetadata = null;
-                        joinFilter = null;
-                        windowLoFunc = null;
-                        windowHiFunc = null;
-                        groupByFunctions = null;
-                        if (failure != null) {
-                            Misc.free(factory, failure);
-                            CairoException.rethrowCleanupFailure(failure);
-                        }
-                        return factory;
+                }
+                if (ParanoiaState.PLAN_PARANOIA_MODE && step.isNullExtending() != (joinFilter.isConstant() && !joinFilter.getBool(null))) {
+                    throw new AssertionError("window join step filter differs from its instantiated function");
+                }
+                if (step.isNullExtending()) {
+                    final RecordCursorFactory nullExtended = master;
+                    master = null;
+                    final RecordCursorFactory factory = columnIndex == null
+                            ? new ExtraNullColumnCursorFactory(outerMetadata, splitIndex, nullExtended)
+                            : new SelectedRecordCursorFactory(outerMetadata, columnIndex, new ExtraNullColumnCursorFactory(innerMetadata, splitIndex, nullExtended));
+                    Throwable failure = Misc.freeBestEffort(null, slave);
+                    failure = Misc.freeBestEffort(failure, joinMetadata);
+                    failure = Misc.freeBestEffort(failure, joinFilter);
+                    failure = Misc.freeBestEffort(failure, windowLoFunc);
+                    failure = Misc.freeBestEffort(failure, windowHiFunc);
+                    failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
+                    slave = null;
+                    joinMetadata = null;
+                    joinFilter = null;
+                    windowLoFunc = null;
+                    windowHiFunc = null;
+                    groupByFunctions = null;
+                    if (failure != null) {
+                        Misc.free(factory, failure);
+                        CairoException.rethrowCleanupFailure(failure);
                     }
+                    return factory;
+                }
+                if (joinFilter.isConstant()) {
                     joinFilter = Misc.free(joinFilter);
                     filter = null;
                 }
@@ -2471,15 +2202,7 @@ final class JoinFactoryGenerator {
             IntList slaveIndexes,
             boolean isSelfJoin
     ) {
-        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        final ListColumnFilter listColumnFilterB = frame.listColumnFilterB;
-        listColumnFilterA.clear();
-        listColumnFilterB.clear();
-        for (int i = 0, n = slaveIndexes.size(); i < n; i++) {
-            listColumnFilterA.add(slaveIndexes.getQuick(i) + 1);
-            listColumnFilterB.add(masterIndexes.getQuick(i) + 1);
-        }
-        processJoinKeyTypes(frame, isSelfJoin, masterMetadata, slaveMetadata);
+        frame.joinKeys.of(masterMetadata, slaveMetadata, masterIndexes, slaveIndexes, isSelfJoin);
     }
 
     @FunctionalInterface

@@ -159,7 +159,7 @@ final class Decorrelation implements OptimiserPass {
     }
 
     /**
-     * Empties the carriers decorrelation recorded on join steps for {@link PlanVerifier#verifyDecorrelation}.
+     * Empties the carriers decorrelation recorded on join steps for {@link DecorrelationVerifier#verify}.
      */
     public void releaseCarriers() {
         ctx.releaseCarriers();

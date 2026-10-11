@@ -164,6 +164,28 @@ public class FilterPushdownIntoUnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterPushdownBlockedByUnstableSubqueryInUnion() throws Exception {
+        assertQuery("""
+                SELECT * FROM (SELECT x, ts FROM a UNION ALL SELECT x, ts FROM b)
+                WHERE ts > (SELECT rnd_timestamp('2024-01-01'::timestamp, '2024-12-31'::timestamp, 0))
+                """)
+                .ddl("CREATE TABLE a (x LONG, ts TIMESTAMP) TIMESTAMP(ts)", "CREATE TABLE b (x LONG, ts TIMESTAMP) TIMESTAMP(ts)")
+                .assertsPlan("""
+                        Filter filter: ts [thread-safe] > cursor\s
+                            VirtualRecord
+                              functions: [rnd_timestamp(1704067200000000,1735603200000000,0)]
+                                long_sequence count: 1
+                            Union All
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                        """);
+    }
+
+    @Test
     public void testFilterPushdownShouldNotChangeSampleByInUnionBranch() throws Exception {
         // Regression test: pushing a WHERE filter into a UNION branch that has
         // SAMPLE BY must not change aggregation semantics. The filter should be

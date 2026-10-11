@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.GeneratedShapes;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -70,13 +71,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.ColumnType.isTimestamp;
-
 final class SortFactoryGenerator {
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
-    private final OutputSchema emptySchema;
     private final EntityColumnFilter entityColumnFilter;
     private final FilterFactoryGenerator filterGenerator;
     private final ProjectionFactoryGenerator projectionGenerator;
@@ -88,7 +86,6 @@ final class SortFactoryGenerator {
             FilterFactoryGenerator filterGenerator,
             ProjectionFactoryGenerator projectionGenerator,
             BytecodeAssembler asm,
-            OutputSchema emptySchema,
             EntityColumnFilter entityColumnFilter,
             RecordComparatorCompiler recordComparatorCompiler
     ) {
@@ -97,13 +94,19 @@ final class SortFactoryGenerator {
         this.filterGenerator = filterGenerator;
         this.projectionGenerator = projectionGenerator;
         this.asm = asm;
-        this.emptySchema = emptySchema;
         this.entityColumnFilter = entityColumnFilter;
         this.recordComparatorCompiler = recordComparatorCompiler;
     }
 
+    private static int sourceIndex(@Nullable ProjectPlan projection, OutputSchema sorted, OutputSchema source, int sortedIndex) {
+        final int columnId = projection == null ? sorted.getColumnId(sortedIndex)
+                : ((ColumnExpression) projection.getExpressions().getQuick(sortedIndex)).getColumnId();
+        return source.getColumnIndexById(columnId);
+    }
+
     // Consumes the input and optional limit functions on entry, including failure.
-    RecordCursorFactory generate(GenerationFrame frame, SortPlan sort, RecordCursorFactory base, Function lo, Function hi, int limitPosition) throws SqlException {
+    RecordCursorFactory generate(GenerationFrame frame, SortPlan sort, RecordCursorFactory base, @Nullable LimitPlan limit, Function lo, Function hi)
+            throws SqlException {
         try {
             final SortPlan.Algorithm algorithm = sort.getAlgorithm();
             if (algorithm != SortPlan.Algorithm.INPUT_ORDER) {
@@ -121,13 +124,8 @@ final class SortFactoryGenerator {
                 base = null;
                 switch (algorithm) {
                     case LONG_TOP_K -> {
-                        final Function count = lo;
-                        lo = null;
-                        try {
-                            return new LongTopKRecordCursorFactory(metadata, ownedBase, Math.abs(firstKey) - 1, (int) count.getLong(null), firstKey > 0);
-                        } finally {
-                            count.close();
-                        }
+                        final long count = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
+                        return new LongTopKRecordCursorFactory(metadata, ownedBase, Math.abs(firstKey) - 1, (int) count, firstKey > 0);
                     }
                     case PARALLEL_FILTERED_TOP_K, PARALLEL_TOP_K -> {
                         final IllegalStateException failure = new IllegalStateException("parallel top-K generates its own input");
@@ -140,10 +138,12 @@ final class SortFactoryGenerator {
                         lo = null;
                         hi = null;
                         return generateSort(metadata, ownedBase, keys, ownedLo, ownedHi,
-                                algorithm == SortPlan.Algorithm.PRESORTED_LIMITED ? Math.abs(firstKey) - 1 : -1, false);
+                                algorithm == SortPlan.Algorithm.PRESORTED_LIMITED ? Math.abs(firstKey) - 1 : -1,
+                                configuration.isSqlOrderBySortEnabled(), false);
                     }
                     default ->
-                            base = generateSort(metadata, ownedBase, keys, null, null, -1, algorithm == SortPlan.Algorithm.MATERIALIZED);
+                            base = generateSort(metadata, ownedBase, keys, null, null, -1, configuration.isSqlOrderBySortEnabled(),
+                                    algorithm == SortPlan.Algorithm.MATERIALIZED);
                 }
             }
             if (lo == null) {
@@ -155,7 +155,7 @@ final class SortFactoryGenerator {
             base = null;
             lo = null;
             hi = null;
-            return new LimitRecordCursorFactory(limited, ownedLo, ownedHi, limitPosition);
+            return new LimitRecordCursorFactory(limited, ownedLo, ownedHi, limit.getPosition());
         } catch (Throwable th) {
             Misc.free(base, th);
             Misc.free(lo, th);
@@ -179,10 +179,7 @@ final class SortFactoryGenerator {
         RecordCursorFactory leaf = null;
         try {
             leaf = codeGenerator.generateSource(frame, source, prepared, executionContext);
-            final long count;
-            try (Function lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext)) {
-                count = lo.getLong(null);
-            }
+            final long count = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
             assert count > 0 && count <= Integer.MAX_VALUE;
             if (ParanoiaState.PLAN_PARANOIA_MODE && !leaf.supportsPageFrameCursor()) {
                 throw new AssertionError("parallel top-K input does not read page frames");
@@ -191,17 +188,13 @@ final class SortFactoryGenerator {
             final OutputSchema input = source.getOutput();
             final ListColumnFilter keys = new ListColumnFilter();
             for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
-                int columnId = sort.getColumnIds().getQuick(i);
-                if (projection != null) {
-                    columnId = ((ColumnExpression) projection.getExpressions().getQuick(sorted.getColumnIndexById(columnId))).getColumnId();
-                }
-                final int index = input.getColumnIndexById(columnId);
+                final int index = sourceIndex(projection, sorted, input, sorted.getColumnIndexById(sort.getColumnIds().getQuick(i)));
                 keys.add(sort.getDirections().getQuick(i) == SortDirection.DESCENDING ? -index - 1 : index + 1);
             }
             final RecordMetadata leafMetadata = leaf.getMetadata();
             final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(leafMetadata);
-            final int firstIndex = Math.abs(keys.getQuick(0)) - 1;
-            metadata.setTimestampIndex(isTimestamp(leafMetadata.getColumnType(firstIndex)) ? firstIndex : -1);
+            final int timestampIndex = PhysicalProperties.timestampIndex(sort);
+            metadata.setTimestampIndex(timestampIndex < 0 ? -1 : sourceIndex(projection, sorted, input, timestampIndex));
             if (isFilterStolen) {
                 filterGenerator.prepareParallel(prepared, leaf, frame.functionInstantiator, executionContext);
             }
@@ -231,7 +224,8 @@ final class SortFactoryGenerator {
 
     /**
      * Consumes the input and optional LIMIT functions. A non-null lo selects the bounded sort of a random-access
-     * input; without one, the sort copies the rows of the input when {@code isMaterialized}.
+     * input; without one, the sort copies the rows of the input when {@code isMaterialized}. The sort compares
+     * encoded keys when {@code isEncodingEnabled} and the encoder supports the keys.
      * The column filter is borrowed; retained factories receive a private copy.
      */
     RecordCursorFactory generateSort(
@@ -241,6 +235,7 @@ final class SortFactoryGenerator {
             @Nullable Function lo,
             @Nullable Function hi,
             int preSortedTimestampIndex,
+            boolean isEncodingEnabled,
             boolean isMaterialized
     ) throws SqlException {
         final ListColumnFilter retainedKeys;
@@ -252,7 +247,7 @@ final class SortFactoryGenerator {
         try {
             final RecordMetadata metadata = base.getMetadata();
             retainedKeys = keys.copy();
-            isEncoded = configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, keys);
+            isEncoded = isEncodingEnabled && SortKeyEncoder.isSupported(metadata, keys);
             if (lo == null) {
                 assert hi == null;
                 if (isMaterialized) {
@@ -319,10 +314,13 @@ final class SortFactoryGenerator {
         }
         final RecordCursorFactory base = codeGenerator.generate(frame, sort.getInput(), executionContext);
         if (limit.getApplication() == LimitPlan.Application.INPUT) {
-            return generate(frame, sort, base, null, null, limit.getPosition());
+            return generate(frame, sort, base, null, null, null);
+        }
+        if (sort.getAlgorithm() == SortPlan.Algorithm.LONG_TOP_K) {
+            return generate(frame, sort, base, limit, null, null);
         }
         codeGenerator.instantiateLimit(frame, limit, base, executionContext);
-        return generate(frame, sort, base, frame.limitLo, frame.limitHi, limit.getPosition());
+        return generate(frame, sort, base, limit, frame.limitLo, frame.limitHi);
     }
 
 }
