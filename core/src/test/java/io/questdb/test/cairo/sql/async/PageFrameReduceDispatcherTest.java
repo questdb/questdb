@@ -1066,6 +1066,53 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForeignFiberHashJoinCompletesWhenProbeExceedsQueueCapacity() throws Exception {
+        assertForeignFiberQueryCompletes(
+                "SELECT t.k FROM t JOIN s ON s.k = t.k WHERE t.vt IS NULL AND s.ct = 'u'",
+                """
+                        SelectedRecord
+                            Hash Join Light
+                              condition: s.k=t.k
+                                Async Filter workers: 1
+                                  filter: null=vt
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                                Hash
+                                    Async Filter workers: 1
+                                      filter: ct=u
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: s
+                        """,
+                "[2,5]"
+        );
+    }
+
+    @Test
+    public void testForeignFiberUnionAllCompletesWhenSecondHalfExceedsQueueCapacity() throws Exception {
+        assertForeignFiberQueryCompletes(
+                "SELECT k FROM s WHERE ct = 'u' UNION ALL SELECT k FROM t WHERE vt IS NULL",
+                """
+                        Union All
+                            SelectedRecord
+                                Async Filter workers: 1
+                                  filter: ct=u
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: s
+                            SelectedRecord
+                                Async Filter workers: 1
+                                  filter: null=vt
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                        """,
+                "[2,5,1,2,3,4,5,6]"
+        );
+    }
+
+    @Test
     public void testForeignProgressBeforeWaitDoesNotGetLost() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
@@ -1278,95 +1325,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(dispatcher);
             }
         });
-    }
-
-    @Test
-    public void testHashJoinProbeReducesLocallyWhenBuildSidePinsQueue() throws Exception {
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
-        assertMemoryLeak(() -> TestUtils.execute(null, (engine, compiler, sqlExecutionContext) -> {
-            Assert.assertEquals(1, engine.getMessageBus().getPageFrameReduceShardCount());
-            Assert.assertEquals(4, engine.getMessageBus().getPageFrameReduceQueue(0).getCycle());
-            execute(compiler, """
-                    CREATE TABLE t AS (
-                        SELECT x AS k, NULL::TIMESTAMP AS vt, timestamp_sequence(0, 86_400_000_000) AS ts
-                        FROM long_sequence(6)
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """, sqlExecutionContext);
-            execute(compiler, "CREATE TABLE s AS (SELECT k, 'u' AS ct FROM t WHERE k % 3 = 2)", sqlExecutionContext);
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            final String query = "SELECT t.k FROM t JOIN s ON s.k = t.k WHERE t.vt IS NULL AND s.ct = 'u'";
-            assertQuery(query).withEngine(engine).withContext(sqlExecutionContext).noLeakCheck().assertsPlan("""
-                    SelectedRecord
-                        Hash Join Light
-                          condition: s.k=t.k
-                            Async Filter workers: 1
-                              filter: null=vt
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            Hash
-                                Async Filter workers: 1
-                                  filter: ct=u
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: s
-                    """);
-
-            final FiberRuntime ownerRuntime = new FiberRuntime(1);
-            final FiberRuntime queryRuntime = new FiberRuntime(4);
-            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
-                    engine,
-                    engine.getMessageBus(),
-                    queryRuntime
-            );
-            try {
-                engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
-                final AtomicReference<Throwable> failure = new AtomicReference<>();
-                final LongList keys = new LongList();
-                try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                    final FiberTask ownerTask = new FiberTask() {
-                        @Override
-                        protected void onError(Throwable th) {
-                            failure.set(th);
-                        }
-
-                        @Override
-                        protected boolean runStep() {
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                while (cursor.hasNext()) {
-                                    keys.add(cursor.getRecord().getLong(0));
-                                }
-                            } catch (SqlException e) {
-                                throw new AssertionError(e);
-                            }
-                            return true;
-                        }
-                    };
-
-                    Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask));
-                    final long deadline = System.nanoTime() + 5_000_000_000L;
-                    while (!ownerTask.isDone() && System.nanoTime() < deadline) {
-                        ownerRuntime.drain(8);
-                        dispatcher.consumeOrdered(
-                                -1,
-                                engine.getMessageBus().getPageFrameReduceQueue(0),
-                                engine.getMessageBus().getPageFrameReduceSubSeq(0),
-                                null
-                        );
-                        queryRuntime.drain(8);
-                    }
-
-                    Assert.assertTrue(ownerTask.isDone());
-                    Assert.assertNull(failure.get());
-                    TestUtils.assertEquals("[2,5]", keys.toString());
-                }
-            } finally {
-                close(ownerRuntime);
-                close(queryRuntime);
-                Misc.free(dispatcher);
-            }
-        }, configuration, LOG));
     }
 
     @Test
@@ -4571,6 +4529,80 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(queue);
             }
         });
+    }
+
+    private void assertForeignFiberQueryCompletes(String query, String expectedPlan, String expectedKeys) throws Exception {
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        assertMemoryLeak(() -> TestUtils.execute(null, (engine, compiler, sqlExecutionContext) -> {
+            Assert.assertEquals(1, engine.getMessageBus().getPageFrameReduceShardCount());
+            Assert.assertEquals(4, engine.getMessageBus().getPageFrameReduceQueue(0).getCycle());
+            execute(compiler, """
+                    CREATE TABLE t AS (
+                        SELECT x AS k, NULL::TIMESTAMP AS vt, timestamp_sequence(0, 86_400_000_000) AS ts
+                        FROM long_sequence(6)
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """, sqlExecutionContext);
+            execute(compiler, "CREATE TABLE s AS (SELECT k, 'u' AS ct FROM t WHERE k % 3 = 2)", sqlExecutionContext);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(query).withEngine(engine).withContext(sqlExecutionContext).noLeakCheck().assertsPlan(expectedPlan);
+
+            final FiberRuntime ownerRuntime = new FiberRuntime(1);
+            final FiberRuntime queryRuntime = new FiberRuntime(4);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    queryRuntime
+            );
+            try {
+                engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final LongList keys = new LongList();
+                try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                    final FiberTask ownerTask = new FiberTask() {
+                        @Override
+                        protected void onError(Throwable th) {
+                            failure.set(th);
+                        }
+
+                        @Override
+                        protected boolean runStep() {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                while (cursor.hasNext()) {
+                                    keys.add(cursor.getRecord().getLong(0));
+                                }
+                            } catch (SqlException e) {
+                                throw new AssertionError(e);
+                            }
+                            return true;
+                        }
+                    };
+
+                    Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask));
+                    final long deadline = System.nanoTime() + 5_000_000_000L;
+                    while (!ownerTask.isDone() && System.nanoTime() < deadline) {
+                        ownerRuntime.drain(8);
+                        dispatcher.consumeOrdered(
+                                -1,
+                                engine.getMessageBus().getPageFrameReduceQueue(0),
+                                engine.getMessageBus().getPageFrameReduceSubSeq(0),
+                                null
+                        );
+                        queryRuntime.drain(8);
+                    }
+
+                    Assert.assertTrue(ownerTask.isDone());
+                    Assert.assertNull(failure.get());
+                    TestUtils.assertEquals(expectedKeys, keys.toString());
+                    Assert.assertEquals(0, ownerRuntime.getOutstandingTaskCount());
+                    Assert.assertEquals(0, queryRuntime.getOutstandingTaskCount());
+                }
+            } finally {
+                close(ownerRuntime);
+                close(queryRuntime);
+                Misc.free(dispatcher);
+            }
+        }, configuration, LOG));
     }
 
     private void assertProgressBeforeTimer(boolean isSequenceWait, ProgressBeforeTimerScenario scenario) throws Exception {
