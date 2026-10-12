@@ -3503,7 +3503,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testHorizonJoinRightFilterRenamedColumns() throws Exception {
         // A right-hand sub-query that renames columns: the right-hand filter, whether two keys imply it,
         // ON holds it or the sub-query's WHERE does, filters the table under the projection, and the
-        // join reads the table's columns under their projected names. Rows checked with DuckDB.
+        // join reads the table's columns under their projected names. Each query runs on the serial and
+        // on the parallel factory. Rows checked with DuckDB.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (id INT, s SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
             executeWithRewriteTimestamp("CREATE TABLE prices (a SYMBOL, b SYMBOL, v VARCHAR, price DOUBLE, venue SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
@@ -3536,40 +3537,70 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     {"(SELECT x AS z, price, ts FROM (SELECT a AS x, b AS y, price, ts FROM prices WHERE a = b)) p ON (t.s = p.z)", "slave filter: a=b", "1\t3.0\n2\t0.5\n"},
                     {"(SELECT a AS x, price, ts AS pts FROM prices) p ON (t.s = p.x AND p.price > 1)", "slave filter: 1<price", "1\t3.0\n2\t2.0\n"},
             };
-            for (String[] c : cases) {
-                assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN " + c[0] + " RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String horizonJoin = (isParallel ? "Async " : "") + "Horizon Join";
+                final String multiHorizonJoin = (isParallel ? "Async " : "") + "Multi Horizon Join";
+                for (String[] c : cases) {
+                    assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN " + c[0] + " RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining(horizonJoin, c[1])
+                            .returns("id\tavg\n" + c[2]);
+                }
+                assertQuery("WITH q AS (SELECT a AS x, b AS y, price, ts FROM prices) " +
+                        "SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN q AS p ON (t.s = p.x AND t.s = p.y) " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
                         .noLeakCheck()
                         .expectSize()
-                        .withPlanContaining(c[1])
-                        .returns("id\tavg\n" + c[2]);
+                        .withPlanContaining(horizonJoin, "slave filter: a=b")
+                        .returns("id\tavg\n1\t3.0\n2\t0.5\n");
+                assertQuery("SELECT t.id, avg(p.px) FROM trades AS t HORIZON JOIN (SELECT a, b, price AS px, ts FROM prices) AS p " +
+                        "ON (t.s = p.a AND t.s = p.b) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(horizonJoin, "slave filter: a=b")
+                        .returns("id\tavg\n1\t3.0\n2\t0.5\n");
+                // a projected column takes the name of the dropped column b, and price takes b#2, the name
+                // that renameHorizonSlaveColumns() tries first for b, at index 2 of the peeled slave's
+                // columns price, a, b, ts
+                assertQuery("SELECT t.id, avg(p.\"b#2\") FROM trades AS t HORIZON JOIN (SELECT a AS b, price AS \"b#2\", ts FROM prices WHERE b = 'A') AS p " +
+                        "ON (t.s = p.b) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(horizonJoin, "slave filter: b='A'")
+                        .returns("id\tavg\n1\t3.0\n2\t2.0\n");
+                assertQuery("SELECT t.id, avg(p.price), avg(q.price) FROM trades AS t " +
+                        "HORIZON JOIN (SELECT a AS x, b AS y, price, ts FROM prices) AS p ON (t.s = p.x AND t.s = p.y) " +
+                        "HORIZON JOIN (SELECT a AS z, price, ts FROM prices WHERE b = 'A') AS q ON (t.s = q.z) " +
+                        "LIST (0) AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(multiHorizonJoin, "slave filter: a=b", "slave filter: b='A'")
+                        .returns("id\tavg\tavg1\n1\t3.0\t3.0\n2\t0.5\t2.0\n");
+                // a slave that renames columns after one that renames none: each slave reads its own metadata
+                assertQuery("SELECT t.id, avg(q.price), avg(p.price) FROM trades AS t " +
+                        "HORIZON JOIN (prices WHERE b = 'A') AS q ON (t.s = q.a) " +
+                        "HORIZON JOIN (SELECT a AS x, b AS y, price, ts FROM prices) AS p ON (t.s = p.x AND t.s = p.y) " +
+                        "LIST (0) AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(multiHorizonJoin, "slave filter: b='A'", "slave filter: a=b")
+                        .returns("id\tavg\tavg1\n1\t3.0\t3.0\n2\t2.0\t0.5\n");
+                // the peel stops at a projection that exposes one base column under two names, which cannot
+                // read time frames; count(p.y) keeps y in the projection
+                final String twoNames = "SELECT t.id, avg(p.price), count(p.y) FROM trades AS t HORIZON JOIN (SELECT a AS x, a AS y, price, ts FROM prices WHERE b = 'A') AS p " +
+                        "ON (t.s = p.x) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id";
+                assertQuery(twoNames)
+                        .noLeakCheck()
+                        .fails(twoNames.indexOf("HORIZON"), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+                // a column that the projection drops stays unreadable by name
+                final String sql = "SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN (SELECT a AS x, price, ts FROM prices WHERE venue = 'X') AS p " +
+                        "ON (t.s = p.x AND p.venue = 'X') RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(sql.indexOf("p.venue"), "Invalid column: p.venue");
             }
-            assertQuery("WITH q AS (SELECT a AS x, b AS y, price, ts FROM prices) " +
-                    "SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN q AS p ON (t.s = p.x AND t.s = p.y) " +
-                    "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
-                    .noLeakCheck()
-                    .expectSize()
-                    .withPlanContaining("slave filter: a=b")
-                    .returns("id\tavg\n1\t3.0\n2\t0.5\n");
-            assertQuery("SELECT t.id, avg(p.px) FROM trades AS t HORIZON JOIN (SELECT a, b, price AS px, ts FROM prices) AS p " +
-                    "ON (t.s = p.a AND t.s = p.b) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
-                    .noLeakCheck()
-                    .expectSize()
-                    .withPlanContaining("slave filter: a=b")
-                    .returns("id\tavg\n1\t3.0\n2\t0.5\n");
-            assertQuery("SELECT t.id, avg(p.price), avg(q.price) FROM trades AS t " +
-                    "HORIZON JOIN (SELECT a AS x, b AS y, price, ts FROM prices) AS p ON (t.s = p.x AND t.s = p.y) " +
-                    "HORIZON JOIN (SELECT a AS z, price, ts FROM prices WHERE b = 'A') AS q ON (t.s = q.z) " +
-                    "LIST (0) AS h ORDER BY t.id")
-                    .noLeakCheck()
-                    .expectSize()
-                    .withPlanContaining("slave filter: a=b", "slave filter: b='A'")
-                    .returns("id\tavg\tavg1\n1\t3.0\t3.0\n2\t0.5\t2.0\n");
-            // a column that the projection drops stays unreadable by name
-            final String sql = "SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN (SELECT a AS x, price, ts FROM prices WHERE venue = 'X') AS p " +
-                    "ON (t.s = p.x AND p.venue = 'X') RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id";
-            assertQuery(sql)
-                    .noLeakCheck()
-                    .fails(sql.indexOf("p.venue"), "Invalid column: p.venue");
         });
     }
 
