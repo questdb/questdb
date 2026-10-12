@@ -5875,8 +5875,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         }
                     }
                 }
-                // Three operands, which the generator folds from the left, flat and with a parenthesised right
-                // operand: SHORT, CHAR, INT, TIMESTAMP, STRING, SYMBOL, VARCHAR, GEOHASH(4c), DECIMAL(10,2), DOUBLE[]
+                // Three operands, which the generator folds from the left, flat and with a parenthesised left or
+                // right operand: SHORT, CHAR, INT, TIMESTAMP, STRING, SYMBOL, VARCHAR, GEOHASH(4c), DECIMAL(10,2),
+                // DOUBLE[]
                 final int[] chainTypes = {2, 3, 4, 7, 11, 12, 13, 17, 19, 21};
                 final String[][] chains = {
                         {"UNION ALL", "UNION ALL"}, {"UNION", "UNION ALL"}, {"UNION ALL", "EXCEPT"},
@@ -5901,6 +5902,37 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     isSymbol,
                                     mismatches
                             );
+                            for (String operation : new String[]{"UNION ALL", "EXCEPT"}) {
+                                assertSetOperationColumnType(
+                                        compiler,
+                                        "(SELECT k, c FROM t" + a + ' ' + operation + " SELECT k, c FROM t" + b + ") UNION ALL SELECT k, c FROM t" + c,
+                                        false,
+                                        isSymbol,
+                                        mismatches
+                                );
+                            }
+                        }
+                    }
+                }
+                // Four operands, so that a run of UNION steps ends at an EXCEPT and another one starts after it:
+                // INT, TIMESTAMP, STRING, SYMBOL, VARCHAR, GEOHASH(4c)
+                final int[] longChainTypes = {4, 7, 11, 12, 13, 17};
+                for (int a : longChainTypes) {
+                    for (int b : longChainTypes) {
+                        for (int c : longChainTypes) {
+                            for (int d : longChainTypes) {
+                                final boolean isSymbol = a == symbol && b == symbol && c == symbol && d == symbol;
+                                for (String middle : new String[]{"UNION ALL", "EXCEPT"}) {
+                                    assertSetOperationColumnType(
+                                            compiler,
+                                            "SELECT k, c FROM t" + a + " UNION ALL SELECT k, c FROM t" + b + ' ' + middle
+                                                    + " SELECT k, c FROM t" + c + " UNION ALL SELECT k, c FROM t" + d,
+                                            false,
+                                            isSymbol,
+                                            mismatches
+                                    );
+                                }
+                            }
                         }
                     }
                 }

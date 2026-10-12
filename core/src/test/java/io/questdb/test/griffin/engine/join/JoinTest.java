@@ -4644,6 +4644,37 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImpliedKeyOverExceptOfSymbolColumns() throws Exception {
+        // The code generator outputs a.f as STRING: the EXCEPT casts its operands for the c column, which is INT in
+        // one and LONG in the other, and so widens SYMBOL with SYMBOL to STRING. getSetOperationColumnType() reads
+        // the SYMBOL type of the operands, because the cast depends on other columns. SYMBOL and STRING encode join
+        // keys alike, so the implied a.f = bq.g keys the join on the STRING column and the rows stay right.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ae1 (w INT, f SYMBOL, c INT)");
+            execute("INSERT INTO ae1 VALUES (1, 'x', 1), (3, 'y', 1)");
+            execute("CREATE TABLE ae2 (w INT, f SYMBOL, c LONG)");
+            execute("INSERT INTO ae2 VALUES (3, 'y', 1)");
+            execute("CREATE TABLE bq (g SYMBOL, x INT)");
+            execute("INSERT INTO bq VALUES ('x', 2), ('z', 2)");
+            execute("CREATE TABLE dq (y INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3)");
+            execute("CREATE TABLE cq (k SYMBOL)");
+            execute("INSERT INTO cq VALUES ('x'), (null)");
+            assertQuery("""
+                    SELECT a.w, a.f, bq.g, dq.y, cq.k ck
+                    FROM (SELECT w, f, c FROM ae1 EXCEPT SELECT w, f, c FROM ae2) a
+                    JOIN bq ON bq.x > 1 RIGHT JOIN dq ON dq.y = a.w JOIN cq ON a.f = cq.k AND bq.g = cq.k
+                    WHERE a.w > 0 ORDER BY 1, 2, 3, 4, 5""")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: bq.g=a.f")
+                    .returns("""
+                            w\tf\tg\ty\tck
+                            1\tx\tx\t1\tx
+                            """);
+        });
+    }
+
+    @Test
     public void testImpliedKeyOverMixedTypeUnionColumn() throws Exception {
         // getQueryColumnType() read a.f as BYTE from the union's first branch, although the union widens it to
         // INT. isFilterEqualToKeyMatch() then accepted the implied a.f = bq2.g as a join key, and code generation
@@ -14867,6 +14898,63 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinOnKeysSharingMixedTypeUnionColumnKeepsBothKeys() throws Exception {
+        // The keys imply u.x = u.y over a union that widens INT and LONG to LONG. As over a table, a RIGHT or FULL
+        // JOIN that cannot filter the scan of u keeps both keys, which match the rows that the equality keeps. When
+        // the union columns had no type, the join kept one key and ran the equality as an outer join filter, once
+        // per entry of the hash chain.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pi (id INT, x INT, y INT)");
+            execute("INSERT INTO pi VALUES (1, 1, 1), (2, 2, 1), (3, null, null)");
+            execute("CREATE TABLE pl (id INT, x LONG, y LONG)");
+            execute("INSERT INTO pl VALUES (4, 3, 3), (5, 2, 2)");
+            execute("CREATE TABLE pb (k LONG, v INT)");
+            execute("INSERT INTO pb VALUES (1, 10), (1, 11), (1, 12), (2, 20), (2, 21), (null, 30), (7, 70)");
+            final String union = "(SELECT id, x, y FROM pi UNION ALL SELECT id, x, y FROM pl) u";
+
+            // Row 2 fails the equality, row 3 matches the null key, row 4 finds no key and the key 7 finds no row.
+            final String expectedPreserved = """
+                    id\tv
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\tnull
+                    3\t30
+                    4\tnull
+                    5\t20
+                    5\t21
+                    """;
+            final String expectedFull = """
+                    id\tv
+                    null\t70
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\tnull
+                    3\t30
+                    4\tnull
+                    5\t20
+                    5\t21
+                    """;
+            assertQuery("SELECT u.id, pb.v FROM " + union + " FULL JOIN pb ON u.x = pb.k AND u.y = pb.k ORDER BY u.id, pb.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: pb.k=u.y and pb.k=u.x")
+                    .withPlanNotContaining("filter:")
+                    .returns(expectedFull);
+            assertQuery("SELECT u.id, pb.v FROM pb RIGHT JOIN " + union + " ON pb.k = u.x AND pb.k = u.y ORDER BY u.id, pb.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Right Outer Join", "condition: u.y=pb.k and u.x=pb.k")
+                    .withPlanNotContaining("filter:")
+                    .returns(expectedPreserved);
+            assertQuery("SELECT u.id, pb.v FROM pb FULL JOIN " + union + " ON pb.k = u.x AND pb.k = u.y ORDER BY u.id, pb.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Full Outer Join", "condition: u.y=pb.k and u.x=pb.k")
+                    .withPlanNotContaining("filter:")
+                    .returns(expectedFull);
+        });
+    }
+
+    @Test
     public void testOuterJoinOnNameSharedInScopeAndWithLaterTable() throws Exception {
         // w exists in both f1 aliases, which are in scope of the ON clause, and in the later f2. The name
         // is ambiguous within the scope of the ON clause, so the optimiser must not qualify it with
@@ -15170,7 +15258,8 @@ public class JoinTest extends AbstractCairoTest {
         // The union widens BYTE and INT to INT, whose NULL record passes u.k = NULL: the rows that RIGHT JOIN dq
         // NULL-extends survive the filter, so the constant must not filter bi below the join. A check on the type
         // of the BYTE branch, first or last, finds no NULL and filters bi: dq 2, 3 and 4 then lose their matches
-        // and return three extra NULL-extended rows.
+        // and return three extra NULL-extended rows. A branch that computes k leaves the type unknown, which keeps
+        // the scan as well; a type read from the other branches alone would be BYTE.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ub (k BYTE, v LONG)");
             execute("INSERT INTO ub VALUES (0, 1), (5, 2)");
@@ -15188,7 +15277,8 @@ public class JoinTest extends AbstractCairoTest {
                     """;
             for (String source : new String[]{
                     "(SELECT k, v FROM ub UNION ALL SELECT k, v FROM ui)",
-                    "(SELECT k, v FROM ui UNION ALL SELECT k, v FROM ub)"
+                    "(SELECT k, v FROM ui UNION ALL SELECT k, v FROM ub)",
+                    "(SELECT k, v FROM ub UNION ALL SELECT k + 0 AS k, v FROM ui)"
             }) {
                 assertQuery("SELECT u.k, u.v, bi.bk, bi.w, dq.x dx FROM " + source
                         + " u JOIN bi ON bi.bk = u.k RIGHT JOIN dq ON dq.x = bi.x WHERE u.k = NULL ORDER BY dx")
@@ -15235,6 +15325,39 @@ public class JoinTest extends AbstractCairoTest {
                         .withPlanNotContaining("filter: bk=0")
                         .returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testRightJoinAfterInnerOverMixedTypeUnionKeysImpliedEquality() throws Exception {
+        // cq's keys imply a.w = bq.k. The union widens BYTE and INT to INT, whose NULL record fails a.x > 0, so the
+        // WHERE drops every row that RIGHT JOIN dq NULL-extends, and the INNER join of a and bq keys on the implied
+        // equality, as it does over a table. When the union column had no type, a and bq ran as a CROSS JOIN, and
+        // the equality filtered its rows after the later joins.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ab (w INT, x BYTE)");
+            execute("INSERT INTO ab VALUES (1, 5), (2, 0)");
+            execute("CREATE TABLE ai (w INT, x INT)");
+            execute("INSERT INTO ai VALUES (3, 8), (4, null)");
+            execute("CREATE TABLE bq (k INT, x INT)");
+            execute("INSERT INTO bq VALUES (1, 2), (2, 2), (3, 2)");
+            execute("CREATE TABLE dq (y INT)");
+            execute("INSERT INTO dq VALUES (5), (8), (0), (9)");
+            execute("CREATE TABLE cq (k INT)");
+            execute("INSERT INTO cq VALUES (1), (3), (null)");
+            assertQuery("""
+                    SELECT a.w, a.x, bq.k, dq.y, cq.k ck
+                    FROM (SELECT w, x FROM ab UNION ALL SELECT w, x FROM ai) a
+                    JOIN bq ON bq.x > 1 RIGHT JOIN dq ON dq.y = a.x JOIN cq ON a.w = cq.k AND bq.k = cq.k
+                    WHERE a.x > 0 ORDER BY 1, 2, 3, 4, 5""")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: bq.k=a.w")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            w\tx\tk\ty\tck
+                            1\t5\t1\t5\t1
+                            3\t8\t3\t8\t3
+                            """);
         });
     }
 

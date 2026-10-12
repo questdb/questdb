@@ -1964,6 +1964,42 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnWhereDropsUnmatchedUnionRows() throws Exception {
+        // The slave is a union that widens INT and LONG to LONG, whose NULL record fails s.v = 5, so the WHERE
+        // drops every unmatched master row, as over a table: a = b filters m, and the join keeps a single key.
+        // When the union column had no type, the join kept both keys and read every row of m.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, a LONG, b LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 1, 1, '2024-01-01T00:00:01.000000Z'),
+                        (2, 1, 2, '2024-01-01T00:00:02.000000Z'),
+                        (3, 2, 2, '2024-01-01T00:00:03.000000Z'),
+                        (4, 3, 3, '2024-01-01T00:00:04.000000Z')
+                    """);
+            execute("CREATE TABLE si (k LONG, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO si VALUES (1, 5, '2024-01-01T00:00:00.000000Z'), (2, 6, '2024-01-01T00:00:00.500000Z')");
+            execute("CREATE TABLE sl (k LONG, v LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO sl VALUES (3, 5, '2024-01-01T00:00:00.700000Z'), (2, null, '2024-01-01T00:00:00.800000Z')");
+            // m 2 fails a = b, and the latest slave row of m 3 has a NULL v
+            final String expected = """
+                    id\ta\tb\tk\tv
+                    1\t1\t1\t1\t5
+                    4\t3\t3\t3\t5
+                    """;
+            for (String join : new String[]{"ASOF JOIN", "LT JOIN"}) {
+                assertQuery("SELECT m.id, m.a, m.b, s.k, s.v FROM m " + join
+                        + " ((SELECT k, v, ts FROM si UNION ALL SELECT k, v, ts FROM sl ORDER BY ts) TIMESTAMP(ts)) s"
+                        + " ON s.k = m.a AND s.k = m.b WHERE s.v = 5")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("filter: a=b", "condition: s.k=m.b")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnKeysSharingSlaveColumnWhereFilterDiffersFromKeys() throws Exception {
         // m.a = m.b would filter other rows than the keys match: SQL compares 0.0 = -0.0 as equal, while
         // the join keys differ, and SYMBOL and STRING columns are compared after different conversions.
