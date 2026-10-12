@@ -11774,13 +11774,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * is generated a second time as if the table model carried {@code no_index}, and the two plans
      * are put behind an {@link IndexScanChoiceRecordCursorFactory}, which opens one of them each
      * time, from the share of the scanned rows the index's per-key counts say the list selects.
+     * <p>
+     * The index plan is compiled from a gather base whether or not the GROUP BY can gather (its
+     * aggregates may not run in parallel, such as {@code string_agg} or {@code count_distinct}).
+     * Then the index plan is a serial GROUP BY over the gather's index scan, which reads a single
+     * key as a list of one rather than through the single-symbol page-frame scan it would
+     * otherwise take, and the cached factory holds both plans, each with its per-worker state.
      */
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory indexPlan = generateSelectGroupBy0(model, executionContext);
-        if (indexPlan.getBaseFactory() instanceof IndexGatherRecordCursorFactory gather) {
-            // its expression nodes go back to the pool with this compilation
-            gather.releaseStealFilterExpr();
-        }
+        // its expression nodes go back to the pool with this compilation, also where the GROUP BY
+        // does not gather and the index scan sits deeper, under a sort (twap)
+        releaseIndexGatherFilterExpr(indexPlan);
         if (!configuration.isSqlIndexScanChoiceEnabled() || forcedScanModel != null) {
             return indexPlan;
         }
@@ -11812,6 +11817,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(scanPlan);
             Misc.free(indexPlan);
             throw th;
+        }
+    }
+
+    private static void releaseIndexGatherFilterExpr(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        // a GROUP BY's base is at most a few factories down: fill, sort, a projection
+        for (int depth = 0; f != null && depth < 8; depth++) {
+            if (f instanceof IndexGatherRecordCursorFactory gather) {
+                gather.releaseStealFilterExpr();
+                return;
+            }
+            f = f.getBaseFactory();
         }
     }
 
@@ -12314,10 +12331,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // A symbol list a POSTING index serves: the workers gather the list's rows through
                 // the index. The base keeps applying the rest of the filter on its serial path, so
                 // the GROUP BY compiles its own copy of it for its tasks.
+                final boolean orderSensitive = GroupByUtils.hasOrderSensitiveFunctions(groupByFunctions);
                 if (!supportsParallelism
                         && factory instanceof IndexGatherRecordCursorFactory gather
                         && configuration.isSqlParallelIndexGroupByEnabled()
-                        && gather.acceptsKeyMajorRows(GroupByUtils.hasOrderSensitiveFunctions(groupByFunctions), keyTypes.getColumnCount() > 0 ? listColumnFilterA : null)) {
+                        && gather.acceptsKeyMajorRows(orderSensitive, keyTypes.getColumnCount() > 0 ? listColumnFilterA : null)) {
+                    // An order-sensitive aggregate must see a group's rows of a frame on one slot,
+                    // in order: array_agg, twap and sparkline merge batches cut at frame changes,
+                    // mode and arg_max/arg_min keep the tie a slot met first. So one task reads a
+                    // key's rows of a partition run, rather than row-range pieces of it.
+                    gather.setSplitKeysByRowRange(!orderSensitive);
                     filterExpr = gather.getStealFilterExpr();
                     if (filterExpr != null) {
                         filter = compileBooleanFilter(filterExpr, factory.getMetadata(), executionContext);

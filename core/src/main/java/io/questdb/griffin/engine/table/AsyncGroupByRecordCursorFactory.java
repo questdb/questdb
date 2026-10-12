@@ -80,6 +80,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
     // rows an index gather task reads per batch, see gatherAndAggregate()
     private static final int GATHER_BATCH_ROWS = 65_536;
+    // see GroupByShardingContext.setShardingThresholdMultiplier()
+    private static final int GATHER_KEY_SHARDING_THRESHOLD_MULTIPLIER = 10;
     private static final UnorderedPageFrameReducer GATHER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::gatherAndAggregate;
 
     private RecordCursorFactory base;
@@ -155,8 +157,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 for (int i = 0, n = listColumnFilter.getColumnCount(); i < n; i++) {
                     groupedByGatherKeyColumn |= listColumnFilter.getColumnIndexFactored(i) == gatherKeyColumn;
                 }
-                atom.setGroupedByGatherKey(groupedByGatherKeyColumn && keyFunctions.size() == 0 && listColumnFilter.getColumnCount() == 1);
-                atom.getShardingContext().setShardingAllowed(!groupedByGatherKeyColumn);
+                final boolean groupedByGatherKeyOnly = groupedByGatherKeyColumn && keyFunctions.size() == 0 && listColumnFilter.getColumnCount() == 1;
+                atom.setGroupedByGatherKey(groupedByGatherKeyOnly);
+                // Grouped by the key column alone: a group per key of the list, nothing to shard.
+                // Grouped by the key column and more: the maps shard only past a larger threshold,
+                // see GroupByShardingContext.setShardingThresholdMultiplier().
+                atom.getShardingContext().setShardingAllowed(!groupedByGatherKeyOnly);
+                if (groupedByGatherKeyColumn) {
+                    atom.getShardingContext().setShardingThresholdMultiplier(GATHER_KEY_SHARDING_THRESHOLD_MULTIPLIER);
+                }
             }
             this.cursor = new AsyncGroupByRecordCursor(engine, messageBus, recordFunctions, indexGather ? GATHER_AND_AGGREGATE : null, base);
             this.workerCount = workerCount;

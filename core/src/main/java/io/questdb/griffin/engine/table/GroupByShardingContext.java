@@ -95,6 +95,8 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     boolean shardedHint;
     // false for a GROUP BY whose workers' maps hold mostly disjoint groups, see setShardingAllowed()
     private boolean shardingAllowed = true;
+    // scales the sharding threshold, see setShardingThresholdMultiplier()
+    private long shardingThresholdMultiplier = 1;
     // set by a serial pass that must hold a single map, until clear()
     private boolean shardingDisabled;
 
@@ -175,6 +177,17 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
      */
     public void setShardingAllowed(boolean shardingAllowed) {
         this.shardingAllowed = shardingAllowed;
+    }
+
+    /**
+     * Scales the map size (and function cardinality) past which this GROUP BY shards. An index
+     * gather grouped by its key column and other columns gives each task whole keys, so the
+     * workers' maps hold mostly disjoint groups, and its unsharded reduce probes a run of rows
+     * sharing a group once: it shards only once the maps are this many times larger than usual,
+     * so that a high-cardinality grouping, such as (sym, ts), still merges in parallel.
+     */
+    public void setShardingThresholdMultiplier(long shardingThresholdMultiplier) {
+        this.shardingThresholdMultiplier = Math.max(1, shardingThresholdMultiplier);
     }
 
     public AsyncQueryProgressState getProgressState() {
@@ -332,7 +345,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             functionCardinality += perWorkerFragments.getQuick(i).totalFunctionCardinality;
         }
 
-        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        final long shardingThreshold = getShardingThreshold();
         // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
         shardedHint = (mapSize > shardingThreshold || functionCardinality > 10L * shardingThreshold);
     }
@@ -373,6 +386,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
+    private long getShardingThreshold() {
+        return configuration.getGroupByShardingThreshold() * shardingThresholdMultiplier;
+    }
+
     boolean isSharded() {
         return sharded;
     }
@@ -380,7 +397,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     void maybeEnableSharding(GroupByMapFragment fragment, long functionCardinalityIncrement) {
         fragment.totalFunctionCardinality += functionCardinalityIncrement;
         // Functions are cheaper to merge when compared with merging the maps, hence the 10x multiplier.
-        final int shardingThreshold = configuration.getGroupByShardingThreshold();
+        final long shardingThreshold = getShardingThreshold();
         if (!sharded && shardingAllowed && !shardingDisabled && (fragment.getMap().size() > shardingThreshold || fragment.totalFunctionCardinality > 10L * shardingThreshold)) {
             sharded = true;
         }

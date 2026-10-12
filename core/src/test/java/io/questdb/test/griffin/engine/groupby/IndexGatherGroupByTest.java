@@ -28,12 +28,17 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.IndexGatherPageFrameCursor;
@@ -41,6 +46,7 @@ import io.questdb.griffin.engine.table.IndexGatherRecordCursorFactory;
 import io.questdb.griffin.engine.table.IndexScanChoiceRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -50,7 +56,10 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The index-driven parallel GROUP BY ({@code cairo.sql.parallel.index.groupby.enabled}, the plan
@@ -72,6 +81,16 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     private static final String AGGREGATES = "count() n, sum(x) sx, avg(x) ax, min(y) mny, max(y) mxy, sum(z) sz, " +
             "weighted_avg(x, y) wa, stddev_samp(x) sd, corr(x, f) cr, min(f) mnf, max(ts) mxt, count(y) cy";
     private static final int ROWS = 30_000;
+    // order-sensitive aggregates over keys split by row range, see testOrderSensitiveOnWorkerPool()
+    private static final String[] ORDER_SENSITIVE_QUERIES = {
+            "select sym, array_agg(x) a from t where sym in ('A', 'B') order by sym",
+            "select array_agg(x) a from t where sym = 'A'",
+            "select sym, timestamp_floor('10m', ts) m, array_agg(x) a from t where sym in ('A', 'B') order by sym, m",
+            "select sym, mode(y) m from t where sym in ('A', 'B') order by sym",
+            "select sym, arg_max(x, y) am, arg_min(x, y) an from t where sym in ('A', 'B') order by sym",
+            "select arg_max(x, y) am, arg_min(x, y) an, mode(y) m from t where sym = 'A'",
+            "select sym, first(x) f, last(x) l, first_not_null(x) fn, last_not_null(x) ln from t where sym in ('A', 'B') order by sym",
+    };
 
     @Override
     public void setUp() {
@@ -201,6 +220,163 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChoiceFallbackRebindsSymbolTables() throws Exception {
+        // A consumer takes the GROUP BY's symbol tables when its cursor opens, before the first
+        // row: a filter or a projection over it. When the scan plan then hits the memory limit and
+        // the index plan opens in its place, the scan cursor and its table reader are closed.
+        // What the consumer took must answer from the index plan's cursor from then on, not from
+        // that closed reader, which the pool may close for good.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute("create table m (sym symbol index type posting, k varchar, v long, ts timestamp) timestamp(ts) partition by day bypass wal", ctx);
+                engine.execute("insert into m select rnd_symbol('A', 'B', 'C', 'D'), (x % 40_000)::varchar, x, timestamp_sequence(0, 1_000_000L) from long_sequence(200_000)", ctx);
+                final String sql = "select sym, k, count() n, sum(v) s from m where sym in ('A', 'B', 'C')";
+                setFeatures(false, false);
+                final String expected = runToString(engine, ctx, sql + " order by sym, k");
+                // the scan plan whatever the selectivity, so that its fallback is what runs
+                setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY, "0.0");
+                int fallbacks = 0;
+                for (long limit = 2L << 20; limit <= 48L << 20; limit += 1L << 20) {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    // limits at which the index plan, which the fallback opens, completes
+                    setFeatures(true, false);
+                    try {
+                        runToString(engine, ctx, sql);
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                        continue;
+                    }
+                    setFeatures(true, true);
+                    try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                        final IndexScanChoiceRecordCursorFactory chooser = findChoice(factory);
+                        Assert.assertNotNull(chooser);
+                        final long fallbacksBefore = chooser.getMemoryLimitFallbacks();
+                        final StringSink sink = new StringSink();
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            // taken before the first row, as a consumer's init() takes them
+                            final SymbolTable shared = cursor.getSymbolTable(0);
+                            final SymbolTable own = cursor.newSymbolTable(0);
+                            final StaticSymbolTable staticTable = shared instanceof SymbolFunction f ? f.getStaticSymbolTable() : (StaticSymbolTable) shared;
+                            Assert.assertNotNull(staticTable);
+                            // size() before the first row must not lose the fallback either
+                            final long size = cursor.size();
+                            final Record record = cursor.getRecord();
+                            boolean first = true;
+                            while (cursor.hasNext()) {
+                                if (first) {
+                                    first = false;
+                                    if (chooser.getMemoryLimitFallbacks() > fallbacksBefore) {
+                                        // close the readers nobody holds, the scan plan's among
+                                        // them: idle for a day, as far as the pool can tell
+                                        setCurrentMicros(MicrosecondClockImpl.INSTANCE.getTicks() + 86_400_000_000L);
+                                        try {
+                                            engine.releaseInactive();
+                                        } finally {
+                                            setCurrentMicros(-1);
+                                        }
+                                    }
+                                }
+                                final int key = record.getInt(0);
+                                final CharSequence value = record.getSymA(0);
+                                TestUtils.assertEquals(value, shared.valueOf(key));
+                                TestUtils.assertEquals(value, own.valueOf(key));
+                                TestUtils.assertEquals(value, staticTable.valueOf(key));
+                                Assert.assertEquals(key, staticTable.keyOf(value));
+                                sink.put(value).put('\t').put(record.getVarcharA(1)).put('\t').put(record.getLong(2)).put('\t').put(record.getLong(3)).put('\n');
+                            }
+                            Assert.assertTrue(size == -1 || size > 0);
+                            Misc.freeIfCloseable(own);
+                        }
+                        if (chooser.getMemoryLimitFallbacks() > fallbacksBefore) {
+                            fallbacks++;
+                            // the rows are the serial plan's, in any order
+                            final String[] e = expected.substring(expected.indexOf('\n') + 1).split("\n");
+                            final String[] a = sink.toString().split("\n");
+                            java.util.Arrays.sort(e);
+                            java.util.Arrays.sort(a);
+                            Assert.assertArrayEquals("limit " + limit, e, a);
+                        }
+                    }
+                }
+                Assert.assertTrue("no limit made the scan plan fall back", fallbacks > 0);
+
+                // The pool hands the index plan the reader the scan plan just returned, so above
+                // the tables taken early stay readable even when they are the scan's. Here the
+                // scan plan's tables fail once its cursor has closed, as a closed reader's would.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 48L << 20);
+                setFeatures(true, true);
+                try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                    final IndexGatherRecordCursorFactory gather = findGather(factory);
+                    Assert.assertNotNull(gather);
+                    final boolean[] scanClosed = {false};
+                    // the query registry gives a compiled query its memory tracker; this factory is
+                    // not registered, so it gets one by hand
+                    final io.questdb.std.MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                            ctx.getSecurityContext(),
+                            Long.MAX_VALUE,
+                            io.questdb.std.MemoryTrackerWorkload.QUERY
+                    );
+                    final io.questdb.std.MemoryTracker prevTracker = ctx.getMemoryTracker();
+                    ctx.setMemoryTracker(tracker);
+                    Assert.assertTrue(tracker.getLimit() > 0);
+                    // a negative selectivity takes the scan plan whatever the estimate
+                    try (
+                            RecordCursorFactory chooser = new IndexScanChoiceRecordCursorFactory(
+                                    new FakePlan(factory.getMetadata(), null, false),
+                                    new FakePlan(factory.getMetadata(), scanClosed, true),
+                                    gather,
+                                    -1.0
+                            );
+                            RecordCursor cursor = chooser.getCursor(ctx)
+                    ) {
+                        final SymbolTable shared = cursor.getSymbolTable(0);
+                        final SymbolTable own = cursor.newSymbolTable(0);
+                        Assert.assertTrue(shared instanceof SymbolFunction);
+                        final StaticSymbolTable staticTable = ((SymbolFunction) shared).getStaticSymbolTable();
+                        Assert.assertNotNull(staticTable);
+                        // the scan plan hits the limit in size(), before any row
+                        Assert.assertEquals(-1, cursor.size());
+                        Assert.assertTrue("the scan plan's cursor did not close", scanClosed[0]);
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(1, ((IndexScanChoiceRecordCursorFactory) chooser).getMemoryLimitFallbacks());
+                        TestUtils.assertEquals("v7", shared.valueOf(7));
+                        TestUtils.assertEquals("v7", shared.valueBOf(7));
+                        TestUtils.assertEquals("v7", own.valueOf(7));
+                        TestUtils.assertEquals("v7", staticTable.valueOf(7));
+                        Assert.assertEquals(7, staticTable.keyOf("v7"));
+                        Assert.assertEquals(FakeSymbolTable.COUNT, staticTable.getSymbolCount());
+                        Assert.assertFalse(cursor.hasNext());
+                        Misc.freeIfCloseable(own);
+                    } finally {
+                        ctx.setMemoryTracker(prevTracker);
+                        tracker.close();
+                    }
+                }
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testColumnTopInsideIndexedPartition() throws Exception {
+        // the symbol column added to a partition that has rows, then rows appended in order to that
+        // same partition: its index starts at the column top, and the rows above it are NULL
+        assertMemoryLeak(() -> {
+            execute("create table t (x double, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into t select x::double, (x * 1_000_000L)::timestamp from long_sequence(5000)");
+            execute("alter table t add column sym symbol index type posting");
+            execute("insert into t (x, ts, sym) select 5000 + x, (5000_000_000L + x * 1_000_000L)::timestamp, rnd_symbol('A', 'B', null) from long_sequence(5000)");
+            execute("insert into t (x, ts, sym) select 10000 + x, ('1970-01-02'::timestamp + x * 1_000_000L), rnd_symbol('A', 'B', null) from long_sequence(5000)");
+            assertSameAsSerial("select sym, count() n, sum(x) s, min(x) mn, max(x) mx from t where sym in ('A', null) order by sym", true);
+            assertSameAsSerial("select count() n, sum(x) s, min(x) mn, max(x) mx from t where sym in (null)", true);
+            assertSameAsSerial("select count() n, sum(x) s, min(x) mn, max(x) mx from t where sym = 'B'", true);
+            assertSameAsSerial("select sym, count() n, sum(x) s from t where sym = null order by sym", true);
+            assertSameAsSerial("select sym, first(x) f, last(x) l, array_agg(x) a from t where sym in ('A', null, 'B') order by sym", true);
+        });
+    }
+
+    @Test
     public void testColumnTops() throws Exception {
         // the symbol and an aggregated column added after the first partitions: rows before the
         // tops are NULL, and partitions without the symbol column have no posting reader
@@ -247,6 +423,9 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                     "select sum(x) from t where sym = 'S1' and y > 10",
                     "Index Or Scan\n" +
                             "  maxSelectivity: 0.05\n" +
+                            "  selected: 0\n" +
+                            "  scanned: 1000\n" +
+                            "  opened: index\n" +
                             "    Async Index Group By workers: 1\n" +
                             "      vectorized: false\n" +
                             "      values: [sum(x)]\n" +
@@ -276,10 +455,114 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
+            // a third of the rows: the open takes the scan, and EXPLAIN says so
             final StringSink sink = new StringSink();
+            printSql("explain select sum(x) from t where sym = 'S0'", sink);
+            TestUtils.assertContains(sink, "  opened: scan\n");
+            sink.clear();
             printSql("explain select /*+ use_index */ sum(x) from t where sym = 'S1'", sink);
             TestUtils.assertContains(sink, "Async Index Group By");
             Assert.assertFalse(sink.toString().contains("Index Or Scan"));
+        });
+    }
+
+    @Test
+    public void testFilterExpressionReleasedUnderSort() throws Exception {
+        // twap() puts a sort between the GROUP BY and the index scan, so the GROUP BY does not
+        // gather; the gather still drops the filter expression, whose nodes the compiler reuses
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", 1000, 53);
+            for (boolean choice : new boolean[]{false, true}) {
+                setFeatures(true, choice);
+                for (String sql : new String[]{
+                        "select /*+ use_index */ twap(x, ts) tw from t where sym = 'S0' and y > 10",
+                        "select sym, sum(x) s from t where sym in ('S0', 'S1') and y > 10 order by sym",
+                }) {
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final IndexGatherRecordCursorFactory gather = findGather(factory);
+                        Assert.assertNotNull(sql, gather);
+                        Assert.assertNull(sql, gather.getStealFilterExpr());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGroupedByKeyAndMoreShards() throws Exception {
+        // A grouping of the key column alone never shards: a group per key of the list. A grouping
+        // of the key column and more shards past ten times the usual threshold, 3,000 groups here:
+        // (sym, x) has a group per row; (sym, 5 minutes), 2,304 groups, would shard at the usual
+        // threshold but not at ten times it.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createTable(engine, ctx, "t", 200_000, 59);
+                final String[] queries = {
+                        "select sym, x, count() n, sum(y) s from t where sym in ('S0', 'S1') order by sym, x",
+                        "select sym, timestamp_floor('5m', ts) m, count() n, sum(y) s from t where sym in ('S0', 'S1') order by sym, m",
+                        "select sym, count() n, sum(y) s from t where sym in ('S0', 'S1', 'S2', 'R1') order by sym",
+                };
+                final boolean[] sharded = {true, false, false};
+                for (int q = 0; q < queries.length; q++) {
+                    final String sql = queries[q];
+                    setFeatures(false, false);
+                    final String expected = runToString(engine, ctx, sql);
+                    setFeatures(true, false);
+                    try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                        final AsyncGroupByRecordCursorFactory async = findAsyncGather(factory);
+                        Assert.assertNotNull(sql, async);
+                        final StringSink sink = new StringSink();
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(sql, sharded[q], async.getAtom().isSharded());
+                            cursor.toTop();
+                            io.questdb.cairo.CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                        }
+                        assertWithinTolerance(sql, expected, sink.toString());
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testGroupedByKeyOnlyNeverShards() throws Exception {
+        // a threshold of one group: any other grouping would shard, the key column alone does not
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createTable(engine, ctx, "t", 200_000, 61);
+                // 30 keys: past ten times the threshold, which a grouping with the key column takes
+                final StringSink list = new StringSink();
+                for (int i = 0; i < 30; i++) {
+                    list.put(i == 0 ? "" : ", ").put('\'').put(i < 10 ? "S" : "R").put(i < 10 ? i : i - 10).put('\'');
+                }
+                final String[] queries = {
+                        "select sym, count() n, sum(y) s from t where sym in (" + list + ") order by sym",
+                        "select sym, timestamp_floor('1d', ts) d, count() n, sum(y) s from t where sym in (" + list + ") order by sym, d",
+                };
+                final boolean[] sharded = {false, true};
+                for (int q = 0; q < queries.length; q++) {
+                    final String sql = queries[q];
+                    setFeatures(false, false);
+                    final String expected = runToString(engine, ctx, sql);
+                    setFeatures(true, false);
+                    try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                        final AsyncGroupByRecordCursorFactory async = findAsyncGather(factory);
+                        Assert.assertNotNull(sql, async);
+                        final StringSink sink = new StringSink();
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(sql, sharded[q], async.getAtom().isSharded());
+                            cursor.toTop();
+                            io.questdb.cairo.CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                        }
+                        assertWithinTolerance(sql, expected, sink.toString());
+                    }
+                }
+            }, configuration, LOG);
         });
     }
 
@@ -421,6 +704,116 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderSensitiveConcurrentQueries() throws Exception {
+        // queries of several threads share one pool: a thread that steals another query's task
+        // takes any free slot, so slots do not see their tasks in order
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createSplitKeyTable(engine, ctx);
+                final String[] queries = ORDER_SENSITIVE_QUERIES;
+                final String[] expected = new String[queries.length];
+                setFeatures(false, false);
+                for (int q = 0; q < queries.length; q++) {
+                    expected[q] = runToString(engine, ctx, queries[q]);
+                }
+                setFeatures(true, false);
+                final int threads = 4;
+                final int iterations = 8;
+                final AtomicInteger runs = new AtomicInteger();
+                final AtomicReference<Throwable> error = new AtomicReference<>();
+                final CyclicBarrier barrier = new CyclicBarrier(threads);
+                final Thread[] ts = new Thread[threads];
+                for (int t = 0; t < threads; t++) {
+                    final int offset = t;
+                    ts[t] = new Thread(() -> {
+                        try (SqlExecutionContextImpl c = TestUtils.createSqlExecutionCtx(engine, 4)) {
+                            barrier.await();
+                            for (int i = 0; i < iterations; i++) {
+                                for (int q = 0; q < queries.length; q++) {
+                                    final int query = (q + offset) % queries.length;
+                                    TestUtils.assertEquals(queries[query], expected[query], runToString(engine, c, queries[query]));
+                                    runs.incrementAndGet();
+                                }
+                            }
+                        } catch (Throwable th) {
+                            error.compareAndSet(null, th);
+                        }
+                    });
+                    ts[t].start();
+                }
+                for (Thread t : ts) {
+                    t.join();
+                }
+                if (error.get() != null) {
+                    throw new AssertionError(error.get());
+                }
+                Assert.assertEquals(threads * iterations * queries.length, runs.get());
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testOrderSensitiveOnWorkerPool() throws Exception {
+        // One partition in one frame, and tasks of 300 rows: a frequent key holds about 100 tasks'
+        // worth of rows of the same frame. Aggregates that depend on the order rows arrive in
+        // (array_agg) or on which of equal rows comes first (mode, arg_max, arg_min) must see each
+        // key's rows of a frame on one slot, in order, so the key is not split by row range.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createSplitKeyTable(engine, ctx);
+                for (String sql : ORDER_SENSITIVE_QUERIES) {
+                    setFeatures(false, false);
+                    final String expected = runToString(engine, ctx, sql);
+                    setFeatures(true, false);
+                    for (int run = 0; run < 10; run++) {
+                        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                            final IndexGatherRecordCursorFactory gather = findGather(factory);
+                            Assert.assertNotNull(sql, gather);
+                            TestUtils.assertEquals(sql + ", run " + run, expected, print(factory, ctx));
+                            // one task per key of the partition
+                            final int keys = sql.contains("sym = 'A'") ? 1 : 2;
+                            Assert.assertEquals(sql, keys, gather.getPageFrameCursorForTesting().getTaskCounts()[0]);
+                        }
+                    }
+                    // The choice: these lists select most rows, so it opens the scan, which splits
+                    // the partition into page frames on several slots. Its ties (mode, arg_max,
+                    // arg_min) then depend on the merge order, as they always have.
+                    if (!sql.contains("mode(") && !sql.contains("arg_")) {
+                        setFeatures(true, true);
+                        TestUtils.assertEquals(sql, expected, runToString(engine, ctx, sql));
+                    }
+                }
+                // aggregates whose index plan does not gather: equal to the serial plan too
+                for (String sql : new String[]{
+                        "select /*+ use_index */ twap(x, ts) tw from t where sym = 'A'",
+                        "select /*+ use_index */ sym, twap(x, ts) tw from t where sym in ('A', 'B') order by sym",
+                        "select /*+ use_index */ sym, sparkline(y) sp from t where sym in ('A', 'B') and x < 3000 order by sym",
+                }) {
+                    setFeatures(false, false);
+                    final String expected = runToString(engine, ctx, sql);
+                    setFeatures(true, true);
+                    for (int run = 0; run < 3; run++) {
+                        TestUtils.assertEquals(sql, expected, runToString(engine, ctx, sql));
+                    }
+                }
+                // an order-insensitive aggregate still splits the frequent key by row range
+                final String sql = "select sym, count() n, sum(x) s, min(y) mn from t where sym in ('A', 'B') order by sym";
+                setFeatures(false, false);
+                final String expected = runToString(engine, ctx, sql);
+                setFeatures(true, false);
+                try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                    TestUtils.assertEquals(sql, expected, print(factory, ctx));
+                    Assert.assertTrue(findGather(factory).getPageFrameCursorForTesting().getTaskCounts()[0] > 50);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testParquetPartitions() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, "t", ROWS, 37);
@@ -548,6 +941,15 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
         }
     }
 
+    // one partition: 30K rows, 9 in 10 of them A, x the row number and y = x % 3
+    private static void createSplitKeyTable(CairoEngine engine, SqlExecutionContext ctx) throws SqlException {
+        engine.execute("create table t (sym symbol index type posting, x double, y int, ts timestamp) timestamp(ts) partition by day bypass wal", ctx);
+        engine.execute(
+                "insert into t select case when x % 10 = 0 then 'B' else 'A' end, x::double, (x % 3)::int, (x * 100_000L)::timestamp from long_sequence(30_000)",
+                ctx
+        );
+    }
+
     private static void createTable(CairoEngine engine, SqlExecutionContext ctx, String name, int rows, long seed) throws SqlException {
         engine.execute(
                 "create table " + name + " (sym symbol index type posting, x double, y int, z long, f float, s2 symbol, ts timestamp)" +
@@ -568,6 +970,134 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                         "from long_sequence(" + rows + ")",
                 ctx
         );
+    }
+
+    private static class FakePlan extends io.questdb.cairo.AbstractRecordCursorFactory {
+        private final boolean[] closed;
+        private final boolean failsOnMemory;
+
+        FakePlan(io.questdb.cairo.sql.RecordMetadata metadata, boolean[] closed, boolean failsOnMemory) {
+            super(metadata);
+            this.closed = closed;
+            this.failsOnMemory = failsOnMemory;
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            final boolean[] closed = this.closed != null ? this.closed : new boolean[1];
+            closed[0] = false;
+            return new io.questdb.cairo.sql.NoRandomAccessRecordCursor() {
+                private boolean done;
+
+                @Override
+                public void close() {
+                    closed[0] = true;
+                }
+
+                @Override
+                public Record getRecord() {
+                    return null;
+                }
+
+                @Override
+                public SymbolTable getSymbolTable(int columnIndex) {
+                    return new FakeSymbolTable(closed);
+                }
+
+                @Override
+                public boolean hasNext() {
+                    if (failsOnMemory) {
+                        throw CairoException.nonCritical().put("query memory limit exceeded").setOutOfMemory(true);
+                    }
+                    final boolean hasNext = !done;
+                    done = true;
+                    return hasNext;
+                }
+
+                @Override
+                public SymbolTable newSymbolTable(int columnIndex) {
+                    return new FakeSymbolTable(closed);
+                }
+
+                @Override
+                public long preComputedStateSize() {
+                    return 0;
+                }
+
+                @Override
+                public long size() {
+                    if (failsOnMemory) {
+                        throw CairoException.nonCritical().put("query memory limit exceeded").setOutOfMemory(true);
+                    }
+                    return -1;
+                }
+
+                @Override
+                public void toTop() {
+                    done = false;
+                }
+            };
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_OTHER;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(io.questdb.griffin.PlanSink sink) {
+            sink.type("fake");
+        }
+    }
+
+    // a static symbol table v0..v9 that fails once its cursor has closed, as a closed reader's would
+    private static class FakeSymbolTable implements StaticSymbolTable {
+        static final int COUNT = 10;
+        private final boolean[] closed;
+
+        FakeSymbolTable(boolean[] closed) {
+            this.closed = closed;
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            check();
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            check();
+            return COUNT;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            check();
+            return Integer.parseInt(value.subSequence(1, value.length()).toString());
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            check();
+            return "v" + key;
+        }
+
+        private void check() {
+            if (closed[0]) {
+                throw new AssertionError("symbol table read after its cursor closed");
+            }
+        }
     }
 
     private static AsyncGroupByRecordCursorFactory findAsyncGather(RecordCursorFactory factory) {

@@ -76,6 +76,8 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
     // the rest of the filter, only valid while the query compiles
     private ExpressionNode filterExpr;
     private IndexGatherPageFrameCursor pageFrameCursor;
+    // see setSplitKeysByRowRange()
+    private boolean splitKeysByRowRange = true;
 
     public IndexGatherRecordCursorFactory(
             @NotNull FilterOnValuesRecordCursorFactory delegate,
@@ -97,7 +99,8 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
      * Whether the index-driven GROUP BY may read its rows key by key: always, unless an aggregate
      * depends on row order and the groups can draw from more than one key. With a single value in
      * the list, or the key column among the grouping columns, every group draws from one key,
-     * whose rows the tasks return in table order.
+     * whose rows the tasks return in table order, provided that one slot reads them: such a GROUP
+     * BY must also forbid row-range splits, see {@link #setSplitKeysByRowRange(boolean)}.
      *
      * @param hasOrderSensitiveAggregates whether an aggregate depends on row order
      * @param groupByKeyColumns           the consumer's plain grouping columns, null for none
@@ -241,6 +244,7 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
                     getKeyColumnIndex(),
                     frameRows,
                     taskRows,
+                    splitKeysByRowRange,
                     workerCount
             );
         }
@@ -306,6 +310,18 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
      */
     public void releaseStealFilterExpr() {
         filterExpr = null;
+    }
+
+    /**
+     * Whether a key with more rows in a partition than a task holds may be split by row range
+     * into several tasks, which different slots then read. The GROUP BY forbids it when an
+     * aggregate depends on the order rows arrive in
+     * ({@link io.questdb.griffin.engine.functions.GroupByFunction#isOrderSensitive()}): see
+     * {@link IndexGatherPageFrameCursor}. Must be set before the first cursor opens.
+     */
+    public void setSplitKeysByRowRange(boolean splitKeysByRowRange) {
+        assert pageFrameCursor == null;
+        this.splitKeysByRowRange = splitKeysByRowRange;
     }
 
     @Override

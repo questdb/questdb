@@ -266,6 +266,13 @@ class AsyncGroupByRecordCursor implements RecordCursor {
      * each worker holds a map of the groups it met - the pass starts over on the query's thread
      * alone, with one map that does not shard, as the serial GROUP BY over the same index scan
      * would hold.
+     * <p>
+     * The retry opens the base again, so it leases a table reader anew and may read a later
+     * transaction than the failed pass did (or than the estimate of an {@code Index Or Scan}
+     * choice did): its rows are that transaction's, consistent in themselves. The failed pass's
+     * maps are freed first ({@code reset()} clears the atom). {@link CairoException#isOutOfMemory()}
+     * also matches an RSS limit, not only the query's; the retry is then as likely to fail, and
+     * fails the same way.
      */
     private void gather() {
         final IndexGatherPageFrameCursor gatherCursor = (IndexGatherPageFrameCursor) frameSequence.getPageFrameCursor();

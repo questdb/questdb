@@ -76,7 +76,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * native frames, the keys of the list that have rows there are grouped, in ascending key order,
  * into tasks of about {@code taskRows} rows; a key with more rows is split by row range into
  * tasks of its own, at the row of its k-th posting where the index can tell
- * ({@link AbstractPostingIndexReader#selectKthMatch}). A task's rows are the postings of its keys
+ * ({@link AbstractPostingIndexReader#selectKthMatch}), unless the consumer forbids such splits
+ * (see below). A task's rows are the postings of its keys
  * in its row range, which a worker reads with a detached cursor
  * ({@link PostingIndexFwdReader#getDetachedCursor}). Partitions without a posting reader (a
  * Parquet partition, or one written before the column existed) are read by a scan task per frame
@@ -87,6 +88,17 @@ import java.util.concurrent.atomic.AtomicLong;
  * key's rows ascend. Row ids are those of the frames, so an aggregate that depends on row order
  * (first, last) sees, within a group, rows in table order, provided that no group spans two keys:
  * the factory accepts such aggregates only when the grouping includes the key column.
+ * <p>
+ * <b>No splits for order-sensitive aggregates.</b> Pieces of one key run on different slots. An
+ * aggregate that compares row ids on every update and merge (first, last) is exact whatever slot
+ * reads which piece, but not one whose state depends on the order rows arrive in on a slot or on
+ * which of equal rows comes first: {@code array_agg}, {@code twap} and {@code sparkline} cut a
+ * group's buffer into batches only where the frame changes, and merge those batches by their
+ * first row, which assumes that no two slots read rows of one frame for one group; {@code mode}
+ * and {@code arg_max}/{@code arg_min} keep whichever tied row a slot met first and merge without
+ * row ids. With {@code splitKeysByRowRange} false, which the GROUP BY asks for whenever an
+ * aggregate declares {@link io.questdb.griffin.engine.functions.GroupByFunction#isOrderSensitive()},
+ * a key's rows of a partition run form one task, so one slot reads them, in order.
  * <p>
  * <b>Readers.</b> The posting readers the tasks read are prepared and frozen
  * ({@link AbstractPostingIndexReader#warmForKeys}, {@link IndexReader#setFrozen}) on the query's
@@ -106,6 +118,8 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
     private final ObjList<AbstractPostingIndexReader> frozenReaders = new ObjList<>();
     private final FwdTableReaderPageFrameCursor inner;
     private final int keyColumnIndex;
+    // whether a key with more than taskRows rows in a partition run is split by row range
+    private final boolean splitKeysByRowRange;
     // the index keys of the list (TableUtils.toIndexKey), distinct and ascending
     private final IntList keys = new IntList();
     private final IntList taskFrameHis = new IntList();
@@ -134,6 +148,7 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             int keyColumnIndex,
             int frameRows,
             long taskRows,
+            boolean splitKeysByRowRange,
             int workerCount
     ) {
         this.inner = new FwdTableReaderPageFrameCursor(columnIndexes, columnSizeShifts, null, 1);
@@ -141,6 +156,7 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         this.keyColumnIndex = keyColumnIndex;
         this.frameRows = frameRows;
         this.taskRows = Math.max(1, taskRows);
+        this.splitKeysByRowRange = splitKeysByRowRange;
         // one reader per slot: the owner's (-1) and the workers'
         this.taskReaderSlots = new ObjList<>(workerCount + 1);
         for (int i = 0; i <= workerCount; i++) {
@@ -411,14 +427,15 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             final int key = keys.getQuick(i);
             long count = reader.estimateMatchesClamped(key, rowLo, callerHiInclusive, clampedMax);
             if (count == AbstractPostingIndexReader.ESTIMATE_REJECT || count == Numbers.LONG_NULL) {
-                // no bounded count: read the key on its own, by row range as if it held every row
+                // no bounded count: read the key on its own (by row range, when allowed), as if it
+                // held every row
                 count = rowHi - rowLo;
             }
             if (count <= 0) {
                 continue;
             }
             used = true;
-            if (count > taskRows) {
+            if (count > taskRows && splitKeysByRowRange) {
                 if (taskKeys.size() > sliceLo) {
                     addIndexTask(frameLo, frameHi, rowLo, rowHi, sliceLo, taskKeys.size(), sliceRows, reader);
                 }
