@@ -97,8 +97,7 @@ public final class SqlOptimiser implements Mutable {
             TableFunctionSources functionSources,
             PlanTables planTables
     ) {
-        context = new OptimiserContext(rewriter, callBinder, instantiator, functionSources, planNodes, planTables, characterStore,
-                tmpExpressions);
+        context = new OptimiserContext(rewriter, callBinder, instantiator, functionSources, planNodes, planTables, tmpExpressions);
         final ObjectPool<ColumnExpression> columns = planNodes.columns;
         final ObjectPool<ConstantExpression> constants = planNodes.constants;
         final ObjectPool<FilterPlan> filters = planNodes.filters;

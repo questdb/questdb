@@ -27,9 +27,7 @@ package io.questdb.griffin.optimiser;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CallBinder;
-import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.FunctionInstantiator;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
@@ -50,7 +48,6 @@ import io.questdb.std.ObjList;
 final class OptimiserContext implements Mutable {
     private final ObjList<BoundExpression> callArguments;
     private final CallBinder callBinder;
-    private final CharacterStore characterStore;
     private final TableFunctionSources functionSources;
     private final FunctionInstantiator instantiator;
     private final BoundExpressionRewriter rewriter;
@@ -65,7 +62,6 @@ final class OptimiserContext implements Mutable {
             TableFunctionSources functionSources,
             PlanNodePools planNodes,
             PlanTables planTables,
-            CharacterStore characterStore,
             ObjList<BoundExpression> callArguments
     ) {
         this.planNodes = planNodes;
@@ -74,7 +70,6 @@ final class OptimiserContext implements Mutable {
         this.callBinder = callBinder;
         this.instantiator = instantiator;
         this.functionSources = functionSources;
-        this.characterStore = characterStore;
         this.callArguments = callArguments;
     }
 
@@ -149,12 +144,5 @@ final class OptimiserContext implements Mutable {
 
     void of(SqlExecutionContext executionContext) {
         this.executionContext = executionContext;
-    }
-
-    /**
-     * The name, or the name with the lowest numeric suffix, that no column of the output has in any case.
-     */
-    CharSequence uniqueName(OutputSchema output, CharSequence name) {
-        return LogicalPlans.uniqueName(output, name, characterStore);
     }
 }

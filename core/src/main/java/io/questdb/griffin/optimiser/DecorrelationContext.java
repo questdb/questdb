@@ -44,6 +44,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
+import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
@@ -74,6 +75,7 @@ final class DecorrelationContext implements Mutable {
     final PlanNodePools planNodes;
     final IntList tmpColumnIds;
     final IntIntHashMap substitution = new IntIntHashMap();
+    private final UniqueColumnNames takenNames = new UniqueColumnNames();
     private final OutputSchema tmpSchema;
     private IntList columnIdSink;
     private IntList readIds;
@@ -554,15 +556,13 @@ final class DecorrelationContext implements Mutable {
     }
 
     /**
-     * Gives each column of the output the name {@link OptimiserContext#uniqueName} assigns it after the columns before it.
+     * Gives each column of the output its name, or the name with the lowest numeric suffix, that no column before it
+     * has in any case.
      */
     void uniqueNames(OutputSchema output) {
-        final OutputSchema seen = tmpSchema;
+        takenNames.clear();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            final CharSequence name = context.uniqueName(seen, output.getColumnName(i));
-            output.setColumnName(i, name, output.getColumnQualifier(i));
-            seen.add(output.getColumnId(i), name, output.getColumnType(i), false);
+            output.setColumnName(i, takenNames.take(output.getColumnName(i), characterStore), output.getColumnQualifier(i));
         }
-        seen.clear();
     }
 }

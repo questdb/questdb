@@ -464,26 +464,33 @@ final class SampleByBinder {
         throw SqlException.$(value.position, "column not found in SELECT list: ").put(value.token);
     }
 
-    private void validateFillSupport(
+    private void validateFill(
             ObjList<FunctionExpression> aggregates, ObjList<ExpressionNode> aggregateNodes, ObjList<ExpressionNode> fill
     ) throws SqlException {
-        if (!configuration.isValidateSampleByFillType()) {
-            return;
-        }
         final int fillCount = fill.size();
-        if (fillCount > 1 && fillCount < aggregates.size()) {
-            boolean hasNone = false;
-            for (int i = 0; i < fillCount; i++) {
-                hasNone |= SqlKeywords.isNoneKeyword(fill.getQuick(i).token);
+        if (configuration.isValidateSampleByFillType()) {
+            if (fillCount > 1 && fillCount < aggregates.size()) {
+                boolean hasNone = false;
+                for (int i = 0; i < fillCount; i++) {
+                    hasNone |= SqlKeywords.isNoneKeyword(fill.getQuick(i).token);
+                }
+                if (!hasNone) {
+                    throw SqlException.$(fill.getQuick(0).position, "not enough fill values");
+                }
             }
-            if (!hasNone) {
-                throw SqlException.$(fill.getQuick(0).position, "not enough fill values");
+            for (int i = 0, n = aggregates.size(); i < n; i++) {
+                final ExpressionNode fillValue = fill.getQuick(Math.min(i, fillCount - 1));
+                ctx.functionBinder.validateSampleByFill(aggregates.getQuick(i), fillValue.token,
+                        fillValue.position, aggregateNodes.getQuick(i));
             }
         }
-        for (int i = 0, n = aggregates.size(); i < n; i++) {
-            final ExpressionNode fillValue = fill.getQuick(Math.min(i, fillCount - 1));
-            ctx.functionBinder.validateSampleByFill(aggregates.getQuick(i), fillValue.token,
-                    fillValue.position, aggregateNodes.getQuick(i));
+        if (fillCount > 1) {
+            for (int i = 0; i < fillCount; i++) {
+                final ExpressionNode expression = fill.getQuick(i);
+                if (SqlKeywords.isNoneKeyword(expression.token)) {
+                    throw SqlException.$(expression.position, "FILL(NONE) cannot be combined with other fill values");
+                }
+            }
         }
     }
 
@@ -605,15 +612,7 @@ final class SampleByBinder {
         final BindScope scope = ctx.scope();
         final ObjList<ExpressionNode> fill = source.getSampleByFill();
         final int fillCount = fill.size();
-        validateFillSupport(aggregate.getAggregates(), aggregateNodes, fill);
-        if (fillCount > 1) {
-            for (int i = 0; i < fillCount; i++) {
-                final ExpressionNode expression = fill.getQuick(i);
-                if (SqlKeywords.isNoneKeyword(expression.token)) {
-                    throw SqlException.$(expression.position, "FILL(NONE) cannot be combined with other fill values");
-                }
-            }
-        }
+        validateFill(aggregate.getAggregates(), aggregateNodes, fill);
         scope.fillBindings.clear();
         for (int i = 0; i < fillCount; i++) {
             final ExpressionNode expression = fill.getQuick(i);
@@ -812,7 +811,7 @@ final class SampleByBinder {
             plan.getFillValues().add(mode == SampleByPlan.FILL_VALUE ? bindFillValue(value, executionContext) : null);
         }
         final ObjList<FunctionExpression> aggregates = plan.getAggregates();
-        validateFillSupport(aggregates, aggregateNodes, fill);
+        validateFill(aggregates, aggregateNodes, fill);
         final int fillCount = fill.size();
         for (int k = 0, n = Math.min(fillCount, aggregates.size()); k < n; k++) {
             final ExpressionNode value = fill.getQuick(k);

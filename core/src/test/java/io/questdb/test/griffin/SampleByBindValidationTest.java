@@ -53,7 +53,11 @@ public class SampleByBindValidationTest extends AbstractCairoTest {
             {"SELECT ts, sum(x) a, first(b) f FROM t SAMPLE BY 1h FILL(LINEAR, NULL)", "NULL",
                     "fill value of type NULL cannot fill column of type BOOLEAN"},
             {"SELECT ts, sum(x) a, max(x) b, min(x) c FROM t SAMPLE BY 1h FILL(LINEAR, NONE)", "NONE",
-                    "insufficient fill values for SAMPLE BY FILL: expected 3 values but only 2 provided"},
+                    "FILL(NONE) cannot be combined with other fill values"},
+            {"SELECT ts, sum(x) a, max(x) b FROM t SAMPLE BY 1h FILL(NONE, LINEAR)", "NONE",
+                    "FILL(NONE) cannot be combined with other fill values"},
+            {"SELECT ts, sum(x) a, max(x) b FROM t SAMPLE BY 1h FILL(LINEAR, NONE) ALIGN TO FIRST OBSERVATION", "NONE",
+                    "FILL(NONE) cannot be combined with other fill values"},
             {"SELECT ts, k, sum(x) s FROM t SAMPLE BY 1h FILL(LINEAR, 1)", null,
                     "linear interpolation is not supported when using fill values for keyed sample by expression"},
             {"SELECT ts, sum(x) s FROM t SAMPLE BY 1h FROM rnd_timestamp(1,2,0) FILL(LINEAR)", "rnd_timestamp",
@@ -110,6 +114,25 @@ public class SampleByBindValidationTest extends AbstractCairoTest {
                 final String sql = "SELECT ts FROM t WHERE x = " + GENERATION_ERROR_SUBQUERY + " UNION ALL SELECT ts FROM (" + c[0] + ")";
                 assertQuery(sql).noLeakCheck().fails(position(sql, c), c[2]);
             }
+        });
+    }
+
+    @Test
+    public void testFillNoneMixedWithLinear() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            assertException("SELECT sum(x + 1) a FROM t SAMPLE BY 1h FILL(NONE, LINEAR) ALIGN TO FIRST OBSERVATION", 45,
+                    "FILL(NONE) cannot be combined with other fill values");
+            assertException("SELECT sum(x + 1) a, sum(x + 2) b FROM t SAMPLE BY 1h FILL(NONE, LINEAR) ALIGN TO FIRST OBSERVATION", 59,
+                    "FILL(NONE) cannot be combined with other fill values");
+            assertException("SELECT sum(x + 1) a, sum(x + 2) b FROM t SAMPLE BY 1h FILL(LINEAR, NONE) ALIGN TO FIRST OBSERVATION", 67,
+                    "FILL(NONE) cannot be combined with other fill values");
+            assertException("SELECT ts, sum(x) a, max(x) b FROM t SAMPLE BY 1h FILL(LINEAR, NONE)", 63,
+                    "FILL(NONE) cannot be combined with other fill values");
+            assertException("SELECT ts, sum(x) a, max(x) b, min(x) c FROM t SAMPLE BY 1h FILL(NONE, LINEAR, NULL)", 65,
+                    "FILL(NONE) cannot be combined with other fill values");
+            assertException("SELECT ts, sum(x) a, max(x) b, min(x) c FROM t SAMPLE BY 1h FILL(PREV, LINEAR, NONE)", 79,
+                    "FILL(NONE) cannot be combined with other fill values");
         });
     }
 

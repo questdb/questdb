@@ -58,10 +58,6 @@ import io.questdb.std.ObjList;
 import static io.questdb.griffin.bind.BindContext.*;
 
 final class JoinBinder implements Mutable {
-    // Match the existing join pass's syntactic constant classification, not
-    // Function.isConstant(): function calls and parameters remain runtime
-    // predicates even when their selected implementation folds at binding.
-    private static final JoinTermTest CONSTANT_TERMS = (term, join, origin) -> !hasColumnReference(term) && isCompileTimeJoinConstant(term);
     private final SqlBinder binder;
     private final CairoConfiguration configuration;
     private final BindContext ctx;
@@ -73,10 +69,8 @@ final class JoinBinder implements Mutable {
     private final LateralBinder lateralBinder;
     private final IntList lateralDependencyInputs = new IntList();
     private final IntList lateralDependencyParents = new IntList();
-    private final JoinTermTest latestFilterTerms = (term, join, origin) -> joinExpressionSource(term, join) == 0;
     private final IntList nonEquiNullingJoinInputs = new IntList();
     private final IntList nullingJoinBoundaries = new IntList();
-    private final JoinTermTest postJoinFilterTerms = this::isPostJoinFilterReference;
     private boolean isForwardInnerFiltered;
     private boolean isForwardLeftKeyFiltered;
     private ExpressionNode rejectedTerms;
@@ -225,16 +219,16 @@ final class JoinBinder implements Mutable {
                 return false;
             }
         }
-        return !isParent(graph.getOrderingConstraints(), input) && !isParent(graph.getLateralDependencies(), input);
+        return isLeaf(graph.getOrderingConstraints(), input) && isLeaf(graph.getLateralDependencies(), input);
     }
 
-    private static boolean isParent(IntList edges, int input) {
+    private static boolean isLeaf(IntList edges, int input) {
         for (int i = 0, n = edges.size(); i < n; i += 2) {
             if (edges.getQuick(i) == input) {
-                return true;
+                return false;
             }
         }
-        return false;
+        return true;
     }
 
     private static boolean isTimestampKey(JoinInput step, int masterId, int slaveId, int masterTimestampId) {
@@ -675,15 +669,15 @@ final class JoinBinder implements Mutable {
         }
     }
 
-    private JoinPlan bindJoinSources(QueryModel source, ExpressionNode where, int lo, int hi,
+    private JoinPlan bindJoinSources(QueryModel source, ExpressionNode where, int hi,
                                      SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> sources = source.getJoinModels();
         final int dependencyBase = lateralDependencyInputs.size();
         final int modelBase = inputModels.size();
-        final JoinPlan join = ctx.planNodes.joins.next().of(sources.getQuick(lo).getModelPosition());
-        join.setExplicitTimestamp(lo == 0 && source.hasExplicitTimestamp());
+        final JoinPlan join = ctx.planNodes.joins.next().of(sources.getQuick(0).getModelPosition());
+        join.setExplicitTimestamp(source.hasExplicitTimestamp());
         try {
-            bindJoinInputs(join, source, lo, hi, hasTemporalJoin(sources, lo, hi), executionContext);
+            bindJoinInputs(join, source, 0, hi, hasTemporalJoin(sources, 0, hi), executionContext);
             if (binder.isLatestOverLeadingInput(source)) {
                 where = bindLatestInput(join, source, where, modelBase, executionContext);
             }
@@ -707,13 +701,13 @@ final class JoinBinder implements Mutable {
         final int lastInput = inputs.size() - 1;
         ExpressionNode latestFilter = null;
         if (LogicalPlans.canPushJoinFilter(join.getInputs(), 0, lastInput)) {
-            splitJoinTerms(where, latestFilterTerms, join, 0);
+            splitJoinTerms(where, JoinTerms.LATEST_FILTER, join, 0);
             latestFilter = selectedTerms;
             where = rejectedTerms;
         }
         for (int i = 1; i <= lastInput; i++) {
             if (isLatestFilteredOn(join, source, modelBase, i)) {
-                splitJoinTerms(joinModel(source, modelBase, i).getJoinCriteria(), latestFilterTerms, join, 0);
+                splitJoinTerms(joinModel(source, modelBase, i).getJoinCriteria(), JoinTerms.LATEST_FILTER, join, 0);
                 latestFilter = combineJoinPredicates(latestFilter, selectedTerms);
             }
         }
@@ -891,7 +885,7 @@ final class JoinBinder implements Mutable {
             }
         }
         final boolean hasNonEquiNullingJoin = nonEquiNullingJoinInputs.size() > 0;
-        splitJoinTerms(where, CONSTANT_TERMS, join, -1);
+        splitJoinTerms(where, JoinTerms.CONSTANT, join, -1);
         ExpressionNode constantFilter = selectedTerms;
         collectJoinConditions(rejectedTerms, join, -1, hasBarriers, hasNonEquiNullingJoin);
         final JoinInput master = join.getInputs().getQuick(0);
@@ -904,11 +898,11 @@ final class JoinBinder implements Mutable {
             final boolean isBarrier = slave.getJoinType().isBarrier();
             ExpressionNode onCriteria = occurrence.getJoinCriteria();
             if (isLatestFilteredOn(join, source, modelBase, i)) {
-                splitJoinTerms(onCriteria, latestFilterTerms, join, 0);
+                splitJoinTerms(onCriteria, JoinTerms.LATEST_FILTER, join, 0);
                 onCriteria = rejectedTerms;
             }
             if (hasBarriers && !isBarrier && isPostJoinFilterReference(onCriteria, join, i)) {
-                splitJoinTerms(onCriteria, postJoinFilterTerms, join, i);
+                splitJoinTerms(onCriteria, JoinTerms.POST_JOIN_FILTER, join, i);
                 final ExpressionNode postJoinFilter = selectedTerms;
                 onCriteria = rejectedTerms;
                 rejectMasterNullingForwardReference(postJoinFilter, join, i);
@@ -966,7 +960,7 @@ final class JoinBinder implements Mutable {
                     }
                 }
             } else {
-                splitJoinTerms(onCriteria, CONSTANT_TERMS, join, i);
+                splitJoinTerms(onCriteria, JoinTerms.CONSTANT, join, i);
                 constantFilter = combineJoinPredicates(constantFilter, selectedTerms);
                 collectJoinConditions(rejectedTerms, join, i, hasBarriers, hasNonEquiNullingJoin);
             }
@@ -1060,7 +1054,7 @@ final class JoinBinder implements Mutable {
      * The number of conjuncts of the conjunction that join the filter of the given join input, or the residual
      * filter for -1.
      */
-    private int countJoinFilterConjuncts(ExpressionNode conjunction, int filterInput, JoinPlan join, int lastInput) throws SqlException {
+    private int countJoinFilterConjuncts(ExpressionNode conjunction, int filterInput, JoinPlan join, int lastInput) {
         if (conjunction.paramCount == 2 && SqlKeywords.isAndKeyword(conjunction.token)) {
             return countJoinFilterConjuncts(conjunction.lhs, filterInput, join, lastInput)
                     + countJoinFilterConjuncts(conjunction.rhs, filterInput, join, lastInput);
@@ -1187,7 +1181,7 @@ final class JoinBinder implements Mutable {
     /**
      * The index of the join input whose filter a conjunct of the conjunction joins, -1 for the residual filter.
      */
-    private int joinFilterInput(ExpressionNode conjunct, JoinPlan join, int lastInput) throws SqlException {
+    private int joinFilterInput(ExpressionNode conjunct, JoinPlan join, int lastInput) {
         final int sourceIndex = joinExpressionSource(conjunct, join);
         return sourceIndex >= 0 && LogicalPlans.canPushJoinFilter(join.getInputs(), sourceIndex, lastInput) ? sourceIndex : -1;
     }
@@ -1311,23 +1305,30 @@ final class JoinBinder implements Mutable {
         return appendJoinConjuncts(prefix, expression);
     }
 
-    private void splitJoinTerms(ExpressionNode expression, JoinTermTest test, JoinPlan join, int origin) throws SqlException {
+    private void splitJoinTerms(ExpressionNode expression, JoinTerms terms, JoinPlan join, int origin) {
         if (expression == null) {
             selectedTerms = null;
             rejectedTerms = null;
             return;
         }
         if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
-            splitJoinTerms(expression.lhs, test, join, origin);
+            splitJoinTerms(expression.lhs, terms, join, origin);
             final ExpressionNode selectedLeft = selectedTerms;
             final ExpressionNode rejectedLeft = rejectedTerms;
-            splitJoinTerms(expression.rhs, test, join, origin);
+            splitJoinTerms(expression.rhs, terms, join, origin);
             selectedTerms = combineJoinPredicates(selectedLeft, selectedTerms);
             rejectedTerms = rejectedLeft == expression.lhs && rejectedTerms == expression.rhs
                     ? expression : combineJoinPredicates(rejectedLeft, rejectedTerms);
             return;
         }
-        final boolean isSelected = test.isSelected(expression, join, origin);
+        final boolean isSelected = switch (terms) {
+            // Match the existing join pass's syntactic constant classification, not
+            // Function.isConstant(): function calls and parameters remain runtime
+            // predicates even when their selected implementation folds at binding.
+            case CONSTANT -> !hasColumnReference(expression) && isCompileTimeJoinConstant(expression);
+            case LATEST_FILTER -> joinExpressionSource(expression, join) == 0;
+            case POST_JOIN_FILTER -> isPostJoinFilterReference(expression, join, origin);
+        };
         selectedTerms = isSelected ? expression : null;
         rejectedTerms = isSelected ? null : expression;
     }
@@ -1433,7 +1434,7 @@ final class JoinBinder implements Mutable {
         final boolean previous = scope.isInsideJoin;
         scope.isInsideJoin = true;
         try {
-            return bindJoinSources(source, where, 0, sourceCount, executionContext);
+            return bindJoinSources(source, where, sourceCount, executionContext);
         } finally {
             scope.isInsideJoin = previous;
         }
@@ -1473,8 +1474,7 @@ final class JoinBinder implements Mutable {
         return result;
     }
 
-    @FunctionalInterface
-    private interface JoinTermTest {
-        boolean isSelected(ExpressionNode term, JoinPlan join, int origin) throws SqlException;
+    private enum JoinTerms {
+        CONSTANT, LATEST_FILTER, POST_JOIN_FILTER
     }
 }

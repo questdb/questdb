@@ -720,23 +720,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * The name, or the name with the lowest numeric suffix, that no column of the output has in any case.
-     */
-    public static CharSequence uniqueName(OutputSchema output, CharSequence name, CharacterStore store) {
-        if (!output.hasColumnName(name)) {
-            return name;
-        }
-        for (int suffix = 1; ; suffix++) {
-            final CharacterStoreEntry entry = store.newEntry();
-            entry.put(name).put(suffix);
-            final CharSequence candidate = entry.toImmutable();
-            if (!output.hasColumnName(candidate)) {
-                return candidate;
-            }
-        }
-    }
-
-    /**
      * The type an UPDATE stores a value of type {@code type} as in a column of type {@code targetType}: the target
      * type for a built-in widening cast other than text to TIMESTAMP, the value's own type otherwise.
      */

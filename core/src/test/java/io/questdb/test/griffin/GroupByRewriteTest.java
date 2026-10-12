@@ -420,6 +420,33 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumNormalisationNamesReuseRenamedAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (x INT, y INT, z INT)");
+            execute("INSERT INTO tab VALUES (1, 2, 3), (null, 4, null)");
+            assertQuery("SELECT count() COUNT, sum(x + 1) a, sum(y + 1) sum1, sum(z - 1) b, sum(y * 2) Sum2 FROM tab")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [COUNT,sum+COUNT1*1,sum2+COUNT2*1,sum1-COUNT3*1,sum2*2]
+                                Async Group By workers: 1
+                                  vectorized: true
+                                  values: [count(*),sum(x),sum(y),sum(z),count(x),count(y),count(z)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """)
+                    .returns("""
+                            COUNT\ta\tsum1\tb\tSum2
+                            2\t2\t8\t2\t12
+                            """);
+        });
+    }
+
+    @Test
     public void testSumNormalisationReusesLaterColumnSum() throws Exception {
         assertMemoryLeak(() -> {
             createSumNormalisationTable();
@@ -492,6 +519,34 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                             sum
                             11
                             """);
+        });
+    }
+
+    @Test
+    public void testSumNormalisationWideProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            final int columnCount = 512;
+            final StringBuilder ddl = new StringBuilder("CREATE TABLE tab AS (SELECT ");
+            final StringBuilder query = new StringBuilder("SELECT ");
+            final StringBuilder expected = new StringBuilder();
+            for (int i = 0; i < columnCount; i++) {
+                final String separator = i > 0 ? ", " : "";
+                ddl.append(separator).append(i).append("::INT c").append(i);
+                query.append(separator).append("sum(c").append(i).append(" + 1)");
+                expected.append(i > 0 ? "\tsum" + i : "sum");
+            }
+            expected.append('\n');
+            for (int i = 0; i < columnCount; i++) {
+                expected.append(i > 0 ? "\t" : "").append(i + 1);
+            }
+            expected.append('\n');
+            execute(ddl.append(" FROM long_sequence(1))").toString());
+            assertQuery(query.append(" FROM tab").toString())
+                    .noLeakCheck()
+                    .noMemoryUsageCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected.toString());
         });
     }
 
