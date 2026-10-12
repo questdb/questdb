@@ -1042,8 +1042,7 @@ final class JoinFactoryGenerator {
             final int markoutTimestampIndex = masterOutput.getColumnIndexById(step.getMarkoutTimestampColumnId());
             final boolean isMarkout = step.getAlgorithm() == JoinInput.Algorithm.MARKOUT;
             metadata = createJoinMetadata(masterAlias, masterMetadata, step.getBindingAlias(),
-                    slaveMetadata, isMarkout || joinType == JoinKind.RIGHT_OUTER || joinType == JoinKind.FULL_OUTER
-                            || step.getMasterSide() == JoinInput.MasterSide.SMALLER ? -1 : masterMetadata.getTimestampIndex());
+                    slaveMetadata, isMarkout || !PlanToFactoryRules.isMasterTimestampKept(step) ? -1 : masterMetadata.getTimestampIndex());
             final BoundExpression onResidual = step.getOnResidual();
             if (onResidual != null) {
                 onFilter = instantiator.instantiate(onResidual, step.getOutput(), metadata, executionContext);

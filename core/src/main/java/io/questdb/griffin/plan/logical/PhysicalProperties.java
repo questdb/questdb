@@ -425,28 +425,27 @@ public final class PhysicalProperties {
             final Capability isFollowingAdvice = capability(properties, ORDER_ADVICE);
             final ScanDirection direction = direction(properties);
             BoundExpression filter = step.getPostJoinFilter();
-            switch (joinType) {
-                case UNNEST, ASOF, LT, SPLICE -> properties = joined(isFollowingAdvice, direction);
-                default -> {
-                    final Capability isMarkout = markout(step);
-                    final boolean isMasterNullExtended = joinType == JoinKind.RIGHT_OUTER || joinType == JoinKind.FULL_OUTER;
-                    final boolean isSwappable = step.getMasterSide() == JoinInput.MasterSide.SMALLER;
-                    final boolean isKeyed = step.getMasterKeyColumnIds().size() > 0;
-                    final Capability isJoinFollowingAdvice = isSwappable ? Capability.NO : isKeyed ? (isMasterNullExtended ? Capability.NO : isFollowingAdvice)
-                                                                                           : isMasterNullExtended ? capability(derive(step.getInput(), null), ORDER_ADVICE) : isFollowingAdvice;
-                    properties = joined(choose(isMarkout, Capability.YES, isJoinFollowingAdvice),
-                            choose(isMarkout, direction, isKeyed && isMasterNullExtended || isSwappable ? ScanDirection.OTHER : direction));
-                    // An outer join applies its ON residual itself; an inner one filters the matched pairs with it.
-                    if (!isMasterNullExtended && joinType != JoinKind.LEFT_OUTER && step.getOnResidual() != null) {
-                        if (filter == null) {
-                            filter = step.getOnResidual();
-                        } else {
-                            // The conjunction of the ON residual and the post-join filter, which codegen never folds.
-                            properties = filtered(filter, properties, Capability.NO, false, false);
-                            filter = null;
-                        }
+            if (joinType.isRelational()) {
+                final Capability isMarkout = markout(step);
+                final boolean isMasterNullExtended = joinType.isMasterNulling();
+                final boolean isSwappable = step.getMasterSide() == JoinInput.MasterSide.SMALLER;
+                final boolean isKeyed = step.getMasterKeyColumnIds().size() > 0;
+                final Capability isJoinFollowingAdvice = isSwappable ? Capability.NO : isKeyed ? (isMasterNullExtended ? Capability.NO : isFollowingAdvice)
+                                                                                       : isMasterNullExtended ? capability(derive(step.getInput(), null), ORDER_ADVICE) : isFollowingAdvice;
+                properties = joined(choose(isMarkout, Capability.YES, isJoinFollowingAdvice),
+                        choose(isMarkout, direction, isKeyed && isMasterNullExtended || isSwappable ? ScanDirection.OTHER : direction));
+                // An outer join applies its ON residual itself; an inner one filters the matched pairs with it.
+                if (!isMasterNullExtended && !joinType.isSlaveNulling() && step.getOnResidual() != null) {
+                    if (filter == null) {
+                        filter = step.getOnResidual();
+                    } else {
+                        // The conjunction of the ON residual and the post-join filter, which codegen never folds.
+                        properties = filtered(filter, properties, Capability.NO, false, false);
+                        filter = null;
                     }
                 }
+            } else {
+                properties = joined(isFollowingAdvice, direction);
             }
             if (filter != null) {
                 properties = filtered(filter, properties, Capability.NO, false, PlanToFactoryRules.isPostJoinFilterFolded(step, filter));
@@ -464,11 +463,10 @@ public final class PhysicalProperties {
         for (int i = 1; i < inputCount; i++) {
             final JoinInput step = ordered.getQuick(i);
             final JoinKind joinType = step.getJoinType();
-            if (joinType == JoinKind.SPLICE) {
+            if (joinType.isRelational()) {
+                timestampIndex = chooseTimestamp(markout(step), -1, PlanToFactoryRules.isMasterTimestampKept(step) ? timestampIndex : -1);
+            } else if (joinType.isMasterNulling()) {
                 timestampIndex = -1;
-            } else if (joinType != JoinKind.UNNEST && joinType != JoinKind.ASOF && joinType != JoinKind.LT) {
-                timestampIndex = chooseTimestamp(markout(step), -1, joinType == JoinKind.RIGHT_OUTER || joinType == JoinKind.FULL_OUTER
-                        || step.getMasterSide() == JoinInput.MasterSide.SMALLER ? -1 : timestampIndex);
             }
         }
         return timestampIndex;

@@ -281,6 +281,14 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * True when the factory of a relational join step can keep its master's designated timestamp: the step neither
+     * null-extends its master nor drives the join with the smaller input. A markout step designates none.
+     */
+    public static boolean isMasterTimestampKept(JoinInput step) {
+        return !step.getJoinType().isMasterNulling() && step.getMasterSide() != JoinInput.MasterSide.SMALLER;
+    }
+
+    /**
      * True when the generator builds a projection factory for the plan, which a parallel top-K can build over itself.
      */
     public static boolean isPeelableProjection(LogicalPlan plan) {
