@@ -34,9 +34,12 @@ package io.questdb.std;
  * must ensure that {@code ptr + index * 8L} is valid for every index in
  * {@code [left, right]}.
  */
-public class DoubleSort {
+public final class DoubleSort {
 
     private static final int INSERTION_SORT_THRESHOLD = 47;
+
+    private DoubleSort() {
+    }
 
     /**
      * Sorts doubles stored in native memory in ascending order.

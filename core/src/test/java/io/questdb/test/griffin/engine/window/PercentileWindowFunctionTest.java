@@ -88,6 +88,34 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileContOverPartitionWithAllNullPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE)");
+            // the rows of the all-NULL partition 'b' sit between the rows of partition 'a', so the
+            // result array alternates between the NULL array and a sized array
+            execute("INSERT INTO t VALUES ('a', 1.0), ('b', null), ('a', 2.0), ('b', null), ('a', 4.0)");
+            assertQuery("SELECT k, v, percentile_cont(v, ARRAY[0.5, 0.75]) OVER (PARTITION BY k) p FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindow
+                              unorderedFunctions: [percentile_cont(v, ARRAY[0.5,0.75]) over (partition by [k])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            k\tv\tp
+                            a\t1.0\t[2.0,3.0]
+                            b\tnull\tnull
+                            a\t2.0\t[2.0,3.0]
+                            b\tnull\tnull
+                            a\t4.0\t[2.0,3.0]
+                            """);
+        });
+    }
+
+    @Test
     public void testMultiPercentileContOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
@@ -106,6 +134,29 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             8.0\t[3.25,5.5,7.75]
                             9.0\t[3.25,5.5,7.75]
                             10.0\t[3.25,5.5,7.75]
+                            """);
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContOverWholeResultSetAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE)");
+            execute("INSERT INTO t VALUES (null), (null)");
+            assertQuery("SELECT v, percentile_cont(v, ARRAY[0.5, 0.75]) OVER () p FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindow
+                              unorderedFunctions: [percentile_cont(v, ARRAY[0.5,0.75]) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            v\tp
+                            null\tnull
+                            null\tnull
                             """);
         });
     }
@@ -130,6 +181,15 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t[3.25,5.5,7.75]
                             10.0\t[3.25,5.5,7.75]
                             """);
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContRejectsNonConstantPercentiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ps DOUBLE[])");
+            final String sql = "SELECT percentile_cont(v, ps) OVER () FROM t";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("ps)"), "percentile argument must be a constant");
         });
     }
 
@@ -362,6 +422,34 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileDiscOverPartitionWithAllNullPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE)");
+            // the rows of the all-NULL partition 'b' sit between the rows of partition 'a', so the
+            // result array alternates between the NULL array and a sized array
+            execute("INSERT INTO t VALUES ('a', 1.0), ('b', null), ('a', 2.0), ('b', null), ('a', 4.0)");
+            assertQuery("SELECT k, v, percentile_disc(v, ARRAY[0.5, 0.75]) OVER (PARTITION BY k) p FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindow
+                              unorderedFunctions: [percentile_disc(v, ARRAY[0.5,0.75]) over (partition by [k])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            k\tv\tp
+                            a\t1.0\t[2.0,4.0]
+                            b\tnull\tnull
+                            a\t2.0\t[2.0,4.0]
+                            b\tnull\tnull
+                            a\t4.0\t[2.0,4.0]
+                            """);
+        });
+    }
+
+    @Test
     public void testMultiPercentileDiscOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
@@ -380,6 +468,29 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             8.0\t[3.0,5.0,8.0]
                             9.0\t[3.0,5.0,8.0]
                             10.0\t[3.0,5.0,8.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscOverWholeResultSetAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE)");
+            execute("INSERT INTO t VALUES (null), (null)");
+            assertQuery("SELECT v, percentile_disc(v, ARRAY[0.5, 0.75]) OVER () p FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindow
+                              unorderedFunctions: [percentile_disc(v, ARRAY[0.5,0.75]) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            v\tp
+                            null\tnull
+                            null\tnull
                             """);
         });
     }
@@ -404,6 +515,15 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t[3.0,5.0,8.0]
                             10.0\t[3.0,5.0,8.0]
                             """);
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscRejectsNonConstantPercentiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ps DOUBLE[])");
+            final String sql = "SELECT percentile_disc(v, ps) OVER () FROM t";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("ps)"), "percentile argument must be a constant");
         });
     }
 
@@ -587,6 +707,35 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPercentileContEmptyFrame() throws Exception {
+        // a frame that ends before it starts holds no rows, so the percentile is NULL
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 2.0, '2024-01-01T00:01:00.000000Z'),
+                    ('b', 3.0, '2024-01-01T00:02:00.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT v,
+                        percentile_cont(v, 0.5) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) p,
+                        percentile_cont(v, 0.5) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) pk
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tp\tpk
+                            1.0\tnull\tnull
+                            2.0\tnull\tnull
+                            3.0\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testPercentileContOverPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (" +
@@ -612,6 +761,32 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPercentileContOverPartitionWithAllNullPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE)");
+            execute("INSERT INTO t VALUES ('a', 1.0), ('b', null), ('a', 2.0), ('b', null), ('a', 4.0)");
+            assertQuery("SELECT k, v, percentile_cont(v, 0.75) OVER (PARTITION BY k) p FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindowLight
+                              unorderedFunctions: [percentile_cont(v, 0.75) over (partition by [k])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            k\tv\tp
+                            a\t1.0\t3.0
+                            b\tnull\tnull
+                            a\t2.0\t3.0
+                            b\tnull\tnull
+                            a\t4.0\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPercentileContOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
@@ -631,6 +806,15 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t5.5
                             10.0\t5.5
                             """);
+        });
+    }
+
+    @Test
+    public void testPercentileContRejectsNonConstantPercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, p DOUBLE)");
+            final String sql = "SELECT percentile_cont(v, p) OVER () FROM t";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("p)"), "percentile argument must be a constant");
         });
     }
 
@@ -748,6 +932,35 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPercentileDiscEmptyFrame() throws Exception {
+        // a frame that ends before it starts holds no rows, so the percentile is NULL
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 2.0, '2024-01-01T00:01:00.000000Z'),
+                    ('b', 3.0, '2024-01-01T00:02:00.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT v,
+                        percentile_disc(v, 0.5) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) p,
+                        percentile_disc(v, 0.5) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) pk
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v\tp\tpk
+                            1.0\tnull\tnull
+                            2.0\tnull\tnull
+                            3.0\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testPercentileDiscMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (" +
@@ -801,6 +1014,32 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPercentileDiscOverPartitionWithAllNullPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE)");
+            execute("INSERT INTO t VALUES ('a', 1.0), ('b', null), ('a', 2.0), ('b', null), ('a', 4.0)");
+            assertQuery("SELECT k, v, percentile_disc(v, 0.75) OVER (PARTITION BY k) p FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindowLight
+                              unorderedFunctions: [percentile_disc(v, 0.75) over (partition by [k])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            k\tv\tp
+                            a\t1.0\t4.0
+                            b\tnull\tnull
+                            a\t2.0\t4.0
+                            b\tnull\tnull
+                            a\t4.0\t4.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPercentileDiscOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
@@ -820,6 +1059,15 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t5.0
                             10.0\t5.0
                             """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscRejectsNonConstantPercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, p DOUBLE)");
+            final String sql = "SELECT percentile_disc(v, p) OVER () FROM t";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("p)"), "percentile argument must be a constant");
         });
     }
 

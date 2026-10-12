@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -597,6 +601,47 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     }
 
     @Test
+    public void testParallelGroupBy() throws Exception {
+        // Small page frames spread the rows over 40 frames and only every tenth frame holds values,
+        // so the workers regularly hand merge() an empty partial result on either side.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("""
+                        CREATE TABLE tab AS (
+                            SELECT CASE WHEN ((x - 1) / 100) % 10 = 0 THEN x::DOUBLE END v, (x % 4)::INT k
+                            FROM long_sequence(4_000)
+                        )""", sqlExecutionContext);
+                assertQuery("SELECT percentile_disc(v, ARRAY[0.25, 0.5, 0.75]) p FROM tab")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4")
+                        .returns("""
+                                p
+                                [100.0,1100.0,2100.0]
+                                """);
+                assertQuery("SELECT k, percentile_disc(v, ARRAY[0.25, 0.5, 0.75]) p FROM tab ORDER BY k")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4")
+                        .returns("""
+                                k\tp
+                                0\t[100.0,1100.0,2100.0]
+                                1\t[97.0,1097.0,2097.0]
+                                2\t[98.0,1098.0,2098.0]
+                                3\t[99.0,1099.0,2099.0]
+                                """);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x::DOUBLE AS val, timestamp_sequence('2024-01-01T00:00:00', 3600000000L) ts FROM long_sequence(5)) TIMESTAMP(ts)");
@@ -608,6 +653,77 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             "2024-01-01T02:00:00.000000Z\t[3.0]\n" +
                             "2024-01-01T03:00:00.000000Z\t[4.0]\n" +
                             "2024-01-01T04:00:00.000000Z\t[5.0]\n");
+        });
+    }
+
+    @Test
+    public void testSampleByFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 3.0, '2024-01-01T00:20:00.000000Z'),
+                    ('b', 10.0, '2024-01-01T00:40:00.000000Z'),
+                    ('a', 5.0, '2024-01-01T03:00:00.000000Z'),
+                    ('b', null, '2024-01-01T03:30:00.000000Z'),
+                    ('c', 7.0, '2024-01-01T03:45:00.000000Z')
+                    """);
+            assertQuery("SELECT ts, percentile_disc(v, ARRAY[0.25, 0.5]) p FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tp
+                            2024-01-01T00:00:00.000000Z\t[1.0,3.0]
+                            2024-01-01T01:00:00.000000Z\tnull
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t[5.0,5.0]
+                            """);
+            assertQuery("SELECT ts, percentile_disc(v, ARRAY[0.25, 0.5]) p FROM t SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tp
+                            2024-01-01T00:00:00.000000Z\t[1.0,3.0]
+                            2024-01-01T01:00:00.000000Z\t[1.0,3.0]
+                            2024-01-01T02:00:00.000000Z\t[1.0,3.0]
+                            2024-01-01T03:00:00.000000Z\t[5.0,5.0]
+                            """);
+            // ALIGN TO FIRST OBSERVATION runs the keyed fill cursors, which seed every key with setNull():
+            // 'c' has no value until 03:00 and must stay null rather than borrow another key's list
+            assertQuery("SELECT ts, k, percentile_disc(v, ARRAY[0.25, 0.5]) p FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tp
+                            2024-01-01T00:00:00.000000Z\ta\t[1.0,1.0]
+                            2024-01-01T00:00:00.000000Z\tb\t[10.0,10.0]
+                            2024-01-01T00:00:00.000000Z\tc\tnull
+                            2024-01-01T01:00:00.000000Z\ta\t[1.0,1.0]
+                            2024-01-01T01:00:00.000000Z\tb\t[10.0,10.0]
+                            2024-01-01T01:00:00.000000Z\tc\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t[1.0,1.0]
+                            2024-01-01T02:00:00.000000Z\tb\t[10.0,10.0]
+                            2024-01-01T02:00:00.000000Z\tc\tnull
+                            2024-01-01T03:00:00.000000Z\ta\t[5.0,5.0]
+                            2024-01-01T03:00:00.000000Z\tb\tnull
+                            2024-01-01T03:00:00.000000Z\tc\t[7.0,7.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByFillUnsupportedModes() throws Exception {
+        // an array result can neither be interpolated nor filled with a scalar constant
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String linearSql = "SELECT ts, percentile_disc(v, ARRAY[0.5]) FROM t SAMPLE BY 1h FILL(LINEAR)";
+            assertExceptionNoLeakCheck(linearSql, linearSql.indexOf("percentile_disc"), "Unsupported interpolation type: DOUBLE[]");
+            final String valueSql = "SELECT ts, percentile_disc(v, ARRAY[0.5]) FROM t SAMPLE BY 1h FILL(42)";
+            assertExceptionNoLeakCheck(valueSql, valueSql.indexOf("42"), "fill value of type INT cannot fill column of type DOUBLE[]");
         });
     }
 

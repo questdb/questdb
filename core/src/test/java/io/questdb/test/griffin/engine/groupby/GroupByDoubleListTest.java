@@ -30,10 +30,146 @@ import io.questdb.griffin.engine.groupby.GroupByDoubleList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class GroupByDoubleListTest extends AbstractCairoTest {
+
+    @Test
+    public void testAddList() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByDoubleList dest = new GroupByDoubleList(2, Double.NaN);
+                dest.setAllocator(allocator);
+                dest.of(0);
+                GroupByDoubleList src = new GroupByDoubleList(2, Double.NaN);
+                src.setAllocator(allocator);
+                src.of(0);
+
+                dest.add(1.5);
+                dest.add(2.5);
+                for (int i = 0; i < 5; i++) {
+                    src.add(10 + i);
+                }
+                Assert.assertEquals(dest.addressOf(2), dest.appendAddress());
+
+                // whole list, growing the destination beyond its initial capacity
+                final long ptr = dest.add(src);
+                Assert.assertEquals(dest.ptr(), ptr);
+                assertList(dest, 1.5, 2.5, 10, 11, 12, 13, 14);
+
+                // sub-range [lo, hi)
+                dest.add(src, 1, 3);
+                assertList(dest, 1.5, 2.5, 10, 11, 12, 13, 14, 11, 12);
+
+                // empty range leaves the list intact
+                dest.add(src, 4, 4);
+                assertList(dest, 1.5, 2.5, 10, 11, 12, 13, 14, 11, 12);
+
+                // the source list is not modified
+                assertList(src, 10, 11, 12, 13, 14);
+            }
+        });
+    }
+
+    @Test
+    public void testCheckCapacityNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByDoubleList list = new GroupByDoubleList(16, 0.0);
+                list.setAllocator(allocator);
+                list.of(0);
+                try {
+                    list.checkCapacity(-1);
+                    Assert.fail("Should throw IllegalArgumentException for negative capacity");
+                } catch (IllegalArgumentException e) {
+                    TestUtils.assertContains(e.getMessage(), "Negative capacity");
+                }
+                Assert.assertEquals(16, list.capacity());
+            }
+        });
+    }
+
+    @Test
+    public void testGet() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByDoubleList list = new GroupByDoubleList(16, 0.0);
+                list.setAllocator(allocator);
+                list.of(0);
+                list.add(4.25);
+                Assert.assertEquals(4.25, list.get(0), 0.0);
+                try {
+                    list.get(1);
+                    Assert.fail("Should throw ArrayIndexOutOfBoundsException for index >= size()");
+                } catch (ArrayIndexOutOfBoundsException e) {
+                    // Expected
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQuickSelectBoundsChecks() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByDoubleList list = new GroupByDoubleList(16, 0.0);
+                list.setAllocator(allocator);
+                list.of(0);
+                for (int i = 0; i < 5; i++) {
+                    list.add(5 - i);
+                }
+
+                // lo < 0, hi >= size(), k < lo, k > hi
+                final int[][] invalid = {{-1, 4, 2}, {0, 5, 2}, {2, 4, 1}, {0, 3, 4}};
+                for (int[] args : invalid) {
+                    try {
+                        list.quickSelect(args[0], args[1], args[2]);
+                        Assert.fail("Should throw ArrayIndexOutOfBoundsException for lo=" + args[0] + ", hi=" + args[1] + ", k=" + args[2]);
+                    } catch (ArrayIndexOutOfBoundsException e) {
+                        TestUtils.assertContains(e.getMessage(), "size=5");
+                    }
+                }
+
+                // the list is left untouched by the rejected calls
+                assertList(list, 5, 4, 3, 2, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testQuickSelectMultipleBoundsChecks() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByDoubleList list = new GroupByDoubleList(16, 0.0);
+                list.setAllocator(allocator);
+                list.of(0);
+                for (int i = 0; i < 5; i++) {
+                    list.add(5 - i);
+                }
+
+                final int[] indices = {0, 2, 4};
+                try {
+                    list.quickSelectMultiple(-1, 4, indices, 0, 3);
+                    Assert.fail("Should throw ArrayIndexOutOfBoundsException for lo < 0");
+                } catch (ArrayIndexOutOfBoundsException e) {
+                    TestUtils.assertContains(e.getMessage(), "lo=-1");
+                }
+                try {
+                    list.quickSelectMultiple(0, 5, indices, 0, 3);
+                    Assert.fail("Should throw ArrayIndexOutOfBoundsException for hi >= size()");
+                } catch (ArrayIndexOutOfBoundsException e) {
+                    TestUtils.assertContains(e.getMessage(), "hi=5");
+                }
+
+                list.quickSelectMultiple(0, 4, indices, 0, 3);
+                Assert.assertEquals(1.0, list.getQuick(0), 0.0);
+                Assert.assertEquals(3.0, list.getQuick(2), 0.0);
+                Assert.assertEquals(5.0, list.getQuick(4), 0.0);
+            }
+        });
+    }
 
     @Test
     public void testSortEmpty() throws Exception {
@@ -411,5 +547,12 @@ public class GroupByDoubleListTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertList(GroupByDoubleList list, double... expected) {
+        Assert.assertEquals(expected.length, list.size());
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals("index " + i, expected[i], list.get(i), 0.0);
+        }
     }
 }

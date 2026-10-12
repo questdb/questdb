@@ -31,6 +31,134 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
+    // DOUBLE and LONG input, each with the default precision and with a precision above 2,
+    // which selects the packed histogram implementation
+    private static final String ALL_VARIANTS = "approx_percentile(d, ARRAY[0.5]) d1, approx_percentile(d, ARRAY[0.5], 4) d4, " +
+            "approx_percentile(l, ARRAY[0.5]) l1, approx_percentile(l, ARRAY[0.5], 4) l4";
+
+    @Test
+    public void testAllVariantsEmptyAndNullGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, d DOUBLE, l LONG)");
+            // non-keyed over an empty table: the value only ever sees setEmpty()
+            assertQuery("SELECT " + ALL_VARIANTS + " FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            d1\td4\tl1\tl4
+                            null\tnull\tnull\tnull
+                            """);
+
+            execute("INSERT INTO t VALUES ('a', 1.0, 1), ('b', null, null), ('a', 1.0, 1), ('b', null, null)");
+            // 'b' has a histogram, but no values were recorded into it
+            assertQuery("SELECT k, " + ALL_VARIANTS + " FROM t ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\td1\td4\tl1\tl4
+                            a\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            b\tnull\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT " + ALL_VARIANTS + " FROM t WHERE k = 'b'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            d1\td4\tl1\tl4
+                            null\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testAllVariantsSampleByFillPrevAlignToFirstObservation() throws Exception {
+        // The keyed fill cursor seeds every key with setNull() before the first bucket. 'c' has no
+        // rows until 03:00, so it must read as null rather than as the histogram of the first group.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, d DOUBLE, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1.0, 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 1.0, 1, '2024-01-01T00:40:00.000000Z'),
+                    ('a', 1.0, 1, '2024-01-01T02:00:00.000000Z'),
+                    ('c', 1.0, 1, '2024-01-01T02:45:00.000000Z')
+                    """);
+            assertQuery("SELECT ts, k, " + ALL_VARIANTS + " FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\td1\td4\tl1\tl4
+                            2024-01-01T00:00:00.000000Z\ta\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T00:00:00.000000Z\tb\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T00:00:00.000000Z\tc\tnull\tnull\tnull\tnull
+                            2024-01-01T01:00:00.000000Z\ta\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T01:00:00.000000Z\tb\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T01:00:00.000000Z\tc\tnull\tnull\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T02:00:00.000000Z\tb\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T02:00:00.000000Z\tc\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            """);
+            assertQuery("SELECT ts, k, " + ALL_VARIANTS + " FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\td1\td4\tl1\tl4
+                            2024-01-01T00:00:00.000000Z\ta\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T00:00:00.000000Z\tb\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T00:00:00.000000Z\tc\tnull\tnull\tnull\tnull
+                            2024-01-01T01:00:00.000000Z\ta\tnull\tnull\tnull\tnull
+                            2024-01-01T01:00:00.000000Z\tb\tnull\tnull\tnull\tnull
+                            2024-01-01T01:00:00.000000Z\tc\tnull\tnull\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T02:00:00.000000Z\tb\tnull\tnull\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\tc\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testAllVariantsWindowJoinEmptyWindow() throws Exception {
+        // WINDOW JOIN resets the value with setEmpty() for every master row. The 00:10 trade has no
+        // price in its window, so it must read as null rather than as the histogram of the first row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (d DOUBLE, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-01T00:10:00.000000Z'),
+                    (3.0, '2024-01-01T00:20:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                    (1.0, 1, '2024-01-01T00:00:30.000000Z'),
+                    (1.0, 1, '2024-01-01T00:00:40.000000Z'),
+                    (1.0, 1, '2024-01-01T00:20:10.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT t.ts,
+                        approx_percentile(p.d, ARRAY[0.5]) d1, approx_percentile(p.d, ARRAY[0.5], 4) d4,
+                        approx_percentile(p.l, ARRAY[0.5]) l1, approx_percentile(p.l, ARRAY[0.5], 4) l4
+                    FROM trades t
+                    WINDOW JOIN prices p
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING
+                    EXCLUDE PREVAILING
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\td1\td4\tl1\tl4
+                            2024-01-01T00:00:00.000000Z\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T00:10:00.000000Z\tnull\tnull\tnull\tnull
+                            2024-01-01T00:20:00.000000Z\t[1.0]\t[1.0]\t[1.0]\t[1.0]
+                            """);
+        });
+    }
 
     @Test
     public void testAllNulls() throws Exception {

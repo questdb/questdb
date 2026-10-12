@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -622,6 +626,47 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
                     .noLeakCheck()
                     .returnsOnce("percentile_cont\n[980.02,950.05,900.1,500.5]\n");
+        });
+    }
+
+    @Test
+    public void testParallelGroupBy() throws Exception {
+        // Small page frames spread the rows over 40 frames and only every tenth frame holds values,
+        // so the workers regularly hand merge() an empty partial result on either side.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("""
+                        CREATE TABLE tab AS (
+                            SELECT CASE WHEN ((x - 1) / 100) % 10 = 0 THEN x::DOUBLE END v, (x % 4)::INT k
+                            FROM long_sequence(4_000)
+                        )""", sqlExecutionContext);
+                assertQuery("SELECT percentile_cont(v, ARRAY[0.25, 0.5, 0.75]) p FROM tab")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4")
+                        .returns("""
+                                p
+                                [775.75,1550.5,2325.25]
+                                """);
+                assertQuery("SELECT k, percentile_cont(v, ARRAY[0.25, 0.5, 0.75]) p FROM tab ORDER BY k")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4")
+                        .returns("""
+                                k\tp
+                                0\t[778.0,1552.0,2326.0]
+                                1\t[775.0,1549.0,2323.0]
+                                2\t[776.0,1550.0,2324.0]
+                                3\t[777.0,1551.0,2325.0]
+                                """);
+            }, configuration, LOG);
         });
     }
 

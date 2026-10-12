@@ -47,11 +47,12 @@ import io.questdb.std.histogram.org.HdrHistogram.PackedHistogram;
 
 public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
     private final Function exprFunc;
-    private final ObjList<PackedHistogram> histograms = new ObjList<>();
     private final Function percentileFunc;
     private final int percentilesPos;
     private final int precision;
     private int histogramIndex;
+    private ObjList<PackedHistogram> histograms = new ObjList<>();
+    private boolean isShared;
     private DirectArray out;
     private int valueIndex;
 
@@ -66,8 +67,10 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
 
     @Override
     public void clear() {
-        histograms.clear();
-        histogramIndex = 0;
+        if (!isShared) {
+            histograms.clear();
+            histogramIndex = 0;
+        }
         if (out != null) {
             out.clear();
         }
@@ -114,19 +117,19 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
 
     @Override
     public ArrayView getArray(Record rec) {
-        if (histograms.size() == 0) {
-            if (out == null) {
-                out = new DirectArray();
-            }
+        if (out == null) {
+            out = new DirectArray();
+        }
+
+        // setEmpty() and setNull() store LONG_NULL, which is not a valid histogram index
+        final long index = rec.getLong(valueIndex);
+        if (index < 0 || index >= histograms.size()) {
             out.ofNull();
             return out;
         }
 
-        final PackedHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        final PackedHistogram histogram = histograms.getQuick((int) index);
         if (histogram.getTotalCount() == 0) {
-            if (out == null) {
-                out = new DirectArray();
-            }
             out.ofNull();
             return out;
         }
@@ -135,9 +138,6 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
         FlatArrayView view = percentiles.flatView();
         int viewLength = view.length();
 
-        if (out == null) {
-            out = new DirectArray();
-        }
         out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
         out.setDimLen(0, viewLength);
         out.applyShape();
@@ -173,6 +173,13 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
     }
 
     @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.histograms = ((MultiApproxPercentileLongPackedGroupByFunction) primary).histograms;
+        this.isShared = true;
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -195,7 +202,7 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
 
     @Override
     public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override

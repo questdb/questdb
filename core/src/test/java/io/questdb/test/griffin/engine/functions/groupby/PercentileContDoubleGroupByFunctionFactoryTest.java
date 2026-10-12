@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -271,6 +275,47 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
+    public void testParallelGroupBy() throws Exception {
+        // Small page frames spread the rows over 40 frames and only every tenth frame holds values,
+        // so the workers regularly hand merge() an empty partial result on either side.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("""
+                        CREATE TABLE tab AS (
+                            SELECT CASE WHEN ((x - 1) / 100) % 10 = 0 THEN x::DOUBLE END v, (x % 4)::INT k
+                            FROM long_sequence(4_000)
+                        )""", sqlExecutionContext);
+                assertQuery("SELECT percentile_cont(v, 0.25) p25, percentile_cont(v, 0.5) p50, percentile_cont(v, 0.75) p75 FROM tab")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4")
+                        .returns("""
+                                p25\tp50\tp75
+                                775.75\t1550.5\t2325.25
+                                """);
+                assertQuery("SELECT k, percentile_cont(v, 0.25) p25, percentile_cont(v, 0.5) p50, percentile_cont(v, 0.75) p75 FROM tab ORDER BY k")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4")
+                        .returns("""
+                                k\tp25\tp50\tp75
+                                0\t778.0\t1552.0\t2326.0
+                                1\t775.0\t1549.0\t2323.0
+                                2\t776.0\t1550.0\t2324.0
+                                3\t777.0\t1551.0\t2325.0
+                                """);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testPercentileAllNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");
@@ -363,6 +408,75 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             assertQuery("SELECT percentile_cont(x, $1) FROM test")
                     .noLeakCheck()
                     .returnsOnce("percentile_cont\n5.0\n");
+        });
+    }
+
+    @Test
+    public void testSampleByFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 3.0, '2024-01-01T00:20:00.000000Z'),
+                    ('b', 10.0, '2024-01-01T00:40:00.000000Z'),
+                    ('a', 5.0, '2024-01-01T03:00:00.000000Z'),
+                    ('b', null, '2024-01-01T03:30:00.000000Z'),
+                    ('c', 7.0, '2024-01-01T03:45:00.000000Z')
+                    """);
+            // 00:00 interpolates between 1.0 and 3.0, 03:00 between 5.0 and 7.0
+            assertQuery("SELECT ts, percentile_cont(v, 0.25) p FROM t SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tp
+                            2024-01-01T00:00:00.000000Z\t2.0
+                            2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t5.5
+                            """);
+            assertQuery("SELECT ts, percentile_cont(v, 0.25) p FROM t SAMPLE BY 1h FILL(-1)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tp
+                            2024-01-01T00:00:00.000000Z\t2.0
+                            2024-01-01T01:00:00.000000Z\t-1.0
+                            2024-01-01T02:00:00.000000Z\t-1.0
+                            2024-01-01T03:00:00.000000Z\t5.5
+                            """);
+            // ALIGN TO FIRST OBSERVATION runs the keyed fill cursors, which seed every key with setNull()
+            assertQuery("SELECT ts, k, percentile_cont(v, 0.25) p FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tp
+                            2024-01-01T00:00:00.000000Z\ta\t1.5
+                            2024-01-01T00:00:00.000000Z\tb\t10.0
+                            2024-01-01T00:00:00.000000Z\tc\tnull
+                            2024-01-01T01:00:00.000000Z\ta\t1.5
+                            2024-01-01T01:00:00.000000Z\tb\t10.0
+                            2024-01-01T01:00:00.000000Z\tc\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t1.5
+                            2024-01-01T02:00:00.000000Z\tb\t10.0
+                            2024-01-01T02:00:00.000000Z\tc\tnull
+                            2024-01-01T03:00:00.000000Z\ta\t5.0
+                            2024-01-01T03:00:00.000000Z\tb\tnull
+                            2024-01-01T03:00:00.000000Z\tc\t7.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByFillLinearNotSupported() throws Exception {
+        // the list pointer in the map value cannot hold an interpolated value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT ts, percentile_cont(v, 0.5) FROM t SAMPLE BY 1h FILL(LINEAR)";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("LINEAR"), "support for LINEAR fill is not yet implemented");
         });
     }
 

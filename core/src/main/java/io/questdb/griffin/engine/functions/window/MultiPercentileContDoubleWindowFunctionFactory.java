@@ -174,15 +174,17 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
 
+            if (result == null) {
+                result = new DirectArray();
+            }
+
             if (value != null) {
                 long resultPtr = value.getLong(0);
                 long resultCount = resultMemory.getLong(resultPtr);
 
-                if (result == null) {
-                    result = new DirectArray();
-                    result.setType(type);
-                }
-
+                // ofNull() for a row of an all-NULL partition resets the type and shape,
+                // so every non-NULL row must set the type again before sizing the array
+                result.setType(type);
                 result.setDimLen(0, (int) resultCount);
                 result.applyShape();
 
@@ -192,10 +194,6 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                 return result;
             }
 
-            if (result == null) {
-                result = new DirectArray();
-                result.setType(type);
-            }
             result.ofNull();
             return result;
         }
