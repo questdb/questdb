@@ -28,6 +28,7 @@ import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -74,7 +75,7 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
                 path.of(root).concat("v1");
                 ff.mkdir(path.$(), configuration.getMkDirMode());
-                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
+                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON);
                 v1.create(path.of(root).concat("v1"), 65897);
                 v1.open(path);
 

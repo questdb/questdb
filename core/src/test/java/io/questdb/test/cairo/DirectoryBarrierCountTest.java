@@ -25,15 +25,19 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -101,6 +105,96 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         // No durable epoch inside a measured window: an epoch fsyncs the table directory itself.
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
         ff = new DirFsyncCountingFacade();
+    }
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
+        engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+        super.tearDown();
+    }
+
+    @Test
+    public void testOpenWriterFlushModeFollowsPolicy() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE w (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (TableWriter writer = getWriter("w")) {
+                final int configured = CommitMode.fromString(commitMode);
+                Assert.assertEquals(configured, writer.getEffectiveCommitMode());
+                Assert.assertEquals(configured, writer.getFlushCommitMode());
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+                Assert.assertEquals("role changes must not erase lifecycle truth", configured, writer.getEffectiveCommitMode());
+                Assert.assertEquals(configured == CommitMode.ADAPTIVE ? CommitMode.NOSYNC : configured, writer.getFlushCommitMode());
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+                Assert.assertEquals(configured, writer.getFlushCommitMode());
+            }
+        });
+    }
+
+    @Test
+    public void testReplicaParquetDetachAttach() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            execute("CREATE TABLE w (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO w VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            execute("ALTER TABLE w CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            final String tableDir = tableDir("w");
+            final boolean metadataSync = "sync".equals(commitMode) || "async".equals(commitMode);
+            // DETACH's two durability passes and ATTACH's regenerated _pm must also use replica grade.
+            try (TableWriter writer = getWriter("w")) {
+                final long timestamp = writer.getTxWriter().getPartitionTimestampByIndex(0);
+                ff.clear();
+                Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition(timestamp));
+                if (!metadataSync) {
+                    Assert.assertEquals(ff.dump(), 0, ff.total());
+                    Assert.assertEquals(ff.dump(), 0, ff.countOther());
+                }
+                final Path detached = Paths.get(tableDir, "2024-01-01" + TableUtils.DETACHED_DIR_MARKER);
+                final Path attachable = Paths.get(tableDir, "2024-01-01" + configuration.getAttachPartitionSuffix());
+                Files.move(detached, attachable);
+                Files.delete(attachable.resolve(TableUtils.PARQUET_METADATA_FILE_NAME));
+                ff.clear();
+                Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestamp));
+                Assert.assertEquals(ff.dump(), metadataSync ? 1 : 0, ff.countOther());
+                Assert.assertEquals(ff.dump(), metadataSync ? 1 : 0, ff.countChildren(tableDir));
+            }
+            assertQuery("SELECT sum(v) FROM w").noRandomAccess().expectSize().returns("sum\n3\n");
+        });
+    }
+
+    @Test
+    public void testReplicaStructuralFlushes() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            execute("CREATE TABLE w (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO w VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            drainWalQueue();
+            final String tableDir = tableDir("w");
+            final boolean sync = "sync".equals(commitMode);
+            final boolean metadataSync = sync || "async".equals(commitMode);
+            ff.clear();
+            execute("ALTER TABLE w ADD COLUMN c INT");
+            drainWalQueue();
+            Assert.assertEquals(ff.dump(), sync ? 1 : 0, ff.count(tableDir + "/_meta.swp"));
+            Assert.assertEquals(ff.dump(), sync ? 2 : 0, ff.count(tableDir));
+            ff.clear();
+            execute("ALTER TABLE w ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+            Assert.assertEquals(ff.dump(), sync ? 2 : 0, ff.countOther());
+            Assert.assertEquals(ff.dump(), sync ? 2 : 0, ff.countChildren(tableDir));
+            ff.clear();
+            execute("ALTER TABLE w CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            Assert.assertEquals(ff.dump(), (sync ? 1 : 0) + (metadataSync ? 1 : 0), ff.countOther());
+            Assert.assertEquals(ff.dump(), (sync ? 1 : 0) + (metadataSync ? 1 : 0), ff.countChildren(tableDir));
+            ff.clear();
+            execute("ALTER TABLE w CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            Assert.assertEquals(ff.dump(), sync ? 3 : 0, ff.countOther());
+            Assert.assertEquals(ff.dump(), sync ? 2 : 0, ff.countChildren(tableDir));
+            assertQuery("SELECT sum(v) FROM w").noRandomAccess().expectSize().returns("sum\n3.0\n");
+        });
     }
 
     @Test
@@ -278,43 +372,12 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
 
     @Test
     public void testSwitchToParquet() throws Exception {
-        assertMemoryLeak(ff, () -> {
-            final boolean isSync = "sync".equals(commitMode);
-            for (String table : new String[]{"x", "w"}) {
-                execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY "
-                        + ("x".equals(table) ? "BYPASS WAL" : "WAL"));
-                execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1), "
-                        + "('2024-01-02T00:00:00.000000Z', 'b', 2)");
-                drainWalQueue();
-                // The durable epoch an adaptive WAL table takes after the switch fsyncs more.
-                final boolean exact = "x".equals(table) || !"adaptive".equals(commitMode);
+        assertSwitchToParquet(false);
+    }
 
-                final String tableDir = tableDir(table);
-                // The cold storage job leaves data.parquet and _pm in the native partition; the switch links them.
-                final Path partitionDir;
-                try (Stream<Path> dirs = Files.list(Paths.get(tableDir))) {
-                    partitionDir = dirs.filter(p -> p.getFileName().toString().startsWith("2024-01-01")).findFirst().orElseThrow();
-                }
-                Files.createFile(partitionDir.resolve(TableUtils.PARQUET_PARTITION_NAME));
-                Files.createFile(partitionDir.resolve(TableUtils.PARQUET_METADATA_FILE_NAME));
-
-                // Under SYNC only, the new partition directory, once the parquet and index files are linked into
-                // it, then the table directory.
-                ff.clear();
-                try (TableWriter writer = getWriter(table)) {
-                    final long partitionTimestamp = writer.getTxWriter().getPartitionTimestampByIndex(0);
-                    Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
-                    Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp, 0));
-                }
-                if (exact) {
-                    Assert.assertEquals("switch to parquet" + ff.dump(), 0, ff.countOther());
-                    Assert.assertEquals("switch to parquet" + ff.dump(), isSync ? 1 : 0, ff.countChildren(tableDir));
-                    Assert.assertEquals("switch to parquet" + ff.dump(), isSync ? 1 : 0, ff.count(tableDir));
-                    Assert.assertEquals("switch to parquet" + ff.dump(), isSync ? 2 : 0, ff.total());
-                    Assert.assertEquals("switch to parquet" + ff.dump(), 0, ff.countEmpty());
-                }
-            }
-        });
+    @Test
+    public void testReplicaSwitchToParquet() throws Exception {
+        assertSwitchToParquet(true);
     }
 
     @Test
@@ -389,6 +452,49 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals("rolls: all directory fsyncs", (isDurable ? 3 : 0) + 3 * segmentDirFsyncs, ff.total());
                 Assert.assertEquals("fsyncs of an empty directory", 0, ff.countEmpty());
+            }
+        });
+    }
+
+    private void assertSwitchToParquet(boolean replica) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            if (replica) {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            }
+            final boolean isSync = "sync".equals(commitMode);
+            for (String table : new String[]{"x", "w"}) {
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY "
+                        + ("x".equals(table) ? "BYPASS WAL" : "WAL"));
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1), "
+                        + "('2024-01-02T00:00:00.000000Z', 'b', 2)");
+                drainWalQueue();
+                // The durable epoch an adaptive WAL table takes after the switch fsyncs more.
+                final boolean exact = replica || "x".equals(table) || !"adaptive".equals(commitMode);
+
+                final String tableDir = tableDir(table);
+                // The cold storage job leaves data.parquet and _pm in the native partition; the switch links them.
+                final Path partitionDir;
+                try (Stream<Path> dirs = Files.list(Paths.get(tableDir))) {
+                    partitionDir = dirs.filter(p -> p.getFileName().toString().startsWith("2024-01-01")).findFirst().orElseThrow();
+                }
+                Files.createFile(partitionDir.resolve(TableUtils.PARQUET_PARTITION_NAME));
+                Files.createFile(partitionDir.resolve(TableUtils.PARQUET_METADATA_FILE_NAME));
+
+                // Under SYNC only, the new partition directory, once the parquet and index files are linked into
+                // it, then the table directory.
+                ff.clear();
+                try (TableWriter writer = getWriter(table)) {
+                    final long partitionTimestamp = writer.getTxWriter().getPartitionTimestampByIndex(0);
+                    Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
+                    Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp, 0));
+                }
+                if (exact) {
+                    Assert.assertEquals("switch to parquet" + ff.dump(), 0, ff.countOther());
+                    Assert.assertEquals("switch to parquet" + ff.dump(), isSync ? 1 : 0, ff.countChildren(tableDir));
+                    Assert.assertEquals("switch to parquet" + ff.dump(), isSync ? 1 : 0, ff.count(tableDir));
+                    Assert.assertEquals("switch to parquet" + ff.dump(), isSync ? 2 : 0, ff.total());
+                    Assert.assertEquals("switch to parquet" + ff.dump(), 0, ff.countEmpty());
+                }
             }
         });
     }

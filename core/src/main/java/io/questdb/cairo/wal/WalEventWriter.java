@@ -518,6 +518,7 @@ class WalEventWriter implements Closeable {
     }
 
     void sync() {
+        // Local WAL events keep the configured grade; a replica does not upload them.
         sync(configuration.getCommitMode());
     }
 
@@ -654,6 +655,7 @@ class WalEventWriter implements Closeable {
         // record until it is sequenced, so flushing both files here, in any order, is enough. MS_ASYNC plus the
         // barrier is the pair ADAPTIVE uses for every commit's private files. NOSYNC and ASYNC promise nothing
         // across a power loss and take no barrier.
+        // Local WAL events keep the configured grade; a replica does not upload them.
         final int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             eventMem.sync(true);

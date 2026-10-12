@@ -54,7 +54,7 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
      */
     public static boolean canServeLocalTier(CairoEngine engine) {
         return !engine.isDurabilityFailed()
-                && engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE;
+                && engine.getResolvedCommitMode() == CommitMode.ADAPTIVE;
     }
 
     /**

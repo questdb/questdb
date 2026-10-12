@@ -171,6 +171,7 @@ public class ViewWalWriter extends WalWriterBase {
             long seqTxn = nextSeqTxn(0L, Long.MAX_VALUE, -1L, 0L);
             assert seqTxn != NO_TXN;
             // Group commit leaves the log's flush to a batch that only table WAL writers run.
+            // Local view commits keep the configured grade; the object store does not hold them.
             if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
                 final SeqTxnTracker tracker = sequencer.getTxnTracker(tableToken);
                 final long orphanSweepMark = tracker.snapshotOrphanSweepMark();
@@ -198,6 +199,7 @@ public class ViewWalWriter extends WalWriterBase {
         try {
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
+            // Local view commits keep the configured grade; the object store does not hold them.
             final int commitMode = configuration.getCommitMode();
             if (!Os.isWindows() && commitMode != CommitMode.NOSYNC) {
                 dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
@@ -230,6 +232,7 @@ public class ViewWalWriter extends WalWriterBase {
     }
 
     private void syncIfRequired() {
+        // Local view commits keep the configured grade; the object store does not hold them.
         final int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             events.sync();

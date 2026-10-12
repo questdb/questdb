@@ -582,7 +582,11 @@ bytes.
 - **Replicas keep no save points.** A replica installs `LocalDurabilityPolicy.REPLICA_SKIP`: its writers take no
   save points and its truth is the object store. Its WAL floor comes from any save point files still on disk. It
   never rewinds, so ATTACH and DETACH PARTITION finish at once there (section 10), and it never asks for an idle save
-  point (section 9).
+  point (section 9). With `adaptive` configured, structural flush gates on applied state and on the downloaded
+  log resolve to `nosync` through the live policy (`CairoEngine.getResolvedCommitMode` and
+  `TableWriter.getFlushCommitMode`). Explicit `sync` replicas remain `sync`. The promote flush, boot before
+  role installation, and local commits (including REBASE staging and view definitions) keep their configured
+  grade: the object store does not hold those local writes. Every-mode repair barriers remain unchanged.
 - **Demote** (`ReplicaRoleState.clearAdaptiveEpochArtifacts`). For each WAL table with a save point file, the role
   switch takes the table's writer without waiting (`getWriterUnsafe`). If it gets it, the writer's reconcile makes
   the table durable and removes the save point in two steps (section 7), and outside `adaptive` a leftover save
@@ -591,7 +595,8 @@ bytes.
   lose the rows applied lazily since. If the writer is busy, the table is skipped and that writer's own reconcile
   does the same at the end of its current batch, or before its next one, on its own thread, so the removal never
   races a save point being written. A table that fails for another reason is logged and left to its writer; a
-  failed flush stops the engine. The switch logs `cleared adaptive save points on becoming a replica [tables=...,
+  failed flush follows the engine's resolved mode (section 9): in `adaptive` the table keeps its save point
+  and WAL floor and retries the flush and removal before each batch; in `sync` it stops the engine. The switch logs `cleared adaptive save points on becoming a replica [tables=...,
   busy=..., failed=...]`. On Linux each enrolled table costs one `syncfs` and two `fsync`, about 19 ms with the
   writer open and the removal: about 19 s for 1,000 tables before the replica loop starts. One `syncfs` for every
   table, then the removals, would bring that near the writer opens alone; that batching is left for later.

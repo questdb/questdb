@@ -91,12 +91,13 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
     private static final long MINUTE_MICROS = 60_000_000L;
 
     @Test
-    public void testCloseEpochThenLateRowUnderDefaultCadence() throws Exception {
-        // Pure defaults (60 s interval, 5M rows), no injection. The idle tick closes the writer, whose
+    public void testCloseEpochThenLateRowUnderShippedCadence() throws Exception {
+        // Pin the shipped 60 s interval (the harness uses 1 s). The idle tick closes the writer, whose
         // close-time epoch covers an un-epoched tail and restarts the cadence clock, then frees the board.
         // A late row 10 s later is inside the interval, so its batch publishes no epoch and the window stays
         // open until the next write.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60_000);
         final long t0 = 1_790_000_000_000_000L;
         assertMemoryLeak(() -> {
             try {

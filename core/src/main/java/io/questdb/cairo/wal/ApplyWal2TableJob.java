@@ -127,7 +127,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().walMetrics();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
-        blockFileWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
+        blockFileWriter = new BlockFileWriter(config.getFilesFacade(), engine.getResolvedCommitMode());
     }
 
     @Override
@@ -1032,7 +1032,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final WalEventCursor.ViewDefinitionInfo info = walEventCursor.getViewDefinitionInfo();
                     // Only a replica replaying a VIEW_DEFINITION event reaches this write; a primary writes
                     // _view through SqlCompilerImpl. As for _mv, the local durability policy resolves the mode.
-                    blockFileWriter.setCommitMode(LocalDurabilityPolicy.resolveCommitMode(config.getCommitMode(), engine.getLocalDurabilityPolicy()));
+                    blockFileWriter.setCommitMode(engine.getResolvedCommitMode());
                     engine.updateViewDefinition(viewToken, info.getViewSql(), info.getViewDependencies(), seqTxn, blockFileWriter, path);
                 } catch (CairoException e) {
                     LOG.error().$("could not update view definition [view=").$(viewToken)
@@ -1221,7 +1221,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     ) {
         try (BlockFileWriter stateWriter = blockFileWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-            stateWriter.setCommitMode(LocalDurabilityPolicy.resolveCommitMode(config.getCommitMode(), engine.getLocalDurabilityPolicy()));
+            stateWriter.setCommitMode(engine.getResolvedCommitMode());
             MatViewState.append(
                     lastRefreshTimestamp,
                     lastRefreshBaseTxn,

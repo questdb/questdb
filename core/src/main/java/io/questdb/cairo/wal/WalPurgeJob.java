@@ -596,8 +596,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // WAL again. The save point files are read after _txn, so one published later needs no WAL this pass deletes.
         // In any mode, a table that holds a save point pin keeps the WAL from its save point: on a start outside
         // adaptive that is a refused conversion to non-WAL, which keeps its save point for the next start.
-        final int commitMode = engine.getConfiguration().getCommitMode();
-        final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(commitMode, engine.getLocalDurabilityPolicy());
+        // Configured lifecycle grade: even a replica must retain WAL for an anchor still on disk.
+        final int commitMode = configuration.getCommitMode();
+        final int purgeFloorMode = engine.getResolvedCommitMode();
         final SeqTxnTracker tracker = purgeFloorMode == CommitMode.ADAPTIVE
                 ? engine.getTableSequencerAPI().getTxnTracker(tableToken)
                 : engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
@@ -759,7 +760,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 || idleSavePointRequests >= IDLE_SAVE_POINT_REQUESTS_PER_PASS
                 || idleSweepIndex < idleSavePointStart
                 || tableToken.isView()
-                || LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), engine.getLocalDurabilityPolicy()) != CommitMode.ADAPTIVE
+                || engine.getResolvedCommitMode() != CommitMode.ADAPTIVE
                 || engine.isWalApplySuspended(tableToken)) {
             return;
         }

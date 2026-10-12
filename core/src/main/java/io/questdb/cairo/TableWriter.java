@@ -342,7 +342,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ColumnVersionReader attachColumnVersionReader;
     // The commit mode this writer applies under: the instance's cairo.commit.mode, except that a table of an
     // ADAPTIVE instance applies under SYNC until its enrolment baseline is published. Every adaptive decision on
-    // the apply path reads this field, not configuration.getCommitMode().
+    // the lifecycle path reads this field. Structural flushes use getFlushCommitMode(), which resolves the live role.
     private int effectiveCommitMode = CommitMode.UNSET;
     // The instance runs ADAPTIVE but this table has no valid save point: it needs a durable baseline published
     // at the live cut before a single commit may be applied lazily.
@@ -562,7 +562,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             this.metadata = new TableWriterMetadata(this.tableToken);
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
-            final int resolvedCommitMode = configuration.getCommitMode();
+            final int configuredCommitMode = configuration.getCommitMode();
             // A table is enrolled exactly when it has a valid save point. One without (created under another
             // mode, by an older build, or left without one by a restore or a lineage discard) gets one at its
             // live cut. A replica keeps none (see reconcileDurableEpochAnchor) and applies at its grade.
@@ -578,13 +578,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.adaptiveEnrollmentPending = !privateRootWriter
                     && tableToken.isWal()
                     && metadata.isWalEnabled()
-                    && resolvedCommitMode == CommitMode.ADAPTIVE
+                    && configuredCommitMode == CommitMode.ADAPTIVE
                     && (engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled() || tableToken.isView())
                     && DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId()).length == 0;
             // An unenrolled table cannot use lazy adaptive apply until a full durable baseline has been
             // published. Open/configure it with eager SYNC semantics, then enroll it at the end of
             // construction before publishing ADAPTIVE to the tracker.
-            this.effectiveCommitMode = adaptiveEnrollmentPending ? CommitMode.SYNC : resolvedCommitMode;
+            this.effectiveCommitMode = adaptiveEnrollmentPending ? CommitMode.SYNC : configuredCommitMode;
             // Publish the table's mode to the _txn writer as soon as it is known, before any commit can run.
             // TxWriter otherwise falls back to the instance-global mode (see TxWriter.resolveCommitMode).
             this.txWriter.setCommitMode(this.effectiveCommitMode);
@@ -1279,7 +1279,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
                                 long parquetMetaSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
                                 LOG.info().$("generated parquet metadata [path=").$(path).$(", parquetMetaSize=").$(parquetMetaSize).I$();
-                                if (effectiveCommitMode != CommitMode.NOSYNC) {
+                                if (getFlushCommitMode() != CommitMode.NOSYNC) {
                                     ff.fsync(parquetMetaFd);
                                 }
                             } catch (Throwable t) {
@@ -1295,7 +1295,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 ff.close(parquetFd);
                                 ff.close(parquetMetaFd);
                             }
-                            if (!Os.isWindows() && effectiveCommitMode != CommitMode.NOSYNC) {
+                            if (!Os.isWindows() && getFlushCommitMode() != CommitMode.NOSYNC) {
                                 path.trimTo(partitionPathLen);
                                 final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
                                 if (dirFd != -1) {
@@ -2324,7 +2324,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", from=").$(other)
                                     .$(", to=").$(detachedPath)
                                     .I$();
-                        } else if (CommitMode.isPowerLossDurable(effectiveCommitMode)) {
+                        } else if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
                             // The copies, a partition copied across devices and the temporary name are durable before
                             // _txn names them.
                             try {
@@ -2720,6 +2720,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     public int getEffectiveCommitMode() {
         return effectiveCommitMode;
+    }
+
+    /**
+     * Structural flush grade: the lifecycle mode resolved through the live policy; adaptive replicas use NOSYNC.
+     */
+    public int getFlushCommitMode() {
+        return LocalDurabilityPolicy.resolveCommitMode(effectiveCommitMode, engine.getLocalDurabilityPolicy());
     }
 
     @Override
@@ -8119,7 +8126,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // once nothing can rewind to that state. A non-WAL table is never rewound, so it purges at once.
         boolean asyncOnly = checkScoreboardHasReadersBeforeLastCommittedTxn()
                 || isCheckpointInProgress()
-                || (tableToken.isWal() && effectiveCommitMode == CommitMode.ADAPTIVE);
+                || (tableToken.isWal() && getFlushCommitMode() == CommitMode.ADAPTIVE);
         purgingOperator.purge(
                 path.trimTo(pathSize),
                 tableToken,
@@ -8145,7 +8152,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", to=").$(path).$(", errno=").$(ff.errno()).I$();
                 return;
             }
-            if (CommitMode.isPowerLossDurable(effectiveCommitMode)) {
+            if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
                 DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size());
                 TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).$());
             }
@@ -13015,7 +13022,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.close(dstDataFd);
                 }
             }
-            if (!Os.isWindows() && CommitMode.isPowerLossDurable(effectiveCommitMode)) {
+            if (!Os.isWindows() && CommitMode.isPowerLossDurable(getFlushCommitMode())) {
                 try {
                     final long partDirFd = TableUtils.openRONoCache(ff, other.trimTo(newPartitionDirLen).slash$(), LOG);
                     if (partDirFd != -1) {
@@ -13072,7 +13079,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 columnVersionWriter,
                 symbolTableProvider,
                 configuration,
-                effectiveCommitMode,
+                getFlushCommitMode(),
                 bloomFilterColumns,
                 bloomFilterFpp,
                 parquetBloomFilterIndexes,
@@ -13430,7 +13437,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (partitionRemoveCandidates.size() > 0 && effectiveCommitMode == CommitMode.SYNC) {
                     txWriter.rewriteAndFsync();
                 }
-                if (!isPrivateRoot && (effectiveCommitMode == CommitMode.SYNC || effectiveCommitMode == CommitMode.ADAPTIVE)) {
+                if (!isPrivateRoot && (getFlushCommitMode() == CommitMode.SYNC || getFlushCommitMode() == CommitMode.ADAPTIVE)) {
                     engine.markPartitionPurgeSafe(tableToken);
                 }
                 processPartitionRemoveCandidates();
@@ -13956,7 +13963,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void recoverFromTodoWriteFailure() {
-        restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex, metaSwapCommitMode(effectiveCommitMode));
+        restoreMetaFrom(META_PREV_FILE_NAME, metaPrevIndex, metaSwapCommitMode(getFlushCommitMode()));
         // The compensating rename must reach the directory before the caller clears the restore marker.
         // Otherwise a crash could retain the failed forward rename, lose this rollback rename, and find no
         // _todo marker on restart. If this barrier also fails, runFragile distresses the writer while leaving
@@ -14874,7 +14881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
-        final int metadataEffectiveCommitMode = metaSwapCommitMode(configuration.getCommitMode());
+        final int metadataEffectiveCommitMode = metaSwapCommitMode(getFlushCommitMode());
         // create new _meta.swp
         this.metaSwapIndex = rewriteMetadata(metadata, metadataEffectiveCommitMode);
 
@@ -16314,7 +16321,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public void advanceDurableEpochAfter(CharSequence operation) {
         if (enrolledAdaptive) {
-            advanceDurableEpochBestEffort(operation);
+            if (defersPartitionMoves()) {
+                advanceDurableEpochBestEffort(operation);
+            }
             if (partitionRemovalsAfterSavePoint.size() > 0) {
                 // Removed only where no pin covers them; the rest go to a later purge.
                 partitionRemoveCandidates.clear();
@@ -16647,7 +16656,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void fsyncTableDirAfterMetadataRename() {
-        if (!Os.isWindows() && metaSwapCommitMode(effectiveCommitMode) != CommitMode.NOSYNC) {
+        if (!Os.isWindows() && metaSwapCommitMode(getFlushCommitMode()) != CommitMode.NOSYNC) {
             final long dirFd = TableUtils.openRONoCache(ff, path.trimTo(pathSize).$(), LOG);
             if (dirFd != -1) {
                 ff.fsyncAndClose(dirFd);
@@ -17078,9 +17087,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void updateMatViewDefinition(MatViewDefinition newDefinition) {
         if (blockFileWriter == null) {
-            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+            blockFileWriter = new BlockFileWriter(ff, engine.getResolvedCommitMode());
         }
-        blockFileWriter.setCommitMode(LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), engine.getLocalDurabilityPolicy()));
+        blockFileWriter.setCommitMode(engine.getResolvedCommitMode());
         try (BlockFileWriter definitionWriter = blockFileWriter) {
             definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
             MatViewDefinition.append(newDefinition, definitionWriter);

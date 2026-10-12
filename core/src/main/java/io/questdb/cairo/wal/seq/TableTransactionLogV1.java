@@ -31,6 +31,7 @@ import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -84,6 +85,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private final CairoConfiguration configuration;
+    private final LocalDurabilityPolicy durabilityPolicy;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
@@ -91,8 +93,9 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     // records, written ahead of the tail it publishes, and only a Java append may wipe them.
     private boolean isPastTailUnchecked;
 
-    public TableTransactionLogV1(CairoConfiguration configuration) {
+    public TableTransactionLogV1(CairoConfiguration configuration, LocalDurabilityPolicy durabilityPolicy) {
         this.configuration = configuration;
+        this.durabilityPolicy = durabilityPolicy;
         this.ff = configuration.getFilesFacade();
     }
 
@@ -268,7 +271,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     private boolean isDurableMode() {
-        final int commitMode = configuration.getCommitMode();
+        final int commitMode = LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), durabilityPolicy);
         return commitMode == CommitMode.ADAPTIVE || commitMode == CommitMode.SYNC;
     }
 
@@ -376,6 +379,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     private void sync0() {
+        // Local Java commits and create keep the configured grade: the object store does not hold them on a replica.
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             // With a group window, ADAPTIVE msyncs the header with MS_ASYNC, which flushes nothing, and leaves

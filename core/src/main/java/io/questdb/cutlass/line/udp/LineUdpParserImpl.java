@@ -532,6 +532,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     // point, so its rows would be lost at the next restart: ADAPTIVE refuses the table, existing or new, for the
     // parser's life.
     private boolean refuseWalTable(CacheEntry entry, CharSequence tableName, boolean isWal) {
+        // Refuse local writes outside the WAL regardless of role; this is not a flush gate.
         if (isWal && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
             LOG.error().$("UDP line protocol cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart [table=")
                     .$safe(tableName).I$();

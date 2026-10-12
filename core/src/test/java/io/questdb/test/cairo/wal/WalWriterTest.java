@@ -37,6 +37,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
@@ -2368,7 +2369,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 path.of(root).concat("v1_drop");
                 ff.mkdir(path.$(), configuration.getMkDirMode());
 
-                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
+                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON);
                 v1.create(path.of(root).concat("v1_drop"), 65_897);
                 v1.open(path);
 

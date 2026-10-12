@@ -187,6 +187,7 @@ abstract class WalWriterBase implements AutoCloseable {
      * record ahead of a file it names.
      */
     long nextSeqTxn(long structureVersion, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
+        // Local WAL commits keep the configured grade; a replica does not upload them.
         final int commitMode = configuration.getCommitMode();
         events.syncBeforeSequencing(commitMode);
         syncSegmentFilesBeforeSequencing(commitMode);

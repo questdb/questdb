@@ -247,6 +247,30 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
                 "[CairoException.java, ConvertOperatorImpl.java, SeqTxnTracker.java, TableWriter.java]",
                 filesUsing(Pattern.compile("dataSyncFailureCarry\\("), "CairoException dataSyncFailureCarry(")
         );
+        // Configured reads are classified exceptions, not new flush gates. K: boot (RecoveryCoordinator,
+        // TableConverter), promotion (EntCairoEngine), local WAL/view/REBASE truth, lifecycle anchors
+        // (TableWriter, WalPurgeJob, WalEvents) and primary-only upload. U: configuration definitions,
+        // one-shot structural/checkpoint writers, lazy column/index seeds, cold storage's existing grade,
+        // COPY (no replica ingress) and UDP refusal. CairoEngine and V1/V2 own the live resolution.
+        // A new file reading the configured mode needs classification here before it can bypass the policy.
+        Assert.assertEquals(
+                "[BitmapIndexWriter.java, CairoConfiguration.java, CairoConfigurationWrapper.java, CairoEngine.java, "
+                        + "ColumnVersionWriter.java, DatabaseCheckpointAgent.java, DefaultCairoConfiguration.java, "
+                        + "DefaultLineUdpReceiverConfiguration.java, IDGeneratorFactory.java, LineUdpParserImpl.java, "
+                        + "LineUdpReceiverConfiguration.java, LiveViewCheckpointDataSegmentWriter.java, "
+                        + "LiveViewCheckpointMetaSegmentWriter.java, LiveViewCheckpointRepairMarker.java, "
+                        + "LiveViewCheckpointRepairState.java, LiveViewCheckpointSuperblock.java, LiveViewRefreshJob.java, "
+                        + "MemoryPMARImpl.java, ParallelCsvFileImporter.java, PostingIndexWriter.java, PropServerConfiguration.java, "
+                        + "RecoveryCoordinator.java, SequencerMetadata.java, SettingsStore.java, SqlCompilerImpl.java, "
+                        + "TableConverter.java, TableSequencerImpl.java, TableSnapshotRestore.java, TableTransactionLog.java, "
+                        + "TableTransactionLogV1.java, TableTransactionLogV2.java, TableWriter.java, TxWriter.java, ViewWalWriter.java, "
+                        + "WalEventWriter.java, WalPurgeJob.java, WalUtils.java, WalWriter.java, WalWriterBase.java]"
+                        + (hasEnterpriseSources() ?
+                        "+[ColdStorageTaskJob.java, EntCairoEngine.java, EntPropServerConfiguration.java, PrimaryRoleState.java, "
+                        + "StoragePolicyJob.java, StoragePolicyWriterCommand.java, WalEvents.java]"
+                        : ""),
+                filesUsing(Pattern.compile("getCommitMode\\(\\)"), null)
+        );
         // poisonOnDataSyncFailure returns null when the failure is not fatal: each caller is inside a fatal branch.
         final List<String> unguarded = new ArrayList<>();
         for (Path root : sourceRoots()) {

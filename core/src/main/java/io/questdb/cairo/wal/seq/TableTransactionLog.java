@@ -185,7 +185,7 @@ public class TableTransactionLog implements Closeable {
     ) {
         int formatVersion = getFormatVersion(path, configuration.getFilesFacade());
         return switch (formatVersion) {
-            case WAL_SEQUENCER_FORMAT_VERSION_V1 -> new TableTransactionLogV1(configuration);
+            case WAL_SEQUENCER_FORMAT_VERSION_V1 -> new TableTransactionLogV1(configuration, durabilityPolicy);
             case WAL_SEQUENCER_FORMAT_VERSION_V2 ->
                     new TableTransactionLogV2(configuration, -1, walDirectoryPolicy, durabilityPolicy);
             default -> throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
@@ -197,7 +197,7 @@ public class TableTransactionLog implements Closeable {
             if (configuration.getDefaultSeqPartTxnCount() > 0) {
                 txnLogFile = new TableTransactionLogV2(configuration, configuration.getDefaultSeqPartTxnCount(), walDirectoryPolicy, durabilityPolicy);
             } else {
-                txnLogFile = new TableTransactionLogV1(configuration);
+                txnLogFile = new TableTransactionLogV1(configuration, durabilityPolicy);
             }
         } else {
             throw new IllegalStateException("transaction log file already opened");
@@ -265,6 +265,7 @@ public class TableTransactionLog implements Closeable {
         // endMetadataChangeEntry publishes MAX_TXN after the pre-sync above. Under SYNC and ADAPTIVE flush that
         // commit pointer too; otherwise an acknowledged idle structural ALTER can disappear on a power loss.
         // NOSYNC and ASYNC promise nothing across a power loss.
+        // Local commits keep the configured grade, including on a replica.
         if (CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
             txnLogFile.fullSync();
         }

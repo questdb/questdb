@@ -2484,7 +2484,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * The commit mode governing WAL durability. Instance-wide and fixed for the life of the process:
      * {@code cairo.commit.mode} is a final field read once at construction, so every WAL writer of every
-     * table answers the same grade and no commit can straddle a change.
+     * table answers the same grade and no commit can straddle a change. A replica's local commits keep
+     * the configured grade on purpose: the object store does not hold these files.
      */
     private int walCommitMode() {
         return configuration.getCommitMode();

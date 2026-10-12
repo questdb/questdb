@@ -124,8 +124,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
-        final boolean isSync = tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC;
-        final boolean isPowerLossDurable = CommitMode.isPowerLossDurable(tableWriter.getEffectiveCommitMode());
+        final boolean isSync = tableWriter.getFlushCommitMode() != CommitMode.NOSYNC;
+        final boolean isPowerLossDurable = CommitMode.isPowerLossDurable(tableWriter.getFlushCommitMode());
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         ctx.clear();
         final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder(cairoConfiguration);
@@ -3811,8 +3811,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long partitionRowCount = srcOooHi - srcOooLo + 1;
         final FilesFacade ff = tableWriter.getFilesFacade();
         final CairoConfiguration configuration = tableWriter.getConfiguration();
-        final boolean isSync = tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC;
-        final boolean isPowerLossDurable = CommitMode.isPowerLossDurable(tableWriter.getEffectiveCommitMode());
+        final boolean isSync = tableWriter.getFlushCommitMode() != CommitMode.NOSYNC;
+        final boolean isPowerLossDurable = CommitMode.isPowerLossDurable(tableWriter.getFlushCommitMode());
         final long partitionNameTxn = txn - 1;
         final long mergeIndexAddr = sortedTimestampsAddr + srcOooLo * TableWriter.TIMESTAMP_MERGE_ENTRY_BYTES;
 

@@ -240,6 +240,7 @@ public class TableSequencerImpl implements TableSequencer {
             );
             // Group commit leaves the log's flush to the next batch, and no writer flushes a dropped table again.
             final CairoConfiguration configuration = engine.getConfiguration();
+            // Local commits keep the configured grade, including on a replica.
             if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
                 fdatasyncTxnLog();
             }
@@ -431,6 +432,7 @@ public class TableSequencerImpl implements TableSequencer {
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
                 final long timestamp = microClock.getTicks();
+                // Local commits keep the configured grade, including on a replica.
                 final int commitMode = engine.getConfiguration().getCommitMode();
                 final boolean isDurableMode = commitMode == CommitMode.ADAPTIVE || commitMode == CommitMode.SYNC;
                 // Orphaned pins registered by now are covered by the flushes of this change.
@@ -622,6 +624,7 @@ public class TableSequencerImpl implements TableSequencer {
             long txnMaxTimestamp,
             long txnRowCount
     ) {
+        // Local commits keep the configured grade, including on a replica.
         final int effectiveMode = engine.getConfiguration().getCommitMode();
         final long txn = tableTransactionLog.addEntry(
                 getStructureVersion(),

@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal.seq;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
@@ -43,6 +44,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -109,7 +111,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                     try (Path path = new Path().of(seqDir)) {
                         configuration.commitMode = CommitMode.NOSYNC;
                         configuration.groupWindowUs = 0;
-                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
                             log.create(path, TS_BASE);
                             for (int t = 1; t <= oldTxns; t++) {
                                 log.addEntry(0, 100 + t, 0, t - 1, TS_BASE + t * 1_000L, 0, 0, 0);
@@ -117,7 +119,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                         }
                         configuration.commitMode = (int) mode[0];
                         configuration.groupWindowUs = mode[1];
-                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
                             log.create(path, TS_BASE);
                             for (int t = 1; t <= newTxns; t++) {
                                 Assert.assertEquals(t, log.addEntry(0, 7, 0, t - 1, TS_BASE + 50_000L + t * 1_000L, 0, 0, 0));
@@ -128,7 +130,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                             ByteBuffer.wrap(image).order(ByteOrder.LITTLE_ENDIAN)
                                     .putLong((int) TableTransactionLogFile.MAX_TXN_OFFSET_64, publishedTxn);
                             writeFile(logPath, image);
-                            try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                            try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
                                 log.open(path);
                                 Assert.assertEquals(
                                         "records that never reached the disk must be cut, not read from the old lineage [mode="
@@ -166,7 +168,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
             try (Path path = new Path().of(seqDir)) {
                 configuration.commitMode = CommitMode.NOSYNC;
                 int txns = 0;
-                try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
                     log.create(path, TS_BASE);
                     while (txns < 100) {
                         txns++;
@@ -179,7 +181,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 for (int i = 0; i < modes.length; i++) {
                     configuration.commitMode = modes[i];
                     flushes[0] = 0;
-                    try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration)) {
+                    try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
                         log.open(path);
                         Assert.assertEquals(txns, log.lastTxn());
                         if (i == 3) {
@@ -193,6 +195,66 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 }
             }
             Assert.assertEquals("nosync=0 sync=1 sync=0 nosync=0 async=0 adaptive=1 adaptive=0 ", actual.toString());
+        });
+    }
+
+    @Test
+    public void testReplicaReloadFollowsLivePolicyButLocalCommitsKeepConfiguredGrade() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] flushes = {0};
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public void fdatasync(long fd) {
+                    flushes[0]++;
+                    super.fdatasync(fd);
+                }
+            };
+            final SweepConfiguration configuration = new SweepConfiguration(root, ff);
+            final boolean[] localDurability = {true};
+            final String seqDir = root + "/replica/" + WalUtils.SEQ_DIR;
+            Files.createDirectories(Paths.get(seqDir));
+            try (Path path = new Path().of(seqDir);
+                 TableTransactionLogV1 log = new TableTransactionLogV1(configuration, () -> localDurability[0])) {
+                configuration.commitMode = CommitMode.ADAPTIVE;
+                configuration.groupWindowUs = 0;
+                localDurability[0] = false;
+                log.create(path, TS_BASE);
+                Assert.assertEquals("local create retains configured grade", 1, flushes[0]);
+                log.addEntry(0, 1, 0, 0, TS_BASE, 0, 0, 0);
+                Assert.assertEquals("local append retains configured grade", 2, flushes[0]);
+                // Mimic the downloader's positive hint without closing the Java log between batches.
+                try (RandomAccessFile downloaded = new RandomAccessFile(seqDir + "/" + WalUtils.TXNLOG_FILE_NAME, "rw")) {
+                    for (int batch = 0; batch < 3; batch++) {
+                        downloaded.seek(TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64);
+                        downloaded.writeLong(Long.reverseBytes(1));
+                        flushes[0] = 0;
+                        log.open(path);
+                        Assert.assertEquals("replica reload batch " + batch, 0, flushes[0]);
+                        Assert.assertEquals(1, log.lastTxn());
+                    }
+                    localDurability[0] = true;
+                    log.open(path);
+                    Assert.assertEquals("promotion reaches the already-open log", 1, flushes[0]);
+                    localDurability[0] = false;
+                    configuration.commitMode = CommitMode.SYNC;
+                    downloaded.seek(TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64);
+                    downloaded.writeLong(Long.reverseBytes(1));
+                    flushes[0] = 0;
+                    log.open(path);
+                    Assert.assertEquals("explicit SYNC replica remains durable", 1, flushes[0]);
+
+                    configuration.commitMode = CommitMode.ADAPTIVE;
+                    log.addEntry(0, 1, 0, 1, TS_BASE + 1_000, 0, 0, 0);
+                    downloaded.seek(TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64);
+                    downloaded.writeLong(Long.reverseBytes(2));
+                    downloaded.seek(HEADER_SIZE + RECORD_SIZE + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
+                    downloaded.writeInt(0);
+                    flushes[0] = 0;
+                    log.open(path);
+                    Assert.assertEquals("torn-tail repair flushes even on an adaptive replica", 1, flushes[0]);
+                    Assert.assertEquals(1, log.lastTxn());
+                }
+            }
         });
     }
 
@@ -429,7 +491,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 // window starts, as if the kernel had written it back long ago.
                 configuration.commitMode = CommitMode.NOSYNC;
                 configuration.groupWindowUs = 0;
-                TableTransactionLogV1 log = new TableTransactionLogV1(configuration);
+                TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON);
                 try {
                     log.create(path, TS_BASE);
                     for (int t = 1; t < first; t++) {
@@ -457,7 +519,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 logModel = new FileModel(logPath);
                 acked = first - 1;
                 ff.sweep = this;
-                log = new TableTransactionLogV1(configuration);
+                log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON);
                 try {
                     activity = "open";
                     log.open(path);
@@ -479,7 +541,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                     if (window.reopenAtEnd) {
                         activity = "reopen";
                         log.close();
-                        log = new TableTransactionLogV1(configuration);
+                        log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON);
                         log.open(path);
                         crashPoint("after reopen");
                     }
@@ -694,7 +756,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
             int readCount = -1;
             verifyConfiguration.commitMode = reopenMode;
             verifyConfiguration.groupWindowUs = window.groupWindowUs;
-            final TableTransactionLogV1 log = new TableTransactionLogV1(verifyConfiguration);
+            final TableTransactionLogV1 log = new TableTransactionLogV1(verifyConfiguration, LocalDurabilityPolicy.ALWAYS_ON);
             try (Path path = new Path().of(verifyDir)) {
                 log.open(path);
                 final List<Rec> read = readAll(log, path);

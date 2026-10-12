@@ -156,7 +156,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int timestampType,
             int partitionBy
     ) {
-        final int commitMode = configuration.getCommitMode();
+        final int commitMode = engine.getResolvedCommitMode();
         if ((commitMode == CommitMode.SYNC || (commitMode == CommitMode.ADAPTIVE && tableToken.isWal()))
                 && !engine.isPartitionPurgeSafe(tableToken)) {
             // the next writer open makes the table's state durable and removes the versions itself

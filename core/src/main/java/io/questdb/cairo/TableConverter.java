@@ -143,6 +143,7 @@ public class TableConverter {
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
                                 // A one-shot structural conversion, outside any table writer and any save
                                 // point: under adaptive it takes the sync grade.
+                                // Boot conversion precedes role installation and keeps the configured grade.
                                 txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
 
                                 // A type conversion resets the table's WAL lineage: resetLagValuesUnsafe()
@@ -193,6 +194,7 @@ public class TableConverter {
                                 // generation-zero save point here, as the REBASE WAL clone does. A non-adaptive
                                 // instance publishes nothing.
                                 path.trimTo(rootLen).concat(dirNameSink);
+                                // Boot conversion precedes role installation and keeps the configured grade.
                                 if (walEnabled && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
                                     final long baselineTxn = DurableEpochManifest.publishInitialAt(
                                             configuration,
@@ -260,6 +262,7 @@ public class TableConverter {
                                 .put(", lastSeqTxn=").put(lastSeqTxn)
                                 .put(", suspended=").put(tracker.isSuspended())
                                 .put(']');
+                        // Boot conversion precedes role installation and keeps the configured grade.
                         if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
                             throw refusal;
                         }

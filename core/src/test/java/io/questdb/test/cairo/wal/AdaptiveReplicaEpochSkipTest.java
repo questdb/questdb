@@ -108,19 +108,18 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 baselineGeneration = saved[0].generation;
             }
 
-            // The demote-in-window policy. Installing it changes the policy version, so the batch first asks it
-            // from TableWriter.reconcileDurableEpochAnchor() (call 0, answered ENABLED: the table keeps its
-            // anchor). Then ENABLED on the gate call (call 1, maybeAdvanceDurableEpoch), DISABLED on advance()'s
-            // re-check (call 2) and every call thereafter.
+            // Calls 0-3 construct the apply job and writer (including its two structural purge gates).
+            // Call 4 reconciles the anchor, call 5 is maybeAdvanceDurableEpoch's gate, and call 6 is
+            // advance()'s re-check. Only the re-check and subsequent calls see the demote.
             final AtomicInteger calls = new AtomicInteger();
             final boolean[] sawEnabledAtGate = {false};
             final boolean[] sawDisabledAtRecheck = {false};
             final LocalDurabilityPolicy demoteInWindow = () -> {
                 final int call = calls.getAndIncrement();
-                final boolean enabled = call < 2;
-                if (call == 1) {
+                final boolean enabled = call < 6;
+                if (call == 5) {
                     sawEnabledAtGate[0] = true;
-                } else if (call == 2) {
+                } else if (call == 6) {
                     sawDisabledAtRecheck[0] = true;
                 }
                 return enabled;
@@ -136,16 +135,15 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                         sawEnabledAtGate[0]);
                 Assert.assertTrue("advance()'s re-check must have seen local durability DISABLED",
                         sawDisabledAtRecheck[0]);
-                // Pin the sequence: anchor reconcile, gate, re-check. Another caller in between would shift
-                // which call this policy answers ENABLED, and the re-check would go unexercised.
-                Assert.assertEquals("policy consulted exactly by the reconcile, the gate and the re-check",
-                        3, calls.get());
 
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
                 Assert.assertEquals("a demote in the epoch window must not advance the durable epoch frontier",
                         0L, tracker.getDurableEpochSeqTxn());
                 Assert.assertEquals("a demote in the epoch window must not publish an epoch (lastEpochTs stays 0)",
                         0L, tracker.getLastEpochTs());
+
+                // Pin the exact sequence so a new policy reader cannot silently move the demote before the gate.
+                Assert.assertEquals("setup, reconcile, gate, then disabled re-check", 7, calls.get());
 
                 // Enrollment may have published an epoch-0 baseline before this window. The demoted node must
                 // not advance or replace that save point.

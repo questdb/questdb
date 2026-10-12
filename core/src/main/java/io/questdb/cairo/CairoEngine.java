@@ -2321,6 +2321,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return liveViewStateStore;
     }
 
+    /**
+     * The configured grade resolved through the live role policy, never cached.
+     */
+    public int getResolvedCommitMode() {
+        return LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), localDurabilityPolicy);
+    }
+
     public @NotNull LocalDurabilityPolicy getLocalDurabilityPolicy() {
         return localDurabilityPolicy;
     }
@@ -3921,7 +3928,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * this.
      */
     public boolean isDataSyncFailureFatal(Throwable failure) {
-        return CommitMode.isPowerLossDurable(LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), localDurabilityPolicy))
+        return CommitMode.isPowerLossDurable(getResolvedCommitMode())
                 && CairoException.isDataSyncFailure(failure);
     }
 
@@ -3945,7 +3952,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * {@link #handleDataSyncFailure(Throwable)} in every commit mode. Only for a stop decided for every mode: the
-     * flush after the WAL replay before a conversion to non-WAL.
+     * flush after the WAL replay before a conversion to non-WAL, and the Enterprise promote flush.
      */
     public void handleDataSyncFailureInEveryMode(Throwable failure) {
         throw poisonEngine(failure);

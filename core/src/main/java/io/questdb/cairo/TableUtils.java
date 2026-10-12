@@ -2466,6 +2466,7 @@ public final class TableUtils {
             SymbolTableProvider symbolTableProvider,
             CairoConfiguration configuration,
             ParquetConversionContext conversionContext,
+            int flushCommitMode,
             long seqTxn
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
@@ -2599,7 +2600,7 @@ public final class TableUtils {
             }
 
             final long resultParquetSize = partitionUpdater.updateFileMetadata();
-            partitionUpdater.commitParquetMeta(configuration.getCommitMode() != CommitMode.NOSYNC);
+            partitionUpdater.commitParquetMeta(flushCommitMode != CommitMode.NOSYNC);
             return resultParquetSize;
         } catch (Throwable th) {
             // Close Rust-owned descriptors before removing candidates, especially on Windows.

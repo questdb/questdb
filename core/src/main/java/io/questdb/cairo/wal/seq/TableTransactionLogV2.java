@@ -275,6 +275,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public void fullSync() {
+        // Local commits keep the configured grade; the downloader does not call this method.
         // The part file must be durable before the header, as in sync0(). NOSYNC and ASYNC promise nothing
         // across a power loss and sync the header alone.
         if (txnPartMem.isOpen() && CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
@@ -538,7 +539,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     /**
      * True under ADAPTIVE with a group window above zero, where the batched flush takes over the per-commit
-     * sequencer fdatasync. It depends on configuration only, so concurrent WAL writers of a table agree.
+     * sequencer fdatasync. Local commits keep the configured grade, including on a replica, so concurrent
+     * WAL writers of a table agree.
      */
     private boolean isDeviceFlushDeferred() {
         return configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0;
@@ -573,6 +575,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             try {
                 rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part);
                 long partSize = partTransactionCount * RECORD_SIZE;
+                // A local append switching parts keeps the configured grade, including on a replica.
                 if (txnPartMem.isOpen()
                         && CommitMode.isPowerLossDurable(configuration.getCommitMode())
                         && partId * partTransactionCount < maxTxn.get()) {
@@ -686,6 +689,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     private void sync0() {
+        // Local Java commits keep the configured grade; a replica does not upload them.
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
             // The part file must be durable before the header that points to it, or a crash after the header

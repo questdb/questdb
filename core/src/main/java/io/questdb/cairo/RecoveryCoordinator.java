@@ -99,6 +99,7 @@ public class RecoveryCoordinator {
     public void recover() {
         // The save point decides whether a table is rolled forward, never the instance mode: a table left
         // enrolled is still recovered when the instance now runs nosync, and then leaves adaptive here.
+        // Boot runs before a role is installed; recovery needs the configured grade.
         final boolean adaptiveInstance = configuration.getCommitMode() == CommitMode.ADAPTIVE;
         final ObjHashSet<TableToken> tokens = new ObjHashSet<>();
         final ObjList<TableToken> exits = new ObjList<>();
@@ -480,6 +481,7 @@ public class RecoveryCoordinator {
         tablePath(metaPath, token).concat(TableUtils.META_FILE_NAME);
         LOG.info().$("repairing interrupted metadata swap [table=").$(token).$(", from=").$(prevPath).I$();
         ff.removeQuiet(metaPath.$());
+        // Boot runs before a role is installed; recovery needs the configured grade.
         if (TableUtils.renamePublish(ff, prevPath.$(), metaPath.$(), configuration.getCommitMode()) != Files.FILES_RENAME_OK) {
             throw CairoException.critical(ff.errno())
                     .put("could not repair interrupted metadata swap [table=").put(token.getTableName())
@@ -601,6 +603,7 @@ public class RecoveryCoordinator {
         }
         // The selected save point may be only in the page cache; the purges and the next save point trust it once
         // recover() returns. Where syncfs is filesystem-wide, recover() flushes every rewritten header at once.
+        // Boot runs before a role is installed; recovery needs the configured grade.
         if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
             tablePath(dir, token);
             final boolean isFlushedByRecover = ff.isSyncfsFileSystemWide();
