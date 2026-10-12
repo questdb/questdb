@@ -931,6 +931,53 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyedRepairAtTheChainedBoundaryBoundOverCoveringRootsStaysKeyed() throws Exception {
+        // The control for the case below: the same three roots, none of them tied, are re-versioned
+        // by key.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, -1, 0, true);
+    }
+
+    @Test
+    public void testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRoot() throws Exception {
+        // Three roots in the range and a bound of three: the splice re-versions all three, so the
+        // lowest one, which acct-1 tied, must be vetted too. A walk that stopped one root short
+        // would re-stamp it by key, and the late acct-1 row would resume from it one short.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, 0, 0, false);
+    }
+
+    @Test
+    public void testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRootOverARootBelowItsRange() throws Exception {
+        // The case above with one more root, sealed on January 2, below the correction. The
+        // splice re-versions only the three roots inside the range, so the bound still admits
+        // it, and the walk must count only those three as well. A walk that counted the
+        // January 2 root too would read the repair as past the bound, vet none of the roots,
+        // and let the splice re-stamp the tied lowest root by key.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, 0, 1, false);
+    }
+
+    @Test
+    public void testAKeyedRepairPastTheChainedBoundaryBoundStaysKeyedOverATiedHighestRoot() throws Exception {
+        // Three roots in the range and a bound of two: the splice declines and re-versions none
+        // of them, so the tied root at the top of the range, the first one a walk from H reaches,
+        // has nothing to protect and must not cost the keyed read.
+        assertKeyedRepairAroundTheChainedBoundaryBound(2, 2, 0, true);
+    }
+
+    @Test
+    public void testAKeyedRepairPastTheChainedBoundaryBoundStaysKeyedOverATiedLowestRoot() throws Exception {
+        // As the case above, with the tie on the lowest root, the last one a walk from H reaches:
+        // the splice still re-versions none of the three, so a walk that vetted on past the bound,
+        // or read crossing the bound as a failure, would cost the keyed read for nothing.
+        assertKeyedRepairAroundTheChainedBoundaryBound(2, 0, 0, true);
+    }
+
+    @Test
+    public void testAKeyedRepairWithTheChainedBoundaryBoundOffStaysKeyedOverATiedRoot() throws Exception {
+        // A bound of zero declines every splice, so no root is re-versioned and none is vetted.
+        assertKeyedRepairAroundTheChainedBoundaryBound(0, 0, 0, true);
+    }
+
+    @Test
     public void testAKeyedRepairWhoseStoredRowsFailToCloseAfterItsCommitRetiresTheTimeline() throws Exception {
         // The keyed replay's unwind closes the merge's stored rows after the replacement has
         // committed. A close that fails there skips the publication tail, so the splice that
@@ -1777,6 +1824,104 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The tie burst of {@link #commitTheTieBurst} at a one-row cadence, which seals a root per
+     * commit, so January 3 carries three roots inside the range the acct-4 correction repairs by
+     * key: the lowest at 00:48:50, the next at 01:36:32, and the highest at 09:54, where the
+     * acct-9 filler that makes the keyed read the cheaper one ends. The splice re-versions those
+     * roots only while they number at most {@code maxChainedBoundaries}, and only a root it
+     * re-versions needs to cover its timestamp group for the keyed read to keep it.
+     * <p>
+     * After the repair, a row tying the head sends a late acct-1 row at 01:00 through a resume
+     * from the newest root below it, which reads acct-1's state back from that root.
+     *
+     * @param maxChainedBoundaries  {@code cairo.live.view.checkpoint.repair.max.chained.boundaries}
+     * @param tiedRoot              which root acct-1 ties in the commit after the one that sealed
+     *                              it: 0 for the lowest, 2 for the highest, or -1 for none
+     * @param rootsBelowRange       how many acct-5 commits, each sealing a root on January 2,
+     *                              precede the burst. Those roots sit below the range, so the
+     *                              splice never re-versions them
+     * @param isKeyedRepairExpected whether the correction reads January 3 by key
+     */
+    private void assertKeyedRepairAroundTheChainedBoundaryBound(
+            int maxChainedBoundaries,
+            int tiedRoot,
+            int rootsBelowRange,
+            boolean isKeyedRepairExpected
+    ) throws Exception {
+        final int rootCount = 3;
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, maxChainedBoundaries);
+        final boolean isLowestRootTied = tiedRoot == 0;
+        final boolean isHighestRootTied = tiedRoot == rootCount - 1;
+        final String acct1SecondTs = isLowestRootTied ? "2026-01-03T00:48:50.000000Z" : "2026-01-03T00:48:51.000000Z";
+        assertMemoryLeak(() -> {
+            createTieBurstView(true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                for (int i = 0; i < rootsBelowRange; i++) {
+                    commit(row(2, 10 + i, "acct-5"), job);
+                }
+                commitTheTieBurst(acct1SecondTs, job);
+                // Closes January 3.
+                commit((isHighestRootTied ? "('2026-01-03T09:54:00.000000Z', 'acct-1', 1.0), " : "")
+                        + "('2026-01-04T01:00:00.000000Z', 'acct-0', 1.0)", job);
+
+                final LiveViewInstance instance = viewInstance();
+                final LongList ladder = snapshotCheckpointLadder(instance);
+                int closedDayRoots = 0;
+                int earlierDayRoots = 0;
+                for (int i = 0, n = ladder.size() / 2; i < n; i++) {
+                    final long maxTimestamp = ladder.getQuick(i * 2);
+                    if (maxTimestamp >= ts("2026-01-03T00:00:00.000000Z") && maxTimestamp < ts("2026-01-04T00:00:00.000000Z")) {
+                        closedDayRoots++;
+                    } else if (maxTimestamp >= ts("2026-01-02T00:00:00.000000Z") && maxTimestamp < ts("2026-01-03T00:00:00.000000Z")) {
+                        earlierDayRoots++;
+                    }
+                }
+                Assert.assertEquals("January 3 must carry one root per commit", rootCount, closedDayRoots);
+                Assert.assertEquals("January 2 must carry one root per commit", rootsBelowRange, earlierDayRoots);
+                final long keyedRepairsBefore = job.keyedReplaySegmentCountForTest();
+                final long rootsVersionedBefore = instance.getCheckpointRepairRootsVersioned();
+
+                // Below every root, on an account the tie does not involve.
+                commit("('2026-01-03T00:32:37.000000Z', 'acct-4', 3.0)", job);
+                Assert.assertEquals(
+                        "the pricing must pick the keyed read for January 3",
+                        1,
+                        job.keyedScanCheaperCountForTest()
+                );
+                Assert.assertEquals(
+                        "a root the splice re-versions must cover its timestamp group for the read to stay keyed,"
+                                + " and a root it leaves alone costs nothing",
+                        isKeyedRepairExpected ? 1 : 0,
+                        job.keyedReplaySegmentCountForTest() - keyedRepairsBefore
+                );
+                Assert.assertEquals(
+                        "the splice re-versions every root in range up to the bound, and none past it",
+                        maxChainedBoundaries > 0 && rootCount <= maxChainedBoundaries ? rootCount : 0,
+                        instance.getCheckpointRepairRootsVersioned() - rootsVersionedBefore
+                );
+
+                // Ties the head.
+                commit("('2026-01-04T01:00:00.000000Z', 'acct-7', 1.0)", job);
+                // Between the two lowest roots, so the resume reads acct-1 back from the lowest.
+                commit("('2026-01-03T01:00:00.000000Z', 'acct-1', 1.0)", job);
+
+                assertQuery("SELECT created_at, cumulative_sum FROM lv WHERE account_id = 'acct-1'")
+                        .noLeakCheck()
+                        .timestamp("created_at")
+                        .returns("created_at\tcumulative_sum\n"
+                                + "2026-01-03T00:32:37.000000Z\t3.0\n"
+                                + acct1SecondTs + "\t4.0\n"
+                                + "2026-01-03T01:00:00.000000Z\t5.0\n"
+                                + "2026-01-03T01:36:32.000000Z\t6.0\n"
+                                + (isHighestRootTied ? "2026-01-03T09:54:00.000000Z\t7.0\n" : ""));
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    /**
      * Seven commits to an anchored view over a daily-partitioned base, each settled before
      * the next, under default settings otherwise. The 295 acct-9 rows are what make the
      * pricing pick the keyed read for January 3 once it closes, and the acct-7 row tying the
@@ -1798,31 +1943,10 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         }
         final String acct1SecondTs = isTied ? "2026-01-03T00:48:50.000000Z" : "2026-01-03T00:48:51.000000Z";
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL" + (isKeyIndexed ? " INDEX" : "")
-                    + ", amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
-            execute("""
-                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
-                    SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum FROM tx
-                    WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')
-                    """);
+            createTieBurstView(isKeyIndexed);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
-                // The first root seals at 00:48:50.
-                commit("""
-                        ('2026-01-03T00:26:24.000000Z', 'acct-4', 2.0),
-                        ('2026-01-03T00:32:37.000000Z', 'acct-1', 3.0),
-                        ('2026-01-03T00:48:50.000000Z', 'acct-0', 3.0)""", job);
-                commit("('" + acct1SecondTs + "', 'acct-1', 1.0), ('2026-01-03T01:36:32.000000Z', 'acct-1', 1.0)", job);
-                final StringBuilder filler = new StringBuilder();
-                for (int minute = 0; minute < 295; minute++) {
-                    if (minute > 0) {
-                        filler.append(", ");
-                    }
-                    filler.append("('2026-01-03T")
-                            .append(String.format("%02d:%02d", 5 + minute / 60, minute % 60))
-                            .append(":00.000000Z', 'acct-9', 1.0)");
-                }
-                commit(filler.toString(), job);
+                commitTheTieBurst(acct1SecondTs, job);
                 // Closes January 3.
                 commit("('2026-01-04T01:00:00.000000Z', 'acct-0', 1.0)", job);
                 // Below the root, on an account the tie does not involve.
@@ -1887,6 +2011,28 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         driveRefreshToQuiescence(job);
     }
 
+    /**
+     * Three commits to the view {@link #createTieBurstView} creates: acct-1's first row
+     * among two other accounts' rows up to 00:48:50, which seals a root there; acct-1's
+     * second row at {@code acct1SecondTs}, which ties that root or lands one second past it,
+     * with acct-1's third row at 01:36:32; and the 295 acct-9 rows from 05:00 to 09:54.
+     */
+    private void commitTheTieBurst(String acct1SecondTs, LiveViewRefreshJob job) throws Exception {
+        commit("""
+                ('2026-01-03T00:26:24.000000Z', 'acct-4', 2.0),
+                ('2026-01-03T00:32:37.000000Z', 'acct-1', 3.0),
+                ('2026-01-03T00:48:50.000000Z', 'acct-0', 3.0)""", job);
+        commit("('" + acct1SecondTs + "', 'acct-1', 1.0), ('2026-01-03T01:36:32.000000Z', 'acct-1', 1.0)", job);
+        final StringBuilder filler = new StringBuilder();
+        for (int minute = 0; minute < 295; minute++) {
+            if (minute > 0) {
+                filler.append(", ");
+            }
+            filler.append(row(3, 5 + minute / 60, minute % 60, 0, "acct-9"));
+        }
+        commit(filler.toString(), job);
+    }
+
     private long count(String sql) throws Exception {
         try (
                 RecordCursorFactory factory = select(sql);
@@ -1895,6 +2041,19 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             Assert.assertTrue(cursor.hasNext());
             return cursor.getRecord().getLong(0);
         }
+    }
+
+    /**
+     * An empty base partitioned by day, and a running sum per account over it, anchored daily.
+     */
+    private void createTieBurstView(boolean isKeyIndexed) throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL" + (isKeyIndexed ? " INDEX" : "")
+                + ", amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
+        execute("""
+                CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum FROM tx
+                WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')
+                """);
     }
 
     private void createView(String seedRows) throws Exception {

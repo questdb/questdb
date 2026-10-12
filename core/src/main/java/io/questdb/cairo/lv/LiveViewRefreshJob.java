@@ -9994,7 +9994,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // from the guard that refuses to resume from such a root, so a later resume
                 // would skip the tie row for good. The whole segment's read re-freezes every
                 // boundary from the base, tie rows included. A covering root keeps the keyed
-                // route.
+                // route, and so does every root of a repair crossing more of them than the
+                // splice below re-versions: that splice declines, and the truncate drops them.
                 timelineAnchors.of(instance);
                 if (isTimelineSpliceable && !timelineAnchors.isEveryTimestampGroupCovered(
                         plan.getRetireLowTs(),
@@ -15874,7 +15875,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // its own ids. A horizon over the cache's whole band would list each such value under
         // two keys, and a keyed WINDOW JOIN from the view, which maps every key its symbol
         // table lists, would match the rows that carry the committed key against nothing.
-        // See LiveViewRuntimeRestoreTest.testAReaderPinnedAcrossARestoredHandOffKeepsEachAccountUnderOneSymbolKey.
+        // See LiveViewRuntimeRestoreTest.testAReaderPinnedOnALeadTheRetryHasNotCommittedSendsDrainsToDiskBackToBackWhileTheyConverge.
         final long lvSeqTxn;
         final IntList horizonCaps = restagedSymbolCounts;
         horizonCaps.clear();
@@ -18450,10 +18451,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
          * the tie rows, with a position that counts them, and the guard a later resume
          * applies can no longer see the gap.
          * <p>
-         * The walk stops at the first boundary that fails, and after
-         * {@code maxBoundaries}: a repair crossing more boundaries than that declines its
-         * splice and re-versions none of them, which leaves nothing for the check to
-         * protect.
+         * A repair crossing more than {@code maxBoundaries} boundaries declines its splice
+         * and re-versions none of them, which leaves nothing for the check to protect. So
+         * the walk counts the boundaries before it vets any, and when they number more
+         * than {@code maxBoundaries} it vets none of them at all: vetting can cost a
+         * reader open per root, and a root that fails would turn the keyed route off for
+         * a truncate that drops the root anyway. At or below the bound it vets every
+         * boundary, from the highest down, and stops at the first that fails.
          *
          * @param maxBoundaries the most boundaries the repair's splice re-versions
          * @return false when a boundary no longer covers its group, or when the timeline
@@ -18464,8 +18468,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (maxBoundaries <= 0) {
                 return true;
             }
-            long ceiling = highTsExclusive;
-            int boundaries = 0;
             try (Path checkpointsDir = new Path()) {
                 checkpointsDir.of(engine.getConfiguration().getDbRoot())
                         .concat(instance.getLiveViewToken())
@@ -18473,12 +18475,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final LiveViewCheckpointTimelineStoreReader reader =
                         borrowCheckpointTimelineStoreReader(checkpointsDir);
                 try {
+                    long ceiling = highTsExclusive;
+                    int boundaries = 0;
                     while (true) {
                         final long lvRowPosition = reader.predecessorLvRowPosition(ceiling, coverageProbe);
                         if (lvRowPosition == Numbers.LONG_NULL || coverageProbe.maxTimestamp < lowTsInclusive) {
-                            return true;
+                            break;
                         }
                         if (++boundaries > maxBoundaries) {
+                            return true;
+                        }
+                        ceiling = coverageProbe.maxTimestamp;
+                    }
+                    // Both passes run under one bind of the reader, whose meta store fixes the
+                    // generation when it binds, and only a refresh worker holding the view's
+                    // refresh latch, as this one does, publishes a generation. So this pass
+                    // meets the boundaries the one above counted.
+                    ceiling = highTsExclusive;
+                    while (true) {
+                        final long lvRowPosition = reader.predecessorLvRowPosition(ceiling, coverageProbe);
+                        if (lvRowPosition == Numbers.LONG_NULL || coverageProbe.maxTimestamp < lowTsInclusive) {
                             return true;
                         }
                         if (!coversOwnTimestampGroup(coverageProbe, lvRowPosition)) {
@@ -18517,15 +18533,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
          * neither the missing rows nor their contribution - every value it computes
          * from then on is short by them, durably.
          * <p>
-         * Two checks, because the evidence differs either side of a head transition:
+         * Three checks, because the evidence differs either side of a head transition:
          * <ul>
-         *     <li><b>The head's own root</b> answers from the runtime.
+         *     <li><b>Every root</b> first answers from the runtime.
          *     {@code minSeenTsSinceCheckpoint} is reset by the seal and lowered by
          *     every row the runtime consumes since, and immediately after a seal the
          *     frontier sits at the boundary - so a row at or below it is exactly the
-         *     tie growing. This costs nothing and covers the common resume, whose
-         *     anchor is the head.</li>
-         *     <li><b>Every older root</b> answers from the durable live-view table,
+         *     tie growing. The rows behind that minimum may be durable nowhere: an
+         *     un-flushed lead the out-of-order hand-off discarded held them, and only a
+         *     replay that starts below them re-emits them. So the check holds whatever
+         *     identity the head carries. A seal that appends no root - the one closing
+         *     a repair whose splice kept or re-versioned the root at the frontier -
+         *     leaves the head on that root without naming it, and the durable count
+         *     below cannot see a tie that only the lead ever held. An in-order row
+         *     never sits below the newest seal's boundary, so for an older root this
+         *     check stays silent unless a replay whose seal did not land left the
+         *     minimum lower. A rejection costs work, never correctness. The repair
+         *     plan takes a deeper anchor, whose resume reads more of the base and may
+         *     lose on price to the localized rebuild, or, with no covering root left,
+         *     the boundary rebuild over [L, H) or from the view's boundary. Neither
+         *     arms the restatement guard, which only a whole-view rebuild arms, and
+         *     no whole-view rebuild runs this check. A closed segment's keyed
+         *     repair reads the segment whole. The segment loop, whose check vets the
+         *     newest root, the one at the frontier, gives way to the union range.</li>
+         *     <li><b>The head's own root</b>, named by the seal that wrote or
+         *     restored it, covers its group once the runtime check passes. This
+         *     costs nothing and covers the common resume, whose anchor is the
+         *     head.</li>
+         *     <li><b>Every other root</b> answers from the durable live-view table,
          *     which is authoritative for a root's position (the corrupt-root heal
          *     positions its repaired roots the same way). The table can lag a root -
          *     a live-view block committed but not yet applied - and never leads it,
@@ -18539,9 +18574,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
          * stands.
          */
         private boolean coversOwnTimestampGroup(LiveViewCheckpointTimelineEntry entry, long lvRowPosition) {
+            if (instance.getMinSeenTsSinceCheckpoint() <= entry.maxTimestamp) {
+                return false;
+            }
             if (entry.maxTimestamp == instance.getHeadCheckpointMaxTs()
                     && entry.checkpointId == instance.getHeadCheckpointRootId()) {
-                return instance.getMinSeenTsSinceCheckpoint() > entry.maxTimestamp;
+                return true;
             }
             try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
                 final long durableRowsBelow = countDurableRowsBelow(

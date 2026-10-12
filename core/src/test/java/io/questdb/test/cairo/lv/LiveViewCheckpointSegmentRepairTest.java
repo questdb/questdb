@@ -31,6 +31,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
+import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -74,6 +75,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
 
+    private static final String ANCHORED_FRAME = "ANCHOR DAILY '00:00'";
     // The default cairo.live.view.checkpoint.max.duration.micros: a flush that waits this long
     // seals a root.
     private static final long DEFAULT_CHECKPOINT_CADENCE_MICROS = 5 * 60_000_000L;
@@ -1311,6 +1313,258 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testATiedLeadRowSurvivesALateCommitOverAReversionedRootInARangeFramedView() throws Exception {
+        assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+                RANGE_FRAME,
+                false,
+                true,
+                false,
+                false,
+                "('2026-01-05T17:07:00.000000Z', 'acct-37', 303.0)",
+                "('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)",
+                "('2026-01-06T03:36:00.000000Z', 'acct-39', 602.0)",
+                """
+                        2026-01-05T17:07:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-06T03:36:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitOverARootARowsRepairSealed() throws Exception {
+        // A ROWS repair reaching the end of the table splices nothing. It seals a fresh root at
+        // the frontier and names it, so the runtime's own evidence vets that root.
+        assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+                ROWS_FRAME,
+                false,
+                false,
+                false,
+                false,
+                "('2026-01-05T17:07:00.000000Z', 'acct-37', 303.0)",
+                "('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)",
+                "('2026-01-06T03:36:00.000000Z', 'acct-39', 602.0)",
+                """
+                        2026-01-05T17:07:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-06T03:36:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitOverAReversionedRootInAnAnchoredView() throws Exception {
+        assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+                ANCHORED_FRAME,
+                false,
+                true,
+                false,
+                false,
+                "('2026-01-05T17:07:00.000000Z', 'acct-37', 303.0)",
+                "('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)",
+                "('2026-01-06T03:36:00.000000Z', 'acct-39', 602.0)",
+                """
+                        2026-01-05T17:07:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-06T03:36:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitOverAReversionedRootInAnAnchoredViewHeldInMemory() throws Exception {
+        assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+                ANCHORED_FRAME,
+                true,
+                true,
+                false,
+                false,
+                "('2026-01-05T17:07:00.000000Z', 'acct-37', 303.0)",
+                "('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)",
+                "('2026-01-06T03:36:00.000000Z', 'acct-39', 602.0)",
+                """
+                        2026-01-05T17:07:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-06T03:36:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitOverAReversionedRootThatAnotherLeadRowReadsBack() throws Exception {
+        // The tied row's contribution, not only the row: a resume that skipped it would answer
+        // 10.0 for acct-8 at 17:45, and 592.0 holds both of acct-8's rows.
+        assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+                ANCHORED_FRAME,
+                false,
+                true,
+                false,
+                false,
+                "('2026-01-05T17:07:00.000000Z', 'acct-37', 303.0)",
+                "('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-05T17:45:00.000000Z', 'acct-8', 10.0), "
+                        + "('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)",
+                "('2026-01-05T17:35:00.000000Z', 'acct-39', 602.0)",
+                """
+                        2026-01-05T17:07:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-05T17:35:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-05T17:45:00.000000Z\tacct-8\t10.0\t592.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitOverAReversionedRootThatAnotherLeadRowReadsBackInARangeFramedView() throws Exception {
+        assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+                RANGE_FRAME,
+                false,
+                true,
+                false,
+                false,
+                "('2026-01-05T17:07:00.000000Z', 'acct-37', 303.0)",
+                "('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-05T17:45:00.000000Z', 'acct-8', 10.0), "
+                        + "('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)",
+                "('2026-01-05T17:35:00.000000Z', 'acct-39', 602.0)",
+                """
+                        2026-01-05T17:07:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-05T17:35:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-05T17:45:00.000000Z\tacct-8\t10.0\t592.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitOverARootADeepRepairKeptInAnAnchoredView() throws Exception {
+        // The first late row lands a day below the root, so its repair converges in that day
+        // and keeps the root at the frontier rather than re-versioning it.
+        assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+                ANCHORED_FRAME,
+                false,
+                true,
+                true,
+                false,
+                "('2026-01-04T17:07:00.000000Z', 'acct-37', 303.0)",
+                "('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)",
+                "('2026-01-06T03:36:00.000000Z', 'acct-39', 602.0)",
+                """
+                        2026-01-04T17:07:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-06T03:36:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitOverARootADeepRepairKeptInARangeFramedView() throws Exception {
+        // The first late row lands more than the frame's width below the root, so its repair
+        // converges below the root and keeps it rather than re-versioning it.
+        assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+                RANGE_FRAME,
+                false,
+                true,
+                true,
+                false,
+                "('2026-01-05T16:00:00.000000Z', 'acct-37', 303.0)",
+                "('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)",
+                "('2026-01-06T03:36:00.000000Z', 'acct-39', 602.0)",
+                """
+                        2026-01-05T16:00:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-06T03:36:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesALateCommitOverAReversionedRootWithAnOlderRootBelowIt() throws Exception {
+        // The rejected root is not the last one: the repair re-anchors on the root at 10:00
+        // and resumes from there, which reads the tied row back from the base.
+        assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+                ANCHORED_FRAME,
+                false,
+                true,
+                false,
+                true,
+                "('2026-01-05T17:07:00.000000Z', 'acct-37', 303.0)",
+                "('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)",
+                "('2026-01-06T03:36:00.000000Z', 'acct-39', 602.0)",
+                """
+                        2026-01-05T10:00:00.000000Z\tacct-1\t1.0\t1.0
+                        2026-01-05T17:07:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-06T03:36:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """
+        );
+    }
+
+    @Test
+    public void testATiedLeadRowSurvivesARestartAheadOfALateCommitOverAReversionedRoot() throws Exception {
+        // The restart drops the lead and the runtime's batch minimum with it. The restore stands
+        // on a timeline root, and the drain after it reads the tied commit back from the base and
+        // flushes it, so the late commit that follows finds the tie in the view's table.
+        assertMemoryLeak(() -> {
+            createTiedRowView(ANCHORED_FRAME, false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                execute("INSERT INTO tx VALUES ('2026-01-05T17:29:00.000000Z', 'acct-14', 614.0)");
+                flushNext(job);
+                commit("('2026-01-05T17:07:00.000000Z', 'acct-37', 303.0)", job);
+                Assert.assertEquals(
+                        "the repair's splice must leave the head without a root identity",
+                        Numbers.LONG_NULL,
+                        viewInstance().getHeadCheckpointRootId()
+                );
+                commit("('2026-01-05T17:29:00.000000Z', 'acct-8', 582.0), ('2026-01-06T16:29:00.000000Z', 'acct-38', 494.0)", job);
+                Assert.assertTrue("the tied row must sit in the un-flushed lead", viewInstance().getLeadRowCount() > 0);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertEquals(
+                        "the restart must restore the runtime from a timeline root",
+                        LiveViewCheckpointRestoreRoute.name(LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE),
+                        LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
+                );
+                Assert.assertEquals("the drain must flush the tied commit", 0, instance.getLeadRowCount());
+                commit("('2026-01-06T03:36:00.000000Z', 'acct-39', 602.0)", job);
+                final String expected = """
+                        created_at\taccount_id\tamount\ts
+                        2026-01-05T17:07:00.000000Z\tacct-37\t303.0\t303.0
+                        2026-01-05T17:29:00.000000Z\tacct-14\t614.0\t614.0
+                        2026-01-05T17:29:00.000000Z\tacct-8\t582.0\t582.0
+                        2026-01-06T03:36:00.000000Z\tacct-39\t602.0\t602.0
+                        2026-01-06T16:29:00.000000Z\tacct-38\t494.0\t494.0
+                        """;
+                assertTiedViewReturns(expected, recomputeOverFrame(ANCHORED_FRAME));
+                flushNext(job);
+                assertTiedViewReturns(expected, recomputeOverFrame(ANCHORED_FRAME));
+            }
+        });
+    }
+
+    @Test
     public void testAViewWithoutCheckpointStateReportsNoRepairDenial() throws Exception {
         // CREATE rejects a window shape without checkpoint-state support, so only a view that
         // loses it at runtime lacks it, and the refresh job skips such a view's repair before it
@@ -1520,6 +1774,30 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                     after.getQuick(base + field)
             );
         }
+    }
+
+    /**
+     * The from-base oracle for {@link #createTiedRowView}. ANCHOR is a live-view clause, so the
+     * anchored oracle partitions by the anchor day instead.
+     */
+    private static String recomputeOverFrame(String frame) {
+        if (ANCHORED_FRAME.equals(frame)) {
+            return """
+                    SELECT created_at, account_id, amount,
+                    sum(amount) OVER (PARTITION BY account_id, bucket ORDER BY created_at
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s
+                    FROM (
+                        SELECT created_at, account_id, amount,
+                        timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp) AS bucket
+                        FROM tx
+                    )
+                    """;
+        }
+        return """
+                SELECT created_at, account_id, amount,
+                sum(amount) OVER (PARTITION BY account_id ORDER BY created_at %s) AS s
+                FROM tx
+                """.formatted(frame);
     }
 
     private LiveViewWindow anchorWindow() {
@@ -1823,6 +2101,109 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Flushes one row at 2026-01-05T17:29, which seals the view's newest root there, and then,
+     * each commit drained on a pass of its own within one {@code FLUSH EVERY} interval:
+     * <ol>
+     *     <li>{@code firstLateRow}, whose repair leaves the head on a root at 17:29. A repair
+     *     that publishes a timeline splice keeps or re-versions the root there and seals none of
+     *     its own, so the head stands on that root without naming it. A ROWS repair reaching the
+     *     end of the table splices nothing: it seals a fresh root there and names it;</li>
+     *     <li>{@code tieCommit}, which ties the root's timestamp and runs above it, and stays in
+     *     the un-flushed lead;</li>
+     *     <li>{@code secondLateRow}, whose hand-off discards that lead. Its repair must not
+     *     resume from the root at 17:29: the root never held the tied row, and the lead was the
+     *     only place it was ever materialised.</li>
+     * </ol>
+     * The view must return {@code expectedRows}, and match the from-base recompute, after the
+     * second repair; again after the next flush; again after a restart; and once more after a
+     * head row reads the accumulators back.
+     *
+     * @param frame             the window's ORDER BY tail: {@link #ANCHORED_FRAME},
+     *                          {@link #RANGE_FRAME} or {@link #ROWS_FRAME}
+     * @param isInMemory        whether the view keeps an {@code IN MEMORY 1h} tier
+     * @param isHeadRootUnnamed whether the first repair leaves the head without a root
+     *                          identity, as a splice does. A ROWS repair reaching the end of
+     *                          the table splices nothing: it seals a fresh root and names it
+     * @param isRootKept        whether the first repair's splice keeps the root at 17:29 as it
+     *                          was, rather than writing a new version of it. Checked only when
+     *                          {@code isHeadRootUnnamed}, as only a splice leaves the head so
+     * @param hasOlderRoot      whether a flush seals a root at 2026-01-05T10:00 (acct-1) first,
+     *                          which leaves the second repair an older root to re-anchor on
+     */
+    private void assertTiedLeadRowSurvivesALateCommitOverTheRootAtTheFrontier(
+            String frame,
+            boolean isInMemory,
+            boolean isHeadRootUnnamed,
+            boolean isRootKept,
+            boolean hasOlderRoot,
+            String firstLateRow,
+            String tieCommit,
+            String secondLateRow,
+            String expectedRows
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            createTiedRowView(frame, isInMemory);
+            final String recompute = recomputeOverFrame(frame);
+            final String expected = "created_at\taccount_id\tamount\ts\n" + expectedRows;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                if (hasOlderRoot) {
+                    execute("INSERT INTO tx VALUES ('2026-01-05T10:00:00.000000Z', 'acct-1', 1.0)");
+                    flushNext(job);
+                }
+                execute("INSERT INTO tx VALUES ('2026-01-05T17:29:00.000000Z', 'acct-14', 614.0)");
+                flushNext(job);
+                final long rootMaxTs = ts("2026-01-05T17:29:00.000000Z");
+                Assert.assertEquals("the flush must seal a root at 17:29", rootMaxTs, viewInstance().getHeadCheckpointMaxTs());
+                final LongList timelineBefore = snapshotTimeline();
+
+                commit(firstLateRow, job);
+                final LiveViewInstance instance = viewInstance();
+                Assert.assertEquals("the repair must leave the head on the root", rootMaxTs, instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(
+                        "whether the repair left the head without a root identity",
+                        isHeadRootUnnamed,
+                        instance.getHeadCheckpointRootId() == Numbers.LONG_NULL
+                );
+                if (isHeadRootUnnamed) {
+                    final LongList timelineAfter = snapshotTimeline();
+                    Assert.assertEquals(
+                            "the splice must neither drop a root nor add one",
+                            timelineBefore.size(),
+                            timelineAfter.size()
+                    );
+                    // The root at 17:29 is the newest one.
+                    final int rootIndex = timelineBefore.size() / ENTRY_SIZE - 1;
+                    if (isRootKept) {
+                        assertSameRoot(timelineBefore, timelineAfter, rootIndex);
+                    } else {
+                        assertNewRoot(timelineBefore, timelineAfter, rootIndex);
+                    }
+                }
+
+                commit(tieCommit, job);
+                Assert.assertTrue("the tied row must sit in the un-flushed lead", instance.getLeadRowCount() > 0);
+                Assert.assertEquals("the batch minimum must sit on the tie", rootMaxTs, instance.getMinSeenTsSinceCheckpoint());
+
+                commit(secondLateRow, job);
+                assertTiedViewReturns(expected, recompute);
+                flushNext(job);
+                assertTiedViewReturns(expected, recompute);
+            }
+
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                driveRefreshToQuiescence(job);
+                assertTiedViewReturns(expected, recompute);
+                execute("INSERT INTO tx VALUES ('2026-01-06T16:40:00.000000Z', 'acct-38', 1.0)");
+                flushNext(job);
+                assertTiedViewReturns(expected + "2026-01-06T16:40:00.000000Z\tacct-38\t1.0\t495.0\n", recompute);
+            }
+        });
+    }
+
+    /**
      * Leaves a row tied with the durable maximum in the un-flushed lead, with the newest root
      * below the tie, lands a late row in a closed day under a one-commit turn budget, and arms a
      * fault ahead of the first resume replay the refresh runs. The view must then return the
@@ -1895,6 +2276,23 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                     hasResumeReplayStarted.get()
             );
         });
+    }
+
+    private void assertTiedViewReturns(String expected, String recompute) throws Exception {
+        assertQuery("SELECT * FROM lv ORDER BY created_at, account_id")
+                .noLeakCheck()
+                .timestamp("created_at")
+                .expectSize()
+                .returns(expected);
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + recompute + ") ORDER BY created_at, account_id",
+                "(lv) ORDER BY created_at, account_id",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
     }
 
     /**
@@ -2151,6 +2549,19 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 + "count(account_id) OVER w AS cumulative_count "
                 + "FROM tx" + filter + " "
                 + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+    }
+
+    /**
+     * The view the tied-lead-row cases repair: a running sum per account over
+     * {@code frame}, waiting an hour between flushes, over an empty base partitioned by day.
+     */
+    private void createTiedRowView(String frame, boolean isInMemory) throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
+                + "TIMESTAMP(created_at) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1h" + (isInMemory ? " IN MEMORY 1h" : "")
+                + " START FROM BEGINNING AS "
+                + "SELECT created_at, account_id, amount, sum(amount) OVER w AS s FROM tx "
+                + "WINDOW w AS (PARTITION BY account_id ORDER BY created_at " + frame + ")");
     }
 
     private void createView(String seedRows) throws Exception {
