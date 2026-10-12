@@ -419,6 +419,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 } else if (dispatch(dispatchLimit, countOnly)) {
                     // We have dispatched something, so let's try to collect it.
                     continue;
+                } else if (dispatcher != null && !isActive()) {
+                    continue;
                 }
                 if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                     reduceLocally(countOnly);

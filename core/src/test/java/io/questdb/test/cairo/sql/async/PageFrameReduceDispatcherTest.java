@@ -3166,6 +3166,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
                 runtime.beginQuiesce();
                 assertQueryCancelledByQuiesce("SELECT * FROM tab WHERE x > 0");
+                assertQueryCancelledByQuiesce("SELECT count() FROM tab WHERE x > 0");
                 assertQueryCancelledByQuiesce("SELECT k, count() FROM tab GROUP BY k");
             } finally {
                 close(runtime);
