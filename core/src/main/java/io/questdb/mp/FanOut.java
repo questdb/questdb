@@ -159,7 +159,6 @@ public class FanOut implements Barrier {
     }
 
     public void resume(SCSequence subscriber) {
-        assert holder.barriers.indexOf(subscriber) > -1;
         // gate the publisher before catching up, so the publisher cannot lap the catch-up position
         subscriber.setCurrent(barrier.current());
         subscriber.setCurrent(barrier.current());
@@ -187,7 +186,6 @@ public class FanOut implements Barrier {
     }
 
     public void suspend(SCSequence subscriber) {
-        assert holder.barriers.indexOf(subscriber) > -1;
         subscriber.setCurrent(Long.MAX_VALUE);
     }
 

@@ -86,60 +86,62 @@ public class ServerMainWorkStealingTest extends AbstractBootstrapTest {
     public void testTwoFilteredScansOverHttp() throws Exception {
         final String joinQuery = "SELECT t.k FROM t JOIN s ON s.k = t.k WHERE t.vt IS NULL AND s.ct = 'u'";
         final String unionAllQuery = "SELECT sum(k) FROM (SELECT k FROM s WHERE ct = 'u' UNION ALL SELECT k FROM t WHERE vt IS NULL)";
-        try (ServerMain serverMain = new ServerMain(getServerMainArgs())) {
-            serverMain.start();
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
 
-            try (
-                    Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
-                    Statement statement = conn.createStatement()
-            ) {
-                statement.execute("""
-                        CREATE TABLE t AS (
-                            SELECT x AS k, NULL::TIMESTAMP AS vt, timestamp_sequence(0, 86_400_000_000) AS ts
-                            FROM long_sequence(40)
-                        ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                        """);
-                statement.execute("CREATE TABLE s AS (SELECT k, 'u' AS ct FROM t WHERE k % 10 = 7)");
-                assertPlan(statement, joinQuery, """
-                        QUERY PLAN[VARCHAR]
-                        SelectedRecord
-                            Hash Join Light
-                              condition: s.k=t.k
-                                Async JIT Filter workers: 1
-                                  filter: null=vt
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                                Hash
-                                    Async JIT Filter workers: 1
-                                      filter: ct=u
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: s
-                        """);
-                assertPlan(statement, unionAllQuery, """
-                        QUERY PLAN[VARCHAR]
-                        GroupBy vectorized: false
-                          values: [sum(k)]
-                            Union All
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: ct=u
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: s
-                                SelectedRecord
+                try (
+                        Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement statement = conn.createStatement()
+                ) {
+                    statement.execute("""
+                            CREATE TABLE t AS (
+                                SELECT x AS k, NULL::TIMESTAMP AS vt, timestamp_sequence(0, 86_400_000_000) AS ts
+                                FROM long_sequence(40)
+                            ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                            """);
+                    statement.execute("CREATE TABLE s AS (SELECT k, 'u' AS ct FROM t WHERE k % 10 = 7)");
+                    assertPlan(statement, joinQuery, """
+                            QUERY PLAN[VARCHAR]
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: s.k=t.k
                                     Async JIT Filter workers: 1
                                       filter: null=vt
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
-                        """);
-            }
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: ct=u
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: s
+                            """);
+                    assertPlan(statement, unionAllQuery, """
+                            QUERY PLAN[VARCHAR]
+                            GroupBy vectorized: false
+                              values: [sum(k)]
+                                Union All
+                                    SelectedRecord
+                                        Async JIT Filter workers: 1
+                                          filter: ct=u
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: s
+                                    SelectedRecord
+                                        Async JIT Filter workers: 1
+                                          filter: null=vt
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """);
+                }
 
-            assertExecReturns(joinQuery, "\"dataset\":[[7],[17],[27],[37]],\"count\":4");
-            assertExecReturns(unionAllQuery, "\"dataset\":[[908]],\"count\":1");
-        }
+                assertExecReturns(joinQuery, "\"dataset\":[[7],[17],[27],[37]],\"count\":4");
+                assertExecReturns(unionAllQuery, "\"dataset\":[[908]],\"count\":1");
+            }
+        });
     }
 
     @Test
