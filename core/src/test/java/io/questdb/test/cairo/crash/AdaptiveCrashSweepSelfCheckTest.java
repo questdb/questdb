@@ -121,6 +121,22 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
         }));
     }
 
+    @Test
+    public void testNeuteredSweepRejectsMissingFlushClass() throws Exception {
+        withAdaptiveW0(() -> runWithCrashFacade(() -> {
+            for (int commits : new int[]{0, ROWS}) {
+                final AssertionError error = Assert.assertThrows(AssertionError.class, () ->
+                        assertSweepGoesRedWithNeuteredFlushes(
+                                new IdentityWorkload(commits, 1, false),
+                                "a class that performs no flush",
+                                frame -> false
+                        )
+                );
+                Assert.assertTrue(error.getMessage(), error.getMessage().contains("nothing to control"));
+            }
+        }));
+    }
+
     /**
      * The negative control of the control: with the WAL writer's own flushes removed, the W0 sweep must go red.
      * The sweeps crash at every durability op, so a removed flush shrinks N instead of failing anything;

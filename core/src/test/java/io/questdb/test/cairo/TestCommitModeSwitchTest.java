@@ -74,8 +74,9 @@ public class TestCommitModeSwitchTest extends AbstractCairoTest {
      */
     @Test
     public void testEveryConfigurationPathAgreesOnTheAdaptiveSettings() {
-        // Any override puts this test on the properties path; the value is the suite default, so nothing else moves.
-        node1.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 16);
+        // Any override that differs from its default puts this test on the properties path (an override equal to
+        // the default is dropped); a pool capacity moves nothing the assertions read.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 17);
         final CairoConfiguration viaProperties = engine.getConfiguration();
         final CairoConfiguration viaDefaults = new DefaultTestCairoConfiguration(root);
         Assert.assertTrue(

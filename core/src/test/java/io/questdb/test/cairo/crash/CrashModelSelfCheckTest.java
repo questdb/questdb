@@ -774,13 +774,22 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             expectRefused(failures, "syncFileRange", () -> ff.syncFileRange(ma.fd, 0, SIZE, Files.SYNC_FILE_RANGE_WRITE));
             expectRefused(failures, "fdatasync", () -> ff.fdatasync(ma.fd));
             expectRefused(failures, "fsync", () -> ff.fsync(ma.fd));
-            expectRefused(failures, "fsyncAndClose", () -> ff.fsyncAndClose(ma.fd));
+            expectRefused(failures, "syncfs", () -> ff.syncfs(ma.fd));
+            final boolean[] isClosed = {false};
+            expectRefused(failures, "fsyncAndClose", () -> {
+                ff.fsyncAndClose(ma.fd);
+                isClosed[0] = true;
+            });
             // an engine-root file's handle outlives the simulated restart
             ff.msync(mb.addr, SIZE, false);
             ff.fsync(mb.fd);
             unmapAndClose(ff, mb);
-            // releasing a stale handle is allowed
-            unmapAndClose(ff, ma);
+            // Releasing a stale handle is allowed. Keep the negative control's missing-fence assertion visible
+            // even if fsyncAndClose above wrongly succeeded and already closed it.
+            ff.munmap(ma.addr, SIZE, MemoryTag.MMAP_DEFAULT);
+            if (!isClosed[0]) {
+                ff.close(ma.fd);
+            }
             Assert.assertEquals("", failures.toString());
             assertAllBytes("test23: a mutation through a pre-crash handle changed the rolled-back file", ff, a, PRIOR);
 

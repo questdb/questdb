@@ -83,6 +83,10 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
         crashFf.powerLoss();
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+        // A freshly booted engine's WAL-writer pool is empty: a pooled WAL writer released after the rollback would
+        // truncate its segment files against the rolled-back state.
+        engine.releaseCrashOrphanedWalWriters();
+        engine.releaseAllWalWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
     }
 

@@ -213,16 +213,18 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         try {
             forEachAdaptiveCrashPoint(workload);
         } catch (AssertionError | CairoException | CairoError red) {
-            if (red instanceof AssertionError && red.getMessage() != null && red.getMessage().contains("nothing to control")) {
+            if (crashFf.neuteredOpCount() == 0
+                    || red instanceof AssertionError && red.getMessage() != null && red.getMessage().contains("nothing to control")) {
                 throw red;
             }
             // The sweep stops at the red point without its own cleanup; release what it left checked out.
             workload.teardown();
             releaseEngineHandles();
             reclaimLingeringNonCacheFds(nonCacheFdBaseline);
+            final String redMessage = red.getMessage();
             LOG.info().$("[neutered sweep] ").$(flushClassDescription).$(" neutered, ")
                     .$(crashFf.neuteredOpCount()).$(" op(s) removed, the sweep went red as it must: ")
-                    .$safe(red.getMessage()).$();
+                    .$safe(redMessage).$();
             return red;
         } finally {
             crashFf.neuterFlushesAt(null);
@@ -435,7 +437,6 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         if (uncrashedSuspend != null) {
             throw new WorkloadNotCrashTestableException(uncrashedSuspend);
         }
-        Assert.assertTrue("workload commit phase must perform >= 1 durability op (N=" + n + ")", n > 0);
         if (crashFf.isNeutering()) {
             // The negative control is only a control where the class takes a flush: a green sweep with nothing
             // neutered would say nothing about the class.
@@ -445,6 +446,7 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
                     neutered > 0
             );
         }
+        Assert.assertTrue("workload commit phase must perform >= 1 durability op (N=" + n + ")", n > 0);
 
         final int atomicCommitOps = workload.atomicCommitDurabilityOpCount(n);
         Assert.assertTrue(

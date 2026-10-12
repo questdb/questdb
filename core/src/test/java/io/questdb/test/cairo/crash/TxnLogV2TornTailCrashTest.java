@@ -25,21 +25,31 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.Collection;
+
+import static io.questdb.cairo.wal.seq.TableTransactionLogFile.MAX_TXN_OFFSET_64;
+import static io.questdb.cairo.wal.seq.TableTransactionLogV2.UNSYNCED_FROM_TXN_OFFSET_64;
 
 /**
  * A power loss can put the header of a V2 sequencer log on the disk ahead of the part page that holds the records
@@ -85,6 +95,20 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
                 {"the last record without its first sector", 8, 1, 9, 0, sectorSplit},
                 {"the last record half-stored", 5, 1, 6, 12, RECORD_SIZE - 12},
                 {"the first record of a new part", PART_TXN_COUNT, 1, PART_TXN_COUNT + 1, 0, RECORD_SIZE}
+        });
+    }
+
+    @Test
+    public void testAppendCrashAtEveryDurabilityOp() throws Exception {
+        assumeCrashHarnessSupported();
+        assertMemoryLeak(() -> {
+            for (long window : new long[]{0, 10_000_000}) {
+                final int count = appendAtCrashPoint(window, 0);
+                Assert.assertTrue("an ADAPTIVE append must flush", count > 0);
+                for (int k = 1; k <= count; k++) {
+                    appendAtCrashPoint(window, k);
+                }
+            }
         });
     }
 
@@ -154,6 +178,81 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
             assertQuery("SELECT v, c, d FROM t ORDER BY v").expectSize().returns(expected.toString());
             releaseEngineHandles();
         });
+    }
+
+    private int appendAtCrashPoint(long window, int k) throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        ff.modelSharedJournal = false;
+        final String dir = temp.newFolder().getAbsolutePath();
+        final CairoConfiguration config = new CairoConfigurationWrapper(configuration) {
+            @Override
+            public long getAdaptiveCommitGroupWindowUs() {
+                return window;
+            }
+
+            @Override
+            public int getCommitMode() {
+                return CommitMode.ADAPTIVE;
+            }
+
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+        final String headerPath = dir + "/" + WalUtils.TXNLOG_FILE_NAME;
+        final String partPath = dir + "/" + WalUtils.TXNLOG_PARTS_DIR + "/0";
+        final int count;
+        final byte[] expectedPart;
+        try (Path path = new Path().of(dir)) {
+            final TableTransactionLogV2 log = new TableTransactionLogV2(config, PART_TXN_COUNT, DefaultWalDirectoryPolicy.INSTANCE);
+            try {
+                log.create(path, 0);
+                log.open(path);
+                // A pre-existing part makes the count pass and all armed passes identical.
+                log.addEntry(0, 1, 0, 0, 1001, 1000, 2000, 1);
+                log.fdatasyncTxnLog();
+                ff.markDurableBaseline(dir);
+                final int before = ff.durabilityOpCount();
+                if (k > 0) {
+                    ff.armCrashAt(before + k);
+                }
+                try {
+                    log.addEntry(0, 1, 0, 1, 1002, 1000, 2000, 1);
+                    if (window > 0) {
+                        log.fdatasyncTxnLog();
+                    }
+                    Assert.assertEquals("armed crash must fire", 0, k);
+                } catch (CrashSimulationError expected) {
+                    Assert.assertTrue(k > 0);
+                    Assert.assertFalse(ff.isCrashArmed());
+                }
+                count = ff.durabilityOpCount() - before;
+                expectedPart = java.nio.file.Files.readAllBytes(java.nio.file.Path.of(partPath));
+                ff.powerLoss();
+            } finally {
+                log.close();
+            }
+            // Inspect the frozen durable image, before crash() installs a new baseline or open repairs a tail.
+            final byte[] header = ff.durableContentOf(headerPath);
+            final byte[] part = ff.durableContentOf(partPath);
+            final ByteBuffer h = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN);
+            final long maxTxn = h.getLong((int) MAX_TXN_OFFSET_64);
+            final long field = h.getLong((int) UNSYNCED_FROM_TXN_OFFSET_64);
+            final String what = "window=" + window + ", k=" + k;
+            Assert.assertTrue(what + ": field ahead of durable header", field <= maxTxn + 1);
+            for (int txn = 1; txn <= maxTxn; txn++) {
+                Assert.assertArrayEquals(what + ": header counts a non-durable part record at txn " + txn,
+                        Arrays.copyOfRange(expectedPart, (txn - 1) * RECORD_SIZE, txn * RECORD_SIZE),
+                        Arrays.copyOfRange(part, (txn - 1) * RECORD_SIZE, txn * RECORD_SIZE));
+            }
+            ff.crash(dir);
+            try (TableTransactionLogV2 reopened = new TableTransactionLogV2(config, PART_TXN_COUNT, DefaultWalDirectoryPolicy.INSTANCE)) {
+                reopened.open(path);
+                Assert.assertEquals(what + ": every header-trusted record survives open", maxTxn, reopened.lastTxn());
+            }
+        }
+        return count;
     }
 
     private String sequencerSchema(TableToken token) {

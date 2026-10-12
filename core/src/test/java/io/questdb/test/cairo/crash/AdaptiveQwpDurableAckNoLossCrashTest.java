@@ -237,21 +237,20 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
                             ackedSeqTxn < seqA);
 
                     // (2) Power loss right after the ack: drop both writers' pending without a device flush (A's row
-                    // and the unacked tail are page-cache only, so lost), roll files back.
-                    crashFf.powerLoss();
-                    a.simulatePowerLossDropPending();
-                    b.simulatePowerLossDropPending();
-                    crashFf.crash(engine.getConfiguration().getDbRoot());
+                    // and the unacked tail are page-cache only, so lost).
+                    powerLossDroppingPending(a, b);
                 } finally {
                     a.close();
                     b.close();
                 }
 
-                // (3) Recover as a fresh boot would: drop live handles and the stale in-memory sequencer, then
-                // RecoveryCoordinator, republish, and drain the durable WAL.
+                // (3) Recover as a fresh boot would: release every handle from before the power loss and the stale
+                // in-memory sequencer, roll the files back, then RecoveryCoordinator, republish, and drain the
+                // durable WAL.
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseInactiveTableSequencers();
+                crashFf.crash(engine.getConfiguration().getDbRoot());
                 new RecoveryCoordinator(engine).recover();
                 engine.notifyWalTxnRepublisher(tt);
                 drainWalQueue();
@@ -390,10 +389,7 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
                     registry.getLocalDurableSeqTxn(dirName), ackedSeqTxn);
 
             // Power loss right after the ack.
-            crashFf.powerLoss();
-            for (WalWriter writer : w) {
-                writer.simulatePowerLossDropPending();
-            }
+            powerLossDroppingPending(w);
         } finally {
             for (WalWriter writer : w) {
                 if (writer != null) {
@@ -402,15 +398,16 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
             }
         }
 
-        // Recover as a fresh boot would, as in the multi-writer fuzz.
+        // Recover as a fresh boot would, as in the multi-writer fuzz: every handle from before the power loss is
+        // released before the rollback.
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
         if (engine.getTableSequencerAPI().isSuspended(tt)) {
             engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
         }
         engine.getTxnScoreboardPool().remove(tt);
         engine.getTableSequencerAPI().resetForReboot(tt);
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
         new RecoveryCoordinator(engine).recover();
         engine.notifyWalTxnRepublisher(tt);
         drainWalQueue();
@@ -537,26 +534,27 @@ public class AdaptiveQwpDurableAckNoLossCrashTest extends AbstractCrashConsisten
                     Assert.assertEquals("the dropped table's pending commit must be acked as covered",
                             committedSeqTxn, collectDurableAck("gone", dirName, committedSeqTxn, registry));
 
-                    // Power loss right after the ack, then boot a fresh engine on what survived.
-                    crashFf.powerLoss();
-                    w.simulatePowerLossDropPending();
-                    crashFf.crash(engine.getConfiguration().getDbRoot());
-                    try (CairoEngine rebooted = new CairoEngine(configuration)) {
-                        Assert.assertNotNull("the table that was not dropped must come back",
-                                rebooted.getTableTokenIfExists("kept"));
-                        isBack[0] = rebooted.getTableTokenIfExists("gone") != null;
-                        if (!isBack[0]) {
-                            Assert.assertNull(rebooted.getTableTokenByDirName(dirName));
-                            Assert.assertEquals(DurableAckRegistry.TABLE_GONE,
-                                    LocalDurableAckRegistry.resolveLocalDurableSeqTxn(rebooted, dirName));
-                        }
-                    }
+                    // Power loss right after the ack.
+                    powerLossDroppingPending(w);
                 } finally {
                     w.close();
                 }
+                // Release every handle from before the power loss, roll the files back, then boot a fresh engine on
+                // what survived.
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseInactiveTableSequencers();
+                crashFf.crash(engine.getConfiguration().getDbRoot());
+                try (CairoEngine rebooted = new CairoEngine(configuration)) {
+                    Assert.assertNotNull("the table that was not dropped must come back",
+                            rebooted.getTableTokenIfExists("kept"));
+                    isBack[0] = rebooted.getTableTokenIfExists("gone") != null;
+                    if (!isBack[0]) {
+                        Assert.assertNull(rebooted.getTableTokenByDirName(dirName));
+                        Assert.assertEquals(DurableAckRegistry.TABLE_GONE,
+                                LocalDurableAckRegistry.resolveLocalDurableSeqTxn(rebooted, dirName));
+                    }
+                }
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");

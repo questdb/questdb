@@ -274,6 +274,42 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNosyncAndAsyncOpenAndAppendTakeNoSynchronousFlush() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int mode : new int[]{CommitMode.NOSYNC, CommitMode.ASYNC}) {
+                final String dir = "noFlush" + mode;
+                writeLog(dir, PART - 1, CommitMode.ADAPTIVE, 0);
+                // Force both recoverTail and zeroPastTail to have work if their ADAPTIVE gates are removed.
+                patchLong(headerFile(dir), UNSYNCED_FROM_OFFSET, 1);
+                patch(partFile(dir, 0), (PART - 2L) * RS + 12, new byte[RS - 12]);
+                try (RandomAccessFile next = new RandomAccessFile(partFile(dir, 1), "rw")) {
+                    next.setLength((long) PART * RS);
+                }
+                patch(partFile(dir, 1), RS, read(partFile(dir, 0), 0, RS));
+                final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+                appendLog(dir, 2, withMode(ff, mode, 0));
+                for (String op : ff.durabilityOpLog()) {
+                    Assert.assertFalse("mode=" + mode + ": unexpected synchronous flush: " + op,
+                            op.contains(" fdatasync ") || op.contains(" msync "));
+                }
+                Assert.assertEquals("non-ADAPTIVE open must not scan/cut", PART + 1,
+                        readLong(headerFile(dir), MAX_TXN_OFFSET_64));
+            }
+        });
+    }
+
+    @Test
+    public void testSlotZeroWithFieldOneScansFromFirstRecord() throws Exception {
+        assertMemoryLeak(() -> {
+            final String dir = "slotZero";
+            writeLog(dir, 3, CommitMode.ADAPTIVE, 10_000_000);
+            patchLong(headerFile(dir), UNSYNCED_FROM_OFFSET, 1);
+            patch(partFile(dir, 0), 0, new byte[RS]);
+            Assert.assertEquals("a tear in slot zero must cut every record", 0, reopen(dir, adaptive(0))[0]);
+        });
+    }
+
+    @Test
     public void testOlderBinaryRecordsAreKeptAndTheScanResumes() throws Exception {
         // Downgrade, write, upgrade: an older binary appends records without a checksum and moves the max txn only,
         // leaving the field and the slot as this binary left them. The upgraded binary must keep every one of them,
