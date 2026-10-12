@@ -2413,6 +2413,16 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testO3InsertUpdatesInPlaceAfterStringVarcharRoundTripColumnsBeforeTimestamp() throws Exception {
+        assertO3InPlaceAfterStringVarcharRoundTrip("a VARCHAR, b VARCHAR, ts TIMESTAMP");
+    }
+
+    @Test
+    public void testO3InsertUpdatesInPlaceAfterStringVarcharRoundTripTimestampFirst() throws Exception {
+        assertO3InPlaceAfterStringVarcharRoundTrip("ts TIMESTAMP, a VARCHAR, b VARCHAR");
+    }
+
     /**
      * Verifies snapshot isolation across {@code ALTER TABLE ... ALTER COLUMN TYPE} on a
      * parquet-backed partition. A cursor opened against the pre-ALTER transaction must
@@ -4605,6 +4615,58 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             tryDrop("nt");
             tryDrop("pt");
         }
+    }
+
+    /**
+     * A VARCHAR -> STRING -> VARCHAR round trip leaves a parquet partition untouched
+     * (storage-compatible conversion), so its columns keep their original order while
+     * the table writer appends the converted column at the end. The file type matches
+     * the table type again, so an O3 merge updates the file in place and must match the
+     * merged columns to the file's columns by id, not by position.
+     */
+    private void assertO3InPlaceAfterStringVarcharRoundTrip(String columns) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"nt", "pt"}) {
+                execute("CREATE TABLE " + table + " (" + columns + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + table + " (a, b, ts) SELECT 'a' || x, 'b' || x, '2024-01-01'::timestamp + (x - 1) * 3_600_000_000L FROM long_sequence(12)");
+                execute("INSERT INTO " + table + " (a, b, ts) VALUES ('a99', 'b99', '2024-01-02T00:00:00.000000Z')");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            for (String table : new String[]{"nt", "pt"}) {
+                execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE STRING");
+                execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE VARCHAR");
+            }
+            drainWalQueue();
+
+            final long nameTxn = getPartitionNameTxn("pt");
+            for (String table : new String[]{"nt", "pt"}) {
+                execute("INSERT INTO " + table + " (a, b, ts) VALUES ('aX', 'bX', '2024-01-01T04:30:00.000000Z')");
+            }
+            drainWalQueue();
+            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+
+            for (String table : new String[]{"nt", "pt"}) {
+                execute("INSERT INTO " + table + " (a, b, ts) VALUES ('aY', 'bY', '2024-01-01T09:30:00.000000Z')");
+            }
+            drainWalQueue();
+            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+
+            assertSqlCursors("SELECT a, b, ts FROM nt", "SELECT a, b, ts FROM pt");
+            assertQuery("SELECT a, b, ts FROM pt WHERE ts BETWEEN '2024-01-01T04:00:00.000000Z' AND '2024-01-01T05:00:00.000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tb\tts
+                            a5\tb5\t2024-01-01T04:00:00.000000Z
+                            aX\tbX\t2024-01-01T04:30:00.000000Z
+                            a6\tb6\t2024-01-01T05:00:00.000000Z
+                            """);
+        });
     }
 
     private void assertParquetFloatOutOfRangeNull(String sourceType, String targetType, String floatExpr) throws Exception {
