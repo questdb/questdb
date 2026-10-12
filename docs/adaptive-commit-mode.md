@@ -392,7 +392,8 @@ More detail:
   In QuestDB Enterprise the uploader start includes it, so on that start uploads begin that much later. The first
   `adaptive` start after a `nosync`, `async` or `sync` run also flushes the kept parts of each version 2 log an
   earlier `adaptive` run had written: one directory listing and one `fdatasync` per kept part (5,000 transactions
-  each by default) plus the header, once per table, with no read of the records.
+  each by default) plus the header, once per table. The listing and flush do not read records; the torn-tail check
+  at that open can still scan the last part.
 - **Disk.** Because a start can fall back to the older of the two save points, the WAL, the superseded partition
   versions and the superseded column and index files wait one save point longer before they are removed: one minute
   at the defaults, but with a negative `cairo.adaptive.epoch.interval` that can be days. The WAL purge job reads the

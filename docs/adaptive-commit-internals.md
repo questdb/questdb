@@ -641,20 +641,21 @@ change reads as unverified, never as torn, and a released binary ignores the new
   so a replica's downloader can write a batch past `maxTxn` before it advances it. Before the first `adaptive` append
   of a log instance into a part, the rest of that part is checked and, if any byte is non-zero, zeroed and flushed
   (`zeroPastTail`), so a stale record can never look valid after the next power loss. A `sync` or `adaptive` log
-  flushes a part before it moves to the next one, so a part a group window or another mode left unflushed is on the
-  disk before a later record is.
+  flushes the part it leaves before it moves to the next one. This does not reach earlier parts a `nosync` or
+  `async` run already left; the `adaptive` reopen's walk below reaches those.
   A field of 0 trusts every record: an older log, a log no `adaptive` append has touched, or one a replica's
   downloader appends to (Enterprise clears the field when its downloader advances `maxTxn`, and a replica's first
   open clears it too). A `nosync`, `async` or `sync` open on a node that keeps the log durable itself stores the field
-  negated, as a V1 log does: that run appends without flushing a part before the header counts its records, and the
-  slot keeps following `maxTxn`. The next `adaptive` open scans the last part from the field's magnitude, flushes
-  every kept part from the magnitude's part to the tail's (one `fdatasync` each, found by listing `_txn_parts`), and
-  only then stores the field at `maxTxn + 1` and the slot at `maxTxn`, so a power loss in the kernel's writeback
-  window after that start cannot lose a part an earlier record of the log depends on. A power loss before the claim
-  is stored leaves the negative field, and the next `adaptive` open does the same work again. A checkpoint restore
-  that lowers `maxTxn` lowers the field's magnitude to `maxTxn + 1` and the slot to `maxTxn` with it, in the same
-  sector (`TableTransactionLogV2.lowerMaxTxn`, also used by the cut), so records an older binary appends after a
-  downgrade sit above the slot and are trusted at the next open instead of being cut.
+  negated, as a V1 log does: those modes do not maintain the `adaptive` flushed-through claim, and the slot keeps
+  following `maxTxn`. The existing `sync` part flushes are unchanged. The next `adaptive` open scans the last part
+  from the field's magnitude, flushes every kept part from the magnitude's part to the tail's (one `fdatasync` each,
+  found by listing `_txn_parts`), and only then stores the field at `maxTxn + 1` and the slot at `maxTxn`, so a power
+  loss in the kernel's writeback window after that start cannot lose a part an earlier record of the log depends on.
+  A power loss before the claim is stored leaves the negative field, and the next `adaptive` open does the same work
+  again. A checkpoint restore that lowers `maxTxn` clamps the field's magnitude to at most `maxTxn + 1` and the slot
+  to at most `maxTxn` with it, in the same sector (`TableTransactionLogV2.lowerMaxTxn`, also used by the cut), so
+  records an older binary appends after a downgrade sit above the slot and are trusted at the next open instead of
+  being cut.
   The header slot next to the field (bytes 48-55) holds `maxTxn` as this release last stored it, while the field is
   set: it is stored before a `maxTxn` it raises and after one it lowers. A writer that does not know the field (an
   older binary after a downgrade, the downloader) moves `maxTxn` alone, so a `maxTxn` above the slot means the records
