@@ -44,19 +44,24 @@ import io.questdb.std.str.StringSink;
  * recompile the query, as it does after a schema change.
  * <p>
  * The values are compared the way the optimiser read them: each printed by
- * {@link SqlOptimiser#printRecordColumnOrNull}, repeats dropped, in the order the subquery
- * returned them.
+ * {@link SqlOptimiser#printRecordColumnOrNull}, repeats dropped. When the subquery orders its
+ * rows, the order is part of the plan (it orders the columns) and must match too. Otherwise the
+ * subquery's order is unspecified, and can change from one run to the next (a parallel GROUP BY
+ * merges its workers' maps in whatever order they finish), so only the set of values must match.
  */
 public final class PivotInListCheck implements QuietCloseable {
     private final ObjList<String> expected = new ObjList<>();
+    private final CharSequenceHashSet expectedSet = new CharSequenceHashSet();
+    private final boolean isOrderSensitive;
     private final int position;
     private final CharSequenceHashSet seen = new CharSequenceHashSet();
     private final StringSink sink = new StringSink();
     private RecordCursorFactory factory;
 
-    PivotInListCheck(RecordCursorFactory factory, int position) {
+    PivotInListCheck(RecordCursorFactory factory, int position, boolean isOrderSensitive) {
         this.factory = factory;
         this.position = position;
+        this.isOrderSensitive = isOrderSensitive;
     }
 
     @Override
@@ -82,18 +87,29 @@ public final class PivotInListCheck implements QuietCloseable {
                 if (!seen.add(sink)) {
                     continue;
                 }
-                if (matched == expected.size() || !Chars.equals(expected.getQuick(matched), sink)) {
+                if (isOrderSensitive
+                        ? matched == expected.size() || !Chars.equals(expected.getQuick(matched), sink)
+                        : !expectedSet.contains(sink)) {
                     throw TableReferenceOutOfDateException.ofPivotInList(sink);
                 }
                 matched++;
             }
         }
         if (matched != expected.size()) {
-            throw TableReferenceOutOfDateException.ofPivotInList(expected.getQuick(matched));
+            // a value is missing: with unordered values, name one the run did not return
+            String missing = isOrderSensitive ? expected.getQuick(matched) : null;
+            for (int i = 0, n = expected.size(); missing == null && i < n; i++) {
+                if (!seen.contains(expected.getQuick(i))) {
+                    missing = expected.getQuick(i);
+                }
+            }
+            throw TableReferenceOutOfDateException.ofPivotInList(missing != null ? missing : expected.getQuick(0));
         }
     }
 
     void addExpected(CharSequence value) {
-        expected.add(Chars.toString(value));
+        final String v = Chars.toString(value);
+        expected.add(v);
+        expectedSet.add(v);
     }
 }

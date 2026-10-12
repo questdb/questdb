@@ -677,6 +677,16 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // whether a model orders its rows anywhere along its chain, see PivotInListCheck
+    private static boolean hasOrderBy(IQueryModel model) {
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            if (m.getOrderBy().size() > 0 || (m.getUnionModel() != null && hasOrderBy(m.getUnionModel()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
         for (int i = 0, n = fill.size(); i < n; i++) {
             if (isLinearKeyword(fill.getQuick(i).token)) {
@@ -8204,7 +8214,7 @@ public class SqlOptimiser implements Mutable {
                     // could then be taken for the statement's.
                     final RecordCursorFactory inListFactory = compiler.generateSelectWithRetries(subQueryNode.queryModel, null, sqlExecutionContext, false);
                     // the values are the plan's: a cached plan re-runs the subquery to check them
-                    final PivotInListCheck check = new PivotInListCheck(inListFactory, subQueryNode.position);
+                    final PivotInListCheck check = new PivotInListCheck(inListFactory, subQueryNode.position, hasOrderBy(subQueryNode.queryModel));
                     try {
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
