@@ -178,7 +178,7 @@ public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest
                 // The write went into the damaged generation, so the recovered one is still there: the start succeeds.
                 new RecoveryCoordinator(engine).recover();
                 Assert.assertEquals("the start must stand on the generation the fallback selected", 1, activeGeneration(tt));
-                assertQuery("SELECT count() FROM t").returns("count\n" + K + "\n");
+                assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n" + K + "\n");
             });
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");

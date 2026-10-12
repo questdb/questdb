@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -193,6 +194,12 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         final List<Object[]> params = new ArrayList<>();
         for (History history : History.values()) {
             for (Operation operation : Operation.values()) {
+                if (history == History.COPY_SECOND_SAVE_POINT_FAILS) {
+                    if (operation == Operation.COPY_INTO_EXISTING_TABLE) {
+                        params.add(new Object[]{history, operation, OperationPath.OWN});
+                    }
+                    continue;
+                }
                 if (history == History.NEWEST_GENERATION_DAMAGED) {
                     // A fallback replays an ATTACH from the WAL, which must find .attachable again; nothing replays
                     // a COPY, so both generations must cover it.
@@ -674,6 +681,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         if (operation.keepsAttachable() && !history.failsSavePoint() && !history.killed()
                 && history != History.NOSYNC && history != History.NEWEST_GENERATION_DAMAGED) {
             Assert.assertTrue("the attach source must stay until the older generation covers the attach", attachableExists(e));
+            if (history == History.ENROLLED_AT_CREATE) {
+                // Reopening must re-queue the source rather than leave it behind after the covering save point.
+                e.releaseAllWriters();
+            }
             takeSavePoint(e);
             Assert.assertFalse("the attach source must go once both generations cover the attach", attachableExists(e));
         }
@@ -726,13 +737,17 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             }
             TestUtils.assertContains(ex.getFlyweightMessage(), "save point");
             TestUtils.assertContains(ex.getFlyweightMessage(), "truncated");
+            try (TableReader reader = e.getReader(e.verifyTableName("t"))) {
+                Assert.assertEquals("a failed COPY truncates its previously empty target", 0, reader.size());
+            }
         } finally {
             endOperation();
         }
         // Two save points per COPY into an existing table, one per generation, not one per imported partition. A
         // table COPY creates has no save point until the next restart: the importer's writer holds a non-WAL token,
         // so it does not enrol it.
-        final int expected = history == History.NOSYNC || operation == Operation.COPY_INTO_NEW_TABLE ? 0 : savePointFails ? 1 : 2;
+        final int expected = history == History.NOSYNC || operation == Operation.COPY_INTO_NEW_TABLE ? 0
+                : savePointFails && history != History.COPY_SECOND_SAVE_POINT_FAILS ? 1 : 2;
         Assert.assertEquals("save points during the COPY", expected, savePoints.get());
     }
 
@@ -821,7 +836,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     private void startOperation() {
         savePoints.set(0);
         if (history.failsSavePoint()) {
-            failSavePointsAfter = 0;
+            failSavePointsAfter = history == History.COPY_SECOND_SAVE_POINT_FAILS ? 1 : 0;
         }
         crossDevice = operation == Operation.ATTACH_CROSS_DEVICE || operation == Operation.DETACH_CROSS_DEVICE;
         killAfterMove = history == History.KILLED_BEFORE_TXN || history == History.KILLED_BEFORE_TXN_NOSYNC;
@@ -839,6 +854,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         INLINE_SAVE_POINTS_ONLY,
         // The save point after the operation fails with an I/O error; the next apply batch must take one.
         SAVE_POINT_FAILS,
+        // COPY publishes its first generation, but the second fails: it must truncate the import and report failure.
+        COPY_SECOND_SAVE_POINT_FAILS,
         // As SAVE_POINT_FAILS with the periodic save point off: the next apply batch must still take one.
         SAVE_POINT_FAILS_NO_PERIODIC,
         // The save point after the operation fails, nothing is written after it, and the restart is clean: the
@@ -871,7 +888,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
 
         boolean failsSavePoint() {
-            return this == SAVE_POINT_FAILS || this == SAVE_POINT_FAILS_NO_PERIODIC || this == SAVE_POINT_FAILS_THEN_KILLED || cleanRestart();
+            return this == SAVE_POINT_FAILS || this == COPY_SECOND_SAVE_POINT_FAILS || this == SAVE_POINT_FAILS_NO_PERIODIC || this == SAVE_POINT_FAILS_THEN_KILLED || cleanRestart();
         }
 
         boolean killed() {
@@ -935,7 +952,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
         boolean attaches() {
             return switch (this) {
-                case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK,
+                case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR,
+                     ATTACH_SOFT_LINK,
                      ATTACH_WITH_COPY_SETTING -> true;
                 default -> false;
             };

@@ -751,8 +751,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         // The attaches consumed the imported partition directories, so one durable epoch covers them all, in the
         // newer generation. Nothing in the WAL redoes an import, so a start that fell back to the older generation
-        // would lose it: the older generation must cover the attaches too, which takes a second epoch unless the
-        // first left no older generation behind. An epoch that is skipped or fails leaves the import to be undone
+        // would lose it: both generations must cover the attaches, which takes a second epoch even when the
+        // first left no older pin behind. An epoch that is skipped or fails leaves the import to be undone
         // by the next fallback, so COPY fails instead of reporting it done; cleanUp() then truncates the target,
         // which was empty. Outside an enrolled adaptive table the epochs are no-ops, and so is the check.
         writer.advanceDurableEpochAfter("attach partition");
@@ -762,10 +762,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 && cairoEngine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             final SeqTxnTracker tracker = cairoEngine.getTableSequencerAPI().getTxnTracker(tableToken);
             final long attachTxn = writer.getTxn();
-            if (tracker.getPinnedEpochTxn() >= attachTxn && tracker.getOtherPinnedEpochTxn() > -1 && tracker.getOtherPinnedEpochTxn() < attachTxn) {
+            if (tracker.getPinnedEpochTxn() >= attachTxn && tracker.getOtherPinnedEpochTxn() < attachTxn) {
                 writer.advanceDurableEpochAfter("attach partition, second generation");
             }
-            if (tracker.getPinnedEpochTxn() < attachTxn || (tracker.getOtherPinnedEpochTxn() > -1 && tracker.getOtherPinnedEpochTxn() < attachTxn)) {
+            if (tracker.getPinnedEpochTxn() < attachTxn || tracker.getOtherPinnedEpochTxn() < attachTxn) {
                 throw TextImportException.instance(
                         CopyImportTask.PHASE_ATTACH_PARTITIONS,
                         "import is not durable against a save point fallback: a save point after the attach was skipped or failed (see the log), "
