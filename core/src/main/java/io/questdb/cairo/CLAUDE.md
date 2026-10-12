@@ -134,6 +134,16 @@ Dedup mode is gated by `tableWriter.isCommitDedupMode()`. It changes **only** th
 step; the column conversions (Phase 1a), destination sizing (Phase 1b) and copy (Phase 2) are
 byte-for-byte identical with and without dedup.
 
+The table's dedup mode (`_meta` header, `TableUtils.DEDUP_MODE_*`) decides which row of a
+duplicate group survives. UPSERT keeps the latest write, REJECT keeps the earliest one and drops
+the rest. `tableWriter.isCommitDedupRejectMode()` passes the choice to every native dedup kernel
+as `isRejectMode`: the sort-dedup of a commit or a WAL block (`Vect.dedupSortedTimestampIndex*`)
+and the merge with partition rows (`Vect.mergeDedupTimestampWithLongIndex*`), for native and
+parquet partitions alike. Both modes rely on the same invariant: equal-key rows reach the kernels
+in commit order (stable sorts, lag rows before new rows, partition rows before O3 rows). In REJECT
+mode a merge whose O3 rows are all duplicates leaves the partition as is by construction, so
+`O3PartitionJob` skips the `checkDedupCommitIdenticalToPartition` column comparison.
+
 | | Non-dedup | Dedup |
 |---|---|---|
 | call | `createMergeIndex` | `Unsafe.malloc` → build addresses → `Vect.mergeDedupTimestampWithLongIndexIntKeys` → `Unsafe.realloc` |
@@ -187,6 +197,10 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
   shared by the merge and rewrite paths. Fix bugs in the helper, not in one caller.
 - **`var_data_len` is a debug-assert bound**, so a tight `getDataVectorSizeAt` extent is fine;
   do not pass a stale `getChunkDataSize` for a converted buffer.
+- **`dedup_column` is a packed struct.** Its `null_value` (read for rows in a column top) sits at
+  an unaligned offset. Read it through `get_null_value<T>()`, which copies it out: dereferencing
+  it in place as a 16-byte `T` (`__int128`, `int256`) lets the compiler emit aligned SIMD loads,
+  which fault (seen with GCC 16 at `-O3`).
 - **No conversion buffers on the native O3 path** — only parquet partitions with a lazy ALTER
   allocate them.
 

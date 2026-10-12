@@ -85,13 +85,21 @@ public final class Vect {
 
     public static native long dedupMergeVarcharColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
 
+    /**
+     * Deduplicates a timestamp-sorted index. Rows that are equal on the timestamp and all dedup key
+     * columns form a group, kept in commit order.
+     *
+     * @param isRejectMode when false (DEDUP UPSERT), the last row of each group wins; when true
+     *                     (DEDUP REJECT), the first row of each group wins and the later rows are dropped
+     */
     public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
             long count,
             long outIndexAddr,
             long indexAddrTemp,
             int dedupColumnCount,
-            long dedupColumnData
+            long dedupColumnData,
+            boolean isRejectMode
     );
 
     public static long dedupSortedTimestampIndexIntKeysChecked(
@@ -100,7 +108,8 @@ public final class Vect {
             long outIndexAddr,
             long indexAddrTemp,
             int dedupColumnCount,
-            long dedupColumnData
+            long dedupColumnData,
+            boolean isRejectMode
     ) {
         long dedupRowCount = dedupSortedTimestampIndex(
                 inIndexAddr,
@@ -108,18 +117,24 @@ public final class Vect {
                 outIndexAddr,
                 indexAddrTemp,
                 dedupColumnCount,
-                dedupColumnData
+                dedupColumnData,
+                isRejectMode
         );
         assert dedupRowCount != -1 : "unsorted data passed to deduplication";
         return dedupRowCount;
     }
 
+    /**
+     * Multi-segment variant of {@link #dedupSortedTimestampIndex}, see it for the meaning of
+     * {@code isRejectMode}.
+     */
     public static native long dedupSortedTimestampIndexManyAddresses(
             long indexFormat,
             long inIndexAddr,
             long outIndexAddr,
             int dedupColumnCount,
-            long dedupColumnData
+            long dedupColumnData,
+            boolean isRejectMode
     );
 
     public static native void flattenIndex(long pIndex, long count);
@@ -203,6 +218,12 @@ public final class Vect {
     // note: memset only uses single byte of the given int
     public static native void memset(long dst, long len, int value);
 
+    /**
+     * Merges existing partition timestamps with a sorted O3 index, deduplicating on the timestamp only.
+     *
+     * @param isRejectMode when false (DEDUP UPSERT), the new row replaces the existing rows with the
+     *                     same timestamp; when true (DEDUP REJECT), the existing rows stay and the new row is dropped
+     */
     public static native long mergeDedupTimestampWithLongIndexAsc(
             long pSrc,
             long srcLo,
@@ -210,9 +231,17 @@ public final class Vect {
             long pIndex,
             long indexLo,
             long indexHiInclusive,
-            long pDestIndex
+            long pDestIndex,
+            boolean isRejectMode
     );
 
+    /**
+     * Merges existing partition timestamps with a sorted O3 index, deduplicating on the timestamp and
+     * the dedup key columns described by {@code dedupColBuffs}.
+     *
+     * @param isRejectMode when false (DEDUP UPSERT), the new row replaces the matching existing row;
+     *                     when true (DEDUP REJECT), the existing row stays and the new row is dropped
+     */
     public static native long mergeDedupTimestampWithLongIndexIntKeys(
             long srcTimestampAddr,
             long mergeDataLo,
@@ -222,7 +251,8 @@ public final class Vect {
             long mergeOOOHi,
             long tempIndexAddr,
             int dedupKeyCount,
-            long dedupColBuffs
+            long dedupColBuffs,
+            boolean isRejectMode
     );
 
     public static void mergeLongIndexesAsc(long pIndexStructArray, int count, long mergedIndexAddr) {

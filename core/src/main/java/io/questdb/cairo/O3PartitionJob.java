@@ -1850,7 +1850,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     sortedTimestampsAddr,
                     mergeOOOLo,
                     mergeOOOHi,
-                    tempIndexAddr
+                    tempIndexAddr,
+                    tableWriter.isCommitDedupRejectMode()
             );
         } else {
             return getDedupRowsWithAdditionalKeys(
@@ -2058,7 +2059,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     mergeOOOHi,
                     tempIndexAddr,
                     dedupCommitAddresses.getColumnCount(),
-                    DedupColumnCommitAddresses.getAddress(dedupColSinkAddr)
+                    DedupColumnCommitAddresses.getAddress(dedupColSinkAddr),
+                    tableWriter.isCommitDedupRejectMode()
             );
         } finally {
             for (int i = 0, n = dedupCommitAddresses.getColumnCount(); i < n; i++) {
@@ -2277,7 +2279,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             sortedTimestampsAddr,
                             mergeRangeLo,
                             mergeRangeHi,
-                            timestampMergeIndexAddr
+                            timestampMergeIndexAddr,
+                            tableWriter.isCommitDedupRejectMode()
                     );
                 } else {
                     int dedupColumnIndex = 0;
@@ -2355,7 +2358,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeRangeHi,
                             timestampMergeIndexAddr,
                             dedupCommitAddresses.getColumnCount(),
-                            DedupColumnCommitAddresses.getAddress(dedupColSinkAddr)
+                            DedupColumnCommitAddresses.getAddress(dedupColSinkAddr),
+                            tableWriter.isCommitDedupRejectMode()
                     );
                 }
 
@@ -3162,8 +3166,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (duplicateCount == mergeOOOHi - mergeOOOLo + 1 && prefixType != O3_BLOCK_O3) {
 
                             // All the rows are duplicates, the commit does not add any new lines.
-                            // Check non-key columns if they are exactly the same as the rows they replace
-                            if (tableWriter.checkDedupCommitIdenticalToPartition(
+                            // In REJECT mode the duplicates are discarded, so the partition data stays
+                            // as is by construction. In UPSERT mode the duplicates replace the existing
+                            // rows: check non-key columns if they are exactly the same as the rows they replace.
+                            if (tableWriter.isCommitDedupRejectMode() || tableWriter.checkDedupCommitIdenticalToPartition(
                                     oldPartitionTimestamp,
                                     srcNameTxn,
                                     srcDataOldPartitionSize,

@@ -108,6 +108,13 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    // Dedup modes, stored in the _meta header at META_OFFSET_DEDUP_MODE. The mode matters only when
+    // deduplication is enabled, i.e. when the designated timestamp is a dedup key.
+    // REJECT: a new row is discarded when a row with the same dedup key values already exists,
+    // the earliest write wins.
+    public static final int DEDUP_MODE_REJECT = 1;
+    // UPSERT: a new row replaces the existing row with the same dedup key values, the latest write wins.
+    public static final int DEDUP_MODE_UPSERT = 0;
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -119,7 +126,8 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
+    public static final short META_FORMAT_MINOR_VERSION_DEDUP_MODE = 3;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 3;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -138,6 +146,7 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
+    public static final long META_OFFSET_DEDUP_MODE = META_OFFSET_TABLE_FORMAT + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -2946,6 +2955,7 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
+        mem.putInt(tableStruct.getDedupMode());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -3184,6 +3194,17 @@ public final class TableUtils {
 
     static byte getColumnIndexType(MemoryR metaMem, int columnIndex) {
         return decodeIndexTypeFlags(getColumnFlags(metaMem, columnIndex));
+    }
+
+    /**
+     * Returns the dedup mode stored in the _meta header, one of the DEDUP_MODE_* constants. A _meta
+     * file written before the dedup mode field existed has no such field: deduplication on such a
+     * table, when enabled, is always UPSERT.
+     */
+    static int getDedupMode(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_DEDUP_MODE)
+                ? metaMem.getInt(TableUtils.META_OFFSET_DEDUP_MODE)
+                : DEDUP_MODE_UPSERT;
     }
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {

@@ -3769,8 +3769,12 @@ public class SqlParser {
             }
 
             tok = optTok(lexer);
-            if (tok == null || !isUpsertKeyword(tok)) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert'");
+            if (tok != null && isUpsertKeyword(tok)) {
+                builder.setDedupMode(TableUtils.DEDUP_MODE_UPSERT);
+            } else if (tok != null && isRejectKeyword(tok)) {
+                builder.setDedupMode(TableUtils.DEDUP_MODE_REJECT);
+            } else {
+                throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert' or 'reject'");
             }
 
             tok = optTok(lexer);
@@ -3826,7 +3830,7 @@ public class SqlParser {
             }
         }
 
-        // FORMAT can also appear after DEDUP: ... DEDUP UPSERT KEYS(ts) FORMAT PARQUET
+        // FORMAT can also appear after DEDUP: ... DEDUP UPSERT|REJECT KEYS(ts) FORMAT PARQUET
         if (tok != null && isFormatKeyword(tok)) {
             if (formatSeen) {
                 throw SqlException.$(lexer.lastTokenPosition(), "duplicate FORMAT clause");

@@ -354,7 +354,48 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 1 + rnd.nextInt(1)
         );
 
-        runFuzzWithRandomColsDedup(rnd, -1, convertToParquet);
+        runFuzzWithRandomColsDedup(rnd, -1, convertToParquet, false);
+    }
+
+    @Test
+    public void testRandomColumnsDedupMultipleKeyColReject() throws Exception {
+        Rnd rnd = generateRandomAndProps();
+        boolean createAsParquet = rnd.nextBoolean();
+        boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+        boolean parquet = createAsParquet || convertToParquet;
+        setCreateWalAsParquet(createAsParquet);
+        setFuzzProbabilities(
+                rnd.nextDouble() / 100,
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
+                // TODO(eugene): table column manipulation is not yet supported for Parquet
+                parquet ? 0 : 0.1 * rnd.nextDouble(),
+                0,
+                parquet ? 0 : rnd.nextDouble(),
+                0.0,
+                parquet ? 0 : rnd.nextDouble(),
+                0.5,
+                0.0,
+                0.1 * rnd.nextDouble(),
+                0.0,
+                0.5,
+                0.0,
+                0
+        );
+
+        setFuzzCounts(
+                rnd.nextBoolean(),
+                rnd.nextInt(100_000),
+                rnd.nextInt(20),
+                rnd.nextInt(20),
+                rnd.nextInt(20),
+                rnd.nextInt(1000),
+                rnd.nextInt(100_000),
+                1 + rnd.nextInt(1)
+        );
+
+        runFuzzWithRandomColsDedup(rnd, -1, convertToParquet, true);
     }
 
     @Test
@@ -393,7 +434,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 1 + rnd.nextInt(1)
         );
 
-        runFuzzWithRandomColsDedup(rnd, -1, false);
+        runFuzzWithRandomColsDedup(rnd, -1, false, false);
     }
 
     @Test
@@ -435,7 +476,49 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 1 + rnd.nextInt(1)
         );
 
-        runFuzzWithRandomColsDedup(rnd, 1, convertToParquet);
+        runFuzzWithRandomColsDedup(rnd, 1, convertToParquet, false);
+    }
+
+    @Test
+    public void testRandomColumnsDedupOneKeyColReject() throws Exception {
+        Rnd rnd = generateRandomAndProps();
+        boolean createAsParquet = rnd.nextBoolean();
+        boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+        boolean parquet = createAsParquet || convertToParquet;
+        setCreateWalAsParquet(createAsParquet);
+        setFuzzProbabilities(
+                rnd.nextDouble() / 100,
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
+
+                // TODO(eugene): table column manipulation is not yet supported for Parquet
+                parquet ? 0 : 0.2 * rnd.nextDouble(),
+                0,
+                parquet ? 0 : rnd.nextDouble(),
+                0.0,
+                parquet ? 0 : rnd.nextDouble(),
+                0.5,
+                0.0,
+                0.1 * rnd.nextDouble(),
+                0.0,
+                0.5,
+                0.0,
+                0
+        );
+
+        setFuzzCounts(
+                rnd.nextBoolean(),
+                rnd.nextInt(100_000),
+                rnd.nextInt(20),
+                rnd.nextInt(20),
+                rnd.nextInt(20),
+                rnd.nextInt(1000),
+                rnd.nextInt(100_000),
+                1 + rnd.nextInt(1)
+        );
+
+        runFuzzWithRandomColsDedup(rnd, 1, convertToParquet, true);
     }
 
     @Test
@@ -551,7 +634,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void assertSqlCursorsNoDups(
             String tableNameNoWal,
             ObjList<CharSequence> upsertKeyNames,
-            String tableNameWal
+            String tableNameWal,
+            boolean isRejectMode
     ) throws SqlException {
         Log log = LOG;
         // Define where clause for debugging
@@ -566,7 +650,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)
                 ) {
                     try (
-                            RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames);
+                            RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames, isRejectMode);
                             RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
                     ) {
                         try {
@@ -867,7 +951,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys, boolean convertToParquet) throws Exception {
+    private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys, boolean convertToParquet, boolean isRejectMode) throws Exception {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
             String tableNameDedup = tableNameBase + "_wal";
@@ -904,8 +988,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     comaSeparatedUpsertCols = toCommaSeparatedString(readerMetadata, upsertKeyIndexes);
                 }
                 String alterStatement = String.format(
-                        "alter table %s dedup upsert keys(%s)",
+                        "alter table %s dedup %s keys(%s)",
                         tableNameDedup,
+                        isRejectMode ? "reject" : "upsert",
                         comaSeparatedUpsertCols
                 );
                 execute(alterStatement);
@@ -929,7 +1014,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     assertSqlCursorsNoDups(
                             tableNameWalNoDedup,
                             upsertKeyNames,
-                            tableNameDedup
+                            tableNameDedup,
+                            isRejectMode
                     );
 
                     fuzzer.assertCounts(tableNameDedup, timestampColumnName);
@@ -944,7 +1030,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     assertSqlCursorsNoDups(
                             tableNameWalNoDedup,
                             upsertKeyNames,
-                            tableNameDedup
+                            tableNameDedup,
+                            isRejectMode
                     );
 
                 } finally {
@@ -1326,6 +1413,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private static class DedupCursor implements RecordCursor {
 
         private final StringSink currentRecordKeys = new StringSink();
+        // REJECT keeps the first row of each duplicate group, UPSERT keeps the last one
+        private final boolean isKeepFirst;
         private final IntList keyColumns = new IntList();
         private final ObjHashSet<String> keyProcessed = new ObjHashSet<>();
         private final RecordMetadata metadata;
@@ -1335,15 +1424,20 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         private final IntList skipRecords = new IntList();
         ObjList<String> recordKeys = new ObjList<>();
         private long lastTimestamp = -1;
+        // records of the previous timestamp group, after the last record dispatched from it, which the
+        // inner cursor still has to skip; it is non-zero only when the last record of a group is a dropped duplicate
+        private int skipCarry;
         private int timestampColIndex = -1;
 
         public DedupCursor(
                 RecordMetadata cursorMetadata,
                 RecordCursor innerCursor,
                 RecordCursor previewCursor,
-                ObjList<CharSequence> keyColumnNames
+                ObjList<CharSequence> keyColumnNames,
+                boolean isKeepFirst
         ) {
             this.recordCursor = innerCursor;
+            this.isKeepFirst = isKeepFirst;
             this.metadata = cursorMetadata;
             this.nextRecCursor = previewCursor;
 
@@ -1385,23 +1479,34 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 if (currentTs != lastTimestamp) {
                     lastTimestamp = currentTs;
 
-                    // unleash the last records for each key
-                    for (int i = recordKeys.size() - 1; i > -1; i--) {
-                        if (keyProcessed.add(recordKeys.get(i))) {
-                            skipRecords.add(i);
+                    // unleash the first or the last records for each key, in ascending position order
+                    if (isKeepFirst) {
+                        for (int i = 0, n = recordKeys.size(); i < n; i++) {
+                            if (keyProcessed.add(recordKeys.get(i))) {
+                                skipRecords.add(i);
+                            }
                         }
+                    } else {
+                        for (int i = recordKeys.size() - 1; i > -1; i--) {
+                            if (keyProcessed.add(recordKeys.get(i))) {
+                                skipRecords.add(i);
+                            }
+                        }
+                        reverse(skipRecords);
                     }
+                    final int groupSize = recordKeys.size();
                     recordKeys.clear();
                     keyProcessed.clear();
 
-                    // find differences between indexes in skipRecords
-                    reverse(skipRecords);
-                    int last = -1;
+                    // find differences between indexes in skipRecords, the inner cursor sits on the record
+                    // before the group, minus the records left over from the previous group
+                    int last = -1 - skipCarry;
                     for (int i = 0; i < skipRecords.size(); i++) {
                         int val = skipRecords.get(i);
                         skipRecords.set(i, val - last);
                         last = val;
                     }
+                    skipCarry = groupSize - 1 - last;
 
                     // reverse skip records for easier removal from the end
                     reverse(skipRecords);
@@ -1448,6 +1553,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             currentRecordKeys.clear();
             skipRecords.clear();
             recordKeys.clear();
+            skipCarry = 0;
         }
 
         private boolean dispatchRecordsWithOffsets() {

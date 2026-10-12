@@ -25,16 +25,25 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -121,6 +130,37 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableDedupRejectAndBack() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertDedupMode("x", false, TableUtils.DEDUP_MODE_UPSERT);
+
+            execute("ALTER TABLE x DEDUP ENABLE REJECT KEYS(ts, sym)");
+            drainWalQueue();
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+            assertShowCreateTable("x", "\nDEDUP REJECT KEYS(ts,sym)");
+
+            // ENABLE is optional
+            execute("ALTER TABLE x DEDUP UPSERT KEYS(ts)");
+            drainWalQueue();
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_UPSERT);
+            assertShowCreateTable("x", "\nDEDUP UPSERT KEYS(ts)");
+
+            execute("ALTER TABLE x DEDUPLICATE REJECT KEYS(ts)");
+            drainWalQueue();
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+            assertShowCreateTable("x", "\nDEDUP REJECT KEYS(ts)");
+
+            // disabling dedup resets the mode
+            execute("ALTER TABLE x DEDUP DISABLE");
+            drainWalQueue();
+            assertDedupMode("x", false, TableUtils.DEDUP_MODE_UPSERT);
+            assertShowCreateTable("x", "");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+        });
+    }
+
+    @Test
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             execute("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
@@ -135,11 +175,76 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             assertQuery(alterPrefix + "deduplicate UPSERT KEYS (s)")
                     .fails(39, "deduplicate key list must include dedicated timestamp column");
             assertQuery(alterPrefix + "deduplicate KEYS (s);")
-                    .fails(26, "expected 'upsert'");
+                    .fails(26, "expected 'upsert' or 'reject'");
             assertQuery(alterPrefix + "deduplicate UPSERT (s);")
                     .fails(33, "expected 'keys'");
             assertQuery(alterPrefix + "deduplicate UPSERT KEYS")
                     .fails(37, "column list expected");
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectDedupReject() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT timestamp_sequence('2024-01-01', 1_000_000) ts, 'a'::SYMBOL sym, x v FROM long_sequence(3)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)
+                    """);
+            drainWalQueue();
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:01.000000Z', 'a', 10), ('2024-01-01T00:00:01.000000Z', 'b', 11)");
+            drainWalQueue();
+            assertQuery("SELECT * FROM x ORDER BY v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1
+                            2024-01-01T00:00:01.000000Z\ta\t2
+                            2024-01-01T00:00:02.000000Z\ta\t3
+                            2024-01-01T00:00:01.000000Z\tb\t11
+                            """);
+        });
+    }
+
+    @Test
+    public void testCreateTableDedupReject() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+            try (TableWriter writer = getWriter("x")) {
+                Assert.assertTrue(writer.getMetadata().isDedupKey(0));
+                Assert.assertTrue(writer.getMetadata().isDedupKey(1));
+                Assert.assertFalse(writer.getMetadata().isDedupKey(2));
+            }
+            assertShowCreateTable("x", "\nDEDUP REJECT KEYS(ts,sym)");
+            assertQuery("SELECT table_name, dedup FROM tables() WHERE table_name = 'x'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            table_name\tdedup
+                            x\ttrue
+                            """);
+
+            // a table created without dedup has the default mode
+            execute("CREATE TABLE y (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertDedupMode("y", false, TableUtils.DEDUP_MODE_UPSERT);
+        });
+    }
+
+    @Test
+    public void testCreateTableLikeCopiesDedupMode() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE y (LIKE x)");
+            assertDedupMode("y", true, TableUtils.DEDUP_MODE_REJECT);
+            assertShowCreateTable("y", "\nDEDUP REJECT KEYS(ts,sym)");
+
+            execute("CREATE TABLE u (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE TABLE z (LIKE u)");
+            assertDedupMode("z", true, TableUtils.DEDUP_MODE_UPSERT);
         });
     }
 
@@ -156,7 +261,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);")
                     .fails(127, "deduplicate key list must include dedicated timestamp column");
             assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate KEYS (s);")
-                    .fails(114, "expected 'upsert'");
+                    .fails(114, "expected 'upsert' or 'reject'");
             assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT (s);")
                     .fails(121, "expected 'keys'");
             assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS")
@@ -458,6 +563,104 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupModeIgnoredOnLegacyMetaFormat() throws Exception {
+        // _meta files written before the dedup mode field existed do not carry it. The minor format
+        // version gates the field, so the bytes at its offset are ignored for such files.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            final TableToken token = engine.verifyTableName("x");
+            try (
+                    MemoryMARW mem = Vm.getCMARWInstance();
+                    Path path = new Path()
+            ) {
+                path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                Assert.assertEquals(TableUtils.DEDUP_MODE_REJECT, mem.getInt(TableUtils.META_OFFSET_DEDUP_MODE));
+                // older versions do not write a minor format version that is recognised as current
+                mem.putInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, 0);
+            }
+            reloadMetadataCache();
+
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_UPSERT);
+        });
+    }
+
+    @Test
+    public void testDedupModePreservedByOtherAlterations() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG, w INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1, 1)");
+            // each of these rewrites the _meta file
+            execute("ALTER TABLE x ADD COLUMN z DOUBLE");
+            execute("ALTER TABLE x RENAME COLUMN v TO v2");
+            execute("ALTER TABLE x DROP COLUMN w");
+            execute("ALTER TABLE x ALTER COLUMN z TYPE FLOAT");
+            execute("ALTER TABLE x SET TTL 2 YEARS");
+            execute("ALTER TABLE x SET PARAM maxUncommittedRows = 1000");
+            execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+
+            execute("INSERT INTO x(ts, sym, v2) VALUES ('2024-01-01T00:00:00.000000Z', 'a', 2)");
+            drainWalQueue();
+            assertQuery("SELECT ts, sym, v2 FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv2
+                            2024-01-01T00:00:00.000000Z\ta\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testDedupModeSurvivesMetadataReload() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE y (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("ALTER TABLE y DEDUP ENABLE REJECT KEYS(ts)");
+            drainWalQueue();
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            reloadMetadataCache();
+
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+            assertDedupMode("y", true, TableUtils.DEDUP_MODE_REJECT);
+            assertShowCreateTable("y", "\nDEDUP REJECT KEYS(ts)");
+        });
+    }
+
+    @Test
+    public void testDedupRejectSyntaxErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            String createPrefix = "create table a (ts timestamp, i int, s symbol) timestamp(ts) partition by day";
+            assertQuery(createPrefix + " bypass wal dedup reject keys(ts);")
+                    .fails(95, "deduplication is possible only on WAL tables");
+            assertQuery(createPrefix + " wal dedup rejected keys(ts);")
+                    .fails(88, "expected 'upsert' or 'reject'");
+            assertQuery(createPrefix + " wal dedup reject (ts);")
+                    .fails(95, "expected 'keys'");
+            assertQuery(createPrefix + " wal dedup reject keys(s);")
+                    .fails(100, "deduplicate key list must include dedicated timestamp column");
+
+            execute(createPrefix + " wal");
+            assertQuery("alter table a dedup enable rejected keys(ts)")
+                    .fails(27, "expected 'upsert' or 'reject'");
+            assertQuery("alter table a dedup reject (ts)")
+                    .fails(27, "expected 'keys'");
+            assertQuery("alter table a dedup enable reject keys(s)")
+                    .fails(39, "deduplicate key list must include dedicated timestamp column");
+        });
+    }
+
+    @Test
     public void testDedupSyntaxError() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
@@ -709,7 +912,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 try (TableWriterAPI tw2 = engine.getTableWriterAPI(tableToken, "test")) {
 
                     AlterOperationBuilder setDedupAlterBuilder = new AlterOperationBuilder()
-                            .ofDedupEnable(1, tableToken);
+                            .ofDedupEnable(1, tableToken, TableUtils.DEDUP_MODE_UPSERT);
                     setDedupAlterBuilder.setDedupKeyFlag(1);
                     AlterOperation ao = setDedupAlterBuilder.build();
                     ao.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
@@ -759,7 +962,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 LongList columnIndexes = new LongList();
                 columnIndexes.add(-1);
                 try {
-                    tw.enableDeduplicationWithUpsertKeys(columnIndexes);
+                    tw.enableDeduplication(columnIndexes, TableUtils.DEDUP_MODE_UPSERT);
                     Assert.assertFalse(tw.isDeduplicationEnabled());
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column index to make a dedup key");
@@ -768,7 +971,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 columnIndexes.clear();
                 columnIndexes.add(0);
                 try {
-                    tw.enableDeduplicationWithUpsertKeys(columnIndexes);
+                    tw.enableDeduplication(columnIndexes, TableUtils.DEDUP_MODE_UPSERT);
                     Assert.assertFalse(tw.isDeduplicationEnabled());
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Unsupported column type used as deduplicate key");
@@ -780,12 +983,86 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 LongList columnIndexes = new LongList();
                 columnIndexes.add(1);
                 try {
-                    tw.enableDeduplicationWithUpsertKeys(columnIndexes);
+                    tw.enableDeduplication(columnIndexes, TableUtils.DEDUP_MODE_UPSERT);
                     Assert.assertFalse(tw.isDeduplicationEnabled());
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column index to make a dedup key");
                 }
             }
         });
+    }
+
+    @Test
+    public void testEnableDedupInvalidModeFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+            try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "test")) {
+                // an operation with a mode this version does not know, e.g. a corrupt or a newer payload
+                final AlterOperationBuilder builder = new AlterOperationBuilder().ofDedupEnable(1, tableToken, 7);
+                builder.setDedupKeyFlag(0);
+                final AlterOperation ao = builder.build();
+                ao.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
+                ao.withSqlStatement("ALTER TABLE x DEDUP ENABLE UNKNOWN KEYS(ts)");
+                try {
+                    writer.apply(ao, true);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid dedup mode [table=x, mode=7]");
+                }
+
+                // a payload with the mode but without the dedup keys
+                final AlterOperation noKeys = new AlterOperationBuilder()
+                        .ofDedupEnable(1, tableToken, TableUtils.DEDUP_MODE_REJECT)
+                        .build();
+                noKeys.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
+                noKeys.withSqlStatement("ALTER TABLE x DEDUP ENABLE REJECT KEYS()");
+                try {
+                    writer.apply(noKeys, true);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid dedup enable statement, no dedup keys [table=x]");
+                }
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+            assertDedupMode("x", false, TableUtils.DEDUP_MODE_UPSERT);
+        });
+    }
+
+    private static void reloadMetadataCache() {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.clearCache();
+        }
+        engine.getMetadataCache().onStartupAsyncHydrator();
+    }
+
+    private void assertDedupMode(String tableName, boolean expectedDedup, int expectedMode) {
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        try (TableWriter writer = getWriter(tableToken)) {
+            Assert.assertEquals(expectedDedup, writer.isDeduplicationEnabled());
+            Assert.assertEquals(expectedMode, writer.getMetadata().getDedupMode());
+        }
+        try (TableReader reader = getReader(tableToken)) {
+            Assert.assertEquals(expectedMode, reader.getMetadata().getDedupMode());
+        }
+        try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+            final CairoTable table = metadataRO.getTable(tableToken);
+            Assert.assertNotNull(table);
+            Assert.assertEquals(expectedDedup, table.hasDedup());
+            Assert.assertEquals(expectedMode, table.getDedupMode());
+        }
+    }
+
+    private void assertShowCreateTable(String tableName, String dedupClause) throws Exception {
+        assertQuery("SHOW CREATE TABLE " + tableName)
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("ddl\n" +
+                        "CREATE TABLE '" + tableName + "' ( \n" +
+                        "\tts TIMESTAMP,\n" +
+                        "\tsym SYMBOL,\n" +
+                        "\tv LONG\n" +
+                        ") timestamp(ts) PARTITION BY DAY" + dedupClause + ";\n");
     }
 }

@@ -24,8 +24,10 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
@@ -35,6 +37,7 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
@@ -92,6 +95,38 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             ) timestamp(ts) PARTITION BY DAY
                             DEDUP UPSERT KEYS(ts,s,i);
                             """);
+        });
+    }
+
+    @Test
+    public void testDedupReject() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table foo ( ts timestamp, s symbol, i int ) timestamp(ts) partition by day wal dedup reject keys(ts, s)");
+            assertQuery("show create table foo")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ts SYMBOL,
+                            \ti INT
+                            ) timestamp(ts) PARTITION BY DAY
+                            DEDUP REJECT KEYS(ts,s);
+                            """);
+
+            // The printed DDL re-creates the table with the same dedup mode. It omits WAL, the default
+            // in production but not in the test configuration.
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            printSql("SHOW CREATE TABLE foo");
+            String printedSql = sink.toString().replace("ddl\n", "");
+            execute("drop table foo");
+            execute(printedSql);
+            try (TableReader reader = getReader("foo")) {
+                Assert.assertEquals(TableUtils.DEDUP_MODE_REJECT, reader.getMetadata().getDedupMode());
+            }
+            printSql("SHOW CREATE TABLE foo");
+            TestUtils.assertEquals(printedSql, sink.toString().replace("ddl\n", ""));
         });
     }
 

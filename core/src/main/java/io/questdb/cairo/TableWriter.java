@@ -2192,6 +2192,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             metadata.getColumnMetadata(i).setDedupKeyFlag(false);
         }
+        // the mode has no effect without dedup keys, reset it so that _meta does not carry a stale value
+        metadata.setDedupMode(TableUtils.DEDUP_MODE_UPSERT);
         rewriteAndSwapMetadata(metadata);
         clearTodoAndCommitMetaStructureVersion();
         if (dedupColumnCommitAddresses != null) {
@@ -2298,10 +2300,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    public boolean enableDeduplication(LongList columnsIndexes, int tableDedupMode) {
         assert txWriter.getLagRowCount() == 0;
+        assert tableDedupMode == TableUtils.DEDUP_MODE_UPSERT || tableDedupMode == TableUtils.DEDUP_MODE_REJECT;
         checkDistressed();
-        LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$(tableToken).$(", columns=[");
+        LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$(tableToken)
+                .$(", mode=").$(tableDedupMode == TableUtils.DEDUP_MODE_REJECT ? "REJECT" : "UPSERT")
+                .$(", columns=[");
 
         boolean isSubsetOfOldKeys = true;
         try {
@@ -2338,6 +2343,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 j++;
             }
         }
+        metadata.setDedupMode(tableDedupMode);
         rewriteAndSwapMetadata(metadata);
         clearTodoAndCommitMetaStructureVersion();
 
@@ -2756,6 +2762,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         return dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT || dedupMode == WalUtils.WAL_DEDUP_MODE_UPSERT_NEW;
+    }
+
+    /**
+     * Returns true when the current commit deduplicates (see {@link #isCommitDedupMode()}) and
+     * duplicates resolve in favour of the row that was written first: a new row that matches an
+     * existing row, or an earlier row of the same commit, on all dedup keys is discarded. This is
+     * the case for tables with the REJECT dedup mode, unless the commit explicitly requests UPSERT.
+     */
+    public boolean isCommitDedupRejectMode() {
+        return dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT
+                && metadata.getDedupMode() == TableUtils.DEDUP_MODE_REJECT
+                && isDeduplicationEnabled();
     }
 
     public boolean isCommitPlainInsert() {
@@ -6859,7 +6877,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexDstAddr,
                     tempIndexAddr,
                     dedupKeyIndex,
-                    DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
+                    DedupColumnCommitAddresses.getAddress(dedupCommitAddr),
+                    isCommitDedupRejectMode()
             );
 
             long dedupRowsRemoved = dedupRowCount > 0 ? longIndexLength - dedupRowCount : 0;
@@ -11291,7 +11310,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     srcIndexSrcAddr,
                     outIndexAddr,
                     dedupKeyIndex,
-                    DedupColumnCommitAddresses.getAddress(dedupCommitAddr)
+                    DedupColumnCommitAddresses.getAddress(dedupCommitAddr),
+                    isCommitDedupRejectMode()
             );
         } finally {
             dedupColumnCommitAddresses.clear();
@@ -13754,6 +13774,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
+            ddlMem.putInt(metadata.getDedupMode());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

@@ -231,7 +231,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile();
     }
 
-    public boolean enableDeduplicationWithUpsertKeys() {
+    public boolean enableDeduplication() {
         structureVersion.incrementAndGet();
         return false;
     }
