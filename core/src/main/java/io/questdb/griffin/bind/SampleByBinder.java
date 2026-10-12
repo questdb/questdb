@@ -81,9 +81,7 @@ import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 
-import static io.questdb.griffin.bind.BindContext.hasSubQuery;
-import static io.questdb.griffin.bind.BindContext.isWildcardColumn;
-import static io.questdb.griffin.bind.BindContext.sourceAlias;
+import static io.questdb.griffin.bind.BindContext.*;
 
 final class SampleByBinder {
     static final int SUBSAMPLE_CADENCE = 0;
@@ -535,17 +533,13 @@ final class SampleByBinder {
     }
 
     private void validateSdtCompdev(ExpressionNode compdev, SqlExecutionContext executionContext) throws SqlException {
-        Function function = null;
-        try {
-            function = functionParser.parseFunction(ExpressionNode.deepClone(ctx.bindingExpressions, compdev), EmptyRecordMetadata.INSTANCE, executionContext);
+        try (Function function = functionParser.parseFunction(ExpressionNode.deepClone(ctx.bindingExpressions, compdev), EmptyRecordMetadata.INSTANCE, executionContext)) {
             SubsampleValidator.validateSdtCompdev(function, compdev.position);
         } catch (SqlException e) {
             if (SubsampleValidator.hasUnresolvableSdtCompdevReference(compdev, executionContext)) {
                 throw SqlException.$(compdev.position, "SUBSAMPLE sdt requires a constant, non-negative finite compdev");
             }
             throw e;
-        } finally {
-            Misc.free(function);
         }
     }
 
@@ -668,7 +662,7 @@ final class SampleByBinder {
             final int targetType = output.getColumnType(keyCount + i);
             int mode = FillPlan.FILL_VALUE;
             int sourceId = -1;
-            int sourcePosition = 0;
+            int sourcePosition;
             CharSequence token = expression.token;
             if (SqlKeywords.isPrevKeyword(expression.token)) {
                 validateFillPrev(expression);
@@ -869,12 +863,13 @@ final class SampleByBinder {
             final ExpressionNode lo = from == null ? null : sampleByComparison(input.getOutput(), ">=", from);
             final ExpressionNode hi = to == null ? null : sampleByComparison(input.getOutput(), "<", to);
             predicate = binder.bindPredicate(joinBinder.combineJoinPredicates(lo, hi), input, source, executionContext);
+        } else if (to == null) {
+            predicate = bindSampleByRangeComparison(input, source, ">=", sampleByRangeBound(from, timezone, timestampType), executionContext);
         } else {
             final BoundExpression lo = from == null ? null
                     : bindSampleByRangeComparison(input, source, ">=", sampleByRangeBound(from, timezone, timestampType), executionContext);
-            final BoundExpression hi = to == null ? null
-                    : bindSampleByRangeComparison(input, source, "<", sampleByRangeBound(to, timezone, timestampType), executionContext);
-            predicate = lo == null ? hi : hi == null ? lo : ctx.expressionRewriter.combineConjunction(lo, hi, hi.getPosition());
+            final BoundExpression hi = bindSampleByRangeComparison(input, source, "<", sampleByRangeBound(to, timezone, timestampType), executionContext);
+            predicate = lo == null ? hi : ctx.expressionRewriter.combineConjunction(lo, hi, hi.getPosition());
         }
         return ctx.planNodes.filters.next().of(input, predicate, predicate.getPosition());
     }

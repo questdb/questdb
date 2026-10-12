@@ -37,8 +37,8 @@ import io.questdb.std.ObjectPool;
 
 /**
  * Binds a LATERAL body. A name the body does not define resolves against the preceding inputs of the
- * join, innermost lateral first, and binds as an outer column reference; {@link Decorrelation}
- * rewrites the dependent step into ordinary joins.
+ * join, innermost lateral first, and binds as an outer column reference; decorrelation in
+ * {@link io.questdb.griffin.optimiser.SqlOptimiser} rewrites the dependent step into ordinary joins.
  */
 final class LateralBinder implements Mutable {
     private final SqlBinder binder;
