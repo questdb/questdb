@@ -985,6 +985,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
+     * Rejects DEDUP ENABLE on a table with a delta-active partition before WAL submission.
+     * {@code TableWriter} refuses it on apply, which would suspend the table.
+     */
+    private static void rejectDedupEnable(
+            SqlExecutionContext executionContext,
+            TableToken tableToken,
+            int position
+    ) throws SqlException {
+        if (isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
+            return;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionDeltaActive(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot enable deduplication, table has delta-active partitions [table=")
+                            .put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; delta-active partitions are insert-only");
+                }
+            }
+        }
+    }
+
+    /**
      * Rejects UPDATE on a WAL table that has a parquet-format partition, including partitions in cold
      * storage. Parquet partitions are read-only; an UPDATE reaching one fails when applied, which on
      * a WAL table suspends the table because an acknowledged UPDATE can never be skipped. Rejecting
@@ -1588,7 +1614,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private void alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, GenericLexer lexer) throws SqlException {
+    private void alterTableDedupEnable(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata,
+            GenericLexer lexer
+    ) throws SqlException {
         if (!tableMetadata.isWalEnabled()) {
             throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
         }
@@ -1653,6 +1685,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else {
             throw SqlException.$(lexer.getPosition(), "deduplicate key column list expected");
         }
+        rejectDedupEnable(executionContext, tableToken, tableNamePosition);
         compiledQuery.ofAlter(setDedup.build());
     }
 
@@ -2995,7 +3028,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     lexer.unparseLast();
                     executionContext.getSecurityContext().authorizeAlterTableDedupEnable(tableToken);
-                    alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
+                    alterTableDedupEnable(executionContext, tableNamePosition, tableToken, tableMetadata, lexer);
                 }
             } else if (isEnableKeyword(tok)) {
                 compileAlterTableEnableExt(executionContext, tok, tableToken, tableNamePosition);
