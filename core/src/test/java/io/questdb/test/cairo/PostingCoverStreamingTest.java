@@ -76,17 +76,19 @@ public class PostingCoverStreamingTest extends AbstractCairoTest {
                     sizes.add((long) BATCH_ROWS * Long.BYTES);
                     sizes.add(4L * BATCH_ROWS * Long.BYTES);
                     sizes.add((long) BATCH_ROWS * BINARY_SLOT);
+                    sizes.add(0); // A removed cover retains its ordinal without a sidecar.
                     LongList auxSizes = new LongList();
                     auxSizes.add(0);
                     auxSizes.add(0);
                     auxSizes.add((BATCH_ROWS + 1L) * Long.BYTES);
+                    auxSizes.add(0);
                     for (int first = 0; first < ROW_COUNT; first += BATCH_ROWS) {
                         fillBatch(fixed, binary, aux, first);
                         writer.configureCovering(
-                                new long[]{fixed, fixed + (long) BATCH_ROWS * Long.BYTES, binary},
-                                new long[]{0, 0, aux}, new long[]{first, first, first},
-                                new int[]{3, 5, -1}, new int[]{1, 2, 3},
-                                new int[]{ColumnType.LONG, ColumnType.LONG256, ColumnType.BINARY}, 3, -1
+                                new long[]{fixed, fixed + (long) BATCH_ROWS * Long.BYTES, binary, 0},
+                                new long[]{0, 0, aux, 0}, new long[]{first, first, first, first},
+                                new int[]{3, 5, -1, 3}, new int[]{1, 2, 3, -1},
+                                new int[]{ColumnType.LONG, ColumnType.LONG256, ColumnType.BINARY, ColumnType.LONG}, 4, -1
                         );
                         writer.setCoveredColumnAddrSizes(sizes, auxSizes);
                         for (int i = 0; i < BATCH_ROWS; i++) {

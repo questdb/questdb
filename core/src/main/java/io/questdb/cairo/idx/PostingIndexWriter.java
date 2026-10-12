@@ -7827,6 +7827,9 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (sealCoverSource != null) {
             for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
                 writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
             }
         } else if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
@@ -7886,6 +7889,9 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (sealCoverSource != null) {
             for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
                 writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
             }
         } else if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
