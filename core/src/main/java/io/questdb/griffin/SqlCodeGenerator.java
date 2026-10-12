@@ -7454,6 +7454,101 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Tries the compiled (JIT) async filter over {@code factory}; returns null when JIT is off, the
+     * base has no page frames, or the filter cannot be compiled, and the caller then builds the Java
+     * async filter. On success the returned factory owns {@code factory}, {@code filter} and
+     * {@code limitLoFunction}; on a null return or a throw the caller still owns all three. Scalar
+     * sub-queries are not bound here (see generateFilter0()): such a filter falls back to Java.
+     */
+    @Nullable
+    private RecordCursorFactory generateJitFilter(
+            RecordCursorFactory factory,
+            Function filter,
+            ExpressionNode filterExpr,
+            IntHashSet filterUsedColumnIndexes,
+            @Nullable Function limitLoFunction,
+            int limitLoPos,
+            RecordMetadata filterMetadata,
+            IQueryModel model,
+            SqlExecutionContext executionContext,
+            boolean isPreTouchEnabled
+    ) throws SqlException {
+        final boolean isJitEnabled = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
+                && (!model.isUpdate() || executionContext.isWalApplication());
+        if (!isJitEnabled || !factory.supportsPageFrameCursor() || !JitUtil.isJitSupported()) {
+            return null;
+        }
+
+        ObjList<Function> bindVarFunctions = new ObjList<>();
+        CompiledCountOnlyFilter compiledCountOnlyFilter = null;
+        CompiledFilter compiledFilter = null;
+        ObjList<Function> perWorkerFilters = null;
+        try {
+            final int jitOptions;
+            try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
+                final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
+                jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
+                jitOptions = jitIRSerializer.serialize(filterExpr, forceScalar, enableJitDebug, enableJitNullChecks);
+            }
+
+            compiledFilter = new CompiledFilter();
+            compiledFilter.compile(jitIRMem, jitOptions);
+            compiledCountOnlyFilter = new CompiledCountOnlyFilter();
+            compiledCountOnlyFilter.compile(jitIRMem, jitOptions);
+            perWorkerFilters = compileWorkerFiltersConditionally(
+                    executionContext,
+                    filter,
+                    executionContext.getSharedQueryWorkerCount(),
+                    filterExpr,
+                    filterMetadata
+            );
+            final ExpressionNode jitFilterClone = deepClone(expressionNodePool, filterExpr);
+            final AsyncJitFilteredRecordCursorFactory jitFactory = new AsyncJitFilteredRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    factory,
+                    bindVarFunctions,
+                    compiledFilter,
+                    compiledCountOnlyFilter,
+                    filter,
+                    filterUsedColumnIndexes,
+                    reduceTaskFactory,
+                    perWorkerFilters,
+                    jitFilterClone,
+                    limitLoFunction,
+                    limitLoPos,
+                    executionContext.getSharedQueryWorkerCount(),
+                    isPreTouchEnabled
+            );
+            bindVarFunctions = null;
+            compiledCountOnlyFilter = null;
+            compiledFilter = null;
+            perWorkerFilters = null;
+            LOG.debug()
+                    .$("JIT enabled for (sub)query [tableName=").$safe(model.getName())
+                    .$(", fd=").$(executionContext.getRequestFd())
+                    .I$();
+            return jitFactory;
+        } catch (SqlException | LimitOverflowException ex) {
+            // These errors deliberately fall back to the Java async filter.
+            LOG.debug()
+                    .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
+                    .$(", ex=").$safe(ex.getFlyweightMessage())
+                    .$(", fd=").$(executionContext.getRequestFd()).I$();
+            return null;
+        } finally {
+            Misc.free(compiledCountOnlyFilter);
+            Misc.free(compiledFilter);
+            Misc.freeObjList(bindVarFunctions);
+            // The constructor nulls every slot it adopted, so this frees only what it did not.
+            Misc.freeObjList(perWorkerFilters);
+            jitIRSerializer.clear();
+            jitIRMem.truncate();
+        }
+    }
+
     private RecordCursorFactory generateJoinAsof(
             final boolean isSelfJoin,
             final IQueryModel model,
@@ -19654,6 +19749,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     IntHashSet filterUsedColumnIndexes = new IntHashSet();
                     collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+                    final boolean isPreTouchEnabled = SqlHints.hasEnablePreTouchHint(model, model.getName());
+                    final RecordCursorFactory jitFactory = generateJitFilter(
+                            coveringFactory,
+                            filter,
+                            filterExpr,
+                            filterUsedColumnIndexes,
+                            asyncLimitLoFunction,
+                            limitLoPos,
+                            queryMeta,
+                            model,
+                            executionContext,
+                            isPreTouchEnabled
+                    );
+                    if (jitFactory != null) {
+                        // the JIT factory owns the covering factory, the filter and the limit
+                        limitLoFunction = null;
+                        return jitFactory;
+                    }
                     // deepClone() runs after compileWorkerFiltersConditionally() (which restores the
                     // filter models) and can throw a node-pool OOM before the constructor adopts the
                     // per-worker filters. Keep the list catch-visible until construction succeeds;
@@ -19683,7 +19796,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 asyncLimitLoFunction,
                                 limitLoPos,
                                 executionContext.getSharedQueryWorkerCount(),
-                                SqlHints.hasEnablePreTouchHint(model, model.getName())
+                                isPreTouchEnabled
                         );
                         coveringPerWorkerFilters = null;
                         return asyncFilterFactory;
