@@ -27,6 +27,8 @@ package io.questdb.test.cairo.wal;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableSnapshotRestore;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalUtils;
@@ -42,7 +44,9 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.wal.seq.TableTransactionLogFile.HEADER_SIZE;
 import static io.questdb.cairo.wal.seq.TableTransactionLogFile.MAX_TXN_OFFSET_64;
@@ -389,6 +393,38 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenInAnotherModeNegatesTheFieldUntilAnAdaptiveOpenFlushesTheKeptParts() throws Exception {
+        // An open in NOSYNC, ASYNC or SYNC on a node that keeps the log durable itself breaks the field's promise: that
+        // run's records are not on the device before the header counts them. The open stores the field negated, as a
+        // V1 log does, and the slot keeps tracking the max txn through the run. The next ADAPTIVE open flushes every
+        // kept part from the field's magnitude up to the tail's part, then claims the log again: the field is the max
+        // txn plus one and the slot the max txn, and a later ADAPTIVE open flushes nothing.
+        assertMemoryLeak(() -> {
+            for (int mode : new int[]{CommitMode.NOSYNC, CommitMode.ASYNC, CommitMode.SYNC}) {
+                final String dir = "negated" + mode;
+                final String what = "mode " + mode;
+                writeLog(dir, 5, CommitMode.ADAPTIVE, 0);
+                Assert.assertEquals(what, 6, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+                // The run crosses into part 1.
+                appendLog(dir, PART, withMode(mode, 0));
+                Assert.assertEquals(what, -6, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+                Assert.assertEquals(what, PART + 5, readLong(headerFile(dir), KNOWN_MAX_TXN_OFFSET));
+                Assert.assertEquals(what, PART + 5, reopen(dir, withMode(mode, 0))[0]);
+                Assert.assertEquals(what, -6, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+                final TableTransactionLogV2SyncOrderTest.SyncOrderFilesFacade syncFf = new TableTransactionLogV2SyncOrderTest.SyncOrderFilesFacade();
+                Assert.assertEquals(what, PART + 5, reopen(dir, withMode(syncFf, CommitMode.ADAPTIVE, 10_000))[0]);
+                Assert.assertEquals(what, "[1, 0, _txnlog]", syncFf.getFdatasyncs().toString());
+                Assert.assertEquals(what, PART + 6, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+                Assert.assertEquals(what, PART + 5, readLong(headerFile(dir), KNOWN_MAX_TXN_OFFSET));
+                syncFf.getFdatasyncs().clear();
+                Assert.assertEquals(what, PART + 5, reopen(dir, withMode(syncFf, CommitMode.ADAPTIVE, 10_000))[0]);
+                Assert.assertEquals(what, "[]", syncFf.getFdatasyncs().toString());
+                Assert.assertEquals(what, PART + 6, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+            }
+        });
+    }
+
+    @Test
     public void testOpenLeavesRecordsPastTheTailAlone() throws Exception {
         // A replica's downloader writes a batch's records past the max txn and advances the max txn once the
         // segments have arrived. An open in between, in any mode, under either policy, with or without the field,
@@ -434,18 +470,28 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final long[][] deadRuns = {{CommitMode.ADAPTIVE, 10_000_000}, {CommitMode.NOSYNC, 0}, {CommitMode.ASYNC, 0}};
             final long[][] restarts = {{CommitMode.ADAPTIVE, 0}, {CommitMode.ADAPTIVE, 10_000_000}, {CommitMode.SYNC, 0}};
+            // The dead run's tail in the part the last ADAPTIVE flush ended in, and one or two parts past it: NOSYNC and
+            // ASYNC flush nothing when they move to the next part, so the restart must reach back to the last flush.
+            final int[] deadTails = {PART, PART - 1, PART / 2, PART + PART / 2, 2 * PART + 1};
             int run = 0;
             for (long[] deadRun : deadRuns) {
                 for (long[] restart : restarts) {
-                    for (int deadTail : new int[]{PART, PART - 1, PART / 2}) {
+                    for (int deadTail : deadTails) {
+                        if (restart[0] == CommitMode.SYNC && deadRun[0] != CommitMode.ADAPTIVE && deadTail > PART) {
+                            // A SYNC open flushes the part it leaves and the one it appends into, not the parts a NOSYNC
+                            // or ASYNC run filled before them: base behaviour, outside the field's protocol.
+                            continue;
+                        }
                         final String dir = "dead" + run++;
                         final String what = "dead run mode=" + deadRun[0] + ", window=" + deadRun[1] + "us, tail=" + deadTail
                                 + "; restart mode=" + restart[0] + ", window=" + restart[1] + "us";
                         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
                         writeLog(dir, 1, withMode(ff, CommitMode.ADAPTIVE, 0), LocalDurabilityPolicy.ALWAYS_ON);
-                        // Part 1's file exists and is durable, so the power loss keeps its directory entry.
-                        try (RandomAccessFile f = new RandomAccessFile(partFile(dir, 1), "rw")) {
-                            f.setLength((long) PART * RS);
+                        // Parts 1 and 2 exist and are durable, so the power loss keeps their directory entries.
+                        for (int part = 1; part <= 2; part++) {
+                            try (RandomAccessFile f = new RandomAccessFile(partFile(dir, part), "rw")) {
+                                f.setLength((long) PART * RS);
+                            }
                         }
                         ff.markDurableBaseline(root);
                         appendLog(dir, deadTail - 1, withMode(ff, (int) deadRun[0], deadRun[1]));
@@ -561,6 +607,43 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
             // The replica's first open dropped the field the primary had kept, so the promoted node trusts the
             // downloaded records; its own first append starts the field above them.
             Assert.assertEquals(0, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+        });
+    }
+
+    @Test
+    public void testRestoreLowersTheFieldAndTheSlotWithTheMaxTxn() throws Exception {
+        // A checkpoint restore lowers the max txn under records this binary flushed. Were the slot left above the new
+        // max txn, the records an older binary appends after a downgrade would sit under it, and the next ADAPTIVE
+        // open would scan them, find no checksum and cut them. The restore lowers the field and the slot with the max
+        // txn, in the same sector, so those records sit above the slot and are trusted. A negated field keeps its
+        // sign, and a log without the field keeps its zeros.
+        assertMemoryLeak(() -> {
+            for (long window : new long[]{10_000, 0}) {
+                final String dir = "restored" + window;
+                final String what = "window=" + window + "us";
+                writeLog(dir, 10, CommitMode.ADAPTIVE, window);
+                final long field = window > 0 ? 1 : 11;
+                Assert.assertEquals(what, field, readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+                restoreMaxTxn(dir, 5);
+                Assert.assertEquals(what, 5, readLong(headerFile(dir), MAX_TXN_OFFSET_64));
+                Assert.assertEquals(what, Math.min(field, 6), readLong(headerFile(dir), UNSYNCED_FROM_OFFSET));
+                Assert.assertEquals(what, 5, readLong(headerFile(dir), KNOWN_MAX_TXN_OFFSET));
+                appendAsOlderBinary(dir, 3);
+                Assert.assertEquals(what, 8, reopen(dir, adaptive(10_000))[0]);
+                Assert.assertEquals(what, 8, reopen(dir, adaptive(10_000))[0]);
+            }
+            writeLog("restoredNegated", 10, CommitMode.ADAPTIVE, 0);
+            appendLog("restoredNegated", 1, withMode(CommitMode.NOSYNC, 0));
+            Assert.assertEquals(-11, readLong(headerFile("restoredNegated"), UNSYNCED_FROM_OFFSET));
+            restoreMaxTxn("restoredNegated", 5);
+            Assert.assertEquals(5, readLong(headerFile("restoredNegated"), MAX_TXN_OFFSET_64));
+            Assert.assertEquals(-6, readLong(headerFile("restoredNegated"), UNSYNCED_FROM_OFFSET));
+            Assert.assertEquals(5, readLong(headerFile("restoredNegated"), KNOWN_MAX_TXN_OFFSET));
+            writeLog("restoredNoField", 10, CommitMode.NOSYNC, 0);
+            restoreMaxTxn("restoredNoField", 5);
+            Assert.assertEquals(5, readLong(headerFile("restoredNoField"), MAX_TXN_OFFSET_64));
+            final byte[] header = read(headerFile("restoredNoField"), 0, (int) HEADER_SIZE);
+            Assert.assertTrue(Arrays.toString(header), isZero(header, 24, (int) HEADER_SIZE));
         });
     }
 
@@ -694,6 +777,35 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
             } finally {
                 v2.close();
             }
+        }
+    }
+
+    // Lowers the log's max txn as a checkpoint restore does: the log is the table's sequencer directory, and the
+    // checkpoint holds the sequencer _meta the restore copies first.
+    private void restoreMaxTxn(String dir, long newMaxTxn) throws IOException {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path srcPath = new Path(); Path dstPath = new Path(); TableSnapshotRestore restore = new TableSnapshotRestore(configuration)) {
+            srcPath.of(root).concat(dir + "Checkpoint");
+            Assert.assertEquals(0, ff.mkdirs(srcPath.concat(WalUtils.SEQ_DIR).slash(), configuration.getMkDirMode()));
+            Assert.assertTrue(ff.touch(srcPath.concat(TableUtils.META_FILE_NAME).$()));
+            srcPath.of(root).concat(dir + "Checkpoint");
+            // The restore expects the log under the table's sequencer directory: move it there and back.
+            Assert.assertEquals(0, ff.mkdirs(dstPath.of(root).concat(dir).concat(WalUtils.SEQ_DIR).slash(), configuration.getMkDirMode()));
+            moveLog(dir, false);
+            try {
+                dstPath.of(root).concat(dir);
+                restore.processWalSequencerMetadata(srcPath, dstPath, new AtomicInteger(), newMaxTxn);
+            } finally {
+                moveLog(dir, true);
+            }
+        }
+    }
+
+    private void moveLog(String dir, boolean out) throws IOException {
+        for (String name : new String[]{WalUtils.TXNLOG_FILE_NAME, WalUtils.TXNLOG_PARTS_DIR}) {
+            final java.nio.file.Path top = Paths.get(root, dir, name);
+            final java.nio.file.Path seq = Paths.get(root, dir, WalUtils.SEQ_DIR, name);
+            java.nio.file.Files.move(out ? seq : top, out ? top : seq);
         }
     }
 

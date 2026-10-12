@@ -132,9 +132,10 @@ public interface TableTransactionLogFile extends Closeable {
     void fdatasyncTxnLog();
 
     /**
-     * Flushes like {@link #fdatasyncTxnLog()}, and first, in a log kept in parts, the older part files that hold
-     * txns from {@code fromTxn} on: a run in a mode that does not flush the log may have left any of them in the
-     * page cache only. A single-file log has nothing more to flush.
+     * Flushes like {@link #fdatasyncTxnLog()}, and first, in a log kept in parts, every older part file the log
+     * still keeps that holds txns from {@code fromTxn} on (a part the WAL purge deleted is skipped, not a stop): a
+     * run in a mode that does not flush the log may have left any of them in the page cache only. A single-file log
+     * has nothing more to flush.
      */
     default void fdatasyncTxnLog(long fromTxn) {
         fdatasyncTxnLog();

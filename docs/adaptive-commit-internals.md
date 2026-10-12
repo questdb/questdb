@@ -616,8 +616,8 @@ bytes.
   mode, the uploader makes every table's sequencer log durable before its first upload, then moves each table's
   durable frontier over the records the flush covered: one `syncfs` of the database root and of each linked volume on
   Linux, which reaches every part file; elsewhere each table's own flush, `TableSequencerAPI.fdatasyncTxnLog(token,
-  0)`, which in a V2 log first flushes every part file it still keeps (walking down from the part below the open one
-  and stopping at the first part that is gone), then the open part and the header. A commit before this step moves the
+  0)`, which in a V2 log first flushes every part file it still keeps (listing `_txn_parts`, so a part kept behind
+  one the purge deleted is reached), then the open part and the header. A commit before this step moves the
   frontier after flushing only the open part, so the walk starts at part 0. The step runs in
   `PrimaryRoleState.openLoops` before the uploader is installed as the WAL listener: a commit notified during the
   flush could ship the older records of a table the flush has not reached; a commit made meanwhile is shipped by the
@@ -670,10 +670,21 @@ change reads as unverified, never as torn, and a released binary ignores the new
   so a replica's downloader can write a batch past `maxTxn` before it advances it. Before the first `adaptive` append
   of a log instance into a part, the rest of that part is checked and, if any byte is non-zero, zeroed and flushed
   (`zeroPastTail`), so a stale record can never look valid after the next power loss. A `sync` or `adaptive` log
-  flushes a part before it moves to the next one, so a part a group window or another mode left unflushed is on the
-  disk before a later record is.
-  A field of 0 trusts every record: an older log, a log another mode wrote, or one a replica's downloader appends to
-  (Enterprise clears the field when its downloader advances `maxTxn`, and a replica's first open clears it too).
+  flushes the part it leaves before it moves to the next one. This does not reach earlier parts a `nosync` or
+  `async` run already left; the `adaptive` reopen's walk below reaches those.
+  A field of 0 trusts every record: an older log, a log no `adaptive` append has touched, or one a replica's
+  downloader appends to (Enterprise clears the field when its downloader advances `maxTxn`, and a replica's first
+  open clears it too). A `nosync`, `async` or `sync` open on a node that keeps the log durable itself stores the field
+  negated, as a V1 log does: those modes do not maintain the `adaptive` flushed-through claim, and the slot keeps
+  following `maxTxn`. The existing `sync` part flushes are unchanged. The next `adaptive` open scans the last part
+  from the field's magnitude, flushes every kept part from the magnitude's part to the tail's (one `fdatasync` each,
+  found by listing `_txn_parts`), and only then stores the field at `maxTxn + 1` and the slot at `maxTxn`, so a power
+  loss in the kernel's writeback window after that start cannot lose a part an earlier record of the log depends on.
+  A power loss before the claim is stored leaves the negative field, and the next `adaptive` open does the same work
+  again. A checkpoint restore that lowers `maxTxn` clamps the field's magnitude to at most `maxTxn + 1` and the slot
+  to at most `maxTxn` with it, in the same sector (`TableTransactionLogV2.lowerMaxTxn`, also used by the cut), so
+  records an older binary appends after a downgrade sit above the slot and are trusted at the next open instead of
+  being cut.
   The header slot next to the field (bytes 48-55) holds `maxTxn` as this release last stored it, while the field is
   set: it is stored before a `maxTxn` it raises and after one it lowers. A writer that does not know the field (an
   older binary after a downgrade, the downloader) moves `maxTxn` alone, so a `maxTxn` above the slot means the records
@@ -723,7 +734,7 @@ new bytes):
 |---|---|
 | `_txn` | body checksum and stamp at offsets 116-127; the lag checksum reset writes 4 bytes instead of 8 (a fix) |
 | `_cv` | a 16-byte trailer after each area; areas are placed with room for it |
-| sequencer V2 part files and `_txnlog` | a checksum in the 8 reserved bytes of each record; in the header, the flushed-through field at offset 40 and the slot holding `maxTxn` as this release last stored it at offset 48 (both written only once an `adaptive` append has touched the log) |
+| sequencer V2 part files and `_txnlog` | a checksum in the 8 reserved bytes of each record; in the header, the flushed-through field at offset 40 (negated by a `nosync`, `async` or `sync` open, positive again after the next `adaptive` open) and the slot holding `maxTxn` as this release last stored it at offset 48 (both written only once an `adaptive` append has touched the log) |
 | sequencer V1 `_txnlog` | the unsynced-from hint at header offset 40 (negated after a `nosync` or `async` open) |
 | `_meta` | none: the base layout (format minor version 2). A development build's enrolment field still loads. |
 | `_convert` | none |

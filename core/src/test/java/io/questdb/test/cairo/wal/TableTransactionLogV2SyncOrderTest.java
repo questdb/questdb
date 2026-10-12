@@ -108,8 +108,9 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
     }
 
     /**
-     * Verifies that the flush from a txn reaches the older part files the log keeps from that txn's part on, stops at
-     * the first part the WAL purge deleted, and flushes them before the open part and the header.
+     * Verifies that the flush from a txn reaches every older part file the log keeps from that txn's part on, past
+     * the parts the WAL purge deleted (it keeps a backup-locked or in-use part while it deletes later ones), and
+     * flushes them before the open part and the header. Only part files are flushed: a stray entry is ignored.
      */
     @Test
     public void testFdatasyncTxnLogFromTxnFlushesTheKeptPartsBeforeTheHeader() throws Exception {
@@ -132,10 +133,20 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
                     // The purge deleted part 1 and kept part 0, as a backup lock does.
                     final int len = path.size();
                     Assert.assertTrue(syncFf.removeQuiet(path.concat(WalUtils.TXNLOG_PARTS_DIR).slash().put(1).$()));
+                    // A stray file and a directory next to the parts.
+                    Assert.assertTrue(syncFf.touch(path.trimTo(len).concat(WalUtils.TXNLOG_PARTS_DIR).concat("12x").$()));
+                    Assert.assertEquals(0, syncFf.mkdir(path.trimTo(len).concat(WalUtils.TXNLOG_PARTS_DIR).concat("7").$(), configuration.getMkDirMode()));
                     path.trimTo(len);
 
-                    final long[] fromTxns = {0, 6, 7, Long.MAX_VALUE};
-                    final String[] expected = {"[3, 2, 4, _txnlog]", "[3, 2, 4, _txnlog]", "[3, 4, _txnlog]", "[4, _txnlog]"};
+                    final long[] fromTxns = {0, 1, 3, 6, 7, Long.MAX_VALUE};
+                    final String[] expected = {
+                            "[3, 2, 0, 4, _txnlog]",
+                            "[3, 2, 0, 4, _txnlog]",
+                            "[3, 2, 4, _txnlog]",
+                            "[3, 2, 4, _txnlog]",
+                            "[3, 4, _txnlog]",
+                            "[4, _txnlog]"
+                    };
                     for (int i = 0; i < fromTxns.length; i++) {
                         syncFf.getFdatasyncs().clear();
                         v2.fdatasyncTxnLog(fromTxns[i]);
