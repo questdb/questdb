@@ -199,6 +199,16 @@ import java.util.concurrent.locks.Lock;
 import static io.questdb.griffin.CompiledQuery.*;
 
 public class CairoEngine implements Closeable, WriterSource {
+    /**
+     * Runs once, on the first fatal flush failure of the engine, after the engine has fenced itself (every later
+     * writer acquire, commit, purge, acknowledgement and CHECKPOINT CREATE is refused by
+     * {@link #throwIfDurabilityFailed()}) and before the failure site throws its {@link CairoError}. Production
+     * ({@code ServerMain}) halts the process here, without closing writers. The default handler returns: an
+     * embedded engine or a test JVM keeps the fence as its stop, and the embedder closes the engine, fixes the
+     * cause and constructs a new one; nothing past the failure was acknowledged, and the new engine recovers as a
+     * restart does. The engine never closes itself from here, since the callback runs inside a flush, under writer
+     * monitors or the sequencer lock, and a library never halts its host.
+     */
     @FunctionalInterface
     public interface DurabilityFailureHandler {
         void onFailure(DurabilityFailure failure);
@@ -1271,6 +1281,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
+        // A checkpoint copies the tables' state, and an Enterprise incremental backup takes one without the final
+        // sync(): neither may copy a state whose flush failed. checkpointRelease stays open, it only releases.
+        throwIfDurabilityFailed();
         checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }
 
@@ -4620,7 +4633,15 @@ public class CairoEngine implements Closeable, WriterSource {
         return isUnderRoot(path, configuration.getDbRoot())
                 || isUnderRoot(path, configuration.getCheckpointRoot())
                 || isUnderRoot(path, configuration.getLegacyCheckpointRoot())
-                || isUnderRoot(path, configuration.getSqlCopyInputWorkRoot());
+                || isUnderRoot(path, configuration.getSqlCopyInputWorkRoot())
+                || holdsVolumePath(path);
+    }
+
+    // A table created IN VOLUME is a soft link into the volume, so the OS names its files by the volume's path.
+    private boolean holdsVolumePath(CharSequence path) {
+        final boolean[] held = {false};
+        configuration.getVolumeDefinitions().forEach((alias, volumeRoot) -> held[0] |= isUnderRoot(path, volumeRoot));
+        return held[0];
     }
 
     private void invalidateLiveViewsForBaseTable0(

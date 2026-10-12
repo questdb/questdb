@@ -125,6 +125,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
         final boolean isSync = tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC;
+        final boolean isPowerLossDurable = CommitMode.isPowerLossDurable(tableWriter.getEffectiveCommitMode());
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         ctx.clear();
         final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder(cairoConfiguration);
@@ -620,8 +621,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // _pm header is published below, so a power loss cannot leave a
                 // committed _pm pointing at data-file bytes still in the page
                 // cache. Both barriers of commitParquetMeta target _pm (footer,
-                // then header), not the data file.
-                if (isSync) {
+                // then header), not the data file. Only the power-loss-durable
+                // modes pay it: ASYNC promises nothing on a power loss and, as
+                // on the base release, flushes _pm alone.
+                if (isPowerLossDurable) {
                     final long parquetNameTxn = isRewrite ? txn : srcNameTxn;
                     path.of(pathToTable);
                     setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
@@ -3809,6 +3812,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final FilesFacade ff = tableWriter.getFilesFacade();
         final CairoConfiguration configuration = tableWriter.getConfiguration();
         final boolean isSync = tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC;
+        final boolean isPowerLossDurable = CommitMode.isPowerLossDurable(tableWriter.getEffectiveCommitMode());
         final long partitionNameTxn = txn - 1;
         final long mergeIndexAddr = sortedTimestampsAddr + srcOooLo * TableWriter.TIMESTAMP_MERGE_ENTRY_BYTES;
 
@@ -3911,14 +3915,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             parquetFileSize = ff.length(parquetPath.$());
 
-            if (isSync) {
-                // Data before metadata: the freshly encoded parquet data must be durable before _pm.
+            if (isPowerLossDurable) {
+                // Data before metadata: the freshly encoded parquet data must be durable before _pm. ASYNC
+                // flushes _pm alone, as on the base release.
                 final long parquetDataFd = TableUtils.openRW(ff, parquetPath.$(), LOG, configuration.getWriterFileOpenOpts());
                 try {
                     ff.fsync(parquetDataFd);
                 } finally {
                     ff.close(parquetDataFd);
                 }
+            }
+            if (isSync) {
                 ff.fsync(parquetMetaFd);
             }
 

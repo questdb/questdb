@@ -27,20 +27,25 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.CopyWalSegmentUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -107,6 +112,35 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testCheckpointCreateIsRefusedAfterAFailedFlush() throws Exception {
+        // A checkpoint, and the Enterprise incremental backup that takes one without the final sync(), copies the
+        // tables' state. Once a flush of that state has failed the copy is refused: where nothing halts the process
+        // (an embedded engine, a test JVM) the fence is the stop.
+        assertMemoryLeak(ff, () -> {
+            createWalTable("t");
+            failFirstFlush("t", table -> {
+                insertDays(table, "2024-01-04", 1);
+                drainWalQueue();
+            });
+            Assert.assertTrue("the failed flush stops the engine", engine.isDurabilityFailed());
+            boolean created = false;
+            try {
+                execute("CHECKPOINT CREATE");
+                created = true;
+            } catch (CairoError e) {
+                TestUtils.assertContains(e.getMessage(), "engine is poisoned");
+            } finally {
+                engine.resetDurabilityFailure();
+                releasePools();
+            }
+            if (created) {
+                execute("CHECKPOINT RELEASE");
+                Assert.fail("CHECKPOINT CREATE must be refused on a stopped engine");
+            }
+        });
     }
 
     @Test
@@ -180,6 +214,39 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
             assertFlushFailuresStopEngine("interface defaults", facadeWithInterfaceDefaults(new FilesFacadeImpl()), new String[]{"syncfs"}, failures);
             if (!failures.isEmpty()) {
                 Assert.fail("[mode=" + commitMode + "]\n" + failures);
+            }
+        });
+    }
+
+    @Test
+    public void testInVolumeTableFailureStopsOnlyTheEngineThatOwnsIt() throws Exception {
+        // A table created IN VOLUME lives behind a soft link, so the OS names its files by the volume's path and not
+        // by the database root's. A failed flush of one of them must still stop only the engine whose volume it is,
+        // not a second engine on the same facade object.
+        Assume.assumeTrue("the owner is found by the failed file's path, which only Linux tells", Os.isLinux());
+        assertMemoryLeak(ff, () -> {
+            final File volume = new File(temp.newFolder(), "volume");
+            Assert.assertTrue(volume.mkdir());
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of("vol->" + volume.getAbsolutePath(), p, root);
+            }
+            final File bystanderRoot = new File(temp.newFolder(), "db");
+            Assert.assertTrue(bystanderRoot.mkdir());
+            try (CairoEngine bystander = new CairoEngine(bystanderConfiguration(bystanderRoot.getAbsolutePath(), ff))) {
+                execute("CREATE TABLE t (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL IN VOLUME 'vol'");
+                failFirstFlush("t", table -> {
+                    insertDays(table, "2024-01-01", 1);
+                    drainWalQueue();
+                });
+                Assert.assertTrue("the failed flush stops the engine that owns the table", engine.isDurabilityFailed());
+                Assert.assertFalse(
+                        "the failed flush stopped an engine that does not own the file [failure=" + bystander.getDurabilityFailure() + ']',
+                        bystander.isDurabilityFailed()
+                );
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+                engine.resetDurabilityFailure();
+                releasePools();
             }
         });
     }
@@ -494,6 +561,37 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalSegmentCopyFlushFailureKeepsItsCause() throws Exception {
+        // Uncommitted rows roll into a new segment when a column's type changes under them. A flush failure inside
+        // that copy is wrapped in "failed to copy column file" and must stay its cause: the writer's handler then
+        // sees the flag, drops the pending durable txn and raises the stop, with or without a halt installed.
+        assertMemoryLeak(ff, () -> {
+            final int failAt = segmentCopyFlushOf("t_dry");
+            Assert.assertTrue("the segment copy flushes in " + commitMode, failAt > 0);
+            releasePools();
+            createWalTable("t");
+            try (WalWriter writer = getWalWriter("t")) {
+                appendRow(writer);
+                execute("ALTER TABLE t ALTER COLUMN i TYPE LONG");
+                ff.arm(failAt);
+                try {
+                    writer.commit();
+                    Assert.fail("the commit must raise the stop");
+                } catch (CairoError e) {
+                    // the handler's stop carries the flush failure; the fence's refusal does not
+                    Assert.assertTrue("the stop carries the flush failure [error=" + e + ']', CairoException.isDataSyncFailure(e));
+                } finally {
+                    ff.disarm();
+                }
+                Assert.assertNotNull("the segment copy's flush was failed", ff.getInjection());
+            }
+            Assert.assertTrue(engine.isDurabilityFailed());
+            engine.resetDurabilityFailure();
+            releasePools();
+        });
+    }
+
+    @Test
     public void testWalTruncate() throws Exception {
         assertEveryFlushFailureStopsEngine(
                 DataSyncFailurePropagationTest::createWalTable,
@@ -517,6 +615,14 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     private static CairoConfiguration bystanderConfiguration(String root, FilesFacade ff) {
         return engineConfiguration(root, ff, CommitMode.SYNC);
+    }
+
+    private static void appendRow(WalWriter writer) {
+        final TableWriter.Row row = writer.newRow(1_704_326_400_000_000L); // 2024-01-04
+        row.putInt(1, 1);
+        row.putSym(2, "a");
+        row.putVarchar(3, new io.questdb.std.str.Utf8String("a varchar too long to inline"));
+        row.append();
     }
 
     private static void callFlush(FilesFacade ff, String operation) {
@@ -555,6 +661,19 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
                 return ff;
             }
         };
+    }
+
+    // Fails the workload's first flush; the workload's own error is not the check.
+    private void failFirstFlush(String table, Workload action) throws Exception {
+        ff.arm(1);
+        try {
+            action.run(table);
+        } catch (Throwable ignore) {
+            // the statement or the apply fails; the check is on the engine
+        } finally {
+            ff.disarm();
+        }
+        Assert.assertNotNull("the workload takes a flush in " + commitMode, ff.getInjection());
     }
 
     private static FilesFacade facadeWithInterfaceDefaults(FilesFacade delegate) {
@@ -697,6 +816,23 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         return fds;
     }
 
+    // The first flush of the rolled segment's column copy, found by a dry run on its own table.
+    private int segmentCopyFlushOf(String table) throws Exception {
+        createWalTable(table);
+        try (WalWriter writer = getWalWriter(table)) {
+            appendRow(writer);
+            execute("ALTER TABLE " + table + " ALTER COLUMN i TYPE LONG");
+            ff.arm(-1);
+            try {
+                writer.commit();
+            } finally {
+                ff.disarm();
+            }
+        }
+        // the conversion's own flushes, not those of the copy helpers of the other columns
+        return ff.firstFlushFrom(CopyWalSegmentUtils.class.getName() + ".rollColumnToSegment");
+    }
+
     private static void releasePools() {
         engine.releaseInactive();
         // A table or view the failed workload left behind keeps its pooled WAL writer until the pool's TTL.
@@ -731,6 +867,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     private static final class FlushFailureFacade extends TestFilesFacadeImpl {
         private final AtomicInteger flushCount = new AtomicInteger();
         private final IntList firstFlushOfEachPath = new IntList();
+        private final ObjList<String> firstFlushStacks = new ObjList<>();
         private final HashSet<String> paths = new HashSet<>();
         private volatile long errnoThreadId = -1;
         private volatile int failAt = -1;
@@ -808,6 +945,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
             errnoThreadId = -1;
             flushCount.set(0);
             firstFlushOfEachPath.clear();
+            firstFlushStacks.clear();
             paths.clear();
             injection = null;
             this.failAt = failAt;
@@ -817,6 +955,16 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         void disarm() {
             errnoThreadId = -1;
             isCounting = false;
+        }
+
+        // The first flush of the dry run that the method ran itself (its frame is the innermost), or -1.
+        int firstFlushFrom(String method) {
+            for (int i = 0, n = firstFlushStacks.size(); i < n; i++) {
+                if (firstFlushStacks.getQuick(i).startsWith("    " + method + '(')) {
+                    return firstFlushOfEachPath.getQuick(i);
+                }
+            }
+            return -1;
         }
 
         IntList getFirstFlushOfEachPath() {
@@ -838,8 +986,10 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
             final int flush = flushCount.incrementAndGet();
             if (failAt < 0) {
                 synchronized (paths) {
-                    if (paths.add(stackOf(new Throwable()))) {
+                    final String stack = stackOf(new Throwable());
+                    if (paths.add(stack)) {
                         firstFlushOfEachPath.add(flush);
+                        firstFlushStacks.add(stack);
                     }
                 }
                 return false;

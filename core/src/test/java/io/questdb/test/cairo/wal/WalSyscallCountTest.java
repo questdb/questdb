@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -234,6 +235,40 @@ public class WalSyscallCountTest extends AbstractCairoTest {
      * then the generation's one file twice (its sections, then its header, which publishes it). The generation
      * rewritten here already held a valid header, so its name is durable and the table directory is not synced.
      */
+    /**
+     * The flushes of a Parquet partition. Base flushes its _pm in every mode but NOSYNC and never the data file;
+     * only the power-loss-durable modes flush the data file ahead of _pm, so a durable _pm never names data still
+     * in the page cache. A fresh partition flushes _pm in Java; an O3 merge into an existing one flushes it in
+     * Rust, out of the facade's sight.
+     */
+    @Test
+    public void testParquetPartitionFlushes() throws Exception {
+        Assume.assumeFalse("the sequencer log format does not change the partition writes", isV2);
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        final CountingFacade ff = new CountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000L), x FROM long_sequence(10)");
+            ff.startSyncLog();
+            drainWalQueue();
+            ff.stopSyncLog();
+            final List<String> fresh = new ArrayList<>(ff.syncLog);
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:30.000000Z', 100)");
+            ff.startSyncLog();
+            drainWalQueue();
+            ff.stopSyncLog();
+            final List<String> merge = new ArrayList<>(ff.syncLog);
+            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n11\n");
+            final boolean flushesData = CommitMode.isPowerLossDurable(CommitMode.fromString(commitMode));
+            Assert.assertEquals("a fresh Parquet partition's data file flush " + fresh,
+                    flushesData, flushesOf(fresh, TableUtils.PARQUET_PARTITION_NAME) > 0);
+            Assert.assertEquals("a fresh Parquet partition's _pm flush " + fresh,
+                    !"nosync".equals(commitMode), flushesOf(fresh, TableUtils.PARQUET_METADATA_FILE_NAME) > 0);
+            Assert.assertEquals("an O3 merge into a Parquet partition's data file flush " + merge,
+                    flushesData, flushesOf(merge, TableUtils.PARQUET_PARTITION_NAME) > 0);
+        });
+    }
+
     @Test
     public void testPeriodicSavePointSyncs() throws Exception {
         Assume.assumeTrue("only ADAPTIVE takes save points", "adaptive".equals(commitMode));
@@ -295,6 +330,16 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             row.putArray(4, array);
         }
         row.append();
+    }
+
+    private static int flushesOf(List<String> syncLog, String file) {
+        int n = 0;
+        for (String entry : syncLog) {
+            if (entry.endsWith(" " + file)) {
+                n++;
+            }
+        }
+        return n;
     }
 
     private static String expected(String commitMode, boolean isV2, boolean isCommit, boolean isVarSize) {
@@ -452,6 +497,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public void fsyncDurable(long fd) {
             count("fsyncDurable");
+            logSync("fsyncDurable", fd);
             super.fsyncDurable(fd);
         }
 

@@ -110,8 +110,8 @@ public class ServerMain implements Closeable {
     public ServerMain(final Bootstrap bootstrap) {
         this.bootstrap = bootstrap;
         // OSS completes recovery inside newCairoEngine(), so install the fatal handler before construction.
-        // Enterprise overrides newCairoEngine() with partial initialization; the post-construction setter
-        // below preserves that path as well.
+        // Enterprise overrides newCairoEngine() with partial initialization and passes the bootstrap's handler
+        // to its engine too; the post-construction setter below is the back-stop for an override that does not.
         bootstrap.setDurabilityFailureHandler(this::onFatalDurabilityFailure);
         // bootstrap.newCairoEngine() returns a full-init engine in OSS (back-compat for tests).
         // Enterprise subclasses override newCairoEngine() to return a partial-init engine so that

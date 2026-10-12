@@ -402,8 +402,8 @@ can drop pages whose block allocation failed for good without recording an error
 flush failure (with the forms `dataSyncFailureOfFd` and `dataSyncFailureOfMapping` that name the file), tells the
 engine that owns the file at once, so a path that later drops, counts or wraps the exception (a task's error counter,
 a job's top-level catch, a wrapper without the cause) cannot lose the stop. The owner is a live engine whose files
-facade is `ff` and whose database, checkpoint or COPY work root holds the failed file, which the factory looks up on a
-failure only (Linux: `/proc/self/fd`, `/proc/self/maps`); so two engines on one facade object, a primary and a replica
+facade is `ff` and whose database, checkpoint, COPY work or volume (`cairo.volumes`) root holds the failed file, which the
+factory looks up on a failure only (Linux: `/proc/self/fd`, `/proc/self/maps`); so two engines on one facade object, a primary and a replica
 in one test JVM, hear only their own failures. Without a path (other systems, a test facade that gives none) or when
 no engine holds it, every engine on `ff` hears it, so a stop is never lost. A closed engine, or one whose construction
 failed, is unregistered. Each engine decides by `CairoEngine.isDataSyncFailureFatal`: the flag, and the commit mode
@@ -411,7 +411,8 @@ failed, is unregistered. Each engine decides by `CairoEngine.isDataSyncFailureFa
 to `nosync` (the object store holds the durable copy), reports the error and keeps running as on the base release,
 and a replica in `sync` stops. A
 fatal failure logs `fatal durability barrier failure [operation=..., errno=..., message=...]`, fences writers,
-acknowledgements and the WAL purge, and `ServerMain` halts the process with exit code 55 there, without closing
+acknowledgements, the WAL purge and `CHECKPOINT CREATE` (an Enterprise incremental backup takes one, without the final
+`sync()`, so a fenced engine ships no state whose flush failed), and `ServerMain` halts the process with exit code 55 there, without closing
 writers or running any clean-up (closing them would flush and publish state built on the failed flush). The
 handlers at the catch sites (`handleDataSyncFailure`, `poisonOnDataSyncFailure`) apply the same rule and turn the
 failure into the `CairoError` the caller throws; they no longer test a mode of their own. `nosync` and `async` keep
@@ -420,6 +421,17 @@ conversion to non-WAL stops in every mode, and the Enterprise promote flush, whi
 even while the replica policy may still be in force; both call `handleDataSyncFailureInEveryMode`.
 `DataSyncFailureModePolicyTest` keeps these rules by source scan, and `DataSyncFailurePropagationTest` fails every
 flush of its workloads in turn.
+
+Without `ServerMain` (an embedded engine, a test JVM) the fence is the stop. The default handler returns, and the
+factory's record outlives the exception: every writer acquire, commit, purge, acknowledgement and `CHECKPOINT CREATE`
+is then refused with `CairoError` (`engine is poisoned by a failed durability barrier`), whatever catch the failure
+itself reached; the one wrap that lost the flag, the rolled segment's column copy (`CopyWalSegmentUtils`), now keeps
+it as the cause, so the WAL writer's handler drops the pending durable txn and raises the stop. The embedder closes
+the engine, fixes the cause and constructs a new one: nothing past the failure was acknowledged, the WAL holds the
+rest, and the new engine recovers as a restart does. The engine does not close itself (a close from inside a flush,
+under writer monitors or the sequencer lock, would deadlock or free memory under a caller), and a library never halts
+its host. Enterprise installs the handler at construction (`EntBootstrap` passes the bootstrap's handler to the
+`EntCairoEngine` constructor), so a failure inside the partial constructor halts as one after it does.
 
 Known gap (D62): a flush that Rust runs (the Parquet `_pm` barriers in an O3 merge or an ATTACH, Enterprise cold
 storage) reaches Java as a plain error without the flag, so it fails the statement or suspends the table instead of

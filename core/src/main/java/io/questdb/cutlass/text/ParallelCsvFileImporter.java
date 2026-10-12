@@ -670,6 +670,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     // A failed flush in SYNC and ADAPTIVE stopped the engine where it failed (a server halts
                     // there), so there is no clean-up: what is left is what a crash during the import leaves.
                     if (cairoEngine.isDataSyncFailureFatal(t)) {
+                        if (writer != null) {
+                            // The close in the finally must not commit on a fenced engine: a distressed writer
+                            // closes without a commit, so the work directory is removed below.
+                            writer.markDistressed();
+                        }
                         throw cairoEngine.poisonOnDataSyncFailure(t);
                     }
                     cleanUp();

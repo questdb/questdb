@@ -401,6 +401,11 @@ public class Bootstrap {
         );
     }
 
+    // For a subclass that builds its own engine: the handler must be the engine's from its construction.
+    protected CairoEngine.DurabilityFailureHandler getDurabilityFailureHandler() {
+        return durabilityFailureHandler;
+    }
+
     public void setDurabilityFailureHandler(@NotNull CairoEngine.DurabilityFailureHandler durabilityFailureHandler) {
         this.durabilityFailureHandler = durabilityFailureHandler;
     }

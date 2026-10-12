@@ -591,6 +591,11 @@ The process exits with code 55. No acknowledgement was sent for anything the fai
 (a full disk, a failing device, an I/O error in the system log), then start again: recovery puts every table back
 at its save point and the WAL apply replays the rest. While the disk keeps failing, every start stops the same way.
 
+An embedded engine, built without `ServerMain`, does not halt: after the failure it refuses every further write,
+acknowledgement and `CHECKPOINT CREATE` with `engine is poisoned by a failed durability barrier`. Close it, fix the
+cause and construct a new one; nothing past the failure was acknowledged, and the new engine recovers as a restart
+does.
+
 A flush that the Rust code runs does not stop the server yet: the Parquet metadata (`_pm`) barriers of an
 out-of-order merge into a Parquet partition or of an ATTACH, and Enterprise cold storage. Its failure fails the
 statement or suspends the table (section 11.3) instead; no acknowledged data is lost, because the `_pm` footer is
