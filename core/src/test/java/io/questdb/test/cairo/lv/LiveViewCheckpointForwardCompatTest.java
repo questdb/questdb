@@ -246,14 +246,27 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     }
 
     @Test
-    public void testAFutureHeadOverAPredecessorWhoseTimestampGroupGrewIsRebuiltRatherThanHealed() throws Exception {
+    public void testAFutureHeadOverATiedBoundaryItReplacedIsHealed() throws Exception {
         assertMemoryLeak(() -> {
-            // A tie on the head's predecessor after it sealed; the head sealed above it holds the
-            // tie. The heal warms up from the predecessor, which does not, and positions the roots
-            // it rebuilds from the durable table, which does - so the restore's row count would
-            // pass over accumulators short by the tie.
+            // A tie on the boundary at 09:00:30 after it sealed. The seal at 09:00:40 holds the
+            // tie and takes that boundary's place, so the heal of the unreadable head warms up
+            // from the boundary at 09:00:20, which holds every row at or below it, and folds both
+            // 09:00:30 rows back from the base table.
             seedFiveBoundaries(null, 30, "acct-1");
             rollBackTheHead();
+
+            capture.drain();
+            capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing");
+            capture.assertLogged("reconstructed corrupt live view checkpoint roots");
+            capture.assertNotLogged(HEAL_DECLINED);
+            capture.assertNotLogged("live view checkpoint timeline rebuild does not match durable materialization");
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            Assert.assertEquals(
+                    "the heal re-versions the head in place over the four boundaries the seed left",
+                    BOUNDARIES - 1,
+                    countSealedBoundaries("lv")
+            );
 
             // A row of the tied account in the same anchor day reads the accumulators back. Without
             // the tie they would answer 163.0 over four rows.
@@ -269,11 +282,6 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                     2026-01-01T09:00:50.000000Z\tacct-1\t1163.0\t5
                     """);
             assertViewMatchesRecompute();
-            capture.drain();
-            capture.assertLogged(HEAL_DECLINED + " [view=lv, boundary=2026-01-01T09:00:30.000000Z, "
-                    + "recordedRows=4, durableRows=5]");
-            capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
-            assertRebuiltFromAppliedBase("lv");
             assertNoRefreshFaults("lv");
         });
     }
@@ -1493,6 +1501,8 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
      * first commit, below the first boundary. {@code tieAccount} commits a row of 1000.0 on the
      * boundary at {@code tieSecond} right after that boundary sealed: the cadence seals no second
      * boundary on one timestamp, so the tie leaves that boundary describing part of its group.
+     * Below the newest boundary, the next seal holds the tie and takes the tied boundary's place,
+     * which leaves four boundaries; on the newest, the tie leaves it short and all five stand.
      */
     private void seedFiveBoundaries(String earlierRow, int tieSecond, String tieAccount) throws Exception {
         createView();
@@ -1512,7 +1522,12 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             }
         }
 
-        Assert.assertEquals("the seed must leave one boundary per commit", BOUNDARIES, countSealedBoundaries("lv"));
+        final boolean isTiedBoundaryReplaced = tieSecond >= 0 && tieSecond < 40;
+        Assert.assertEquals(
+                "the seed must leave one boundary per commit, less a tied one the next seal replaced",
+                isTiedBoundaryReplaced ? BOUNDARIES - 1 : BOUNDARIES,
+                countSealedBoundaries("lv")
+        );
         Assert.assertTrue("this build must seal the fused shape it is being asked to outgrow", isFusedHead("lv"));
         assertNoRefreshFaults("lv");
     }
@@ -1574,7 +1589,7 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                 ));
             }
         }
-        Assert.assertEquals("one state root per sealed boundary", BOUNDARIES, sites.size());
+        Assert.assertEquals("one state root per sealed boundary", countSealedBoundaries("lv"), sites.size());
         return sites;
     }
 

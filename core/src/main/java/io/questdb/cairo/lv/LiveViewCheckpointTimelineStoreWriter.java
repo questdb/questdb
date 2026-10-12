@@ -312,7 +312,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     /**
      * Appends one logical boundary strictly above the current head and publishes
-     * the generation that carries it.
+     * the generation that carries it. When the head's timestamp group grew after
+     * the head was sealed, the new boundary replaces the head in the same
+     * generation instead of stacking above it; see {@code batchMinTs}.
      *
      * @param batchMinTs       the lowest designated timestamp the runtime has
      *                         processed since the current head boundary, or
@@ -321,7 +323,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *                         pages only when this proves the batch sits strictly
      *                         above that boundary; anything weaker writes a complete
      *                         state image, which costs more but cannot splice a prefix
-     *                         the runtime no longer holds
+     *                         the runtime no longer holds. At or below the head's
+     *                         timestamp, it also drops the head root: that root holds
+     *                         only the part of its timestamp group the runtime had
+     *                         consumed when it was sealed, and the boundary appended
+     *                         here holds all of it. An unknown minimum drops nothing
      * @param seedCursorOffset the seed sweep's base-cursor row offset when a
      *                         mid-sweep cadence event drives this append, so a
      *                         restart can resume the sweep from the root this
@@ -1859,6 +1865,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         .put(" [head=").put(previousEntry.maxTimestamp)
                         .put(", candidate=").put(maxTimestamp).put(']');
             }
+            // Every root below the newest must hold every row at or below its timestamp,
+            // because a resume from a root replays only the rows above it. The head stops
+            // holding its whole group once the runtime feeds a row at its timestamp after
+            // it was sealed, and the batch minimum is what records that. This boundary sits
+            // above the head and holds those rows, so it takes the head's place. A repair's
+            // replay lowers the minimum too, which can drop a head that was complete; that
+            // costs a resume anchor, never a row. The one caller that passes no minimum, the
+            // corrupt-root heal, seals right after rebuilding the head from the base table.
+            final boolean isPreviousGroupOpen = hasPrevious
+                    && batchMinTs != Numbers.LONG_NULL
+                    && batchMinTs <= previousEntry.maxTimestamp;
 
             final LiveViewCheckpointPageRef oldStateRootRef = shells.oldStateRootRef;
             final LiveViewCheckpointPageRef oldFunctionDirectoryRef = shells.oldFunctionDirectoryRef;
@@ -1961,7 +1978,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
             final long timelineSegmentId = nextSegmentId++;
             final LiveViewCheckpointPageRef newTimelineRoot = shells.newTimelineRoot;
-            timelineWriter.append(oldTimelineRoot, entry, timelineSegmentId, newTimelineRoot);
+            if (isPreviousGroupOpen) {
+                timelineWriter.replaceLast(oldTimelineRoot, entry, timelineSegmentId, newTimelineRoot);
+            } else {
+                timelineWriter.append(oldTimelineRoot, entry, timelineSegmentId, newTimelineRoot);
+            }
             metadataBytesAdded = checkedAdd(metadataBytesAdded, timelineWriter.getLastSegmentBytes());
             registerMetadataSegment(
                     directoryWriter,
@@ -1977,6 +1998,27 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
             if (reusedSegmentIds.size() > 0) {
                 directoryWriter.applyRootReferenceChanges(emptySegmentIds, reusedSegmentIds, generation);
+            }
+            long droppedLogicalStateBytes = 0;
+            long droppedCheckpointId = Numbers.LONG_NULL;
+            if (isPreviousGroupOpen) {
+                // After the new root's references, so a segment both roots name never
+                // passes through zero.
+                truncateVisitor.of(
+                        checkpointsDir,
+                        oldCheckpointRoot,
+                        directoryWriter,
+                        shells.removedSegmentIds,
+                        definitionTxn,
+                        generation
+                );
+                try {
+                    truncateVisitor.onEntry(previousEntry);
+                    droppedLogicalStateBytes = truncateVisitor.droppedLogicalStateBytes;
+                } finally {
+                    truncateVisitor.clearBindings();
+                }
+                droppedCheckpointId = previousEntry.checkpointId;
             }
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
             final long directorySegmentId = nextSegmentId++;
@@ -2008,8 +2050,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             superblock.dataBytes = checkedAdd(metaStore.isValid() ? superblock.dataBytes : 0, dataSegmentBytes);
             superblock.logicalStateBytes = checkedAdd(
                     metaStore.isValid() ? superblock.logicalStateBytes : 0,
-                    boundary.logicalStateBytes
+                    checkedAdd(boundary.logicalStateBytes, -droppedLogicalStateBytes)
             );
+            if (isPreviousGroupOpen) {
+                superblock.retiredCheckpointCount = checkedAdd(superblock.retiredCheckpointCount, 1);
+            }
             // A cadence seal appends above every existing key, so it writes no
             // row-position delta node and the running total carries forward.
             superblock.rowPositionDeltaBytes = metaStore.isValid() ? superblock.rowPositionDeltaBytes : 0;
@@ -2032,6 +2077,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return shells.appendResult.of(
                     generation,
                     checkpointId,
+                    droppedCheckpointId,
                     boundary.logicalStateBytes,
                     dataSegmentBytes,
                     metadataBytesAdded,
@@ -4615,6 +4661,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     public static final class Result {
         private long checkpointId;
         private long dataBytesAdded;
+        private long droppedCheckpointId;
         private long generation;
         private long liveSegmentCount;
         private long logicalStateBytes;
@@ -4626,6 +4673,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private Result of(
                 long generation,
                 long checkpointId,
+                long droppedCheckpointId,
                 long logicalStateBytes,
                 long dataBytesAdded,
                 long metadataBytesAdded,
@@ -4636,6 +4684,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         ) {
             this.generation = generation;
             this.checkpointId = checkpointId;
+            this.droppedCheckpointId = droppedCheckpointId;
             this.logicalStateBytes = logicalStateBytes;
             this.dataBytesAdded = dataBytesAdded;
             this.metadataBytesAdded = metadataBytesAdded;
@@ -4652,6 +4701,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
         public long getDataBytesAdded() {
             return dataBytesAdded;
+        }
+
+        /**
+         * @return the id of the head root this seal replaced because its timestamp
+         * group grew after it was sealed, or {@link Numbers#LONG_NULL} when the seal
+         * replaced none
+         */
+        public long getDroppedCheckpointId() {
+            return droppedCheckpointId;
         }
 
         public long getGeneration() {

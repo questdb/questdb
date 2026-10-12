@@ -1733,6 +1733,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } finally {
             roleLock.unlock();
         }
+        if (timelineResult.getDroppedCheckpointId() != Numbers.LONG_NULL) {
+            LOG.info().$("live view seal replaced the previous root, whose timestamp group grew after it was sealed [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", droppedCheckpointId=").$(timelineResult.getDroppedCheckpointId())
+                    .$(", checkpointId=").$(timelineResult.getCheckpointId())
+                    .$(", batchMinTs=").$ts(batchMinTs)
+                    .$(", maxTs=").$ts(batchMaxTs).I$();
+        }
         // Only a published root moves the window the next seal measures over. A
         // failed append leaves it open, so the next attempt still sees every row
         // fed since the root that is actually on disk.
@@ -12564,7 +12572,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // that spans two refresh cycles - so it is a skipped cadence, not a failed
             // one: the head, the cadence counters and the batch-minimum the next seal
             // shares chunks against all stay where they are, and the next cycle to
-            // reach a higher timestamp seals this cycle's rows along with its own.
+            // reach a higher timestamp seals this cycle's rows along with its own. That
+            // minimum sits on the head, so that seal also takes the head's place.
             LOG.debug().$("live view head checkpoint boundary not above head, seal skipped [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", head=").$ts(instance.getHeadCheckpointMaxTs())

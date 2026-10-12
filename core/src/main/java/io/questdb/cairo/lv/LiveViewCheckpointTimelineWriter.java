@@ -116,7 +116,7 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             leaf.insertEntryAt(0, entry);
             writePage(leaf, newRootOut);
         } else {
-            insertRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), entry, 0);
+            insertRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), entry, 0, false);
             final InsertResult root = resultAt(0);
             if (root.split) {
                 newRootBuilder.resetInternal();
@@ -179,6 +179,30 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
     public void of(@Transient @NotNull Path checkpointsDir) {
         this.checkpointsDir.of(checkpointsDir);
         reader.of(checkpointsDir);
+    }
+
+    /**
+     * Replaces the tree's last entry with {@code entry}, whose key must sit above
+     * every key the tree holds, and fills {@code newRootOut} with the new tree
+     * root. The descent follows the rightmost path an append of {@code entry}
+     * would take, and the leaf it lands in keeps its entry count, so nothing
+     * splits and only that path is copied into {@code newSegmentId}.
+     */
+    public void replaceLast(
+            @NotNull LiveViewCheckpointPageRef oldRoot,
+            @NotNull LiveViewCheckpointTimelineEntry entry,
+            long newSegmentId,
+            @NotNull LiveViewCheckpointPageRef newRootOut
+    ) {
+        if (oldRoot.isNull()) {
+            throw CairoException.critical(0).put("cannot replace the last entry of an empty live view checkpoint timeline");
+        }
+        beginSegment(newSegmentId);
+        insertRec(oldRoot.getSegmentId(), oldRoot.getOffset(), oldRoot.getLength(), entry, 0, true);
+        final InsertResult root = resultAt(0);
+        assert !root.split;
+        newRootOut.of(root.leftRef.getSegmentId(), root.leftRef.getOffset(), root.leftRef.getLength());
+        commitSegment();
     }
 
     /**
@@ -305,7 +329,14 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         res.split = true;
     }
 
-    private void insertRec(long seg, long off, long len, LiveViewCheckpointTimelineEntry entry, int depth) {
+    private void insertRec(
+            long seg,
+            long off,
+            long len,
+            LiveViewCheckpointTimelineEntry entry,
+            int depth,
+            boolean isReplacingLast
+    ) {
         final LiveViewCheckpointTimelineNode node = leftAt(depth);
         reader.openAndDecode(seg, off, len, node);
         // A descended node is always written back, so decoding one is exactly what
@@ -313,6 +344,18 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
         releasedSegmentIds.add(seg);
         final InsertResult res = resultAt(depth);
         if (node.isLeaf()) {
+            if (isReplacingLast) {
+                // A key above every key descends to the leaf holding the tree's last
+                // entry, which is the one it replaces.
+                final int last = node.count() - 1;
+                assert last >= 0 && LiveViewCheckpointTimeline.compareKey(
+                        node.entryMaxTimestamp[last],
+                        node.entryCheckpointId[last],
+                        entry.maxTimestamp,
+                        entry.checkpointId
+                ) < 0 : "live view checkpoint replacement key not above the last entry";
+                node.retainPrefix(last);
+            }
             final int pos = node.leafInsertPosition(entry.maxTimestamp, entry.checkpointId);
             assert pos == node.count()
                     || LiveViewCheckpointTimeline.compareKey(node.entryMaxTimestamp[pos], node.entryCheckpointId[pos], entry.maxTimestamp, entry.checkpointId) != 0
@@ -322,7 +365,8 @@ public class LiveViewCheckpointTimelineWriter implements Closeable {
             return;
         }
         final int ci = node.childIndexFor(entry.maxTimestamp, entry.checkpointId);
-        insertRec(node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci], entry, depth + 1);
+        assert !isReplacingLast || ci == node.count() - 1;
+        insertRec(node.childSegmentId[ci], node.childOffset[ci], node.childLength[ci], entry, depth + 1, isReplacingLast);
         final InsertResult child = resultAt(depth + 1);
         node.setChildEntry(ci, child.leftMinTs, child.leftMinId, child.leftRef.getSegmentId(), child.leftRef.getOffset(), child.leftRef.getLength());
         if (child.split) {

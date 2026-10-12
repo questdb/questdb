@@ -932,71 +932,66 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
 
     @Test
     public void testAKeyedRepairAtTheChainedBoundaryBoundOverCoveringRootsStaysKeyed() throws Exception {
-        // The control for the case below: the same three roots, none of them tied, are re-versioned
-        // by key.
-        assertKeyedRepairAroundTheChainedBoundaryBound(3, -1, 0, true);
-    }
-
-    @Test
-    public void testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRoot() throws Exception {
-        // Three roots in the range and a bound of three: the splice re-versions all three, so the
-        // lowest one, which acct-1 tied, must be vetted too. A walk that stopped one root short
-        // would re-stamp it by key, and the late acct-1 row would resume from it one short.
-        assertKeyedRepairAroundTheChainedBoundaryBound(3, 0, 0, false);
-    }
-
-    @Test
-    public void testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRootOverARootBelowItsRange() throws Exception {
-        // The case above with one more root, sealed on January 2, below the correction. The
-        // splice re-versions only the three roots inside the range, so the bound still admits
-        // it, and the walk must count only those three as well. A walk that counted the
-        // January 2 root too would read the repair as past the bound, vet none of the roots,
-        // and let the splice re-stamp the tied lowest root by key.
-        assertKeyedRepairAroundTheChainedBoundaryBound(3, 0, 1, false);
-    }
-
-    @Test
-    public void testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRootOnTheCorrectionsTimestamp() throws Exception {
-        // testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRoot with the acct-4 correction
-        // on the tied lowest root's own timestamp, 00:48:50, rather than below it. That puts the
-        // root exactly on the low end of the range the splice re-versions, and the walk must vet
-        // it there too. A walk that stopped at a root on the low end would leave the tied root
-        // unvetted, the splice would re-stamp it by key, and the late acct-1 row would resume
-        // from it one short: 4.0 and 5.0 where 5.0 and 6.0 belong. The test this one varies
-        // serves as its control from below.
-        assertKeyedRepairAroundTheChainedBoundaryBound(3, 0, 0, "2026-01-03T00:48:50.000000Z", false);
+        // The same three roots, none of them tied, are re-versioned by key.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, -1, 0);
     }
 
     @Test
     public void testAKeyedRepairAtTheChainedBoundaryBoundOverCoveringRootsStaysKeyedWithTheCorrectionOnTheLowest() throws Exception {
-        // The control for testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRootOnTheCorrectionsTimestamp
-        // from the other side: the same correction on the lowest root's timestamp, with acct-1's
-        // second row one second past that root rather than on it. The view's table does not hold
-        // the correction yet when the walk vets the root, so the correction does not tie it, every
-        // root covers its group, and the root on the low end keeps the keyed read.
-        assertKeyedRepairAroundTheChainedBoundaryBound(3, -1, 0, "2026-01-03T00:48:50.000000Z", true);
+        // The correction on the lowest root's timestamp, with acct-1's second row one second past
+        // that root rather than on it. The view's table does not hold the correction yet when the
+        // walk vets the root, so the correction does not tie it, every root covers its group, and
+        // the root on the low end of the range keeps the keyed read.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, -1, 0, "2026-01-03T00:48:50.000000Z");
+    }
+
+    @Test
+    public void testAKeyedRepairOnATiedRootsTimestampStaysKeyedOnceTheSealReplacedIt() throws Exception {
+        // The correction on the timestamp of the root acct-1 tied, 00:48:50. The seal after the
+        // tie replaced that root, so the correction lands below both roots left in the range,
+        // each covering its group, and the read stays keyed.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, 0, 0, "2026-01-03T00:48:50.000000Z");
+    }
+
+    @Test
+    public void testAKeyedRepairOverATiedHighestRootStaysKeyedOnceTheSealReplacedIt() throws Exception {
+        // acct-1 ties the root at 09:54 in the commit that closes January 3, and that commit's
+        // seal replaces it. The splice re-versions the two roots left, by key.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, 2, 0);
+    }
+
+    @Test
+    public void testAKeyedRepairOverATiedLowestRootStaysKeyedOnceTheSealReplacedIt() throws Exception {
+        // acct-1 ties the root at 00:48:50, and the next seal replaces it. A root that kept only
+        // part of its group would turn the keyed read off; the two roots left cover theirs, so the
+        // splice re-versions both by key and the late acct-1 row reads the tie back.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, 0, 0);
+    }
+
+    @Test
+    public void testAKeyedRepairOverATiedLowestRootStaysKeyedOverARootBelowItsRange() throws Exception {
+        // The case above with one more root, sealed on January 2, below the correction. The
+        // splice re-versions only the roots inside the range, and the walk counts only those.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, 0, 1);
     }
 
     @Test
     public void testAKeyedRepairPastTheChainedBoundaryBoundStaysKeyedOverATiedHighestRoot() throws Exception {
-        // Three roots in the range and a bound of two: the splice declines and re-versions none
-        // of them, so the tied root at the top of the range, the first one a walk from H reaches,
-        // has nothing to protect and must not cost the keyed read.
-        assertKeyedRepairAroundTheChainedBoundaryBound(2, 2, 0, true);
+        // Two roots in the range once the seal replaced the tied one, and a bound of one: the
+        // splice declines and re-versions none of them, and the keyed read stays.
+        assertKeyedRepairAroundTheChainedBoundaryBound(1, 2, 0);
     }
 
     @Test
     public void testAKeyedRepairPastTheChainedBoundaryBoundStaysKeyedOverATiedLowestRoot() throws Exception {
-        // As the case above, with the tie on the lowest root, the last one a walk from H reaches:
-        // the splice still re-versions none of the three, so a walk that vetted on past the bound,
-        // or read crossing the bound as a failure, would cost the keyed read for nothing.
-        assertKeyedRepairAroundTheChainedBoundaryBound(2, 0, 0, true);
+        // As the case above, with the tie on the lowest root.
+        assertKeyedRepairAroundTheChainedBoundaryBound(1, 0, 0);
     }
 
     @Test
-    public void testAKeyedRepairWithTheChainedBoundaryBoundOffStaysKeyedOverATiedRoot() throws Exception {
+    public void testAKeyedRepairWithTheChainedBoundaryBoundOffStaysKeyed() throws Exception {
         // A bound of zero declines every splice, so no root is re-versioned and none is vetted.
-        assertKeyedRepairAroundTheChainedBoundaryBound(0, 0, 0, true);
+        assertKeyedRepairAroundTheChainedBoundaryBound(0, 0, 0);
     }
 
     @Test
@@ -1847,11 +1842,12 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
 
     /**
      * The tie burst of {@link #commitTheTieBurst} at a one-row cadence, which seals a root per
-     * commit, so January 3 carries three roots inside the range the acct-4 correction repairs by
-     * key: the lowest at 00:48:50, the next at 01:36:32, and the highest at 09:54, where the
-     * acct-9 filler that makes the keyed read the cheaper one ends. The splice re-versions those
-     * roots only while they number at most {@code maxChainedBoundaries}, and only a root it
-     * re-versions needs to cover its timestamp group for the keyed read to keep it.
+     * commit, so January 3 carries up to three roots inside the range the acct-4 correction
+     * repairs by key: the lowest at 00:48:50, the next at 01:36:32, and the highest at 09:54,
+     * where the acct-9 filler that makes the keyed read the cheaper one ends. A tie on a root
+     * makes the next seal replace it, which leaves two. The splice re-versions the roots only
+     * while they number at most {@code maxChainedBoundaries}, and every root left covers its
+     * timestamp group, so the correction always reads January 3 by key.
      * <p>
      * After the repair, a row tying the head sends a late acct-1 row at 01:00 through a resume
      * from the newest root below it, which reads acct-1's state back from that root.
@@ -1862,25 +1858,22 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
      * @param rootsBelowRange       how many acct-5 commits, each sealing a root on January 2,
      *                              precede the burst. Those roots sit below the range, so the
      *                              splice never re-versions them
-     * @param isKeyedRepairExpected whether the correction reads January 3 by key
      */
     private void assertKeyedRepairAroundTheChainedBoundaryBound(
             int maxChainedBoundaries,
             int tiedRoot,
-            int rootsBelowRange,
-            boolean isKeyedRepairExpected
+            int rootsBelowRange
     ) throws Exception {
         assertKeyedRepairAroundTheChainedBoundaryBound(
                 maxChainedBoundaries,
                 tiedRoot,
                 rootsBelowRange,
-                "2026-01-03T00:32:37.000000Z",
-                isKeyedRepairExpected
+                "2026-01-03T00:32:37.000000Z"
         );
     }
 
     /**
-     * {@link #assertKeyedRepairAroundTheChainedBoundaryBound(int, int, int, boolean)} with the
+     * {@link #assertKeyedRepairAroundTheChainedBoundaryBound(int, int, int)} with the
      * acct-4 correction at {@code correctionTs}, which sets the low end of the range the repair
      * re-versions. A correction on the lowest root's own timestamp puts that root exactly on the
      * low end, where the walk that vets the roots must still reach it.
@@ -1891,14 +1884,15 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             int maxChainedBoundaries,
             int tiedRoot,
             int rootsBelowRange,
-            String correctionTs,
-            boolean isKeyedRepairExpected
+            String correctionTs
     ) throws Exception {
-        final int rootCount = 3;
+        final int sealedRootCount = 3;
+        // A tie on a root makes the seal of the next commit replace it.
+        final int rootCount = tiedRoot < 0 ? sealedRootCount : sealedRootCount - 1;
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, maxChainedBoundaries);
         final boolean isLowestRootTied = tiedRoot == 0;
-        final boolean isHighestRootTied = tiedRoot == rootCount - 1;
+        final boolean isHighestRootTied = tiedRoot == sealedRootCount - 1;
         final String acct1SecondTs = isLowestRootTied ? "2026-01-03T00:48:50.000000Z" : "2026-01-03T00:48:51.000000Z";
         assertMemoryLeak(() -> {
             createTieBurstView(true);
@@ -1924,7 +1918,11 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                         earlierDayRoots++;
                     }
                 }
-                Assert.assertEquals("January 3 must carry one root per commit", rootCount, closedDayRoots);
+                Assert.assertEquals(
+                        "January 3 must carry one root per commit, less the tied root the next seal replaced",
+                        rootCount,
+                        closedDayRoots
+                );
                 Assert.assertEquals("January 2 must carry one root per commit", rootsBelowRange, earlierDayRoots);
                 final long keyedRepairsBefore = job.keyedReplaySegmentCountForTest();
                 final long rootsVersionedBefore = instance.getCheckpointRepairRootsVersioned();
@@ -1937,9 +1935,8 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                         job.keyedScanCheaperCountForTest()
                 );
                 Assert.assertEquals(
-                        "a root the splice re-versions must cover its timestamp group for the read to stay keyed,"
-                                + " and a root it leaves alone costs nothing",
-                        isKeyedRepairExpected ? 1 : 0,
+                        "every root in the range covers its timestamp group, so the read stays keyed",
+                        1,
                         job.keyedReplaySegmentCountForTest() - keyedRepairsBefore
                 );
                 Assert.assertEquals(
