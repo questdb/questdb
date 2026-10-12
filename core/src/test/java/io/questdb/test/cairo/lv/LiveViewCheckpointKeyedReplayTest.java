@@ -956,6 +956,28 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRootOnTheCorrectionsTimestamp() throws Exception {
+        // testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRoot with the acct-4 correction
+        // on the tied lowest root's own timestamp, 00:48:50, rather than below it. That puts the
+        // root exactly on the low end of the range the splice re-versions, and the walk must vet
+        // it there too. A walk that stopped at a root on the low end would leave the tied root
+        // unvetted, the splice would re-stamp it by key, and the late acct-1 row would resume
+        // from it one short: 4.0 and 5.0 where 5.0 and 6.0 belong. The test this one varies
+        // serves as its control from below.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, 0, 0, "2026-01-03T00:48:50.000000Z", false);
+    }
+
+    @Test
+    public void testAKeyedRepairAtTheChainedBoundaryBoundOverCoveringRootsStaysKeyedWithTheCorrectionOnTheLowest() throws Exception {
+        // The control for testAKeyedRepairAtTheChainedBoundaryBoundVetsItsLowestRootOnTheCorrectionsTimestamp
+        // from the other side: the same correction on the lowest root's timestamp, with acct-1's
+        // second row one second past that root rather than on it. The view's table does not hold
+        // the correction yet when the walk vets the root, so the correction does not tie it, every
+        // root covers its group, and the root on the low end keeps the keyed read.
+        assertKeyedRepairAroundTheChainedBoundaryBound(3, -1, 0, "2026-01-03T00:48:50.000000Z", true);
+    }
+
+    @Test
     public void testAKeyedRepairPastTheChainedBoundaryBoundStaysKeyedOverATiedHighestRoot() throws Exception {
         // Three roots in the range and a bound of two: the splice declines and re-versions none
         // of them, so the tied root at the top of the range, the first one a walk from H reaches,
@@ -1848,6 +1870,30 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
             int rootsBelowRange,
             boolean isKeyedRepairExpected
     ) throws Exception {
+        assertKeyedRepairAroundTheChainedBoundaryBound(
+                maxChainedBoundaries,
+                tiedRoot,
+                rootsBelowRange,
+                "2026-01-03T00:32:37.000000Z",
+                isKeyedRepairExpected
+        );
+    }
+
+    /**
+     * {@link #assertKeyedRepairAroundTheChainedBoundaryBound(int, int, int, boolean)} with the
+     * acct-4 correction at {@code correctionTs}, which sets the low end of the range the repair
+     * re-versions. A correction on the lowest root's own timestamp puts that root exactly on the
+     * low end, where the walk that vets the roots must still reach it.
+     *
+     * @param correctionTs the timestamp of the acct-4 correction, at or below the lowest root
+     */
+    private void assertKeyedRepairAroundTheChainedBoundaryBound(
+            int maxChainedBoundaries,
+            int tiedRoot,
+            int rootsBelowRange,
+            String correctionTs,
+            boolean isKeyedRepairExpected
+    ) throws Exception {
         final int rootCount = 3;
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, maxChainedBoundaries);
@@ -1883,8 +1929,8 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 final long keyedRepairsBefore = job.keyedReplaySegmentCountForTest();
                 final long rootsVersionedBefore = instance.getCheckpointRepairRootsVersioned();
 
-                // Below every root, on an account the tie does not involve.
-                commit("('2026-01-03T00:32:37.000000Z', 'acct-4', 3.0)", job);
+                // At or below the lowest root, on an account the tie does not involve.
+                commit("('" + correctionTs + "', 'acct-4', 3.0)", job);
                 Assert.assertEquals(
                         "the pricing must pick the keyed read for January 3",
                         1,
