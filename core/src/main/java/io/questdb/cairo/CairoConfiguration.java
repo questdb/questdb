@@ -607,6 +607,13 @@ public interface CairoConfiguration {
     int getO3LastPartitionMaxSplits();
 
     /**
+     * The widest table, in columns, whose merge-append frames a writer keeps open across commits - see
+     * {@link io.questdb.cairo.frm.file.CompositeFrameCache}. Each cached partition holds up to two files per column
+     * in each of two frames, so a wider table runs every commit on frames of its own. 0 caches nothing.
+     */
+    int getO3PartitionMergeAppendFrameCacheMaxColumns();
+
+    /**
      * How many partitions a writer keeps merge-append frames open for across commits - see
      * {@link io.questdb.cairo.frm.file.CompositeFrameCache}. 0 disables the cache.
      */

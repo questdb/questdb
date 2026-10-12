@@ -127,6 +127,23 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableWiderThanLimitKeepsNoFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // One below the table's four columns. At the limit the table is cached, as every other test here shows.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_MAX_COLUMNS, 3);
+            createTables();
+            insertBoth(batch("T12:00:30", 10_000, 10));
+            assertReusable(0);
+            insertBoth(batch("T06:00:30", 20_000, 10));
+            assertReusable(0);
+            insertBoth(batch("T18:00:30", 30_000, 10));
+            assertReusable(0);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "t", LOG);
+        });
+    }
+
+    @Test
     public void testTruncatedTableReleasesCachedFrames() throws Exception {
         assertRemovedPartitionReleasesCachedFrames("TRUNCATE TABLE t");
     }

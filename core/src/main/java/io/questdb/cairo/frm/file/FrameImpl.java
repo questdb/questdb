@@ -31,12 +31,9 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterMetadata;
 import io.questdb.cairo.IndexType;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.DeletedFrameColumn;
@@ -57,7 +54,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.Nullable;
@@ -69,10 +65,12 @@ import static io.questdb.cairo.frm.FrameColumn.COLUMN_CONTIGUOUS_FILE;
 import static io.questdb.cairo.frm.FrameColumn.COLUMN_MEMORY;
 
 public class FrameImpl implements Frame {
+    // How many columns execute() opens and dispatches as one batch of column tasks. It bounds open files only for a
+    // frame that releases its columns after each operation: a frame that keeps them open holds every one it opened.
+    private static final int COLUMN_BATCH_SIZE = 64;
     // addDataBytes keeps two longs per column: the var-size data bytes, then the leading NULL run (see
     // extendLeadingNullRun) of the sources it has been given so far.
     private static final int DATA_BYTES_STRIDE = 2;
-    private static final int MAX_OPEN_COLUMNS = 64;
     // A task slot an operation has no use for, matching TableWriter#IGNORE.
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(FrameImpl.class);
@@ -84,10 +82,6 @@ public class FrameImpl implements Frame {
     private final TableWriter.ColumnTaskHandler cthSyncColumnRef = this::cthSyncColumn;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger errorCount = new AtomicInteger();
-    private final FilesFacade ff;
-    // The columns closed since the last sync() whose files still owe a blocking flush: sync() reaches their files by
-    // name. Only a frame that does not keep its columns open closes a written column before its sync().
-    private final IntHashSet fsyncPendingColumns = new IntHashSet();
     private boolean canWrite = false;
     private ReadOnlyObjList<? extends MemoryCR> columnsMemory;
     private ColumnTopSink columnTopSink;
@@ -135,10 +129,9 @@ public class FrameImpl implements Frame {
     private long windowHi = Long.MAX_VALUE;
     private long windowLo = 0;
 
-    public FrameImpl(FrameColumnPool columnPool, @Nullable MessageBus messageBus, FilesFacade ff) {
+    public FrameImpl(FrameColumnPool columnPool, @Nullable MessageBus messageBus) {
         this.columnPool = columnPool;
         this.messageBus = messageBus;
-        this.ff = ff;
     }
 
     @Override
@@ -186,7 +179,6 @@ public class FrameImpl implements Frame {
         // window and per-operation columns, whatever the previous one asked for. So does any flush not synced by
         // now: it belongs to a write being abandoned.
         Misc.freeObjListAndClear(keptColumns);
-        fsyncPendingColumns.clear();
         this.isSyncPending = false;
         this.isKeepingColumnsOpen = false;
         this.windowLo = 0;
@@ -454,7 +446,9 @@ public class FrameImpl implements Frame {
     @Override
     public void releaseColumn(FrameColumn column) {
         if (!isKeepingColumnsOpen) {
-            closeColumn(column);
+            // Never one a write marked for flushing: markWritten refuses a CommitMode.SYNC write to such a frame.
+            assert column == null || !column.isSyncPending();
+            Misc.free(column);
         }
     }
 
@@ -564,16 +558,15 @@ public class FrameImpl implements Frame {
 
     @Override
     public void setKeepColumnsOpen(boolean isKeepColumnsOpen) {
-        // Bounded by the same budget execute() opens columns in, so a wide table keeps no more files open at
-        // once than one batch of an operation already does: past it, every operation opens its own columns.
-        final boolean isKeeping = isKeepColumnsOpen && metadata.getColumnCount() <= MAX_OPEN_COLUMNS;
-        if (!isKeeping) {
-            for (int i = 0, n = keptColumns.size(); i < n; i++) {
-                closeColumn(keptColumns.getQuick(i));
-            }
-            keptColumns.clear();
+        // Whatever the column count: a plan holds every column file of its frames open, the same way a classic O3
+        // merge holds every file of the partition it rewrites. What CompositeFrameCache retains across commits is
+        // bounded there.
+        if (!isKeepColumnsOpen) {
+            // A kept column carries its own pending flush, and sync() reaches it only while the frame keeps it.
+            assert !isSyncPending;
+            Misc.freeObjListAndClear(keptColumns);
         }
-        this.isKeepingColumnsOpen = isKeeping;
+        this.isKeepingColumnsOpen = isKeepColumnsOpen;
     }
 
     @Override
@@ -615,10 +608,6 @@ public class FrameImpl implements Frame {
         if (pendingCount > 0) {
             syncKeptColumns(keptCount, pendingCount);
         }
-        for (int i = 0, n = fsyncPendingColumns.size(); i < n; i++) {
-            fsyncColumnFiles(fsyncPendingColumns.get(i));
-        }
-        fsyncPendingColumns.clear();
         isSyncPending = false;
     }
 
@@ -677,17 +666,6 @@ public class FrameImpl implements Frame {
             bytes += driver.getDataVectorSize(auxAddr, lo - top, hi - 1 - top);
         }
         return bytes;
-    }
-
-    /**
-     * Closes a column this frame handed out, noting first whether its files still owe a blocking flush, which
-     * {@link #sync()} then does by name - the column's fds and mappings are gone by then.
-     */
-    private void closeColumn(FrameColumn column) {
-        if (column != null && column.isSyncPending()) {
-            fsyncPendingColumns.add(column.getColumnIndex());
-        }
-        Misc.free(column);
     }
 
     private void closeColumns(Frame source1, @Nullable Frame source2, int columnLo, int columnHi) {
@@ -937,7 +915,7 @@ public class FrameImpl implements Frame {
         source1Columns.setAll(columnCount, null);
         source2Columns.setAll(columnCount, null);
         try {
-            final int batchSize = isParallel ? MAX_OPEN_COLUMNS : 1;
+            final int batchSize = isParallel ? COLUMN_BATCH_SIZE : 1;
             for (int columnLo = 0; columnLo < columnCount; columnLo += batchSize) {
                 final int columnHi = Math.min(columnLo + batchSize, columnCount);
                 try {
@@ -966,40 +944,6 @@ public class FrameImpl implements Frame {
     private void free() {
         Misc.freeObjListAndClear(keptColumns);
         partitionPath = Misc.free(partitionPath);
-    }
-
-    /**
-     * Flushes the files of a column {@link #closeColumn} closed with a flush still owed: opens each by name and
-     * fsyncs it, which flushes every dirty page of the file, the ones written through a mapping since unmapped
-     * included.
-     */
-    private void fsyncColumnFiles(int columnIndex) {
-        final int columnType = metadata.getColumnType(columnIndex);
-        if (columnType < 0) {
-            return;
-        }
-        final CharSequence columnName = metadata.getColumnName(columnIndex);
-        // Keyed by the writer index, see resolveColumnTop.
-        final long columnNameTxn = crv.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
-        final int plen = partitionPath.size();
-        try {
-            fsyncFile(TableUtils.dFile(partitionPath, columnName, columnNameTxn));
-            if (ColumnType.isVarSize(columnType)) {
-                partitionPath.trimTo(plen);
-                fsyncFile(TableUtils.iFile(partitionPath, columnName, columnNameTxn));
-            }
-        } finally {
-            partitionPath.trimTo(plen);
-        }
-    }
-
-    private void fsyncFile(LPSZ path) {
-        final long fd = TableUtils.openRO(ff, path, LOG);
-        try {
-            ff.fsync(fd);
-        } finally {
-            ff.close(fd);
-        }
     }
 
     private FrameColumn getContiguousFileFrameColumn(int columnIndex) {
@@ -1067,6 +1011,13 @@ public class FrameImpl implements Frame {
     private void markWritten(int commitMode) {
         // ASYNC is treated as NOSYNC, see ContiguousFileFixFrameColumn#markWritten.
         if (commitMode == CommitMode.SYNC) {
+            if (!isKeepingColumnsOpen) {
+                // sync() flushes each file through the writable column that wrote it, so that column has to stay
+                // open until then. Refused before anything is written, rather than leaving a file unflushed.
+                throw CairoException.critical(0)
+                        .put("frame written under sync commit mode does not keep its columns open [path=")
+                        .put(partitionPath).put(']');
+            }
             isSyncPending = true;
         }
     }

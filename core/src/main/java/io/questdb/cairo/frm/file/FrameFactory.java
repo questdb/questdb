@@ -35,7 +35,6 @@ import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.mp.ConcurrentPool;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
@@ -46,7 +45,6 @@ import java.io.Closeable;
 
 public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     private final FrameColumnPool columnPool;
-    private final FilesFacade ff;
     private final ConcurrentPool<FrameImpl> framePool = new ConcurrentPool<>();
     // Handed to every frame this factory hands out: the shared column-task pool a frame operation
     // spreads its per-column work over. Null leaves every operation on its calling thread.
@@ -55,7 +53,6 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
 
     public FrameFactory(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         this.columnPool = new ContiguousFileColumnPool(configuration);
-        this.ff = configuration.getFilesFacade();
         this.messageBus = messageBus;
     }
 
@@ -294,7 +291,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         if (frm != null) {
             return frm;
         }
-        FrameImpl frame = new FrameImpl(columnPool, messageBus, ff);
+        FrameImpl frame = new FrameImpl(columnPool, messageBus);
         frame.setRecycleBin(this);
         return frame;
     }

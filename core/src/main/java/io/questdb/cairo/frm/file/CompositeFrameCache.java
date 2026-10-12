@@ -47,16 +47,22 @@ import io.questdb.std.QuietCloseable;
  * the partition's physical extent, and a lookup under any other key closes it. All of it coarse on purpose: the cache
  * is a fast path for the steady state, and anything that is not the steady state simply reopens.
  * <p>
+ * A table wider than {@code maxColumnCount} is not cached at all: an entry holds up to two files per column in each of
+ * its two frames, open while the writer idles in its pool, and for a wide table that is more file descriptors than the
+ * saved opens are worth. Its plans still hold every column file open while they run, just not past the commit.
+ * <p>
  * Partition tasks run on worker threads, one task per partition at a time, so an entry has at most one user and the
  * lookup is the only thing several threads contend on.
  */
 public class CompositeFrameCache implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(CompositeFrameCache.class);
     private final Entry[] entries;
+    private final int maxColumnCount;
     private long clock;
 
-    public CompositeFrameCache(int capacity) {
+    public CompositeFrameCache(int capacity, int maxColumnCount) {
         assert capacity > 0;
+        this.maxColumnCount = maxColumnCount;
         this.entries = new Entry[capacity];
         for (int i = 0; i < capacity; i++) {
             entries[i] = new Entry();
@@ -67,12 +73,16 @@ public class CompositeFrameCache implements QuietCloseable {
      * Hands out the entry for {@code partitionTimestamp}: a populated one when the cache holds this version of the
      * partition under this metadata version, at exactly the extent the last plan through it left, certified at the
      * table's current txn - otherwise an empty one for the caller to {@link #fill}. Null when every slot is in use by
-     * another partition's task, in which case the caller runs with frames of its own. Every entry returned is in use
-     * by the caller until it {@link #release}s it.
+     * another partition's task, or when the table is wider than this cache keeps frames for, in which case the caller
+     * runs with frames of its own. Every entry returned is in use by the caller until it {@link #release}s it.
      *
-     * @param tableTxn the table's committed txn, the one the commit about to write builds on
+     * @param tableTxn    the table's committed txn, the one the commit about to write builds on
+     * @param columnCount the number of columns the frames would hold, dropped ones included
      */
-    public synchronized Entry acquire(long partitionTimestamp, long nameTxn, long metadataVersion, long extent, long tableTxn) {
+    public synchronized Entry acquire(long partitionTimestamp, long nameTxn, long metadataVersion, long extent, long tableTxn, int columnCount) {
+        if (columnCount > maxColumnCount) {
+            return null;
+        }
         Entry victim = null;
         for (int i = 0, n = entries.length; i < n; i++) {
             final Entry e = entries[i];

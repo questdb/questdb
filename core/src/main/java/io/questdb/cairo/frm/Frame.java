@@ -154,7 +154,8 @@ public interface Frame extends Closeable {
      * When on, every column {@link #openColumn} hands out stays open until {@link #close()}, so a caller that runs
      * several appends or merges against the same partition - a composite partition plan, piece after piece - opens
      * each column file once, and a read-only column maps the frame's whole extent once. Scoped to the open that set
-     * it: {@link #close()} turns it off. A frame wider than one batch of columns ignores it.
+     * it: {@link #close()} turns it off. A writable frame has to have it on before an append or merge under
+     * {@link io.questdb.cairo.CommitMode#SYNC}: {@link #sync()} flushes each file through the column that wrote it.
      */
     void setKeepColumnsOpen(boolean isKeepColumnsOpen);
 
@@ -185,8 +186,9 @@ public interface Frame extends Closeable {
      * Fsyncs every column file an append or merge under {@link io.questdb.cairo.CommitMode#SYNC} wrote since the last
      * call - each file once, however many operations wrote it. The operations themselves flush nothing, and any other
      * commit mode flushes nothing at all, so a caller writing a partition calls this once, after its last operation and
-     * before it publishes what it wrote; it costs nothing unless a SYNC operation ran. Closing the frame drops whatever
-     * is still unflushed.
+     * before it publishes what it wrote; it costs nothing unless a SYNC operation ran. Each file flushes through the
+     * writable column that wrote it, which {@link #setKeepColumnsOpen} keeps open until then. Closing the frame drops
+     * whatever is still unflushed.
      */
     void sync();
 }

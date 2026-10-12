@@ -740,6 +740,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionMergeAppendFrameCacheMaxColumns() {
+        return getDelegate().getO3PartitionMergeAppendFrameCacheMaxColumns();
+    }
+
+    @Override
     public int getO3PartitionMergeAppendFrameCacheSize() {
         return getDelegate().getO3PartitionMergeAppendFrameCacheSize();
     }

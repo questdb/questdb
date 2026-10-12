@@ -645,6 +645,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_MID_PARTITION_MAX_SPLITS("cairo.o3.mid.partition.max.splits"),
     CAIRO_O3_PARTITION_MAX_SPLITS("cairo.o3.partition.max.splits"),
     CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED("cairo.o3.partition.merge.append.enabled"),
+    CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_MAX_COLUMNS("cairo.o3.partition.merge.append.frame.cache.max.columns"),
     CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_SIZE("cairo.o3.partition.merge.append.frame.cache.size"),
     CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS("cairo.o3.partition.presplit.max.cuts"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
