@@ -25,6 +25,9 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
@@ -89,6 +92,37 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
             final String slice = "select ts, v from t where sym = 'F' and ts in '1970-01-02'";
             assertPlanContains(slice, "CoveringIndex");
             assertSameResult(slice, slice.replace("select ", "select /*+ no_index */ "));
+        });
+    }
+
+    @Test
+    public void testFramesHoldAtMostTheConfiguredRows() throws Exception {
+        // a key's rows of a partition spread over frames of cairo.sql.parallel.covering.frame.rows
+        // rows, which the workers decode, rather than one frame of up to a page frame's rows
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS, 1000);
+        assertMemoryLeak(() -> {
+            createTable();
+            final String sql = "select /*+ use_index */ ts, v from t where sym = 'F'";
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue(factory.supportsPageFrameCursor());
+                long rows = 0;
+                int frames = 0;
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        final long frameRows = frame.getPartitionHi() - frame.getPartitionLo();
+                        Assert.assertTrue(frameRows + " rows", frameRows > 0 && frameRows <= 1000);
+                        rows += frameRows;
+                        frames++;
+                    }
+                }
+                final StringSink count = new StringSink();
+                printSql("select /*+ no_index */ count() from t where sym = 'F'", count);
+                TestUtils.assertEquals("count\n" + rows + "\n", count);
+                Assert.assertTrue(frames + " frames", frames >= rows / 1000);
+            }
+            assertSameResult("select /*+ use_index */ count(), sum(v), min(ts), max(ts) from t where sym = 'F'",
+                    "select /*+ no_index */ count(), sum(v), min(ts), max(ts) from t where sym = 'F'");
         });
     }
 
