@@ -139,6 +139,8 @@ public class AsyncWindowTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
+        // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
         // 64 rows per page frame: every key of the fixtures spans many frames
         sqlExecutionContext.changePageFrameSizes(1, 64);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, TASK_ROWS);

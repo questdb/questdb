@@ -39,6 +39,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Runs a plan's PIVOT {@code IN (subquery)} checks before every execution but the first, see
@@ -94,6 +95,12 @@ public class PivotInListCheckFactory implements RecordCursorFactory {
         return base.getBaseColumnName(idx);
     }
 
+    /**
+     * Skips this wrapper, as {@link StaleViewCheckFactory#getBaseFactory()} does: a caller that opens
+     * the factory returned here bypasses the check. No PIVOT plan is reached that way today (a PIVOT
+     * plan is GROUP BY-based, never page-frame backed, and PIVOT is refused in materialized views),
+     * but a caller that unwraps and then opens must run the check itself.
+     */
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base.getBaseFactory();
@@ -103,6 +110,14 @@ public class PivotInListCheckFactory implements RecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         verify(executionContext);
         return base.getCursor(executionContext);
+    }
+
+    /**
+     * The PIVOT IN subqueries this plan re-runs, one per {@code FOR ... IN (subquery)} column.
+     */
+    @TestOnly
+    public int getCheckCount() {
+        return checks.size();
     }
 
     @Override

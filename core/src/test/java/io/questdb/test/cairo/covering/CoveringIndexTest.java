@@ -17400,6 +17400,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // With >1M rows in a single partition, the page frame splits and the
         // second frame has partitionLo>0. The absolute row IDs double-count
         // partitionLo against the already-offset page addresses.
+        // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_split_frame (

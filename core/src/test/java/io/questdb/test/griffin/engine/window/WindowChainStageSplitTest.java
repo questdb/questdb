@@ -203,6 +203,8 @@ public class WindowChainStageSplitTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_ROUND_ROWS, 20_000);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 100);
         sqlExecutionContext.changePageFrameSizes(1, 64);
+        // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
             createSkew(engine, sqlExecutionContext, 6_000);
             final String a1 = "WITH w0 AS (SELECT time, v, bid, row_number()" + P1 + ") rn FROM s WHERE sym = 'K0'), ch AS (SELECT time, v, rn, bid * 1.5 + rn d FROM w0) ";
@@ -481,6 +483,8 @@ public class WindowChainStageSplitTest extends AbstractCairoTest {
     private static void smallConfig() {
         // keys longer than a task, tasks of 50 rows, a prefix of 100
         sqlExecutionContext.changePageFrameSizes(1, 64);
+        // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 50);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS, 400);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 100);

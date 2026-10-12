@@ -48,16 +48,21 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.model.RuntimeIntervalModel;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.DirectString;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -1062,9 +1067,38 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         });
     }
 
+    // the 1000-row frames, partition by partition (DAY), that hold a row of the scanned key (every
+    // numOfSymbols-th row)
+    private static int expectedIndexFrames(int numOfRows, long increment, int numOfSymbols) {
+        final LongList dayRows = new LongList();
+        for (int i = 0; i < numOfRows; i++) {
+            final int day = (int) (i * increment / Micros.DAY_MICROS);
+            dayRows.extendAndSet(day, dayRows.size() > day ? dayRows.getQuick(day) + 1 : 1);
+        }
+        final LongHashSet frames = new LongHashSet();
+        long dayLo = 0;
+        for (int day = 0, n = dayRows.size(); day < n; day++) {
+            final long rows = dayRows.getQuick(day);
+            if (rows == 0) {
+                continue;
+            }
+            final long frameRows = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(0, rows, 10, 1000, 1);
+            for (long r = 0; r < rows; r++) {
+                if ((dayLo + r) % numOfSymbols == 0) {
+                    frames.add(((long) day << 32) | (r / frameRows));
+                }
+            }
+            dayLo += rows;
+        }
+        return frames.size();
+    }
+
     private void testFactory_FullPartitionFrameCursorFactory_SymbolIndexFilter(int numOfRows, long increment, int skip, long expectedNumOfRows) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, "10");
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, "1000");
+        // an index scan takes frames of cairo.sql.index.scan.page.frame.max.rows: without this, it would read
+        // every partition as one frame and the skip and size arithmetic across index frames would go untested
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, "1000");
 
         assertMemoryLeak(() -> {
             final int numOfSymbols = 10;
@@ -1149,6 +1183,19 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
                         cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
                         Assert.assertEquals(expectedNumOfRows, counter.get());
+                    }
+
+                    // the rows come from the frames a 1000-row frame limit cuts the partitions into
+                    try (
+                            SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        final IntHashSet frames = new IntHashSet();
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            frames.add(Rows.toPartitionIndex(record.getRowId()));
+                        }
+                        Assert.assertEquals(expectedIndexFrames(numOfRows, increment, numOfSymbols), frames.size());
                     }
                 }
             }

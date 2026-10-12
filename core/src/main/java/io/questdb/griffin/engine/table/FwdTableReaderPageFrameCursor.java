@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -485,7 +486,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             final long frameCount = Math.max((partitionHi - partitionLo) / rowsPerFrame, 1);
             rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
         }
-        return rowsPerFrame;
+        // The adjustment above may take a frame past pageFrameMaxRows. Never past the most rows a
+        // frame may hold, though: the batched GROUP BY packs frame-relative row indexes into 24 bits.
+        // A frame of pageFrameMaxRows = 2^24 rows (the index scan default) then leaves a small
+        // trailing frame rather than one too large to address.
+        return Math.min(rowsPerFrame, Map.BATCH_ROW_INDEX_MASK + 1);
     }
 
     /**

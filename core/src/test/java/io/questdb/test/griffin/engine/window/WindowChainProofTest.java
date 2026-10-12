@@ -531,6 +531,8 @@ public class WindowChainProofTest extends AbstractCairoTest {
     private static void smallConfig() {
         // keys longer than a task, tasks of 50 rows, a prefix of 100
         sqlExecutionContext.changePageFrameSizes(1, 64);
+        // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 50);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MAX_KEY_ROWS, 400);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 100);

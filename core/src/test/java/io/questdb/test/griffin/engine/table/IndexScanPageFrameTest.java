@@ -25,12 +25,17 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Rows;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -58,6 +63,52 @@ public class IndexScanPageFrameTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         sqlExecutionContext.restoreToDefaultPageFrameSizes();
         super.tearDown();
+    }
+
+    @Test
+    public void testBreakerConsultedWithinLargeIndexFrame() throws Exception {
+        // an index frame holds up to 16M rows: the scan must consult the circuit breaker (cancel,
+        // timeout, fiber yield) within the frame, not only once per frame
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE big (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("INSERT INTO big SELECT 'A', x, x::timestamp FROM long_sequence(3_000_000)");
+            execute("CREATE TABLE tiny (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("INSERT INTO tiny SELECT 'A', x, x::timestamp FROM long_sequence(100)");
+            final String[] queries = {
+                    // the rows reach the consumer one by one
+                    "SELECT * FROM %t WHERE sym = 'A'",
+                    // the filter rejects every row inside the index row cursor
+                    "SELECT * FROM %t WHERE sym = 'A' AND v < 0",
+                    // the same, with the key bound at execution
+                    "SELECT * FROM %t WHERE sym = $1 AND v < 0",
+            };
+            for (String q : queries) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "A");
+                assertPlanContains(q.replace("%t", "big"), "Index forward scan on: sym");
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "A");
+                Assert.assertEquals(q, 1, framesOf(q.replace("%t", "big").replace(" AND v < 0", "")));
+                final long tinyChecks = breakerChecks(q.replace("%t", "tiny"));
+                final long bigChecks = breakerChecks(q.replace("%t", "big"));
+                // 3M rows in one frame: at least one check per 2^20 rows on top of what 100 rows take
+                Assert.assertTrue(q + ": tiny=" + tinyChecks + ", big=" + bigChecks, bigChecks - tinyChecks >= 2);
+            }
+        });
+    }
+
+    @Test
+    public void testIndexFrameRowLimitStaysWithinBatchRowIndex() {
+        // the tiny-trailing-frame adjustment must not take a frame past the 24-bit batch row index:
+        // 16,800,000 rows with 100k minimum and 16M maximum rows would otherwise be one frame
+        final long maxRows = Map.BATCH_ROW_INDEX_MASK + 1;
+        for (long rows : new long[]{16_800_000, maxRows + 1, maxRows + 99_999, 2 * maxRows + 5}) {
+            final long limit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(0, rows, 100_000, maxRows, 1);
+            Assert.assertTrue(rows + " rows: " + limit, limit <= maxRows);
+            Assert.assertTrue(rows + " rows: " + limit, limit > 0);
+        }
+        // below the cap the adjustment still folds a tiny trailing frame into the others
+        Assert.assertEquals(1_000_050, FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(0, 2_000_100, 1_000, 1_000_000, 1));
     }
 
     @Test
@@ -173,6 +224,24 @@ public class IndexScanPageFrameTest extends AbstractCairoTest {
             execute("DROP TABLE t_idx");
             execute("DROP TABLE t_ref");
         });
+    }
+
+    // the circuit breaker consultations of a full read of the query
+    private long breakerChecks(String sql) throws Exception {
+        final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+        final SqlExecutionCircuitBreaker original = context.getCircuitBreaker();
+        final CountingSqlExecutionCircuitBreaker counting = new CountingSqlExecutionCircuitBreaker(original);
+        try (RecordCursorFactory factory = select(sql)) {
+            context.with(counting);
+            try (RecordCursor cursor = factory.getCursor(context)) {
+                while (cursor.hasNext()) {
+                    cursor.getRecord().getLong(1);
+                }
+            }
+        } finally {
+            context.with(original);
+        }
+        return counting.getCheckCount();
     }
 
     private void createTables(String indexType) throws Exception {
