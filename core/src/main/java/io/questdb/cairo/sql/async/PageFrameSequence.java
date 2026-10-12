@@ -409,24 +409,14 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     // We have dispatched something, so let's try to collect it.
                     continue;
                 }
-                if (dispatcher != null) {
-                    if (dispatcher.isCurrentFiberOwned()
-                            && dispatchStartFrameIndex == collectedFrameIndex + 1) {
-                        reduceLocally(countOnly);
-                        return LOCAL_TASK_CURSOR;
-                    }
-                    if (canPark) {
-                        final boolean isDraining = !isActive();
-                        awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
-                        continue;
-                    }
-                    if (!isActive()) {
-                        return -1;
-                    }
-                }
                 if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                     reduceLocally(countOnly);
                     return LOCAL_TASK_CURSOR;
+                }
+                if (canPark) {
+                    final boolean isDraining = !isActive();
+                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
+                    continue;
                 }
                 return -1;
             } else {
