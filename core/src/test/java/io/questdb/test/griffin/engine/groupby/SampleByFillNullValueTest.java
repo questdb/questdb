@@ -299,6 +299,278 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNoneTwiceRejectedBeforeOwnershipCheck() throws Exception {
+        // An all-NONE fill list carries no ownership signal on the group-by model, so
+        // generateFill runs its FILL(NONE) validation before the ownership check. This
+        // keeps FILL(NONE, NONE) rejected on the fast path, like the legacy path does.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT ts, avg(val) AS a, sum(val) AS s FROM t SAMPLE BY 1h FILL(NONE, NONE)")
+                    .noLeakCheck()
+                    .fails(65, "FILL(NONE) cannot be combined with other fill values");
+        });
+    }
+
+    @Test
+    public void testFillNullOuterAggregateAndFloorDoesNotRefill() throws Exception {
+        // The outer GROUP BY aggregates the inner bucket under the timestamp's own name
+        // and floors it again; neither output column is a bucket this group-by owns.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT max(ts) AS ts, timestamp_floor('2h', ts) AS b, avg(v) AS v
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    ORDER BY b""")
+                    .timestamp("b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tb\tv
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.5
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterBucketShapedFloorDoesNotRefill() throws Exception {
+        // The outer key has the exact shape of the optimizer's own bucket key
+        // (5-argument timestamp_floor_utc) and even reuses the alias ts. Only the
+        // ownership signal that rewriteSelectClause0 maintains tells generateFill
+        // that the inner fill is not this group-by's. Option 5 without the ownership
+        // check stacked a second 1h fill here and emitted a spurious 01:00 row.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT timestamp_floor_utc('2h', ts, null, '00:00', null) AS ts, avg(v) AS v
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.5
+                            2024-01-01T02:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterFilteredGroupByDoesNotRefill() throws Exception {
+        // The filter removes the inner 02:00 gap row; a leaked outer fill re-inserted it.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    WHERE v > 1.5
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterGroupByDoesNotRefill() throws Exception {
+        // An outer GROUP BY over a SAMPLE BY ... FILL sub-query must not re-apply the
+        // inner fill. SqlOptimiser.rewriteSelectClause0 exposes the fill only on the
+        // group-by whose own base model carries it, and generateFill returns the plain
+        // group-by factory when that list is empty. Before, generateFill walked into
+        // the inner model, found its fill, matched the outer ts by name and stacked a
+        // second Sample By Fill on the outer GROUP BY (16 rows instead of 4).
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT v, max(ts) AS ts
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    GROUP BY v
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [ts]
+                                GroupBy vectorized: false
+                                  keys: [v]
+                                  values: [max(ts)]
+                                    Sample By Fill
+                                      stride: '1h'
+                                      fill: null
+                                        Encode sort light
+                                          keys: [ts]
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                              values: [avg(val)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            v\tts
+                            1.0\t2024-01-01T00:00:00.000000Z
+                            2.0\t2024-01-01T01:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z
+                            3.5\t2024-01-01T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterGroupByOverFromToDoesNotRefill() throws Exception {
+        // A leaked outer fill emitted every FROM-TO bucket with rows = 42, the inner
+        // fill constant, instead of the single bucket the filter leaves.
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.FROM_TO_DDL);
+            assertQuery("""
+                    SELECT ts, count(*) rows
+                    FROM (SELECT ts, avg(x) a, x FROM fromto SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42))
+                    WHERE a > 400
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\trows
+                            2018-01-09T00:00:00.000000Z\t80
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterGroupByOverJoinFillDoesNotRefill() throws Exception {
+        // With a JOIN the fill parameters sit two models below the inner group-by
+        // (GROUP BY, CHOOSE, base). The downward walk still reaches them from the
+        // outer GROUP BY; the ownership check must keep the outer query empty-handed.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (
+                        SELECT t.ts, avg(t.val) AS v
+                        FROM t JOIN (SELECT DISTINCT k FROM t) u ON t.k = u.k
+                        SAMPLE BY 1h FILL(NULL)
+                    )
+                    WHERE v > 1.5
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterGroupByOverKeyedFillDoesNotRefill() throws Exception {
+        // The inner keyed fill emits one row per (bucket, key): 4 buckets x 2 keys.
+        // The filter keeps the four real rows; a leaked outer fill would add a 02:00
+        // row. Expected counts: 00:00 has a, 01:00 has b, 03:00 has a and b.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (SELECT k, ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    WHERE v > 0
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterGroupByOverWrappedFillDoesNotRefill() throws Exception {
+        // A SELECT * wrapper with the filter sits between the outer GROUP BY and the
+        // filled sub-query. Boundary-based ownership signals used to fail across such
+        // intermediate models; the per-model fill list does not depend on the chain.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (
+                        SELECT * FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                        WHERE v > 1.5
+                    )
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterProjectionKeepsInnerFill() throws Exception {
+        // A plain projection over the filled sub-query is not a group-by; the inner
+        // fill must still emit the 02:00 gap row and the outer must not add a second one.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT d, ts, v
+                    FROM (SELECT ts, timestamp_floor('1d', t.ts) AS d, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            d\tts\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullOuterTimestampFloorDoesNotRefill() throws Exception {
+        // The outer key is a 2-argument timestamp_floor, not the rewrite's bucket key;
+        // the outer query owns no fill and must not re-insert a 01:00 row.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT timestamp_floor('2h', ts) AS ts, avg(v) AS v
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1.5
+                            2024-01-01T02:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
     public void testFillNullCastMultiKey() throws Exception {
         // FILL(NULL) variant of the multi-key inline-function classifier
         // regression: an inline cast x::STRING is a FUNCTION-form key and must
