@@ -589,9 +589,8 @@ bytes.
   naming the table and the error, and is asked again after the uploader's retry window. The up-call answers
   "nothing to hold" only for a table that is purged or whose drop is marked after its log was flushed. A table an
   earlier run dropped whose sequencer `_meta` is torn (a crash between the drop's log append and the `_meta`
-  update) ships its drop after one flush of the filesystem (`syncfs` on Linux, `sync` elsewhere), with a critical
-  line where the filesystem cannot be flushed as a whole; holding it would resurrect an acknowledged DROP on a
-  fail-over.
+  update) ships its drop after filesystem-wide `syncfs` on Linux; elsewhere it ships with a critical line,
+  without a `sync(2)` fallback. Holding it would resurrect an acknowledged DROP on a fail-over.
 - **The uploader start flush** (`WalUploader.coverEarlierRecords`). At boot and at promotion, in `adaptive` and `sync`
   mode, the uploader makes every table's sequencer log durable before its first upload, then moves each table's
   durable frontier over the records the flush covered: one `syncfs` of the database root and of each linked volume on
