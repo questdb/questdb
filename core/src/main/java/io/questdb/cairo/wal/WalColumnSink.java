@@ -52,20 +52,36 @@ import io.questdb.cairo.vm.api.MemoryMA;
  * {@link #finishColumnarWrite(int, long, long, boolean)} NULL-fills every column the client
  * did not write and refuses a block that lacks the designated timestamp column.
  * <p>
- * A writer holds at most one open block. While it is open, the writer refuses a second
- * {@link #beginColumnarWrite()}, and also {@code commit()}, {@code rollback()} and
- * {@code newRow()}. Closing the writer or returning it to the pool discards an open block.
- * A refused {@link #finishColumnarWrite(int, long, long, boolean)} leaves the block open, and
- * the client must cancel it. Without an open block, the writer refuses
- * {@link #finishColumnarWrite(int, long, long, boolean)}, and {@link #cancelColumnarWrite()}
- * does nothing.
+ * The block lifecycle is restrictive by design: the sink serves block clients, not general
+ * composition with the writer's other APIs.
+ * <ul>
+ *   <li>The writer has a single owner and is not thread-safe; the sink adds no locking.</li>
+ *   <li>A writer holds at most one open block, and blocks do not nest.</li>
+ *   <li>The client ends every block with a finish or a cancel before it uses the writer for
+ *   anything else. While a block is open, the writer refuses a second
+ *   {@link #beginColumnarWrite()}, {@code newRow()}, {@code commit()}, {@code rollback()},
+ *   {@code rollSegment()}, ALTER and UPDATE operations, {@code goActive()},
+ *   {@code truncateSoft()}, {@code commitRebaseSeed()}, {@code resetMatViewState()} and
+ *   {@code appendCustomEvent()}.</li>
+ *   <li>A block starts only between rows: a row taken with {@code newRow()} is appended or
+ *   cancelled before {@link #beginColumnarWrite()}. The writer does not check this, since
+ *   tracking an open row would cost every row of the row API.</li>
+ *   <li>A refused {@link #finishColumnarWrite(int, long, long, boolean)} leaves the block open,
+ *   and the client cancels it. Without an open block, the writer refuses
+ *   {@link #finishColumnarWrite(int, long, long, boolean)}, and {@link #cancelColumnarWrite()}
+ *   does nothing.</li>
+ *   <li>Closing the writer or returning it to the pool with a block open breaks this contract.
+ *   The writer then cancels the block, so that a later commit does not publish its rows.</li>
+ * </ul>
+ * A cancel moves the append positions back to the segment's row count, so the rows of the
+ * transaction's earlier blocks stay. It does not take back the symbol values the block
+ * resolved or the NULL symbol marks it set: when the transaction commits rows, they enter the
+ * table's symbol table.
  * <p>
  * {@link #resolveSymbol(int, CharSequence, SymbolMapReader)} must receive this sink's own
  * {@link #getSymbolMapReader(int)} for the column; another reader yields wrong keys. The
  * memories {@link #getDataColumn(int)} and {@link #getAuxColumn(int)} return stay valid only
- * until the block finishes or is cancelled. The writer does not guard structure changes or
- * {@link WalWriter#rollSegment()} during a block, so a client must not trigger them while a
- * block is open.
+ * until the block finishes or is cancelled.
  */
 public interface WalColumnSink {
 
