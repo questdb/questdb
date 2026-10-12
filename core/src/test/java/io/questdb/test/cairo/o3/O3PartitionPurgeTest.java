@@ -52,10 +52,10 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -70,22 +70,11 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 @RunWith(Parameterized.class)
 public class O3PartitionPurgeTest extends AbstractCairoTest {
-    private static O3PartitionPurgeJob purgeJob;
     private final TestTimestampType timestampType;
+    private O3PartitionPurgeJob purgeJob;
 
     public O3PartitionPurgeTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
-    }
-
-    @AfterClass
-    public static void end() {
-        purgeJob = Misc.free(purgeJob);
-    }
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractCairoTest.setUpStatic();
-        purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
 
     @Parameterized.Parameters(name = "timestamp={0}")
@@ -94,6 +83,24 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 {TestTimestampType.MICRO},
                 {TestTimestampType.NANO},
         });
+    }
+
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        // Keep timed retries within the test that scheduled them.
+        purgeJob = new O3PartitionPurgeJob(engine, 1);
+    }
+
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        try {
+            purgeJob = Misc.free(purgeJob);
+        } finally {
+            super.tearDown();
+        }
     }
 
     @Test
@@ -1093,6 +1100,18 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             }
             assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n3\n");
         });
+    }
+
+    @Test
+    public void testPurgeRetryIsolation() throws Exception {
+        setCurrentMicros(0);
+        testPurgeFailed();
+
+        // A failed purge must not leave a timed retry in the next test.
+        tearDown();
+        setUp();
+        setCurrentMicros(60_000_000L);
+        testPurgeFailed();
     }
 
     @Test
