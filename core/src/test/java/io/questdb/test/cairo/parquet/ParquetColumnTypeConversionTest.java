@@ -2273,6 +2273,79 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * Once an O3 merge has rewritten a parquet partition with the post-ALTER column
+     * type, later O3 merges must update the file in place. The rewritten file still
+     * stores the column under its original writer index (the field id), so detecting
+     * a type conversion by comparing writer indexes alone keeps flagging a schema
+     * change and rewrites the whole partition on every commit.
+     */
+    @Test
+    public void testO3InsertUpdatesInPlaceAfterConvertedParquetRewrite() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"ctl", "pt"}) {
+                execute("CREATE TABLE " + table + " (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + table + """
+                         VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'),
+                        (3, '2024-01-01T02:00:00.000000Z'), (4, '2024-01-01T03:00:00.000000Z'),
+                        (5, '2024-01-01T04:00:00.000000Z'), (6, '2024-01-01T05:00:00.000000Z'),
+                        (7, '2024-01-01T06:00:00.000000Z'), (8, '2024-01-01T07:00:00.000000Z'),
+                        (9, '2024-01-01T08:00:00.000000Z'), (10, '2024-01-01T09:00:00.000000Z'),
+                        (11, '2024-01-01T10:00:00.000000Z'), (12, '2024-01-01T11:00:00.000000Z'),
+                        (99, '2024-01-02T00:00:00.000000Z')""");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+            }
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE LONG");
+            drainWalQueue();
+
+            // Control: without a type conversion, an O3 merge into a multi-row-group
+            // parquet partition updates the file in place (partition name txn unchanged).
+            final long ctlNameTxn = getPartitionNameTxn("ctl");
+            execute("INSERT INTO ctl VALUES (100, '2024-01-01T04:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals("control O3 merge must update in place", ctlNameTxn, getPartitionNameTxn("ctl"));
+
+            // First O3 merge after the ALTER legitimately rewrites the file to LONG.
+            final long nameTxnBeforeRewrite = getPartitionNameTxn("pt");
+            execute("INSERT INTO pt VALUES (100, '2024-01-01T04:30:00.000000Z')");
+            drainWalQueue();
+            final long nameTxnAfterRewrite = getPartitionNameTxn("pt");
+            Assert.assertNotEquals("first O3 merge must rewrite", nameTxnBeforeRewrite, nameTxnAfterRewrite);
+            try (TableWriter writer = getWriter("pt")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
+                int colIdx = writer.getMetadata().getColumnIndex("val");
+                Assert.assertEquals(ColumnType.LONG, ColumnType.tagOf(writer.getParquetColumnType(0, colIdx)));
+            }
+
+            // The file now matches the table schema: the next O3 merge must not rewrite it again.
+            execute("INSERT INTO pt VALUES (101, '2024-01-01T06:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals(
+                    "O3 merge must update the already-converted parquet partition in place",
+                    nameTxnAfterRewrite,
+                    getPartitionNameTxn("pt")
+            );
+
+            assertQuery("SELECT val, ts FROM pt WHERE ts BETWEEN '2024-01-01T04:00:00.000000Z' AND '2024-01-01T06:30:00.000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            val\tts
+                            5\t2024-01-01T04:00:00.000000Z
+                            100\t2024-01-01T04:30:00.000000Z
+                            6\t2024-01-01T05:00:00.000000Z
+                            7\t2024-01-01T06:00:00.000000Z
+                            101\t2024-01-01T06:30:00.000000Z
+                            """);
+        });
+    }
+
+    /**
      * Verifies snapshot isolation across {@code ALTER TABLE ... ALTER COLUMN TYPE} on a
      * parquet-backed partition. A cursor opened against the pre-ALTER transaction must
      * continue to see the original column type and values for its entire lifetime, while
@@ -4576,6 +4649,13 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         } finally {
             tryDrop("nt");
             tryDrop("pt");
+        }
+    }
+
+    private long getPartitionNameTxn(String tableName) {
+        try (TableReader reader = getReader(tableName)) {
+            Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+            return reader.getTxFile().getPartitionNameTxn(0);
         }
     }
 

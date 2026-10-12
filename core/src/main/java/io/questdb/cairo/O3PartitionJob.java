@@ -179,7 +179,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     final int origWriterIndex = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
                     int parquetIdx = parquetColIdToIdx.get(origWriterIndex);
-                    if (parquetIdx >= 0 && origWriterIndex != tableWriterMetadata.getColumnMetadata(i).getWriterIndex()) {
+                    // Every parquet writer stores the column under its original writer index,
+                    // so a type-converted column keeps matching by that index even after a
+                    // rewrite has already materialized the new type. Compare the stored type
+                    // as well, otherwise every O3 merge would rewrite the whole partition.
+                    if (parquetIdx >= 0
+                            && origWriterIndex != tableWriterMetadata.getColumnMetadata(i).getWriterIndex()
+                            && (parquetMeta.getColumnType(parquetIdx) & ~ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT)
+                            != tableWriterMetadata.getColumnType(i)) {
                         hasTypeConvertedColumns = true;
                     }
                     tableToParquetIdx.setQuick(i, parquetIdx);
