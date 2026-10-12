@@ -231,11 +231,6 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     }
 
     /**
-     * The sync calls of one periodic save point after its column flush: the live {@code _cv} and {@code _txn},
-     * then the generation's one file twice (its sections, then its header, which publishes it). The generation
-     * rewritten here already held a valid header, so its name is durable and the table directory is not synced.
-     */
-    /**
      * The flushes of a Parquet partition. Base flushes its _pm in every mode but NOSYNC and never the data file;
      * only the power-loss-durable modes flush the data file ahead of _pm, so a durable _pm never names data still
      * in the page cache. A fresh partition flushes _pm in Java; an O3 merge into an existing one flushes it in
@@ -269,6 +264,11 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The sync calls of one periodic save point after its column flush: the live {@code _cv} and {@code _txn},
+     * then the generation's one file twice (its sections, then its header, which publishes it). The generation
+     * rewritten here already held a valid header, so its name is durable and the table directory is not synced.
+     */
     @Test
     public void testPeriodicSavePointSyncs() throws Exception {
         Assume.assumeTrue("only ADAPTIVE takes save points", "adaptive".equals(commitMode));

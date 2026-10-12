@@ -423,12 +423,13 @@ even while the replica policy may still be in force; both call `handleDataSyncFa
 flush of its workloads in turn.
 
 Without `ServerMain` (an embedded engine, a test JVM) the fence is the stop. The default handler returns, and the
-factory's record outlives the exception: every writer acquire, commit, purge, acknowledgement and `CHECKPOINT CREATE`
-is then refused with `CairoError` (`engine is poisoned by a failed durability barrier`), whatever catch the failure
-itself reached; the one wrap that lost the flag, the rolled segment's column copy (`CopyWalSegmentUtils`), now keeps
-it as the cause, so the WAL writer's handler drops the pending durable txn and raises the stop. The embedder closes
-the engine, fixes the cause and constructs a new one: nothing past the failure was acknowledged, the WAL holds the
-rest, and the new engine recovers as a restart does. The engine does not close itself (a close from inside a flush,
+factory's record outlives the exception: write and acknowledgement fences reject further work, purge is blocked,
+and `CHECKPOINT CREATE` is refused with `CairoError` (`engine is poisoned by a failed durability barrier`), whatever
+catch the failure itself reached. The rolled segment's column copy (`CopyWalSegmentUtils`) keeps the flag in its
+cause, so the WAL writer's handler drops the pending durable txn and raises the stop. UPDATE, partition changes,
+WAL close and materialized-view refresh preserve the fatal failure instead of replacing it during cleanup or
+turning it into suspension or invalidation. The embedder closes the engine, fixes the cause and constructs a new one:
+nothing past the failure was acknowledged, the WAL holds the rest, and the new engine recovers as a restart does. The engine does not close itself (a close from inside a flush,
 under writer monitors or the sequencer lock, would deadlock or free memory under a caller), and a library never halts
 its host. Enterprise installs the handler at construction (`EntBootstrap` passes the bootstrap's handler to the
 `EntCairoEngine` constructor), so a failure inside the partial constructor halts as one after it does.

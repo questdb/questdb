@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableToken;
@@ -218,6 +219,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                 entries.remove(token.getDirName());
             }
 
+            // Finish releasing the tenants before propagating a fatal flush stop. Ordinary close errors
+            // remain log-only, as before.
+            CairoError closeFailure = null;
             Entry<T> e = firstEntry;
             while (e != null) {
                 for (int i = 0; i < segmentSize; i++) {
@@ -227,6 +231,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         } catch (Throwable th) {
                             LOG.critical().$("error on closing pool item [table=").$(token)
                                     .$(", error=").$(th).I$();
+                            if (closeFailure == null && th instanceof CairoError error && CairoException.isDataSyncFailure(error)) {
+                                closeFailure = error;
+                            }
                         }
                         Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                     }
@@ -241,6 +248,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                 }
 
                 e = e.next;
+            }
+            if (closeFailure != null) {
+                throw closeFailure;
             }
         }
     }

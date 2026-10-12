@@ -930,6 +930,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         -1
                                 );
                             } catch (CairoException e) {
+                                engine.handleDataSyncFailure(e);
                                 LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
                                         .$(", msg=").$safe(e.getFlyweightMessage())
                                         .$(", errno=").$(e.getErrno())
@@ -1010,6 +1011,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             info.getRefreshIntervalsBaseTxn()
                     );
                 } catch (CairoException e) {
+                    engine.handleDataSyncFailure(e);
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
                             .$(", msg=").$safe(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())

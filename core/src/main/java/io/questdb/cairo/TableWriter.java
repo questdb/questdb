@@ -1046,6 +1046,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return rowsAffected;
         } catch (CairoException ex) {
+            if (engine.isDataSyncFailureFatal(ex)) {
+                distressed = true;
+                engine.handleDataSyncFailure(ex);
+            }
             // rollback in case on any dirty state.
             // Do not catch rollback exceptions, let the calling code handle distressed writer
             rollback();
@@ -1373,6 +1377,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 configureAppendPosition();
             }
         } catch (Throwable e) {
+            if (engine.isDataSyncFailureFatal(e)) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
+            }
             // This is pretty serious; after partition copied, there are no OS operations to fail.
             // Do full rollback to clean up the state
             LOG.critical().$("failed on attaching partition to the table and rolling back [tableName=").$(tableToken)

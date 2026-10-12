@@ -139,13 +139,13 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
             } catch (CairoError e) {
                 TestUtils.assertContains(e.getMessage(), "engine is poisoned");
             } finally {
+                if (created) {
+                    execute("CHECKPOINT RELEASE");
+                }
                 engine.resetDurabilityFailure();
                 releasePools();
             }
-            if (created) {
-                execute("CHECKPOINT RELEASE");
-                Assert.fail("CHECKPOINT CREATE must be refused on a stopped engine");
-            }
+            Assert.assertFalse("CHECKPOINT CREATE must be refused on a stopped engine", created);
         });
     }
 
@@ -613,28 +613,29 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         // that copy is wrapped in "failed to copy column file" and must stay its cause: the writer's handler then
         // sees the flag, drops the pending durable txn and raises the stop, with or without a halt installed.
         assertMemoryLeak(ff, () -> {
-            final int failAt = segmentCopyFlushOf("t_dry");
-            Assert.assertTrue("the segment copy flushes in " + commitMode, failAt > 0);
-            releasePools();
-            createWalTable("t");
-            try (WalWriter writer = getWalWriter("t")) {
-                appendRow(writer);
-                execute("ALTER TABLE t ALTER COLUMN i TYPE LONG");
-                ff.arm(failAt);
-                try {
-                    writer.commit();
-                    Assert.fail("the commit must raise the stop");
-                } catch (CairoError e) {
-                    // the handler's stop carries the flush failure; the fence's refusal does not
-                    Assert.assertTrue("the stop carries the flush failure [error=" + e + ']', CairoException.isDataSyncFailure(e));
-                } finally {
-                    ff.disarm();
+            try {
+                final int failAt = segmentCopyFlushOf("t_dry");
+                Assert.assertTrue("the segment copy flushes in " + commitMode, failAt > 0);
+                releasePools();
+                createWalTable("t");
+                try (WalWriter writer = getWalWriter("t")) {
+                    appendRow(writer);
+                    execute("ALTER TABLE t ALTER COLUMN i TYPE LONG");
+                    ff.arm(failAt);
+                    try {
+                        final CairoError error = Assert.assertThrows(CairoError.class, writer::commit);
+                        // The handler's stop carries the flush failure; the fence's refusal does not.
+                        Assert.assertTrue("the stop carries the flush failure [error=" + error + ']', CairoException.isDataSyncFailure(error));
+                    } finally {
+                        ff.disarm();
+                    }
+                    Assert.assertNotNull("the segment copy's flush was failed", ff.getInjection());
                 }
-                Assert.assertNotNull("the segment copy's flush was failed", ff.getInjection());
+                Assert.assertTrue(engine.isDurabilityFailed());
+            } finally {
+                engine.resetDurabilityFailure();
+                releasePools();
             }
-            Assert.assertTrue(engine.isDurabilityFailed());
-            engine.resetDurabilityFailure();
-            releasePools();
         });
     }
 

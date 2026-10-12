@@ -200,9 +200,9 @@ import static io.questdb.griffin.CompiledQuery.*;
 
 public class CairoEngine implements Closeable, WriterSource {
     /**
-     * Runs once, on the first fatal flush failure of the engine, after the engine has fenced itself (every later
-     * writer acquire, commit, purge, acknowledgement and CHECKPOINT CREATE is refused by
-     * {@link #throwIfDurabilityFailed()}) and before the failure site throws its {@link CairoError}. Production
+     * Runs once, on the first fatal flush failure of the engine, after the engine has fenced further writes,
+     * acknowledgements, purge and CHECKPOINT CREATE, and before the failure site throws. Entry points guarded by
+     * {@link #throwIfDurabilityFailed()} refuse further work with {@link CairoError}. Production
      * ({@code ServerMain}) halts the process here, without closing writers. The default handler returns: an
      * embedded engine or a test JVM keeps the fence as its stop, and the embedder closes the engine, fixes the
      * cause and constructs a new one; nothing past the failure was acknowledged, and the new engine recovers as a

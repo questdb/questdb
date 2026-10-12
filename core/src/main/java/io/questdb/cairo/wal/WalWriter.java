@@ -1622,6 +1622,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             txReader = Misc.free(txReader);
 
             // All native resources are now released; surface the first close-time fault (if any) to the caller.
+            sequencer.handleDataSyncFailure(closeError);
             CairoException.rethrowCleanupFailure(closeError);
         }
     }
