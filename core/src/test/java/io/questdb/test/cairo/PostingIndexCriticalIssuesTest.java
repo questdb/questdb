@@ -3586,6 +3586,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testO3PostingSealPurgeContinuesAfterPurgeLogWriteFailure() throws Exception {
+        // A pure append no longer rotates .pv on every commit (#7516); compact on every
+        // generation so the O3 commits rotate the seal, and its purge, as this test assumes.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 0);
         final AtomicBoolean isLogOpenFailing = new AtomicBoolean(false);
         ff = new TestFilesFacadeImpl() {
             @Override
@@ -4123,6 +4126,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      */
     @Test
     public void testCloseQueuesReadyPostingSealPurgeWhenSpillFileWriteWouldFail() throws Exception {
+        // A pure append no longer rotates .pv on every commit (#7516); compact on every
+        // generation so the O3 commits rotate the seal, and its purge, as this test assumes.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 0);
         final AtomicBoolean isSpillWriteFailing = new AtomicBoolean(false);
         ff = new TestFilesFacadeImpl() {
             @Override
