@@ -1730,6 +1730,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private boolean[] isColumnDecoded;
         private boolean[] isColumnFull;
         private boolean[] isColumnSelected;
+        // decodeInRuns(): the selected fixed-width columns, copied in runs, and the other selected columns
+        private boolean[] isRowColumn;
+        private boolean[] isRunColumn;
+        private long[] runBlockAddrs;
+        private int runColumnCount;
+        private int[] runColumns;
         private int frameIndex = -1;
         private int rowCount;
         // Synthesized symbol-key column (broadcast int), shared by every DIRECT
@@ -1829,7 +1835,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 int count = 0;
                 long filteredPosition = 0;
                 final long filteredCount = filteredRows != null ? filteredRows.size() : 0;
-                if (rowCursor instanceof CoveringRowCursor crc) {
+                if (rowCursor instanceof CoveringRowCursor crc && filteredRows == null && selectRunColumns()) {
+                    count = decodeInRuns(crc);
+                } else if (rowCursor instanceof CoveringRowCursor crc) {
                     while (crc.hasNext()) {
                         crc.next();
                         if (count >= rowCount) {
@@ -1870,6 +1878,101 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             } finally {
                 Misc.free(rowCursor);
             }
+        }
+
+        /**
+         * Decodes every row of the frame, copying the fixed-width columns in runs: consecutive rows
+         * that read consecutive values of one generation's sidecar values (a key's rows within a
+         * generation) are copied with one memory copy per column, instead of one accessor call per
+         * row and column. Var-size columns, and the fixed-width columns of rows that cannot be read
+         * in bulk, take the per-row path.
+         *
+         * @return the rows decoded
+         */
+        private int decodeInRuns(CoveringRowCursor crc) {
+            final int queryColCount = queryColCount();
+            final int sentinelInclude = coveredIncludeIdx[runColumns[0]];
+            int count = 0;
+            int runStartRow = 0;
+            int runStartOrdinal = 0;
+            int runLength = 0;
+            long runBlockId = 0;
+            while (crc.hasNext()) {
+                crc.next();
+                if (count >= rowCount) {
+                    break;
+                }
+                final long blockId = crc.getCoveredBlockId(sentinelInclude);
+                final int ordinal = crc.getCoveredBlockOrdinal();
+                if (runLength > 0 && blockId == runBlockId && ordinal == runStartOrdinal + runLength) {
+                    runLength++;
+                } else {
+                    // the run ends before the cursor decodes another block over the run's values
+                    copyRun(runStartRow, runStartOrdinal, runLength);
+                    runLength = 0;
+                    if (blockId != 0 && captureRunBlocks(crc)) {
+                        runStartRow = count;
+                        runStartOrdinal = ordinal;
+                        runLength = 1;
+                        runBlockId = blockId;
+                    } else {
+                        CoveredColumnDecoder.writeCoveredRow(colAddr, this, count, crc, queryColCount, coveredIncludeIdx, columnTypeTags, columnTypes, isRunColumn);
+                    }
+                }
+                CoveredColumnDecoder.writeCoveredRow(colAddr, this, count, crc, queryColCount, coveredIncludeIdx, columnTypeTags, columnTypes, isRowColumn);
+                count++;
+            }
+            copyRun(runStartRow, runStartOrdinal, runLength);
+            return count;
+        }
+
+        // The block addresses of the run columns for the current row; false when one of them cannot
+        // be read in bulk, which sends the row to the per-row path.
+        private boolean captureRunBlocks(CoveringRowCursor crc) {
+            for (int i = 0, n = runColumnCount; i < n; i++) {
+                final int q = runColumns[i];
+                final long addr = crc.getCoveredBlockAddress(coveredIncludeIdx[q]);
+                if (addr == 0) {
+                    return false;
+                }
+                runBlockAddrs[i] = addr;
+            }
+            return true;
+        }
+
+        private void copyRun(int startRow, int startOrdinal, int length) {
+            if (length == 0) {
+                return;
+            }
+            for (int i = 0, n = runColumnCount; i < n; i++) {
+                final int q = runColumns[i];
+                final int size = columnSizeBytes[q];
+                Unsafe.copyMemory(runBlockAddrs[i] + (long) startOrdinal * size, colAddr[q] + (long) startRow * size, (long) length * size);
+            }
+        }
+
+        /**
+         * Splits the selected covered columns into the fixed-width ones decoded in runs and the rest,
+         * decoded per row. False when no selected column is fixed-width.
+         */
+        private boolean selectRunColumns() {
+            final int queryColCount = queryColCount();
+            if (isRunColumn == null || isRunColumn.length < queryColCount) {
+                isRunColumn = new boolean[queryColCount];
+                isRowColumn = new boolean[queryColCount];
+                runColumns = new int[queryColCount];
+                runBlockAddrs = new long[queryColCount];
+            }
+            runColumnCount = 0;
+            for (int q = 0; q < queryColCount; q++) {
+                final boolean isFixed = isColumnSelected[q] && coveredIncludeIdx[q] >= 0 && !ColumnType.isVarSize(columnTypes[q]);
+                isRunColumn[q] = isFixed;
+                isRowColumn[q] = isColumnSelected[q] && !isFixed;
+                if (isFixed) {
+                    runColumns[runColumnCount++] = q;
+                }
+            }
+            return runColumnCount > 0;
         }
 
         private boolean hasFullColumns(IntHashSet columnIndexes) {

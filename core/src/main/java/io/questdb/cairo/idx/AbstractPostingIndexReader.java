@@ -2295,6 +2295,46 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         @Override
+        public long getCoveredBlockAddress(int includeIdx) {
+            final long id = getCoveredBlockId(includeIdx);
+            if (id == 0 || !isCurrentGenDense) {
+                // a sparse generation stores the column's values raw, one array for the generation
+                return id;
+            }
+            // A dense generation's key block is compressed: a bulk reader reads its values in a
+            // run, so decode it now rather than after a point read, which is what the first
+            // ensureColumnDecoded() call records.
+            if (!ensureColumnDecoded(includeIdx) && !ensureColumnDecoded(includeIdx)) {
+                return 0;
+            }
+            return colCacheAddrs[includeIdx];
+        }
+
+        @Override
+        public long getCoveredBlockId(int includeIdx) {
+            if (cursorCoverCount == 0 || cachedSidecarIdx < 0 || includeIdx < 0 || includeIdx >= cursorCoverCount) {
+                return 0;
+            }
+            if (isCurrentGenDense) {
+                return keyBlockAddrs != null && includeIdx < keyBlockAddrs.length ? keyBlockAddrs[includeIdx] : 0;
+            }
+            // as getRawSidecarXxx() read it: the generation's raw values, at the cursor's ordinal
+            if (includeIdx >= currentGenSidecarOffsets.size()) {
+                return 0;
+            }
+            final MemoryMR mem = sidecarMems.getQuick(includeIdx);
+            if (mem.size() == 0) {
+                return 0;
+            }
+            return mem.addressOf(currentGenSidecarOffsets.getQuick(includeIdx) + 4);
+        }
+
+        @Override
+        public int getCoveredBlockOrdinal() {
+            return cachedSidecarIdx;
+        }
+
+        @Override
         public BinarySequence getCoveredBin(int includeIdx) {
             return getVarSidecarBin(includeIdx);
         }

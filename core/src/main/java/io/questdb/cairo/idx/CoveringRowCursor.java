@@ -33,6 +33,64 @@ public interface CoveringRowCursor extends RowCursor {
 
     ArrayView getCoveredArray(int includeIdx, int columnType);
 
+    /**
+     * The decoded values of fixed-width covered column {@code includeIdx} for the block the current
+     * row reads from, one value of {@code ColumnType.sizeOf(type)} bytes per ordinal (see
+     * {@link #getCoveredBlockOrdinal()}): a dense generation's key block, decoded, or a sparse
+     * generation's raw values. 0 when they are not available in bulk, such as when the column has no
+     * values for the key. The address is valid until the cursor moves to another block (see
+     * {@link #getCoveredBlockId(int)}) or closes.
+     */
+    default long getCoveredBlockAddress(int includeIdx) {
+        return 0;
+    }
+
+    /**
+     * An identity of the block the current row of column {@code includeIdx} reads from, without
+     * decoding it: two rows with the same id and consecutive ordinals read consecutive values of one
+     * block. 0 when the column cannot be read in bulk, see {@link #getCoveredBlockAddress(int)}.
+     */
+    default long getCoveredBlockId(int includeIdx) {
+        return 0;
+    }
+
+    /**
+     * The current row's ordinal in its block, see {@link #getCoveredBlockAddress(int)}.
+     */
+    default int getCoveredBlockOrdinal() {
+        return -1;
+    }
+
+    /**
+     * The ordinal, in the current row's block (see {@link #getCoveredBlockAddress(int)}), of the
+     * first of the rows {@link #peekCoveredRun(int)} counted.
+     */
+    default int getCoveredRunOrdinal() {
+        return -1;
+    }
+
+    /**
+     * Counts, without moving the cursor, the next rows that read consecutive values of the current
+     * row's block, from {@link #getCoveredRunOrdinal()} on: the rows the next {@code hasNext()}
+     * calls would return, which a bulk reader can take from the block addresses at once and then
+     * pass with {@link #skipCoveredRun(int)}. 0 when there are none, or the cursor cannot tell
+     * without decoding: the bulk reader then carries on with {@code hasNext()}.
+     *
+     * @param maxRows the most rows to count, at least 1
+     */
+    default int peekCoveredRun(int maxRows) {
+        return 0;
+    }
+
+    /**
+     * Moves the cursor past the first {@code rows} rows {@link #peekCoveredRun(int)} counted, as
+     * that many {@code hasNext()} and {@code next()} calls would: the current row is the last of
+     * them.
+     */
+    default void skipCoveredRun(int rows) {
+        throw new UnsupportedOperationException();
+    }
+
     BinarySequence getCoveredBin(int includeIdx);
 
     long getCoveredBinLen(int includeIdx);

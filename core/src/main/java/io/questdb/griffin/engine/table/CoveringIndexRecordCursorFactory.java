@@ -53,6 +53,7 @@ import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -79,6 +80,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -1553,9 +1555,254 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return matchedRows / nonEmptyPairs;
     }
 
+    /**
+     * A run of a single-key covering scan's next rows, offered as a {@link RecordBlock}: the rows the
+     * posting cursor's decoded block holds next, whose covered values are consecutive in the
+     * generation's sidecar values (see {@link CoveringRowCursor#peekCoveredRun(int)}). Every
+     * column of the scan is a fixed-width covered column, read at its decoded block, or the indexed
+     * symbol, the key repeated: a scan with a var-size column offers no blocks. The rows' records
+     * ({@link #getRecordAt(int)}) are a {@link CoveringRecord} over the same values, so a block row
+     * reads as the cursor's record would.
+     */
+    private static class CoveringBlock implements RecordBlock, QuietCloseable {
+        private final long[] addresses;
+        private final int[] columnSizes;
+        private final int[] includeIndexes;
+        private final CoveringRecord record;
+        private final BlockValues values;
+        private int keyCapacity;
+        private long keyColumnAddr;
+        private int rowCount;
+
+        CoveringBlock(int[] queryColToIncludeIdx, RecordMetadata metadata) {
+            final int columnCount = queryColToIncludeIdx.length;
+            this.addresses = new long[columnCount];
+            this.columnSizes = new int[columnCount];
+            this.includeIndexes = queryColToIncludeIdx;
+            int maxInclude = -1;
+            for (int q = 0; q < columnCount; q++) {
+                final int includeIdx = queryColToIncludeIdx[q];
+                columnSizes[q] = includeIdx == -1 ? Integer.BYTES : ColumnType.sizeOf(metadata.getColumnType(q));
+                maxInclude = Math.max(maxInclude, includeIdx);
+            }
+            this.values = new BlockValues(maxInclude + 1);
+            this.record = new CoveringRecord(queryColToIncludeIdx, SymbolTable.VALUE_NOT_FOUND, metadata);
+            this.record.of(values);
+        }
+
+        // every column is the indexed symbol or a fixed-width covered column
+        static boolean isEligible(int[] queryColToIncludeIdx, RecordMetadata metadata) {
+            if (queryColToIncludeIdx.length == 0) {
+                return false;
+            }
+            for (int q = 0, n = queryColToIncludeIdx.length; q < n; q++) {
+                final int includeIdx = queryColToIncludeIdx[q];
+                if (includeIdx < -1 || (includeIdx >= 0 && (ColumnType.isVarSize(metadata.getColumnType(q)) || ColumnType.sizeOf(metadata.getColumnType(q)) <= 0))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
+        public void close() {
+            if (keyColumnAddr != 0) {
+                keyColumnAddr = Unsafe.free(keyColumnAddr, (long) keyCapacity * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                keyCapacity = 0;
+            }
+        }
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            return addresses[columnIndex];
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return columnSizes[columnIndex];
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            values.row = row;
+            return record;
+        }
+
+        @Override
+        public int getRowCount() {
+            return rowCount;
+        }
+
+        boolean of(CoveringRowCursor cursor, int rows, int symbolKey) {
+            final int ordinal = cursor.getCoveredRunOrdinal();
+            if (ordinal < 0) {
+                return false;
+            }
+            for (int q = 0, n = addresses.length; q < n; q++) {
+                final int includeIdx = includeIndexes[q];
+                if (includeIdx == -1) {
+                    continue;
+                }
+                final long base = cursor.getCoveredBlockAddress(includeIdx);
+                if (base == 0) {
+                    return false;
+                }
+                final long address = base + (long) ordinal * columnSizes[q];
+                addresses[q] = address;
+                values.addresses[includeIdx] = address;
+            }
+            for (int q = 0, n = addresses.length; q < n; q++) {
+                if (includeIndexes[q] == -1) {
+                    if (keyCapacity < rows) {
+                        keyColumnAddr = Unsafe.realloc(keyColumnAddr, (long) keyCapacity * Integer.BYTES, (long) rows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        keyCapacity = rows;
+                    }
+                    for (int r = 0; r < rows; r++) {
+                        Unsafe.putInt(keyColumnAddr + (long) r * Integer.BYTES, symbolKey);
+                    }
+                    addresses[q] = keyColumnAddr;
+                }
+            }
+            record.setSymbolKey(symbolKey);
+            rowCount = rows;
+            return true;
+        }
+    }
+
+    /**
+     * The covered values of a {@link CoveringBlock}'s row, for its {@link CoveringRecord}: each
+     * include column's value at the block address the block resolved, for the row it was last
+     * positioned at. It serves fixed-width values only, as a block holds no other column.
+     */
+    private static class BlockValues implements CoveringRowCursor {
+        final long[] addresses;
+        int row;
+
+        BlockValues(int includeCount) {
+            this.addresses = new long[Math.max(1, includeCount)];
+        }
+
+        @Override
+        public ArrayView getCoveredArray(int includeIdx, int columnType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public BinarySequence getCoveredBin(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getCoveredBinLen(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public byte getCoveredByte(int includeIdx) {
+            return Unsafe.getByte(addresses[includeIdx] + row);
+        }
+
+        @Override
+        public double getCoveredDouble(int includeIdx) {
+            return Unsafe.getDouble(addresses[includeIdx] + (long) row * Double.BYTES);
+        }
+
+        @Override
+        public float getCoveredFloat(int includeIdx) {
+            return Unsafe.getFloat(addresses[includeIdx] + (long) row * Float.BYTES);
+        }
+
+        @Override
+        public int getCoveredInt(int includeIdx) {
+            return Unsafe.getInt(addresses[includeIdx] + (long) row * Integer.BYTES);
+        }
+
+        @Override
+        public long getCoveredLong(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * Long.BYTES);
+        }
+
+        @Override
+        public long getCoveredLong128Hi(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 16 + 8);
+        }
+
+        @Override
+        public long getCoveredLong128Lo(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 16);
+        }
+
+        @Override
+        public long getCoveredLong256_0(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 32);
+        }
+
+        @Override
+        public long getCoveredLong256_1(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 32 + 8);
+        }
+
+        @Override
+        public long getCoveredLong256_2(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 32 + 16);
+        }
+
+        @Override
+        public long getCoveredLong256_3(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 32 + 24);
+        }
+
+        @Override
+        public short getCoveredShort(int includeIdx) {
+            return Unsafe.getShort(addresses[includeIdx] + (long) row * Short.BYTES);
+        }
+
+        @Override
+        public CharSequence getCoveredStrA(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getCoveredStrB(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Utf8Sequence getCoveredVarcharA(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Utf8Sequence getCoveredVarcharB(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean hasNext() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isCoveredAvailable(int includeIdx) {
+            return true;
+        }
+
+        @Override
+        public long next() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long seekToLast() {
+            throw new UnsupportedOperationException();
+        }
+    }
+
     private static abstract class CoveringCursor implements RecordCursor {
         protected final IntList columnIndexes;
         protected final CoveringRecord coveringRecord;
+        // the block peekRecordBlock() offers, null when this cursor offers none, see CoveringBlock
+        protected CoveringBlock block;
         protected final int indexColumnIndex;
         protected final boolean latestBy;
         protected final int[] requiredIncludeIndices;
@@ -1591,6 +1838,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // before freeing frameCursor).
             this.currentRowCursor = Misc.free(currentRowCursor);
             frameCursor = Misc.free(frameCursor);
+            Misc.free(block);
         }
 
         @Override
@@ -1642,6 +1890,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public @Nullable RecordBlock peekRecordBlock(int maxRows) {
+            if (block == null || frameCursor == null || latestBy || currentRowCursor == null) {
+                return null;
+            }
+            final int rows = currentRowCursor.peekCoveredRun(maxRows);
+            if (rows <= 0 || !block.of(currentRowCursor, rows, coveringRecord.symbolKey)) {
+                return null;
+            }
+            return block;
+        }
+
+        @Override
         public long preComputedStateSize() {
             return 0;
         }
@@ -1649,6 +1909,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         public void recordAt(Record record, long atRowId) {
             throw new UnsupportedOperationException("CoveringIndex does not support random access");
+        }
+
+        @Override
+        public void skipRecordBlock(int rowCount) {
+            if (rowCount > 0) {
+                currentRowCursor.skipCoveredRun(rowCount);
+                coveringRecord.setRowId(currentRowCursor.next());
+            }
+        }
+
+        @Override
+        public boolean supportsRecordBlocks() {
+            return block != null && !latestBy;
         }
 
         @Override
@@ -1740,6 +2013,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     symTablesCache[col] = tableReader.getSymbolMapReader(columnIndexes.getQuick(col));
                 }
                 coveringRecord.setIncludeSymbolTables(symTablesCache);
+            }
+            if (block != null) {
+                block.record.setSymbolTable(indexSymbolTable);
+                block.record.setIncludeSymbolTables(symbolIncludeCols != null ? symTablesCache : null);
             }
         }
 
@@ -3951,6 +4228,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                                 boolean latestBy, RecordMetadata metadata) {
             super(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
             this.symbolKey = symbolKey;
+            if (!latestBy && CoveringBlock.isEligible(queryColToIncludeIdx, metadata)) {
+                this.block = new CoveringBlock(queryColToIncludeIdx, metadata);
+            }
         }
 
         /**

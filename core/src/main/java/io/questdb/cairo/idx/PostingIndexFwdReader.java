@@ -394,6 +394,65 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             return next - minValue;
         }
 
+        @Override
+        public int getCoveredRunOrdinal() {
+            return isCurrentGenDense ? sidecarStrideKeyStart + sidecarOrdinal : sidecarOrdinal;
+        }
+
+        // The rows hasNext() returns one ordinal after another: a constant-delta stream's values up
+        // to the cursor's upper bound, or a decoded block's within the cursor's row range.
+        @Override
+        public int peekCoveredRun(int maxRows) {
+            if (cursorCoverCount == 0) {
+                return 0;
+            }
+            if (constantDeltaRemaining > 0) {
+                if (constantDeltaValue > maxValue) {
+                    return 0;
+                }
+                long rows = constantDeltaRemaining;
+                if (constantDeltaStep > 0) {
+                    rows = Math.min(rows, (maxValue - constantDeltaValue) / constantDeltaStep + 1);
+                }
+                return (int) Math.min(maxRows, rows);
+            }
+            final int available = Math.min(maxRows, blockBufferEnd - blockBufferPos);
+            if (bufferRangeChecked || available <= 0) {
+                return Math.max(0, available);
+            }
+            // a block that straddles the cursor's range: hasNext() skips the values below it, one
+            // ordinal each, and ends at the first above it
+            final long first = Unsafe.getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
+            if (first < minValue) {
+                return 0;
+            }
+            int rows = 0;
+            while (rows < available && Unsafe.getLong(blockBufferAddr + (long) (blockBufferPos + rows) * Long.BYTES) <= maxValue) {
+                rows++;
+            }
+            return rows;
+        }
+
+        @Override
+        public void skipCoveredRun(int rows) {
+            assert rows >= 0;
+            if (rows == 0) {
+                return;
+            }
+            if (constantDeltaRemaining > 0) {
+                assert rows <= constantDeltaRemaining;
+                this.next = constantDeltaValue + (rows - 1) * constantDeltaStep;
+                constantDeltaValue += rows * constantDeltaStep;
+                constantDeltaRemaining -= rows;
+            } else {
+                assert rows <= blockBufferEnd - blockBufferPos;
+                blockBufferPos += rows;
+                this.next = Unsafe.getLong(blockBufferAddr + (long) (blockBufferPos - 1) * Long.BYTES);
+            }
+            sidecarOrdinal += rows;
+            cachedSidecarIdx = isCurrentGenDense ? sidecarStrideKeyStart + sidecarOrdinal - 1 : sidecarOrdinal - 1;
+        }
+
         /**
          * {@link #hasNext()} and {@link #next()} over the decoded block in bulk: a block wholly
          * within the cursor's row range is copied as it is; another one skips the values below
@@ -1205,6 +1264,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
             releaseResources();
+        }
+
+        @Override
+        public int peekCoveredRun(int maxRows) {
+            // the NULL rows of the column top have no covered values
+            return nullPos < nullCount ? 0 : super.peekCoveredRun(maxRows);
         }
 
         // the NULL rows of the column top first, one at a time, then the index's rows in bulk
