@@ -25,16 +25,15 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
-    // DOUBLE and LONG input, each with the default precision and with a precision above 2,
-    // which selects the packed histogram implementation
-    private static final String ALL_VARIANTS = "approx_percentile(d, ARRAY[0.5]) d1, approx_percentile(d, ARRAY[0.5], 4) d4, " +
-            "approx_percentile(l, ARRAY[0.5]) l1, approx_percentile(l, ARRAY[0.5], 4) l4";
+    private static final String ALL_VARIANTS = allVariants("ARRAY[0.5]");
 
     @Test
     public void testAllVariantsEmptyAndNullGroups() throws Exception {
@@ -192,6 +191,49 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     }
 
     @Test
+    public void testBindVariablePercentiles() throws Exception {
+        // bind variables are runtime constants, so the factories accept them as percentiles
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::DOUBLE d, x l FROM long_sequence(100))");
+            final String expected = """
+                    d1\td4\tl1\tl4
+                    [51.9375,91.9375]\t[50.00189208984375,90.00384521484375]\t[51.0,91.0]\t[50.0,90.0]
+                    """;
+            assertQuery("SELECT " + allVariants("ARRAY[0.5, 0.9]") + " FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+
+            // an array built from bind variables
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 0.5);
+            bindVariableService.setDouble(1, 0.9);
+            assertQuery("SELECT " + allVariants("ARRAY[$1, $2]") + " FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+
+            // an array bind variable
+            try (DirectArray percentiles = new DirectArray()) {
+                percentiles.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                percentiles.setDimLen(0, 2);
+                percentiles.applyShape();
+                percentiles.putDouble(0, 0.5);
+                percentiles.putDouble(1, 0.9);
+                bindVariableService.clear();
+                bindVariableService.setArray(0, percentiles);
+                assertQuery("SELECT " + allVariants("$1") + " FROM t")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testEmptyArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(100))");
@@ -336,6 +378,44 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     }
 
     @Test
+    public void testNonConstantPercentile() throws Exception {
+        // getArray() evaluates the percentiles against the GROUP BY output record, which holds
+        // no input columns, so percentiles that vary per row have no meaningful value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE, l LONG, arr DOUBLE[])");
+            assertQuery("SELECT approx_percentile(d, arr) FROM t")
+                    .noLeakCheck()
+                    .fails(28, "percentile must be a constant or runtime constant");
+            assertQuery("SELECT approx_percentile(d, arr, 4) FROM t")
+                    .noLeakCheck()
+                    .fails(28, "percentile must be a constant or runtime constant");
+            assertQuery("SELECT approx_percentile(l, arr) FROM t")
+                    .noLeakCheck()
+                    .fails(28, "percentile must be a constant or runtime constant");
+            assertQuery("SELECT approx_percentile(l, arr, 4) FROM t")
+                    .noLeakCheck()
+                    .fails(28, "percentile must be a constant or runtime constant");
+            assertQuery("SELECT approx_percentile(d, ARRAY[d / 100]) FROM t")
+                    .noLeakCheck()
+                    .fails(33, "percentile must be a constant or runtime constant");
+        });
+    }
+
+    @Test
+    public void testPlanShowsPercentiles() throws Exception {
+        // covers the DOUBLE and LONG functions, plain and packed
+        assertQuery("SELECT " + allVariants("ARRAY[0.5, 0.9]") + " FROM t")
+                .ddl("CREATE TABLE t (d DOUBLE, l LONG)")
+                .assertsPlan("""
+                        GroupBy vectorized: false
+                          values: [approx_percentile(d,ARRAY[0.5,0.9]),approx_percentile(d,ARRAY[0.5,0.9]),approx_percentile(l,ARRAY[0.5,0.9]),approx_percentile(l,ARRAY[0.5,0.9])]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                        """);
+    }
+
+    @Test
     public void testSinglePercentileInArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(100))");
@@ -389,6 +469,13 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
                     .noLeakCheck()
                     .returnsOnce("approx_percentile\n[501.9921875,951.9921875]\n");
         });
+    }
+
+    // DOUBLE and LONG input, each with the default precision and with a precision above 2,
+    // which selects the packed histogram implementation
+    private static String allVariants(String percentiles) {
+        return "approx_percentile(d, " + percentiles + ") d1, approx_percentile(d, " + percentiles + ", 4) d4, " +
+                "approx_percentile(l, " + percentiles + ") l1, approx_percentile(l, " + percentiles + ", 4) l4";
     }
 
     private String queryResult(String query) throws Exception {

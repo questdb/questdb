@@ -215,6 +215,24 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
+    public void testNonConstantPercentile() throws Exception {
+        // getDouble() evaluates the percentile against the GROUP BY output record, which holds
+        // no input columns, so a percentile that varies per row has no meaningful value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x DOUBLE, p DOUBLE)");
+            assertQuery("SELECT percentile_disc(x, p) FROM test")
+                    .noLeakCheck()
+                    .fails(26, "percentile must be a constant or runtime constant");
+            assertQuery("SELECT percentile_disc(x, x / 100) FROM test")
+                    .noLeakCheck()
+                    .fails(28, "percentile must be a constant or runtime constant");
+            assertQuery("SELECT quantile_disc(x, p) FROM test")
+                    .noLeakCheck()
+                    .fails(24, "percentile must be a constant or runtime constant");
+        });
+    }
+
+    @Test
     public void testPercentileAllNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");

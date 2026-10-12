@@ -27,9 +27,12 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+
+import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory.checkPercentile;
 
 public class MultiApproxPercentileLongGroupByDefaultFunctionFactory implements FunctionFactory {
     private static final int DEFAULT_PRECISION = 1;
@@ -51,7 +54,8 @@ public class MultiApproxPercentileLongGroupByDefaultFunctionFactory implements F
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
+        checkPercentile(args.getQuick(1), argPositions.getQuick(1));
         return new MultiApproxPercentileLongGroupByFunction(args.getQuick(0), args.getQuick(1), DEFAULT_PRECISION, argPositions.getQuick(1));
     }
 }

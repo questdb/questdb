@@ -25,6 +25,8 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
@@ -89,6 +91,49 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             ('2022-05-02T15:15:28Z', '8.939'),
             ('2022-05-02T15:15:58Z', '65.81');
             """;
+
+    @Test
+    public void testBindVariablePercentiles() throws Exception {
+        // bind variables are runtime constants, so the factories accept them as percentiles
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            final String expected = """
+                    percentile_cont\tquantile_cont
+                    [25.75,50.5]\t[25.75,50.5]
+                    """;
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.25, 0.5]), quantile_cont(x, ARRAY[0.25, 0.5]) FROM test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+
+            // an array built from bind variables
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 0.25);
+            bindVariableService.setDouble(1, 0.5);
+            assertQuery("SELECT percentile_cont(x, ARRAY[$1, $2]), quantile_cont(x, ARRAY[$1, $2]) FROM test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+
+            // an array bind variable
+            try (DirectArray percentiles = new DirectArray()) {
+                percentiles.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                percentiles.setDimLen(0, 2);
+                percentiles.applyShape();
+                percentiles.putDouble(0, 0.25);
+                percentiles.putDouble(1, 0.5);
+                bindVariableService.clear();
+                bindVariableService.setArray(0, percentiles);
+                assertQuery("SELECT percentile_cont(x, $1), quantile_cont(x, $1) FROM test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+        });
+    }
 
     @Test
     public void testCompareDiscVsCont() throws Exception {
@@ -626,6 +671,24 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
             assertQuery("SELECT percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test")
                     .noLeakCheck()
                     .returnsOnce("percentile_cont\n[980.02,950.05,900.1,500.5]\n");
+        });
+    }
+
+    @Test
+    public void testNonConstantPercentile() throws Exception {
+        // getArray() evaluates the percentiles against the GROUP BY output record, which holds
+        // no input columns, so percentiles that vary per row have no meaningful value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x DOUBLE, arr DOUBLE[])");
+            assertQuery("SELECT percentile_cont(x, arr) FROM test")
+                    .noLeakCheck()
+                    .fails(26, "percentile must be a constant or runtime constant");
+            assertQuery("SELECT percentile_cont(x, ARRAY[x / 100]) FROM test")
+                    .noLeakCheck()
+                    .fails(31, "percentile must be a constant or runtime constant");
+            assertQuery("SELECT quantile_cont(x, arr) FROM test")
+                    .noLeakCheck()
+                    .fails(24, "percentile must be a constant or runtime constant");
         });
     }
 

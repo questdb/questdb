@@ -217,6 +217,6 @@ public class MultiApproxPercentileLongGroupByFunction extends ArrayFunction impl
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("approx_percentile(").val(exprFunc).val(')');
+        sink.val("approx_percentile(").val(exprFunc).val(',').val(percentileFunc).val(')');
     }
 }
