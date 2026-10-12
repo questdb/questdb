@@ -224,6 +224,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 Os.pause();
             }
         }
+
+        if (frameCount > 0) {
+            suspendCollectSubSeq();
+        }
     }
 
     @Override
@@ -255,12 +259,19 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         if (cursor == LOCAL_TASK_CURSOR) {
             collectedFrameIndex = localTask.getFrameIndex();
             localTask.collected();
+            if (done) {
+                suspendCollectSubSeq();
+            }
             return;
         }
         PageFrameReduceTask task = reduceQueue.get(cursor);
         collectedFrameIndex = task.getFrameIndex();
         task.collected(forceCollect);
         collectSubSeq.done(cursor);
+        if (done) {
+            suspendCollectSubSeq();
+            return;
+        }
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         if (dispatcher != null) {
             dispatcher.signalProgress(this);
@@ -581,6 +592,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     .I$();
 
             await();
+            messageBus.getPageFrameCollectFanOut(shard).resume(collectSubSeq);
 
             // done is reset by method call above
             done = false;
@@ -863,5 +875,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             return false;
         }
         return true;
+    }
+
+    private void suspendCollectSubSeq() {
+        messageBus.getPageFrameCollectFanOut(shard).suspend(collectSubSeq);
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        if (dispatcher != null) {
+            dispatcher.signalProgress(this);
+        }
     }
 }
