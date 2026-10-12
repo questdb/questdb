@@ -121,7 +121,8 @@ public class ViewGraph implements Mutable {
         }
 
         final ViewDefinition newDefinition = new ViewDefinition();
-        // A recompile carries the audit setting over: only CREATE VIEW decides it.
+        // A redefinition, by ALTER VIEW or CREATE OR REPLACE VIEW or the WAL replay of one,
+        // carries the audit setting over: only CREATE VIEW decides it.
         newDefinition.init(viewToken, viewSql, dependencies, seqTxn, currentDefinition.isAudited());
 
         try (BlockFileWriter definitionWriter = blockFileWriter) {

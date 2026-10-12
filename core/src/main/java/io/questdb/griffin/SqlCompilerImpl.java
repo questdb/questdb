@@ -4494,7 +4494,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             }
-            // A throw between optimisation and generation leaves the table functions of the
+            // A throw between optimisation and generation leaves open the table functions of the
             // models the walk above does not reach.
             optimiser.freeUnclaimedTableFactories(th);
             // unregister query on error

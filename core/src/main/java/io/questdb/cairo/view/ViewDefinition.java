@@ -98,9 +98,9 @@ public class ViewDefinition implements Mutable {
      * non-audited view's file byte-identical to what a build without auditing writes, so rolling
      * back to such a build is a non-event for it. An audited view does carry the extra block; an
      * older build reads the definition block and stops, so it still loads the view, but if it then
-     * rewrites the definition - a recompile, an ALTER - the flag is dropped, and rolling forward
-     * again reads the view as not audited. That is the one thing a downgrade costs, and it costs it
-     * only for views that opted in.
+     * rewrites the definition - an ALTER VIEW, a CREATE OR REPLACE VIEW, or a checkpoint it
+     * takes - the flag is dropped, and rolling forward again reads the view as not audited. That is
+     * the one thing a downgrade costs, and it costs it only for views that opted in.
      */
     public static void append(@NotNull ViewDefinition viewDefinition, @NotNull BlockFileWriter writer) {
         final AppendableBlock block = writer.append();

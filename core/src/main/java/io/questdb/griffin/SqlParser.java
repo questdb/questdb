@@ -764,18 +764,15 @@ public class SqlParser {
      * audited ones, to the statement's query model.
      * <p>
      * This sits at the single parse entry point rather than in {@code parseSelect}, because a read
-     * of a view is a read whichever statement performs it: {@code INSERT INTO ... SELECT},
-     * {@code CREATE TABLE AS SELECT} and {@code UPDATE ... FROM} build their query model through
-     * {@code parseDml} directly and never reach {@code parseSelect}. Recording there left the
-     * statements that copy rows out of an audited view as the ones leaving no record. It also left
+     * of a view is a read whichever statement performs it: {@code INSERT INTO ... SELECT} and
+     * {@code CREATE TABLE AS SELECT} build their query model through {@code parseDml}, and
+     * {@code UPDATE ... FROM} through {@code parseDmlUpdate}; none of them reach
+     * {@code parseSelect}. Recording there left the statements that copy rows out of an audited
+     * view as the ones leaving no record. It also left
      * their plans without the check that each view is still the definition they compiled, so a
      * plan cached by its text, as PGWire caches an {@code INSERT ... SELECT}, went on serving the
      * body a view had when the plan compiled, without the audit the view gained when re-created
      * {@code WITH AUDIT}.
-     * <p>
-     * {@link IQueryModel#recordViews(LowerCaseCharSequenceObjHashMap)} and
-     * {@link IQueryModel#recordViewAudits(ObjList)} skip entries the model already holds, so a
-     * statement whose parser also recorded them does not end up with duplicates.
      */
     private void attachViewReads(ExecutionModel model) {
         if (recordedViews.size() == 0 && recordedViewAudits.size() == 0) {
@@ -901,7 +898,8 @@ public class SqlParser {
      * {@link #MAX_DECLARED_VARIABLE_NODES} caps the nodes of those copies, but nothing caps the
      * characters the aliases of the copies write before the next check, and they grow with the
      * number of references times the length of the value. A statement that never reaches a check,
-     * one that reads no CTE more than once, no view and no declared sub-query, has only that cap.
+     * one that reads no CTE and no declared sub-query more than once, and no view, has only that
+     * cap.
      * <p>
      * The budget bounds the parse, not the memory the compiler keeps. The optimiser and the code
      * generator take more from the same pools and the same store once the parse is done, several
@@ -909,11 +907,13 @@ public class SqlParser {
      * the pools and the store keep their capacity while the compiler lives.
      * <p>
      * The error names the first part the parse has spent, models before nodes before columns
-     * before characters. It points at the reference that would parse the text again. Inside the
-     * body of a view, where a position means nothing in the statement's text, it points at the
-     * statement's read of the outermost view the parser is expanding instead.
+     * before characters. It points at the reference that would parse the text again, or, for a
+     * copy of a declared sub-query, at the sub-query itself, see {@link #parseDeclaredQuery}.
+     * Inside the body of a view, where a position means nothing in the statement's text, it points
+     * at the statement's read of the outermost view the parser is expanding instead.
      *
-     * @param referencePosition where the reference sits in the text the parser reads
+     * @param referencePosition the reference that would parse the text again, or the declared
+     *                          sub-query a copy would parse
      */
     private void checkParseBudget(int referencePosition) throws SqlException {
         final long textLength = (long) statementTextLength + viewTextLength;
@@ -1505,8 +1505,8 @@ public class SqlParser {
     }
 
     /**
-     * Looks ahead from just after {@code :=} to decide whether the right-hand side is a value list
-     * rather than a parenthesised scalar. Only a comma directly inside the outermost brackets makes
+     * Looks ahead from {@code from}, just after {@code :=} or at the start of a list member, to
+     * decide whether what follows is a value list rather than a parenthesised scalar. Only a comma directly inside the outermost brackets makes
      * it a list - commas nested in a function call or an inner bracket belong to that call. The
      * lookahead reads tokens, as {@link #borrowLookaheadLexer} describes, so a comma inside quoted
      * text or a comment is never mistaken for a separator.
@@ -7641,9 +7641,10 @@ public class SqlParser {
                 expr,
                 rewriteDeclaredVariablesInExpressionVisitor.of(decls, exprTargetVariableName)
         );
-        // A declare's own right-hand side is allowed to be a bare list - that is how the list is
-        // declared in the first place, and how one declared variable aliases another. Everywhere
-        // else a list only means something to IN, so validate there.
+        // A scalar declaration's own right-hand side may be a bare list: that is how one declared
+        // variable aliases another, `@b := @a`. parseValueList() builds a declared list itself and
+        // parses its members strictly. Everywhere else a list only means something to IN, so
+        // validate there.
         final boolean isStrict = exprTargetVariableName == null;
         spliceValueLists(rewritten, isStrict);
         if (isStrict) {

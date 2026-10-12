@@ -1993,8 +1993,9 @@ public class ExpressionParser {
                                         }
 
                                         // exiting CASE context, pop stuff off the stacks. An END written
-                                        // inside a bracket that is still open, as in 'case (when a then b
-                                        // end)', finds the bracket's scope on top in place of the CASE's.
+                                        // inside a bracket that is still open, as in 'case when x then
+                                        // a[1, 2, 3, end]', finds the bracket's scope on top in place of
+                                        // the CASE's.
                                         // The flush above finds no CASE at all after 'case.*', whose
                                         // wildcard replaces it.
                                         if (node == null || scopeStack.pop() != Scope.CASE) {
