@@ -1152,6 +1152,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.volumes\tQDB_CAIRO_VOLUMES\t\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.enabled\tQDB_CAIRO_WAL_APPLY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.look.ahead.txn.count\tQDB_CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT\t200\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.apply.block.size\tQDB_CAIRO_WAL_APPLY_BLOCK_SIZE\t0\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.apply.block.max.rows\tQDB_CAIRO_WAL_APPLY_BLOCK_MAX_ROWS\t100000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.apply.block.memory.percent\tQDB_CAIRO_WAL_APPLY_BLOCK_MEMORY_PERCENT\t25\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.table.time.quota\tQDB_CAIRO_WAL_APPLY_TABLE_TIME_QUOTA\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.parallel.sql.enabled\tQDB_CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.memory.limit.bytes\tQDB_CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +

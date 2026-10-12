@@ -441,6 +441,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // merge that flat image inside this task; TableWriter must not compact and commit mid-block while
         // another partition task owns an earlier directory publication.
         if (tableWriter.isCommitDedupMode() && hasTouchingPieces(geometry, partitionIndex)) {
+            // A fresh version copies every live row
+            tableWriter.addO3CopyStats(true, oldPartitionSize, oldPartitionSize);
             assembleFreshDedupTouchingPartitionVersion(
                     pathToTable,
                     partitionIndex,
@@ -466,17 +468,22 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // The committed, pre-cut piece count, read before beginUpdate/commitUpdate replaces it.
         final long piecesBeforeCuts = geometry.getPieceCount(partitionIndex);
         int keepCount = 0, mergeCount = 0, newPieceCount = 0, appendCount = 0;
+        // Existing rows the plan copies again: only a MERGE rewrites a piece, everything else stays in place
+        long mergedPieceRows = 0;
         for (int i = 0; i < plan.actions.size(); i++) {
-            switch (plan.actions.getQuick(i).type) {
+            final O3CompositeMergeStrategy.Action action = plan.actions.getQuick(i);
+            switch (action.type) {
                 case KEEP -> keepCount++;
-                case MERGE -> mergeCount++;
+                case MERGE -> {
+                    mergeCount++;
+                    mergedPieceRows += O3CompositeMergeStrategy.getRowCount(ctx.bounds, action.pieceIndex);
+                }
                 case NEW_PIECE -> newPieceCount++;
                 case APPEND -> appendCount++;
                 case DROP -> {
                 }
             }
         }
-
         final int columnCount = tableWriter.getMetadata().getColumnCount();
         final long e;
         try {
@@ -498,6 +505,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // version below is the reclaim.
             final int moveTailCut = isCompositeSource ? tableWriter.moveTailCut(partitionIndex, ctx.bounds, plan) : 0;
             if (moveTailCut > 0 && geometry.hasGenerationForNextPublish(partitionIndex, moveTailCut)) {
+                // The fresh sibling copies every live row past the cut
+                long tailRows = 0;
+                for (int p = moveTailCut; p < piecesBefore; p++) {
+                    tailRows += O3CompositeMergeStrategy.getRowCount(ctx.bounds, p);
+                }
+                tableWriter.addO3CopyStats(true, oldPartitionSize, tailRows);
                 moveTailToFreshPartition(
                         pathToTable,
                         partitionIndex,
@@ -518,6 +531,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 return;
             }
             if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, plan, isPendingSquashSource)) {
+                // A fresh version copies every live row
+                tableWriter.addO3CopyStats(true, oldPartitionSize, oldPartitionSize);
                 assembleFreshPartitionVersion(
                         pathToTable,
                         partitionTimestamp,
@@ -538,6 +553,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 return;
             }
 
+            if (mergeCount > 0 || newPieceCount > 0) {
+                // A plan that only appends at the partition's tail copies nothing and does not count as touching it,
+                // same as in TableWriter's block budget.
+                tableWriter.addO3CopyStats(true, oldPartitionSize, mergedPieceRows);
+            }
             ctx.ofColumnCount(columnCount);
             ctx.sinkPartitionTimestamp = partitionTimestamp;
             // readFrom() clears ctx.transientVersions itself, so no separate reset is needed - see
@@ -5636,11 +5656,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
 
-        tableWriter.addPhysicallyWrittenRows(
-                isOpenColumnModeForAppend(openColumnMode)
-                        ? srcOooBatchRowSize
-                        : o3SplitPartitionSize == 0 ? srcDataNewPartitionSize : o3SplitPartitionSize
-        );
+        final boolean isAppend = isOpenColumnModeForAppend(openColumnMode);
+        final long writtenRows = isAppend
+                ? srcOooBatchRowSize
+                : o3SplitPartitionSize == 0 ? srcDataNewPartitionSize : o3SplitPartitionSize;
+        tableWriter.addPhysicallyWrittenRows(writtenRows);
+        if (!isAppend) {
+            // A classic O3 merge writes a fresh partition version, or with a split only the version's tail: what it
+            // writes beyond the O3 rows is existing rows copied again. An append copies nothing and does not count
+            // as touching the partition, same as in TableWriter's block budget.
+            tableWriter.addO3CopyStats(false, srcDataMax, Math.max(0, writtenRows - srcOooBatchRowSize));
+        }
 
         final int columnCount = metadata.getColumnCount();
         columnCounter.set(compressColumnCount(metadata));

@@ -505,6 +505,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
+        Assert.assertEquals(25, configuration.getCairoConfiguration().getWalApplyBlockMemoryPercent());
+        Assert.assertEquals(configuration.getWalApplyPoolConfiguration().getWorkerCount(), configuration.getCairoConfiguration().getWalApplyWorkerCount());
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getWalApplyBlockSize());
+        Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getWalApplyBlockMaxRows());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalLagRowsMultiplier(), 0.00001);
@@ -1662,11 +1666,55 @@ public class PropServerConfigurationTest {
         }
     }
 
+    @Test
+    public void testInvalidWalApplyBlockMaxRows() throws Exception {
+        for (String value : new String[]{"0", "-1", "2_000_000_001", "abc"}) {
+            Properties properties = new Properties();
+            properties.setProperty("cairo.wal.apply.block.max.rows", value);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("expected failure for " + value);
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "cairo.wal.apply.block.max.rows");
+            }
+        }
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.apply.block.max.rows", "2_000_000_000");
+        Assert.assertEquals(2_000_000_000L, newPropServerConfiguration(properties).getCairoConfiguration().getWalApplyBlockMaxRows());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidWalApplyBlockMemoryPercent() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.apply.block.memory.percent", "101");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidWalApplyBlockSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.apply.block.size", "-1");
+        newPropServerConfiguration(properties);
+    }
+
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidWalMaxLagSizeNegative() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.wal.max.lag.size", "-1");
         newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testWalApplyWorkerCountFallsBackToSharedWritePool() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("wal.apply.worker.count", "0");
+        properties.setProperty("shared.worker.count", "5");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getWalApplyPoolConfiguration().isEnabled());
+        Assert.assertEquals(configuration.getSharedWorkerPoolWriteConfiguration().getWorkerCount(), configuration.getCairoConfiguration().getWalApplyWorkerCount());
+
+        properties.setProperty("wal.apply.worker.count", "3");
+        Assert.assertEquals(3, newPropServerConfiguration(properties).getCairoConfiguration().getWalApplyWorkerCount());
     }
 
     @Test
@@ -3630,6 +3678,9 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getWalEnabledDefault());
         Assert.assertFalse(configuration.isWalApplyEnabled());
         Assert.assertEquals(23, configuration.getWalApplyLookAheadTransactionCount());
+        Assert.assertEquals(33, configuration.getWalApplyBlockMemoryPercent());
+        Assert.assertEquals(2 * Numbers.SIZE_1GB, configuration.getWalApplyBlockSize());
+        Assert.assertEquals(5_000_000, configuration.getWalApplyBlockMaxRows());
         Assert.assertFalse(configuration.isTableTypeConversionEnabled());
         Assert.assertEquals(Files.POSIX_MADV_RANDOM, configuration.getWalWriterMadviseMode());
         Assert.assertEquals(100, configuration.getWalWriterPoolMaxSegments());

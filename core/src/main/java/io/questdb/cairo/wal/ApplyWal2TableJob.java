@@ -547,11 +547,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 final long start = microClock.getTicks();
 
                                 long lastLoadedTxnDetails = writer.getWalTnxDetails().getLastSeqTxn();
-                                if (seqTxn > lastLoadedTxnDetails || (lastLoadedTxnDetails < seqTxn + config.getWalApplyLookAheadTransactionCount()
+                                if (seqTxn > lastLoadedTxnDetails || (lastLoadedTxnDetails < seqTxn + writer.getWalTnxDetails().getLookaheadTxnCount()
                                         && (transactionLogCursor.getMaxTxn() > lastLoadedTxnDetails || transactionLogCursor.extend()))
                                 ) {
                                     // Last few transactions left to process from the list
                                     // of observed transactions built upfront in the beginning of the loop.
+                                    // The look-ahead txn count is one block's worth of txns when
+                                    // cairo.wal.apply.block.size is set, the configured count otherwise.
                                     // Read more transactions from the sequencer into readWalTxnDetails to continue
                                     writer.readWalTxnDetails(transactionLogCursor, timeLimit);
                                     transactionLogCursor.setPosition(seqTxn);

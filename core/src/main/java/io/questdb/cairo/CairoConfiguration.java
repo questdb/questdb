@@ -1187,6 +1187,39 @@ public interface CairoConfiguration {
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
 
+    /**
+     * Hard cap, in rows, of one WAL apply transaction block while {@code cairo.wal.apply.block.size} is set: caps
+     * both the starting row limit and its growth. At most 2 billion, which keeps block row counts and the look-ahead
+     * txn estimates derived from them within int range. Has no effect while {@code cairo.wal.apply.block.size} is
+     * unset.
+     */
+    long getWalApplyBlockMaxRows();
+
+    /**
+     * Memory budget of WAL apply transaction blocks above {@link #getWalApplyBlockSize()}, as a percentage of
+     * the RSS limit, shared by the {@link #getWalApplyWorkerCount()} workers: one block gets the percentage
+     * divided by the worker count. A block grows past the block size only while both of its memory uses fit: anonymous memory
+     * (sort index, a copy of the block's rows, and the O3 merge index over them and the existing rows the merge
+     * copies again) and page cache (the block's staging plus the existing rows copied again, read and written).
+     * The existing rows copied again are estimated from the partitions the block's transactions reach, times a
+     * copy ratio learned per table for merge-append partitions and for classic O3 merges. No RSS limit: no growth. Has
+     * no effect while {@code cairo.wal.apply.block.size} is unset.
+     */
+    int getWalApplyBlockMemoryPercent();
+
+    /**
+     * Starting size, in bytes, of one WAL apply transaction block. The writer divides it by the table's
+     * average record size to get the block's row limit. {@code 0} means unset: the block row limit then comes
+     * from {@code cairo.wal.max.lag.size} and {@code cairo.wal.squash.uncommitted.rows.multiplier} x the
+     * table's max uncommitted rows, as before. When set, it replaces both, and the row limit doubles after
+     * every block it cut short, while the block fits {@link #getWalApplyBlockMemoryPercent()}. Blocks can still
+     * be smaller: they end at the last pending transaction and at transactions that
+     * force a full commit. The look-ahead txn count starts at {@code cairo.wal.apply.look.ahead.txn.count} and
+     * adapts to one block's worth of transactions, and the table time quota does not stop the look-ahead
+     * before it has loaded one block of the transactions visible when it started.
+     */
+    long getWalApplyBlockSize();
+
     int getWalApplyLookAheadTransactionCount();
 
     /**
@@ -1211,6 +1244,13 @@ public interface CairoConfiguration {
     }
 
     long getWalApplyTableTimeQuota();
+
+    /**
+     * Number of threads that run WAL apply: the dedicated WAL apply pool's ({@code wal.apply.worker.count}), or the
+     * shared write pool's when there is no dedicated pool. They can apply as many tables at once, so a WAL apply
+     * block gets this share of {@link #getWalApplyBlockMemoryPercent()}.
+     */
+    int getWalApplyWorkerCount();
 
     /**
      * Whether WAL-apply-suspended tables (see {@link #getWalApplySuspendedTables()} and

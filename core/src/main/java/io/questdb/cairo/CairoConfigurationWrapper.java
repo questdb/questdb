@@ -1690,6 +1690,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWalApplyBlockMaxRows() {
+        return getDelegate().getWalApplyBlockMaxRows();
+    }
+
+    @Override
+    public int getWalApplyBlockMemoryPercent() {
+        return getDelegate().getWalApplyBlockMemoryPercent();
+    }
+
+    @Override
+    public long getWalApplyBlockSize() {
+        return getDelegate().getWalApplyBlockSize();
+    }
+
+    @Override
     public int getWalApplyLookAheadTransactionCount() {
         return getDelegate().getWalApplyLookAheadTransactionCount();
     }
@@ -1712,6 +1727,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalApplyTableTimeQuota() {
         return getDelegate().getWalApplyTableTimeQuota();
+    }
+
+    @Override
+    public int getWalApplyWorkerCount() {
+        return getDelegate().getWalApplyWorkerCount();
     }
 
     @Override

@@ -67,6 +67,7 @@ import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.cairo.wal.WalBlockBudget;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
@@ -105,6 +106,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
@@ -202,6 +204,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int SWITCH_SKIPPED = -2;
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
+    // Staging memory per row of a sorted WAL apply block on top of the row itself: o3TimestampMem and
+    // o3TimestampMemCpy, 3 longs per row each (see processWalCommitBlock_sortWalSegmentTimestamps()).
+    public static final long WAL_BLOCK_STAGING_BYTES_PER_ROW = 6 * Long.BYTES;
     private static final int COMPACTION_JOINED = 1;
     private static final int COMPACTION_MADE_PLAIN = 4;
     private static final int COMPACTION_MOVED_TAIL = 3;
@@ -233,6 +238,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
     private static final int TODO_META_INDEX_OFFSET = 48;
+    // Starting copy ratios of a WAL apply block, see getWalBlockCopyRatio(): p90-ish values of the market-loader
+    // bench, since under-estimating the copy is the expensive direction (dynamic-block-size.md, section 4).
+    private static final double WAL_BLOCK_COPY_RATIO_MERGE = 0.15;
+    private static final double WAL_BLOCK_COPY_RATIO_REWRITE = 1.0;
     private static final AtomicLong WRITER_ID_GENERATOR = new AtomicLong();
     final ObjList<MemoryMA> columns;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
@@ -317,8 +326,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
     private final long[] o3LastTimestampSpreads;
+    // Existing rows the O3 partition jobs of this commit copied again, and the rows of the partitions they touched,
+    // split by merge-append partitions (MERGE) and classic O3 merges (REWRITE); see addO3CopyStats().
+    private final LongAdder o3MergeCopiedRows = new LongAdder();
+    private final LongAdder o3MergeTouchedRows = new LongAdder();
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
     private final boolean o3QuickSortEnabled;
+    private final LongAdder o3RewriteCopiedRows = new LongAdder();
+    private final LongAdder o3RewriteTouchedRows = new LongAdder();
     private final LongList o3SealAddrs = new LongList();
     private final LongList o3SealAuxAddrs = new LongList();
     private final LongList o3SealAuxMappedSizes = new LongList();
@@ -387,6 +402,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
+    private final WalBlockBudgetImpl walBlockBudget = new WalBlockBudgetImpl();
     private final long writerId;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
@@ -500,6 +516,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // seqTxn of the WAL apply in progress, stamped into native partitions; -1 when not applying.
     // For a block apply this is the block's last seqTxn.
     private long walApplySeqTxn = -1;
+    // Learned share of a touched partition's rows that a WAL apply block copies again, see getWalBlockCopyRatio().
+    private double walBlockCopyRatioMerge = WAL_BLOCK_COPY_RATIO_MERGE;
+    private double walBlockCopyRatioRewrite = WAL_BLOCK_COPY_RATIO_REWRITE;
+    // Row limit of WAL apply blocks grown above cairo.wal.apply.block.size, 0 until the first growth.
+    private long walBlockRows;
     private long walRowsProcessed;
     private WalTxnDetails walTxnDetails;
 
@@ -733,6 +754,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 Os.pause();
             }
         }
+    }
+
+    /**
+     * Whether a WAL apply block of {@code rowCount} rows that copies {@code copiedRows} existing rows again fits
+     * {@code budget} bytes, in both kinds of memory it uses:
+     * <ul>
+     *     <li>anonymous: the block's staging (sort index plus a copy of its rows) and the O3 merge index over the
+     *     block's and the copied rows;</li>
+     *     <li>page cache: the staging plus the copied rows, read and written once each.</li>
+     * </ul>
+     */
+    public static boolean fitsWalBlockBudget(long rowCount, long copiedRows, long recordSize, long budget) {
+        final double staging = (double) rowCount * (WAL_BLOCK_STAGING_BYTES_PER_ROW + recordSize);
+        final double mergeIndex = (double) (rowCount + copiedRows) * TIMESTAMP_MERGE_ENTRY_BYTES;
+        final double pageCache = 2.0 * copiedRows * recordSize;
+        return staging + mergeIndex <= budget && staging + pageCache <= budget;
     }
 
     public static int getPrimaryColumnIndex(int index) {
@@ -998,6 +1035,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         LOG.info().$("ADDED index to '").$safe(columnName).$('[').$(ColumnType.nameOf(existingType))
                 .$("]' to ").$substr(pathRootSize, path).$();
+    }
+
+    /**
+     * Records, for one partition an O3 job rewrote part of, the rows it held and how many of them the job copied again.
+     * {@code isMergeAppend} is any outcome of a merge-append partition (in-place merge or fresh version), otherwise
+     * a classic O3 merge. The WAL apply block size learns its copy ratios from these, see
+     * {@link #getWalBlockCopyRatio(int)}.
+     */
+    public void addO3CopyStats(boolean isMergeAppend, long touchedRows, long copiedRows) {
+        if (touchedRows > 0) {
+            (isMergeAppend ? o3MergeTouchedRows : o3RewriteTouchedRows).add(touchedRows);
+            (isMergeAppend ? o3MergeCopiedRows : o3RewriteCopiedRows).add(copiedRows);
+        }
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -1742,11 +1792,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         physicallyWrittenRowsSinceLastCommit.reset();
+        o3MergeCopiedRows.reset();
+        o3MergeTouchedRows.reset();
+        o3RewriteCopiedRows.reset();
+        o3RewriteTouchedRows.reset();
         dedupRowsRemovedSinceLastCommit.reset();
         hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+        // Read before the apply changes the lag: with lag pending, calculateInsertTransactionBlock() returns 1
+        // without walking the transactions, and the flag is the previous block's.
+        boolean isBlockCutByRowLimit = txWriter.getLagRowCount() == 0 && walTxnDetails.isLastBlockCutByRowLimit();
         bufferClusterTxnRanges(seqTxn, transactionBlock);
         // Capture wall clock once to reduce syscalls. Used for:
         // - commit latency threshold check in processWalCommit()
@@ -1777,6 +1834,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             throw e;
                         }
                         pressureControl.onBlockApplyError();
+                        isBlockCutByRowLimit = false;
                         pressureControl.updateInflightTxnBlockLength(
                                 1,
                                 Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
@@ -1819,6 +1877,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             lastWalCommitTimestampMicros = wallClockMicros;
             housekeep(wallClockMicros);
             shrinkO3Mem();
+            if (configuration.getWalApplyBlockSize() > 0) {
+                learnWalBlockCopyRatios();
+                if (isBlockCutByRowLimit) {
+                    growWalBlockRows();
+                }
+            }
 
             assert txWriter.getPartitionCount() == 0 || txWriter.getMinTimestamp() >= txWriter.getPartitionTimestampByIndex(0);
             LOG.debug().$("table ranges after the commit [table=").$(tableToken)
@@ -3047,6 +3111,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return walTxnDetails;
     }
 
+    @TestOnly
+    public double getWalBlockCopyRatioMerge() {
+        return walBlockCopyRatioMerge;
+    }
+
+    @TestOnly
+    public double getWalBlockCopyRatioRewrite() {
+        return walBlockCopyRatioRewrite;
+    }
+
     public long getWriterId() {
         return writerId;
     }
@@ -3619,6 +3693,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (walTxnDetails == null) {
             // Lazy creation
             walTxnDetails = new WalTxnDetails(configuration, getWalMaxLagRows());
+        }
+        if (configuration.getWalApplyBlockSize() > 0) {
+            walTxnDetails.setBlockLookaheadRows(getWalMaxBlockRows());
         }
 
         walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, pathSize, getAppliedSeqTxn(), txWriter.getMaxTimestamp(), deadlineMicros);
@@ -4831,6 +4908,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Files.ceilPageSize(mem.getAppendOffset()) < requiredBytes;
     }
 
+    /**
+     * One step of a learned copy ratio: grows to a higher sample at once and moves a quarter of the way toward a
+     * lower one, since under-estimating the copy is the expensive direction.
+     */
+    private static double learnWalBlockCopyRatio(double ratio, long touchedRows, long copiedRows) {
+        if (touchedRows <= 0) {
+            return ratio;
+        }
+        final double sample = Math.min(2.0, (double) copiedRows / touchedRows);
+        return sample > ratio ? sample : ratio + 0.25 * (sample - ratio);
+    }
+
     private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
         if (ff.exists(from)) {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
@@ -5952,7 +6041,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // takes is the live row count, so the rows have to go through the O3 path, which writes at E and
         // records what it wrote in the geometry.
         long inOrderMinTimestamp = isLastPartitionAppendBlocked() ? Long.MAX_VALUE : txWriter.getMaxTimestamp();
-        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), inOrderMinTimestamp);
+        final long blockSize = configuration.getWalApplyBlockSize();
+        return walTxnDetails.calculateInsertTransactionBlock(
+                seqTxn,
+                pressureControl,
+                getWalMaxBlockRows(),
+                inOrderMinTimestamp,
+                blockSize > 0 ? walBlockBudget.of(blockSize) : null
+        );
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
@@ -9111,6 +9207,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return tempDirectMemList;
     }
 
+    /**
+     * Share of partition {@code partitionIndex}'s rows that a WAL apply block touching it is expected to copy again.
+     * A plain ratio per kind of O3 work, starting from a fixed value and corrected after every commit from what the
+     * O3 jobs actually copied (see {@link #learnWalBlockCopyRatios()}):
+     * <ul>
+     *     <li>REWRITE: a classic O3 merge (a table without merge-append, or a parquet partition);</li>
+     *     <li>MERGE: a merge-append partition. The learned ratio absorbs the occasional fresh version, so the
+     *     estimate never resolves partition geometry.</li>
+     * </ul>
+     */
+    private double getWalBlockCopyRatio(int partitionIndex) {
+        return isMergeAppendTable() && !txWriter.isPartitionParquet(partitionIndex)
+                ? walBlockCopyRatioMerge
+                : walBlockCopyRatioRewrite;
+    }
+
+    /**
+     * Row limit of one WAL apply transaction block. With {@code cairo.wal.apply.block.size} set: that size in rows,
+     * or the limit {@link #growWalBlockRows()} grew it to; the block's memory budget may still end it earlier, see
+     * {@link WalBlockBudgetImpl}. Either way capped at {@code cairo.wal.apply.block.max.rows}. Unset: the lag row
+     * limit, as it always was.
+     */
+    private long getWalMaxBlockRows() {
+        final long blockSize = configuration.getWalApplyBlockSize();
+        if (blockSize > 0) {
+            return Math.min(
+                    Math.max(Math.max(1, blockSize / Math.max(1, avgRecordSize())), walBlockRows),
+                    configuration.getWalApplyBlockMaxRows()
+            );
+        }
+        return getWalMaxLagRows();
+    }
+
     private long getWalMaxLagRows() {
         return Math.clamp((long) configuration.getWalLagRowsMultiplier() * metadata.getMaxUncommittedRows(), 0L,
                 getWalMaxLagSize()
@@ -9121,6 +9250,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long maxLagSize = configuration.getWalMaxLagSize();
         return (maxLagSize /
                 (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = estimateAvgRecordSize(metadata))));
+    }
+
+    /**
+     * Doubles the WAL apply block row limit after a block that the limit cut short. The memory budget, not this limit,
+     * bounds the block: a block the budget ends is not cut by the limit, so the limit stops growing there. Growing in
+     * steps rather than straight to the budget lets the learned copy ratios catch up with bigger blocks, which
+     * cover more of each partition. Without a budget (no RSS limit, or a memory percent of 0) the limit does not grow.
+     */
+    private void growWalBlockRows() {
+        if (!walBlockBudget.hasBudget()) {
+            return;
+        }
+        walBlockRows = Math.max(walBlockRows, Math.min(getWalMaxBlockRows() * 2, configuration.getWalApplyBlockMaxRows()));
     }
 
     private void handleColumnTaskException(
@@ -9945,6 +10087,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         return io.questdb.cairo.idx.PostingIndexUtils.readSealTxnFromKeyFile(ff, keyFile) >= 0;
+    }
+
+    private void learnWalBlockCopyRatios() {
+        walBlockCopyRatioMerge = learnWalBlockCopyRatio(walBlockCopyRatioMerge, o3MergeTouchedRows.sum(), o3MergeCopiedRows.sum());
+        walBlockCopyRatioRewrite = learnWalBlockCopyRatio(walBlockCopyRatioRewrite, o3RewriteTouchedRows.sum(), o3RewriteCopiedRows.sum());
     }
 
     /**
@@ -19405,6 +19552,77 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         private MemoryA getSecondaryColumn(int columnIndex) {
             return activeColumns.getQuick(getSecondaryColumnIndex(columnIndex));
+        }
+    }
+
+    /**
+     * The memory budget of a WAL apply block, {@code cairo.wal.apply.block.memory.percent} of the RSS limit divided by
+     * the WAL apply worker count, checked with {@link #fitsWalBlockBudget}. Rows up to {@code cairo.wal.apply.block.size} are always in; past that, a
+     * transaction joins the block only while the block, with the existing rows it is expected to copy again, fits.
+     * <p>
+     * The expected copy is the rows of every partition whose committed data a transaction's time span reaches,
+     * each counted once per block, times the partition's learned copy ratio ({@link #getWalBlockCopyRatio(int)}).
+     * A span past the table's max timestamp only appends and copies nothing.
+     */
+    private class WalBlockBudgetImpl implements WalBlockBudget {
+        private final IntHashSet touchedPartitions = new IntHashSet();
+        private long baseRows;
+        private long budget;
+        private double copiedRows;
+        private long maxTimestamp;
+        private long recordSize;
+        private long rowCount;
+
+        @Override
+        public void begin(long minTimestamp, long maxTimestamp, long rowCount) {
+            touchedPartitions.clear();
+            copiedRows = 0;
+            this.rowCount = 0;
+            this.maxTimestamp = txWriter.getMaxTimestamp();
+            add(minTimestamp, maxTimestamp, rowCount);
+        }
+
+        @Override
+        public boolean tryAdd(long minTimestamp, long maxTimestamp, long rowCount) {
+            add(minTimestamp, maxTimestamp, rowCount);
+            return this.rowCount <= baseRows || fitsWalBlockBudget(this.rowCount, (long) copiedRows, recordSize, budget);
+        }
+
+        private void add(long minTimestamp, long maxTimestamp, long rowCount) {
+            this.rowCount += rowCount;
+            // A transaction without rows (ALTER, SQL) has no time span
+            if (rowCount <= 0) {
+                return;
+            }
+            final long hi = Math.min(maxTimestamp, this.maxTimestamp);
+            if (minTimestamp > hi) {
+                return;
+            }
+            int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(minTimestamp);
+            if (partitionIndex < 0) {
+                // Not a partition's first timestamp: the partition below the insertion point holds it
+                partitionIndex = Math.max(0, -partitionIndex - 2);
+            }
+            for (int n = txWriter.getPartitionCount(); partitionIndex < n && txWriter.getPartitionTimestampByIndex(partitionIndex) <= hi; partitionIndex++) {
+                if (touchedPartitions.add(partitionIndex)) {
+                    copiedRows += getWalBlockCopyRatio(partitionIndex) * txWriter.getPartitionSize(partitionIndex);
+                }
+            }
+        }
+
+        boolean hasBudget() {
+            return budget > 0;
+        }
+
+        WalBlockBudgetImpl of(long blockSize) {
+            recordSize = Math.max(1, avgRecordSize());
+            baseRows = Math.min(Math.max(1, blockSize / recordSize), configuration.getWalApplyBlockMaxRows());
+            final long rssMemLimit = Unsafe.getRssMemLimit();
+            // Every WAL apply worker can apply a block at once, each gets its share
+            budget = rssMemLimit > 0
+                    ? rssMemLimit / 100 * configuration.getWalApplyBlockMemoryPercent() / Math.max(1, configuration.getWalApplyWorkerCount())
+                    : 0;
+            return this;
         }
     }
 }

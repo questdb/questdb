@@ -1677,6 +1677,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalApplyBlockMaxRows() {
+        return 100_000_000L;
+    }
+
+    @Override
+    public int getWalApplyBlockMemoryPercent() {
+        return 25;
+    }
+
+    @Override
+    public long getWalApplyBlockSize() {
+        return 0;
+    }
+
+    @Override
     public int getWalApplyLookAheadTransactionCount() {
         return 20;
     }
@@ -1689,6 +1704,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalApplyTableTimeQuota() {
         return 1000L;
+    }
+
+    @Override
+    public int getWalApplyWorkerCount() {
+        return 1;
     }
 
     @Override

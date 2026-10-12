@@ -160,6 +160,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
     private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = 24L * 60 * 60 * 1000;
+    // Keeps WAL apply block row counts, and the look-ahead txn estimates derived from them, within int range
+    private static final long MAX_WAL_APPLY_BLOCK_MAX_ROWS = 2_000_000_000L;
     // Minimum heap page sizes: a page must hold one fixed-size block or it corrupts the heap.
     // sort.key also feeds RecordTreeChain's MemoryPages (41-byte node -> 64-byte page); window.tree
     // feeds AbstractRedBlackTree (BLOCK_SIZE 24); sort.light.value/window.rowid feed value chains
@@ -702,6 +704,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long viewCompilerWorkerYieldThreshold;
     private final int viewWalWriterPoolMaxSegments;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
+    private final long walApplyBlockMaxRows;
+    private final int walApplyBlockMemoryPercent;
+    private final long walApplyBlockSize;
     private final boolean walApplyEnabled;
     private final int walApplyLookAheadTransactionCount;
     private final long walApplyMemoryLimitBytes;
@@ -1104,6 +1109,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 200);
+        this.walApplyBlockSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0, 0);
+        this.walApplyBlockMemoryPercent = getIntPercentage(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_MEMORY_PERCENT, 25);
+        this.walApplyBlockMaxRows = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS, 100_000_000L);
+        if (walApplyBlockMaxRows < 1 || walApplyBlockMaxRows > MAX_WAL_APPLY_BLOCK_MAX_ROWS) {
+            throw new ServerConfigurationException(PropertyKey.CAIRO_WAL_APPLY_BLOCK_MAX_ROWS.getPropertyPath()
+                    + " must be between 1 and " + MAX_WAL_APPLY_BLOCK_MAX_ROWS);
+        }
         final String walApplySuspendedTablesValue = getString(properties, env, PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
         if (walApplySuspendedTablesValue != null) {
             for (String entry : walApplySuspendedTablesValue.split(",")) {
@@ -5871,6 +5883,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getWalApplyBlockMaxRows() {
+            return walApplyBlockMaxRows;
+        }
+
+        @Override
+        public int getWalApplyBlockMemoryPercent() {
+            return walApplyBlockMemoryPercent;
+        }
+
+        @Override
+        public long getWalApplyBlockSize() {
+            return walApplyBlockSize;
+        }
+
+        @Override
         public int getWalApplyLookAheadTransactionCount() {
             return walApplyLookAheadTransactionCount;
         }
@@ -5888,6 +5915,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalApplyTableTimeQuota() {
             return walApplyTableTimeQuota;
+        }
+
+        @Override
+        public int getWalApplyWorkerCount() {
+            // No dedicated pool: ServerMain runs WAL apply on the shared write pool
+            return Math.max(1, walApplyWorkerCount > 0 ? walApplyWorkerCount : sharedWorkerPoolWriteConfiguration.getWorkerCount());
         }
 
         @Override
