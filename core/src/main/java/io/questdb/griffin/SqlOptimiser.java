@@ -12408,6 +12408,8 @@ public class SqlOptimiser implements Mutable {
             if ((((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) && sampleBy == null)) {
                 final CharSequence selectAlias = qc.getAlias();
                 qc = ensureAliasUniqueness(groupByModel, qc);
+                // ensureAliasUniqueness returns the same QueryColumn instance when the alias
+                // was free, so reference inequality detects a rename.
                 if (qc.getAlias() != selectAlias) {
                     renameFillBucketAlias(baseModel, selectAlias, qc.getAlias());
                 }
@@ -12835,7 +12837,9 @@ public class SqlOptimiser implements Mutable {
                     // rewriteSampleBy puts its bucket on the GROUP BY list when every projected
                     // column carries the timestamp's token, e.g. a designated timestamp named max
                     // next to max(v). This loop keys the bucket under a fresh alias; record it, so
-                    // that SqlCodeGenerator.generateFill still finds the bucket.
+                    // that SqlCodeGenerator.generateFill still finds the bucket. The only such
+                    // node in the GROUP BY list is the optimizer's own, because rewriteSampleBy
+                    // rejects a user-written GROUP BY alongside SAMPLE BY.
                     if (baseModel.getFillBucketAlias() != null && SqlUtil.isSampleByBucketFloor(node)) {
                         baseModel.setFillBucketAlias(qc.getAlias());
                     }

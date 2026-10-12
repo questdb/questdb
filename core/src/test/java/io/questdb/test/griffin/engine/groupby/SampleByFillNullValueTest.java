@@ -337,8 +337,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // The outer key has the exact shape of the optimizer's own bucket key
         // (5-argument timestamp_floor_utc) and even reuses the alias ts. Only the
         // ownership signal that rewriteSelectClause0 maintains tells generateFill
-        // that the inner fill is not this group-by's. Option 5 without the ownership
-        // check stacked a second 1h fill here and emitted a spurious 01:00 row.
+        // that the inner fill is not this group-by's.
+        // Resolving the bucket by its recorded alias alone, without the ownership check,
+        // stacked a second 1h fill here and emitted a spurious 01:00 row.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""

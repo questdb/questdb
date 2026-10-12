@@ -4198,8 +4198,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(-1, "fill values were null");
             }
 
-            fillValues = new ObjList<>(fillValuesExprs.size());
-
             // FILL(NONE) is incompatible with per-aggregate fill values. The
             // optimizer accepts multi-element fill lists, so reject FILL(NONE, 1)
             // here rather than silently dropping the trailing values.
@@ -4223,6 +4221,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (model.getSampleByFill().size() == 0) {
                 return groupByFactory;
             }
+
+            fillValues = new ObjList<>(fillValuesExprs.size());
 
             ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
