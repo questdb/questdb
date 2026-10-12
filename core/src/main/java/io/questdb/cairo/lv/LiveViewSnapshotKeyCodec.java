@@ -606,7 +606,10 @@ public final class LiveViewSnapshotKeyCodec {
      * partition-by RecordSink rewrites SYMBOL columns as resolved STRING so
      * SYMBOL-partitioned LVs ride STRING keys end-to-end).
      */
-    private static boolean isSupportedKeyType(int columnType) {
+    /**
+     * @return true when the snapshot key codec can encode a key column of the given type.
+     */
+    public static boolean isSupportedKeyType(int columnType) {
         if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
             return true;
         }

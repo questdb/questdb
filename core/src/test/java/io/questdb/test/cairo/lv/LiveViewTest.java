@@ -1554,13 +1554,13 @@ public class LiveViewTest extends AbstractLiveViewTest {
         // testRejectUnpartitionedAggregateWindowFunction - but the stub gives a stable
         // function name (test_no_snapshot) and an explicit position to assert on.
         try {
-            CairoEngine.validateLiveViewWindowFunction(new NonSnapshotWindowFunction(), 42);
+            CairoEngine.validateLiveViewWindowFunction(new NonSnapshotWindowFunction(), 42, null);
             Assert.fail("expected SqlException for non-snapshot-capable window function");
         } catch (SqlException e) {
             Assert.assertEquals(42, e.getPosition());
             Assert.assertTrue(
                     e.getMessage(),
-                    e.getMessage().contains("live view select cannot use window function test_no_snapshot(); incremental snapshot is not supported for this function yet")
+                    e.getMessage().contains("live view window function test_no_snapshot() requires PARTITION BY")
             );
         }
     }
@@ -1568,7 +1568,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
     @Test
     public void testRejectSnapshotCapableWindowFunctionWithoutCompilerMetadata() {
         try {
-            CairoEngine.validateLiveViewWindowFunction(new SnapshotWindowFunctionWithoutMetadata(), 43);
+            CairoEngine.validateLiveViewWindowFunction(new SnapshotWindowFunctionWithoutMetadata(), 43, null);
             Assert.fail("expected SqlException for missing checkpoint compiler metadata");
         } catch (SqlException e) {
             Assert.assertEquals(43, e.getPosition());
@@ -1601,9 +1601,8 @@ public class LiveViewTest extends AbstractLiveViewTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("incremental snapshot is not supported for this function yet")
+                        e.getMessage().contains("live view window function avg() requires PARTITION BY")
                 );
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("avg"));
             }
 
             // sum() over a bounded RANGE frame with no PARTITION BY - same reject.
@@ -1615,9 +1614,8 @@ public class LiveViewTest extends AbstractLiveViewTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("incremental snapshot is not supported for this function yet")
+                        e.getMessage().contains("live view window function sum() requires PARTITION BY")
                 );
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("sum"));
             }
         });
     }
