@@ -58,12 +58,21 @@ import java.io.Closeable;
  * <p>
  * A query that only counts the joined pairs needs each key's row count and none of its rows, so
  * its owner turns the frozen links into chain lengths before any probe runs; see
- * {@link #countChains()}.
+ * {@link #countChains()}. A parallel build of more than one partition may count ranges of its
+ * partitions apart, on the workers; see {@link #getChainCountTaskCount(HashJoinPartitions)}.
  */
 final class HashJoinRowHeap implements Closeable {
+    // A parallel count over frame regions takes no more tasks than leave each one runs of this many
+    // rows on average; see getChainCountTaskCount().
+    private static final int FRAME_REGION_MIN_RUN_ROWS = 256;
+    // A parallel count over frame regions keeps at least this many tasks; see getChainCountTaskCount().
+    private static final int FRAME_REGION_MIN_TASKS = 4;
     private static final int LINK_SIZE = Long.BYTES;
     private static final int ROW_ID_ROW_SIZE = LINK_SIZE + Long.BYTES;
     private static final int ROW_ID_ROW_SHIFT = Integer.numberOfTrailingZeros(ROW_ID_ROW_SIZE);
+    // A task of a parallel count checks the breaker once per this many rows, as a partition task of
+    // the build does; a power of two.
+    private static final int ROWS_PER_CHECK = 64 * 1024;
     private final boolean hasRowId;
     private final long initialCapacity;
     private final HashJoinBuffer rows = new HashJoinBuffer(CompressedOffsets.MAX_ALIGNED8_HEAP_SIZE);
@@ -150,16 +159,65 @@ final class HashJoinRowHeap implements Closeable {
         if (hasChainLengths) {
             throw new IllegalStateException("hash join build rows are already counted");
         }
-        final long base = rows.address;
         final long limit = rowBytes;
         for (long chunkLo = 0; chunkLo < limit; chunkLo += HashJoinBuffer.COPY_CHUNK_SIZE) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-            final long chunkHi = Math.min(limit, chunkLo + HashJoinBuffer.COPY_CHUNK_SIZE);
-            for (long offset = chunkLo; offset < chunkHi; offset += rowSize) {
-                final long link = Unsafe.getLong(base + offset);
-                assert link == 0 || link - LINK_SIZE < offset;
-                Unsafe.putLong(base + offset, link == 0 ? 1 : Unsafe.getLong(base + link - LINK_SIZE) + 1);
+            countChains(chunkLo, Math.min(limit, chunkLo + HashJoinBuffer.COPY_CHUNK_SIZE));
+        }
+        hasChainLengths = true;
+    }
+
+    /**
+     * Counts the chains of the partitions from {@code partitionLo} to {@code partitionHi}, exclusive,
+     * of a frozen parallel build: their share of {@link #countChains()}, so that tasks over disjoint
+     * ranges of partitions count the heap concurrently. A row links only to a row of its own key,
+     * which lies in the same partition, and each partition's build task linked the partition's rows
+     * frame by frame, and in heap order within a frame; see {@link IntHashJoinBuild#buildPartition}.
+     * <p>
+     * When each partition fills one region of the heap, consecutive partitions fill one region, in
+     * partition order, and each partition's rows lie there in the order its task linked them; the
+     * pass walks that region in heap order. When the frames have regions, each frame's region holds
+     * the frame's rows sorted by bucket, so the range's rows in a frame form one run; the pass walks
+     * the runs frame by frame, each in heap order. Either way it reaches each partition's rows in the
+     * order they were linked, so it finds every link's target counted already, by itself, and it
+     * reads and writes the range's rows alone, which no other task touches.
+     * <p>
+     * The pass allocates nothing, and checks the calling thread's breaker at its first row and once
+     * per {@value #ROWS_PER_CHECK} rows after it, as the build's partition tasks do. Once every
+     * range's pass returned, the owner ends the count through {@link #endPartitionedChainCount()}; a
+     * pass that throws leaves its partitions half counted, so the owner then closes the heap.
+     */
+    void countChains(HashJoinPartitions partitions, int partitionLo, int partitionHi, SqlExecutionCircuitBreaker circuitBreaker) {
+        assert !hasChainLengths && partitionLo >= 0 && partitionLo < partitionHi && partitionHi <= partitions.getPartitionCount();
+        if (partitions.hasFrameRegions()) {
+            final long bucketLo = partitions.getPartitionBucketLo(partitionLo);
+            final long bucketHi = partitions.getPartitionBucketLo(partitionHi);
+            long counted = 0;
+            for (int frame = 0, frameCount = partitions.getFrameCount(); frame < frameCount; frame++) {
+                final long bucketStarts = partitions.getBucketStarts(frame);
+                final int lo = Unsafe.getInt(bucketStarts + bucketLo);
+                final int hi = Unsafe.getInt(bucketStarts + bucketHi);
+                counted = countRun(partitions.getFrameRegionStart(frame) + lo, hi - lo, counted, circuitBreaker);
             }
+        } else {
+            long rowCount = 0;
+            for (int partition = partitionLo; partition < partitionHi; partition++) {
+                rowCount += partitions.getPartitionRowCount(partition);
+            }
+            countRun(partitions.getPartitionStart(partitionLo), rowCount, 0, circuitBreaker);
+        }
+    }
+
+    /**
+     * Ends a count that ran {@link #countChains(HashJoinPartitions, int, int, SqlExecutionCircuitBreaker)}
+     * once per range of partitions, the ranges covering every partition once: the rows hold chain
+     * lengths from here on, as after {@link #countChains()}. The owner calls it once every range's
+     * pass returned and no task of theirs still runs, which also makes their writes visible to the
+     * owner, and to the probes it publishes the heap to next.
+     */
+    void endPartitionedChainCount() {
+        if (hasChainLengths) {
+            throw new IllegalStateException("hash join build rows are already counted");
         }
         hasChainLengths = true;
     }
@@ -173,6 +231,36 @@ final class HashJoinRowHeap implements Closeable {
 
     long getAddress() {
         return rows.address;
+    }
+
+    /**
+     * How many tasks count the chains of this frozen parallel build, each over as many consecutive
+     * partitions, through {@link #countChains(HashJoinPartitions, int, int, SqlExecutionCircuitBreaker)},
+     * or one when the owner's single pass, {@link #countChains()}, costs less. The result divides the
+     * partition count.
+     * <p>
+     * When each partition fills one region of the heap, a task's rows form one run, which it walks
+     * as the owner's pass walks the heap, so each partition takes a task of its own. When the frames
+     * have regions, a task's rows form one run per frame. Each run starts a new stream of reads, which
+     * costs as much as a few hundred rows of the walk, and neighbouring tasks share a cache line where
+     * their runs meet; with frames of a few hundred rows or fewer, a task per partition would spend
+     * more time starting runs than counting rows. Fewer tasks over more partitions each walk longer
+     * runs, so the tasks halve until their runs average at least {@value #FRAME_REGION_MIN_RUN_ROWS}
+     * rows. Fewer than {@value #FRAME_REGION_MIN_TASKS} such tasks cannot win back the cost of their
+     * runs, so the owner's pass counts instead.
+     */
+    int getChainCountTaskCount(HashJoinPartitions partitions) {
+        int taskCount = partitions.getPartitionCount();
+        if (partitions.hasFrameRegions()) {
+            final long maxTaskCount = getRowCount() / ((long) partitions.getFrameCount() * FRAME_REGION_MIN_RUN_ROWS);
+            while (taskCount > maxTaskCount && taskCount >= FRAME_REGION_MIN_TASKS) {
+                taskCount >>= 1;
+            }
+            if (taskCount < FRAME_REGION_MIN_TASKS) {
+                return 1;
+            }
+        }
+        return taskCount;
     }
 
     long getGeneration() {
@@ -297,5 +385,35 @@ final class HashJoinRowHeap implements Closeable {
      */
     static long getRowIdAddress(long rowAddress) {
         return rowAddress + LINK_SIZE;
+    }
+
+    // Replaces the link of every row between these byte offsets, in heap order, with the length of
+    // its chain. The caller has counted every row that a link here reaches, which lies lower.
+    private void countChains(long lo, long hi) {
+        final long base = rows.address;
+        final int rowSize = this.rowSize;
+        for (long offset = lo; offset < hi; offset += rowSize) {
+            final long link = Unsafe.getLong(base + offset);
+            assert link == 0 || link - LINK_SIZE < offset;
+            Unsafe.putLong(base + offset, link == 0 ? 1 : Unsafe.getLong(base + link - LINK_SIZE) + 1);
+        }
+    }
+
+    // Counts the chains of a run of this many rows from this ordinal on, in heap order, checking the
+    // breaker wherever the rows that the task counted so far reach a multiple of ROWS_PER_CHECK.
+    // Returns the task's rows counted after the run.
+    private long countRun(long ordinal, long rowCount, long counted, SqlExecutionCircuitBreaker circuitBreaker) {
+        while (rowCount > 0) {
+            final long sinceCheck = counted & (ROWS_PER_CHECK - 1);
+            if (sinceCheck == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            }
+            final long runRows = Math.min(rowCount, ROWS_PER_CHECK - sinceCheck);
+            countChains(ordinal * rowSize, (ordinal + runRows) * rowSize);
+            ordinal += runRows;
+            rowCount -= runRows;
+            counted += runRows;
+        }
+        return counted;
     }
 }

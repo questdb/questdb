@@ -97,12 +97,15 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * A query that only counts the joined pairs of an INNER join reads nothing of a pair, so a build
  * that repeats a key need not hand its rows out one by one: build() has the frozen build replace
- * each key's rows with their count, on the owner and before any reducer runs, and the reducers add
- * a count per probe row; see {@link #isCountedByKey()}.
+ * each key's rows with their count before any reducer runs, on the owner, or for most builds of
+ * more than one partition in one more round of tasks, and the reducers add a count per probe
+ * row; see {@link #isCountedByKey()}. Over a build of one row per key, a probe row that finds its
+ * key adds one; see {@link #isCountedByMatch()}.
  */
 public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLockOwner {
     private static final UnorderedPageFrameReducer BUILD_PARTITION = AsyncHashJoinGroupByAtom::buildPartition;
     private static final UnorderedPageFrameReducer COPY_FRAME_PAYLOAD = AsyncHashJoinGroupByAtom::copyFramePayload;
+    private static final UnorderedPageFrameReducer COUNT_PARTITIONS = AsyncHashJoinGroupByAtom::countPartitions;
     private static final UnorderedPageFrameReducer PARTITION_FRAME = AsyncHashJoinGroupByAtom::partitionFrame;
     private final RecordCursorFactory buildFactory;
     // The build scan's WHERE filter, if any, and the owner pool that walks the build frames.
@@ -150,6 +153,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     @Nullable
     private final ObjList<Function> workerBuildOnFilters;
     private boolean buildFiltersInitialized;
+    // Read by the tasks of a parallel build's key row count: the consecutive partitions each counts.
+    private int countTaskPartitionCount;
     // The frozen build of the open cursor, whichever of the two builds produced it.
     private FrozenHashJoinBuild frozen;
     // Exactly one of the two builds exists, as isKeyStaged says.
@@ -164,6 +169,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private boolean isBuiltInRounds;
     // True when the open cursor's build holds each key's row count in place of the key's rows.
     private boolean isCountedByKey;
+    // True when the open cursor's reducers count one pair per probe row that finds its key.
+    private boolean isCountedByMatch;
+    // True when the open cursor's build counted its key rows on the workers, in a round of tasks.
+    private boolean isCountedInRounds;
     private boolean isPayloadCopied;
     private boolean functionsInitialized;
     private boolean filtersInitialized;
@@ -335,6 +344,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         isBuildUnique = false;
         isBuiltInRounds = false;
         isCountedByKey = false;
+        isCountedByMatch = false;
+        isCountedInRounds = false;
         isPayloadCopied = false;
         failure = Misc.freeBestEffort(failure, intBuild);
         failure = Misc.freeBestEffort(failure, mapBuild);
@@ -422,6 +433,16 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
+     * True when the open cursor's build ran on the workers with its frames' rows written straight
+     * into the frames' regions of the heap, as a build whose frames keep every row does; see
+     * {@link IntHashJoinBuild#beginUnfilteredPartitioning}.
+     */
+    @TestOnly
+    public boolean hasBuildFrameRegions() {
+        return isKeyStaged ? mapBuild.hasFrameRegions() : intBuild.hasFrameRegions();
+    }
+
+    /**
      * True when the open cursor's build ran on the workers, in rounds of the frame sequence's tasks.
      */
     @TestOnly
@@ -433,10 +454,31 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
      * True when the open cursor's build holds each key's row count in place of the key's rows: the
      * query only counts the joined pairs and the build repeats a key. The reducers then add a
      * key's count per probe row and visit no pair; see {@link FrozenHashJoinBuild#countKeyRows()}.
-     * A build of one row per key keeps its rows, since its loops take one step per probe row already.
+     * A build of one row per key keeps its rows, whose lookup finds the count already; see
+     * {@link #isCountedByMatch()}.
      */
     public boolean isCountedByKey() {
         return isCountedByKey;
+    }
+
+    /**
+     * True when the query only counts the joined pairs and the open cursor's build holds one row per
+     * key, as an empty build does too: each probe row then adds one pair when the build holds its
+     * key, and the reducers pass no pair through the row updater.
+     */
+    public boolean isCountedByMatch() {
+        return isCountedByMatch;
+    }
+
+    /**
+     * True when the open cursor's build counted its key rows on the workers, in a round of the frame
+     * sequence's tasks, each over a range of hash partitions, rather than in one pass on the owner.
+     * A build of more than one partition takes the round unless its frames are too small for it;
+     * see {@link IntHashJoinBuild#getKeyRowCountTaskCount()}.
+     */
+    @TestOnly
+    public boolean isCountedInRounds() {
+        return isCountedInRounds;
     }
 
     /**
@@ -621,6 +663,34 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
+     * One task of a parallel build's key row count per range of consecutive partitions: replaces the
+     * links of the range's rows with chain lengths, on whichever thread runs the task.
+     */
+    private static void countPartitions(
+            int workerId,
+            PageFrameMemoryRecord unused,
+            int task,
+            SqlExecutionCircuitBreaker breaker,
+            UnorderedPageFrameSequence<?> sequence,
+            UnorderedPageFrameSequence<?> stealingSequence
+    ) {
+        final AsyncHashJoinGroupByAtom atom = (AsyncHashJoinGroupByAtom) sequence.getAtom();
+        // As a build partition task, it holds no slot resource but takes a slot.
+        final int slotId = atom.maybeAcquire(workerId, stealingSequence == sequence, breaker);
+        try {
+            final int partitionLo = task * atom.countTaskPartitionCount;
+            final int partitionHi = partitionLo + atom.countTaskPartitionCount;
+            if (atom.isKeyStaged) {
+                atom.mapBuild.countPartitionKeyRows(partitionLo, partitionHi, breaker);
+            } else {
+                atom.intBuild.countPartitionKeyRows(partitionLo, partitionHi, breaker);
+            }
+        } finally {
+            atom.release(slotId);
+        }
+    }
+
+    /**
      * One task of a parallel build per build frame: filters the frame on the slot's own filters and
      * sorts the rows it keeps into the frame's hash buckets.
      */
@@ -744,7 +814,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         roundTaskRowCounts.clear();
         for (int partition = 0; partition < partitionCount; partition++) {
-            roundTaskRowCounts.add(isKeyStaged ? mapBuild.getPartitionRowCount(partition) : intBuild.getPartitionRowCount(partition));
+            roundTaskRowCounts.add(getPartitionRowCount(partition));
         }
         frameSequence.dispatchRoundAndAwait(BUILD_PARTITION, roundTaskRowCounts);
         frozen = isKeyStaged ? mapBuild.freezePartitioned(buildFrames) : intBuild.freezePartitioned(buildFrames);
@@ -795,6 +865,46 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         // A build without payload columns stores no row ids and never asks the frames for one.
         frozen = isKeyStaged ? mapBuild.freeze(buildFrames) : intBuild.freeze(buildFrames);
+    }
+
+    /**
+     * Counts the key rows of a build of more than one partition on the workers, in one more round of
+     * tasks, each over as many consecutive partitions, in place of the owner's single pass. A key's
+     * rows lie in one partition and link only to each other, so each task counts its partitions'
+     * rows alone, in the order that their build tasks linked them; see {@link IntHashJoinBuild}. The
+     * round returns once all its tasks have stopped, also when it throws, and its return makes their
+     * writes visible to the owner, which publishes them to the probes with the first probe task, as
+     * it publishes the build's own. Only a round whose every task returned ends the count; any
+     * failure closes the build, as the owner's failed pass does, so no probe reads a half counted
+     * heap.
+     */
+    private void countKeyRowsInRounds(int taskCount) {
+        countTaskPartitionCount = getPartitionCount() / taskCount;
+        roundTaskRowCounts.clear();
+        for (int task = 0; task < taskCount; task++) {
+            long rowCount = 0;
+            for (int partition = task * countTaskPartitionCount, n = partition + countTaskPartitionCount; partition < n; partition++) {
+                rowCount += getPartitionRowCount(partition);
+            }
+            roundTaskRowCounts.add(rowCount);
+        }
+        try {
+            frameSequence.dispatchRoundAndAwait(COUNT_PARTITIONS, roundTaskRowCounts);
+            if (isKeyStaged) {
+                mapBuild.endPartitionedKeyRowCount();
+            } else {
+                intBuild.endPartitionedKeyRowCount();
+            }
+        } catch (Throwable th) {
+            // Some partitions may hold counts and others links.
+            if (isKeyStaged) {
+                mapBuild.close();
+            } else {
+                intBuild.close();
+            }
+            throw th;
+        }
+        isCountedInRounds = true;
     }
 
     /**
@@ -859,9 +969,17 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return rowCount;
     }
 
+    private int getKeyRowCountTaskCount() {
+        return isKeyStaged ? mapBuild.getKeyRowCountTaskCount() : intBuild.getKeyRowCountTaskCount();
+    }
+
     // Partitions of the open cursor's build, and where each frame's rows of each lie in its heap.
     private int getPartitionCount() {
         return isKeyStaged ? mapBuild.getPartitionCount() : intBuild.getPartitionCount();
+    }
+
+    private long getPartitionRowCount(int partition) {
+        return isKeyStaged ? mapBuild.getPartitionRowCount(partition) : intBuild.getPartitionRowCount(partition);
     }
 
     private long getSegmentRowCount(int frameIndex, int partition) {
@@ -941,11 +1059,23 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             buildOnOwner(memoryTracker, circuitBreaker, buildSymbols, isFiltered);
         }
         isBuildUnique = frozen.getRowCount() == frozen.getKeyCount();
-        if (isCountOnly && !isBuildUnique) {
-            // The pass over the build's rows runs here, on the owner, so the counts are in place
-            // before the sequence publishes the first probe task. A failure closes the build.
-            frozen.countKeyRows();
-            isCountedByKey = true;
+        if (isCountOnly) {
+            if (isBuildUnique) {
+                // A key's rows are one row, so a lookup that finds the key finds its count.
+                isCountedByMatch = true;
+            } else {
+                // The count runs here, so the counts are in place before the sequence publishes the
+                // first probe task: on the workers for a build of more than one partition whose rows
+                // the tasks walk in long enough runs, and on the owner otherwise. A failure closes
+                // the build.
+                final int countTaskCount = isBuildPartitioned ? getKeyRowCountTaskCount() : 1;
+                if (countTaskCount > 1) {
+                    countKeyRowsInRounds(countTaskCount);
+                } else {
+                    frozen.countKeyRows();
+                }
+                isCountedByKey = true;
+            }
         }
         bindSymbolKeyTranslation(circuitBreaker);
         for (int i = 0; i < slots.size(); i++) {
@@ -1002,7 +1132,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     /**
      * True when the query only counts the joined pairs of an INNER join, as EXPLAIN reports. Each
-     * execution then takes a key's pairs from the key's row count; see {@link #isCountedByKey()}.
+     * execution then takes a key's pairs from the key's row count, or, over a build of one row per
+     * key, from the lookup alone; see {@link #isCountedByKey()} and {@link #isCountedByMatch()}.
      */
     boolean isCountOnly() {
         return isCountOnly;

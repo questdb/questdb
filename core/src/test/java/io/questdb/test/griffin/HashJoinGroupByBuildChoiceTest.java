@@ -245,7 +245,8 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
                     // 48 rows of r, more than q has: q builds, four rows of every key.
                     bindInterval("2020-01-01T00", "2020-01-03T00");
                     assertCountExecution(sql, factory, choice, context, false, 32, true, 168);
-                    // 5 rows of r, one of each key, which leaves nothing to count ahead of the probes.
+                    // 5 rows of r, one of each key, which leaves nothing to count ahead of the probes:
+                    // each probe row that finds its key adds one pair.
                     bindInterval("2020-01-01T00", "2020-01-01T05");
                     assertCountExecution(sql, factory, choice, context, true, 5, false, 20);
                     // An interval past the data builds an empty r.
@@ -434,7 +435,8 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
 
     /**
      * Runs the lone count once: checks the total against the ordinary plan's, which orientation ran,
-     * the rows it built, and whether that build took the count from its key row counts.
+     * the rows it built, and whether that build took the count from its key row counts or, holding
+     * one row per key, from the probe rows that find their keys.
      */
     private void assertCountExecution(
             String sql,
@@ -458,13 +460,17 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             Assert.assertTrue(cursor.hasNext());
             Assert.assertEquals(sql, buildRows, chosen.getFrozenBuild().getRowCount());
             Assert.assertEquals(sql, isCountedByKey, chosen.isCountedByKey());
+            Assert.assertEquals(sql, !isCountedByKey, chosen.isCountedByMatch());
             Assert.assertNull(sql, other.getFrozenBuild());
             Assert.assertFalse(sql, other.isCountedByKey());
+            Assert.assertFalse(sql, other.isCountedByMatch());
             Assert.assertEquals(sql, expected, cursor.getRecord().getLong(0));
             Assert.assertFalse(cursor.hasNext());
         }
         Assert.assertFalse(sql, primary.isCountedByKey());
+        Assert.assertFalse(sql, primary.isCountedByMatch());
         Assert.assertFalse(sql, alternate.isCountedByKey());
+        Assert.assertFalse(sql, alternate.isCountedByMatch());
     }
 
     private void assertExecution(

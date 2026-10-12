@@ -307,6 +307,8 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 // receiver class. The branch below runs once per page frame, not per row.
                 if (atom.isCountedByKey()) {
                     countByKey(atom, slot, probeRecord, rowCount);
+                } else if (atom.isCountedByMatch()) {
+                    countByMatch(atom, slot, probeRecord, rowCount);
                 } else if (atom.isKeyStaged()) {
                     if (atom.isBuildPartitioned()) {
                         if (atom.isBuildUnique()) {
@@ -1416,6 +1418,61 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     }
 
     /**
+     * Adds the frame's joined pairs to the slot's count over a build of one row per key: each probe
+     * row whose key the build holds adds one, see {@link AsyncHashJoinGroupByAtom#isCountedByMatch()}.
+     * A frame bounds the rows a loop reads, as for countByKey(). One loop method per probe
+     * implementation, as for the aggregating loops.
+     */
+    private static void countByMatch(
+            AsyncHashJoinGroupByAtom atom,
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            long rowCount
+    ) {
+        final long pairCount;
+        if (atom.isKeyStaged()) {
+            pairCount = atom.isBuildPartitioned()
+                    ? countRecordPartitionedUnique(slot, probeRecord, rowCount)
+                    : countRecordUnique(slot, probeRecord, rowCount);
+        } else if (atom.isSymbolKey()) {
+            pairCount = atom.isBuildPartitioned()
+                    ? countSymbolPartitionedUnique(slot, probeRecord, atom.getProbeKeyColumn(), rowCount)
+                    : countSymbolUnique(slot, probeRecord, atom.getProbeKeyColumn(), rowCount);
+        } else {
+            pairCount = atom.isBuildPartitioned()
+                    ? countIntPartitionedUnique(slot, probeRecord, atom.getProbeKeyColumn(), rowCount)
+                    : countIntUnique(slot, probeRecord, atom.getProbeKeyColumn(), rowCount);
+        }
+        atom.addPairCount(slot, pairCount);
+    }
+
+    /**
+     * The filtered twin of countByMatch(), driven by the rows the filter phase kept.
+     */
+    private static void countByMatchFiltered(
+            AsyncHashJoinGroupByAtom atom,
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            DirectLongList rows
+    ) {
+        final long pairCount;
+        if (atom.isKeyStaged()) {
+            pairCount = atom.isBuildPartitioned()
+                    ? countRecordPartitionedFilteredUnique(slot, probeRecord, rows)
+                    : countRecordFilteredUnique(slot, probeRecord, rows);
+        } else if (atom.isSymbolKey()) {
+            pairCount = atom.isBuildPartitioned()
+                    ? countSymbolPartitionedFilteredUnique(slot, probeRecord, atom.getProbeKeyColumn(), rows)
+                    : countSymbolFilteredUnique(slot, probeRecord, atom.getProbeKeyColumn(), rows);
+        } else {
+            pairCount = atom.isBuildPartitioned()
+                    ? countIntPartitionedFilteredUnique(slot, probeRecord, atom.getProbeKeyColumn(), rows)
+                    : countIntFilteredUnique(slot, probeRecord, atom.getProbeKeyColumn(), rows);
+        }
+        atom.addPairCount(slot, pairCount);
+    }
+
+    /**
      * Returns the joined pairs of the frame's rows: the sum of their keys' build row counts.
      */
     private static long countInt(
@@ -1452,6 +1509,24 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     }
 
     /**
+     * The filtered twin of countIntUnique(), driven by the rows the filter phase kept.
+     */
+    private static long countIntFilteredUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            int probeKeyColumn,
+            DirectLongList rows
+    ) {
+        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
+        long pairCount = 0;
+        for (long p = 0, n = rows.size(); p < n; p++) {
+            probeRecord.setRowIndex(rows.get(p));
+            pairCount += probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn)) ? 1 : 0;
+        }
+        return pairCount;
+    }
+
+    /**
      * The twin of countInt() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countIntPartitioned(
@@ -1483,6 +1558,61 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
             pairCount += probe.findRowCountUnchecked(probeRecord.getInt(probeKeyColumn));
+        }
+        return pairCount;
+    }
+
+    /**
+     * The twin of countIntFilteredUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
+     */
+    private static long countIntPartitionedFilteredUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            int probeKeyColumn,
+            DirectLongList rows
+    ) {
+        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
+        long pairCount = 0;
+        for (long p = 0, n = rows.size(); p < n; p++) {
+            probeRecord.setRowIndex(rows.get(p));
+            pairCount += probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn)) ? 1 : 0;
+        }
+        return pairCount;
+    }
+
+    /**
+     * The twin of countIntUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
+     */
+    private static long countIntPartitionedUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            int probeKeyColumn,
+            long rowCount
+    ) {
+        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
+        long pairCount = 0;
+        for (long r = 0; r < rowCount; r++) {
+            probeRecord.setRowIndex(r);
+            pairCount += probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn)) ? 1 : 0;
+        }
+        return pairCount;
+    }
+
+    /**
+     * The twin of countInt() for a build of one row per key: a probe row adds one pair when the
+     * build holds its key.
+     */
+    private static long countIntUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            int probeKeyColumn,
+            long rowCount
+    ) {
+        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
+        long pairCount = 0;
+        for (long r = 0; r < rowCount; r++) {
+            probeRecord.setRowIndex(r);
+            pairCount += probe.findSingleUnchecked(probeRecord.getInt(probeKeyColumn)) ? 1 : 0;
         }
         return pairCount;
     }
@@ -1527,6 +1657,25 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     }
 
     /**
+     * The filtered twin of countRecordUnique(), driven by the rows the filter phase kept.
+     */
+    private static long countRecordFilteredUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            DirectLongList rows
+    ) {
+        final FrozenHashJoinBuild.RecordProbe probe = slot.recordProbe;
+        // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
+        final Record keyRecord = slot.keyRecord;
+        long pairCount = 0;
+        for (long p = 0, n = rows.size(); p < n; p++) {
+            probeRecord.setRowIndex(rows.get(p));
+            pairCount += probe.findSingleUnchecked(keyRecord) ? 1 : 0;
+        }
+        return pairCount;
+    }
+
+    /**
      * The twin of countRecord() for a build of more than one hash partition; see aggregateRecordPartitioned().
      */
     private static long countRecordPartitioned(
@@ -1560,6 +1709,64 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
             pairCount += probe.findRowCountUnchecked(keyRecord);
+        }
+        return pairCount;
+    }
+
+    /**
+     * The twin of countRecordFilteredUnique() for a build of more than one hash partition; see aggregateRecordPartitioned().
+     */
+    private static long countRecordPartitionedFilteredUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            DirectLongList rows
+    ) {
+        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
+        final Record keyRecord = slot.keyRecord;
+        long pairCount = 0;
+        for (long p = 0, n = rows.size(); p < n; p++) {
+            probeRecord.setRowIndex(rows.get(p));
+            pairCount += probe.findSingleUnchecked(keyRecord) ? 1 : 0;
+        }
+        return pairCount;
+    }
+
+    /**
+     * The twin of countRecordUnique() for a build of more than one hash partition; see aggregateRecordPartitioned().
+     */
+    private static long countRecordPartitionedUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            long rowCount
+    ) {
+        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
+        final Record keyRecord = slot.keyRecord;
+        long pairCount = 0;
+        for (long r = 0; r < rowCount; r++) {
+            probeRecord.setRowIndex(r);
+            pairCount += probe.findSingleUnchecked(keyRecord) ? 1 : 0;
+        }
+        return pairCount;
+    }
+
+    /**
+     * The twin of countRecord() for a build of one row per key: a probe row adds one pair when the
+     * build holds its key.
+     */
+    private static long countRecordUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            long rowCount
+    ) {
+        final FrozenHashJoinBuild.RecordProbe probe = slot.recordProbe;
+        // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
+        final Record keyRecord = slot.keyRecord;
+        long pairCount = 0;
+        for (long r = 0; r < rowCount; r++) {
+            probeRecord.setRowIndex(r);
+            pairCount += probe.findSingleUnchecked(keyRecord) ? 1 : 0;
         }
         return pairCount;
     }
@@ -1604,6 +1811,25 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     }
 
     /**
+     * The filtered twin of countSymbolUnique(), driven by the rows the filter phase kept.
+     */
+    private static long countSymbolFilteredUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            int probeKeyColumn,
+            DirectLongList rows
+    ) {
+        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
+        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        long pairCount = 0;
+        for (long p = 0, n = rows.size(); p < n; p++) {
+            probeRecord.setRowIndex(rows.get(p));
+            pairCount += probe.findSingleUnchecked(translator.translate(probeRecord.getInt(probeKeyColumn))) ? 1 : 0;
+        }
+        return pairCount;
+    }
+
+    /**
      * The twin of countSymbol() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countSymbolPartitioned(
@@ -1637,6 +1863,64 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
             pairCount += probe.findRowCountUnchecked(translator.translate(probeRecord.getInt(probeKeyColumn)));
+        }
+        return pairCount;
+    }
+
+    /**
+     * The twin of countSymbolFilteredUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
+     */
+    private static long countSymbolPartitionedFilteredUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            int probeKeyColumn,
+            DirectLongList rows
+    ) {
+        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
+        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        long pairCount = 0;
+        for (long p = 0, n = rows.size(); p < n; p++) {
+            probeRecord.setRowIndex(rows.get(p));
+            pairCount += probe.findSingleUnchecked(translator.translate(probeRecord.getInt(probeKeyColumn))) ? 1 : 0;
+        }
+        return pairCount;
+    }
+
+    /**
+     * The twin of countSymbolUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
+     */
+    private static long countSymbolPartitionedUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            int probeKeyColumn,
+            long rowCount
+    ) {
+        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
+        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        long pairCount = 0;
+        for (long r = 0; r < rowCount; r++) {
+            probeRecord.setRowIndex(r);
+            pairCount += probe.findSingleUnchecked(translator.translate(probeRecord.getInt(probeKeyColumn))) ? 1 : 0;
+        }
+        return pairCount;
+    }
+
+    /**
+     * The twin of countSymbol() for a build of one row per key: a probe row adds one pair when the
+     * build holds its key.
+     */
+    private static long countSymbolUnique(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            PageFrameMemoryRecord probeRecord,
+            int probeKeyColumn,
+            long rowCount
+    ) {
+        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
+        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        long pairCount = 0;
+        for (long r = 0; r < rowCount; r++) {
+            probeRecord.setRowIndex(r);
+            pairCount += probe.findSingleUnchecked(translator.translate(probeRecord.getInt(probeKeyColumn))) ? 1 : 0;
         }
         return pairCount;
     }
@@ -1693,6 +1977,8 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 // receiver class. The branch below runs once per page frame, not per row.
                 if (atom.isCountedByKey()) {
                     countByKeyFiltered(atom, slot, probeRecord, rows);
+                } else if (atom.isCountedByMatch()) {
+                    countByMatchFiltered(atom, slot, probeRecord, rows);
                 } else if (atom.isKeyStaged()) {
                     if (atom.isBuildPartitioned()) {
                         if (atom.isBuildUnique()) {

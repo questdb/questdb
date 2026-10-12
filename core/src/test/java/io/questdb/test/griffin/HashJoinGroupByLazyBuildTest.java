@@ -915,6 +915,13 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
                                 Assert.assertEquals(label, buildMode == HashJoinBuildMode.PARALLEL, atom.isBuiltInRounds());
                                 Assert.assertEquals(label, buildMode == HashJoinBuildMode.PARALLEL, atom.getBuildPartitionCount() > 1);
                                 Assert.assertEquals(label, isLoneCount, atom.isCountedByKey());
+                                // The lone count's unfiltered INT key leaves a build in rounds its rows in
+                                // the frames' regions, and frames of 500 rows make their runs too short
+                                // for the count's tasks, so the owner counts them in either mode.
+                                if (isLoneCount) {
+                                    Assert.assertEquals(label, buildMode == HashJoinBuildMode.PARALLEL, atom.hasBuildFrameRegions());
+                                }
+                                Assert.assertFalse(label, atom.isCountedInRounds());
                                 // The lone count has no payload column to copy.
                                 Assert.assertEquals(label, payloadLayout == HashJoinPayloadLayout.COPIED && !isLoneCount, atom.isPayloadCopied());
                             }

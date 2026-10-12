@@ -39,10 +39,12 @@ import java.util.function.BooleanSupplier;
  * cancels the query there on demand. The operator builds on its cursor's first read and probes in
  * the same call, so a test that cancels before the read cancels an execution without a build, and
  * one that cancels after it cancels nothing. This breaker acts at a breaker check instead:
- * {@link #cancellingInsideBuild} trips at the first check that the build itself makes, and
- * {@link #cancellingOnceBuilt} at the first one that finds the build ready, so that the cancelled
- * execution gives up a live build. {@link #meetingOnceBuilt} stops the owner at that same check
- * until other queries got there too, which is how a test makes several builds live at once.
+ * {@link #cancellingInsideBuild} trips at the first check that the build itself makes,
+ * {@link #cancellingInsideKeyRowCount} at the first one that a task of the round counting a
+ * parallel build's key rows makes, and {@link #cancellingOnceBuilt} at the first one that finds
+ * the build ready, so that the cancelled execution gives up a live build. {@link #meetingOnceBuilt}
+ * stops the owner at that same check until other queries got there too, which is how a test makes
+ * several builds live at once.
  */
 final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
     private static final String ATOM_CLASS_NAME = AsyncHashJoinGroupByAtom.class.getName();
@@ -52,6 +54,7 @@ final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
     @Nullable
     private final CyclicBarrier built;
     private final boolean isCancelledInsideBuild;
+    private final boolean isCancelledInsideKeyRowCount;
     private final boolean isCancelledOnceBuilt;
     // Null unless the breaker acts once the build is ready, which only the owner may tell.
     @Nullable
@@ -66,6 +69,7 @@ final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
             CairoEngine engine,
             boolean isWatchingBuildChecks,
             boolean isCancelledInsideBuild,
+            boolean isCancelledInsideKeyRowCount,
             @Nullable BooleanSupplier isBuilt,
             @Nullable CyclicBarrier built,
             boolean isCancelledOnceBuilt
@@ -73,6 +77,7 @@ final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
         super(engine);
         this.isWatchingBuildChecks = isWatchingBuildChecks;
         this.isCancelledInsideBuild = isCancelledInsideBuild;
+        this.isCancelledInsideKeyRowCount = isCancelledInsideKeyRowCount;
         this.isBuilt = isBuilt;
         this.built = built;
         this.isCancelledOnceBuilt = isCancelledOnceBuilt;
@@ -84,7 +89,17 @@ final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
      * build's rounds. Every build makes such a check.
      */
     static HashJoinBuildCircuitBreaker cancellingInsideBuild(CairoEngine engine) {
-        return new HashJoinBuildCircuitBreaker(engine, true, true, null, null, false);
+        return new HashJoinBuildCircuitBreaker(engine, true, true, false, null, null, false);
+    }
+
+    /**
+     * Cancels at the first breaker check that a task of the round counting a parallel build's key
+     * rows makes, on whichever thread runs the task, and counts the build's checks as
+     * {@link #counting} does. Only a build of more than one partition whose frames are large enough
+     * for it, or that copied each partition's rows into a region of its own, counts in that round.
+     */
+    static HashJoinBuildCircuitBreaker cancellingInsideKeyRowCount(CairoEngine engine) {
+        return new HashJoinBuildCircuitBreaker(engine, true, false, true, null, null, false);
     }
 
     /**
@@ -94,14 +109,14 @@ final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
      * the probe starts.
      */
     static HashJoinBuildCircuitBreaker cancellingOnceBuilt(CairoEngine engine, BooleanSupplier isBuilt) {
-        return new HashJoinBuildCircuitBreaker(engine, true, false, isBuilt, null, true);
+        return new HashJoinBuildCircuitBreaker(engine, true, false, false, isBuilt, null, true);
     }
 
     /**
      * Never cancels; counts the build's breaker checks alone.
      */
     static HashJoinBuildCircuitBreaker counting(CairoEngine engine) {
-        return new HashJoinBuildCircuitBreaker(engine, true, false, null, null, false);
+        return new HashJoinBuildCircuitBreaker(engine, true, false, false, null, null, false);
     }
 
     /**
@@ -117,7 +132,7 @@ final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
             CyclicBarrier built,
             boolean isCancelledOnceBuilt
     ) {
-        return new HashJoinBuildCircuitBreaker(engine, false, false, isBuilt, built, isCancelledOnceBuilt);
+        return new HashJoinBuildCircuitBreaker(engine, false, false, false, isBuilt, built, isCancelledOnceBuilt);
     }
 
     @Override
@@ -151,13 +166,20 @@ final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
         return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(ATOM_CLASS_NAME)
                 && (frame.getMethodName().equals("build")
                 || frame.getMethodName().equals("partitionFrame")
-                || frame.getMethodName().equals("buildPartition"))));
+                || frame.getMethodName().equals("buildPartition")
+                || frame.getMethodName().equals("countPartitions"))));
+    }
+
+    // True on any thread inside a task of the round that counts a parallel build's key rows.
+    private static boolean isInsideKeyRowCount() {
+        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(ATOM_CLASS_NAME)
+                && frame.getMethodName().equals("countPartitions")));
     }
 
     private void onCheck() {
         if (isWatchingBuildChecks && isInsideBuild()) {
             buildChecks.incrementAndGet();
-            if (isCancelledInsideBuild) {
+            if (isCancelledInsideBuild || isCancelledInsideKeyRowCount && isInsideKeyRowCount()) {
                 cancel();
             }
         }

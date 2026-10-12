@@ -106,6 +106,9 @@ import java.io.Closeable;
  * whose raw key fits a row's eight-byte link skips the chunks as {@link IntHashJoinBuild}'s does:
  * each frame task writes its rows into its frame's region of the heap, each row's raw key in its
  * link, and the partition task inserts the key from there; see {@link #beginUnfilteredPartitioning}.
+ * As there, a query that counts the key rows of a frozen parallel build counts ranges of its
+ * partitions apart, on any thread; see {@link #countPartitionKeyRows} and
+ * {@link #getKeyRowCountTaskCount()}.
  */
 public final class MapHashJoinBuild implements Closeable {
     public static final int MAX_PARTITIONS = HashJoinPartitions.MAX_PARTITIONS;
@@ -462,6 +465,36 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
+     * Counts the key rows of the partitions from {@code partitionLo} to {@code partitionHi},
+     * exclusive, of a frozen parallel build, as {@link IntHashJoinBuild#countPartitionKeyRows} does.
+     * Runs on any thread, concurrently with the counts of other ranges; the calling thread's circuit
+     * breaker cancels it. On failure the caller closes the build once every task of the count has
+     * stopped.
+     */
+    public void countPartitionKeyRows(int partitionLo, int partitionHi, SqlExecutionCircuitBreaker circuitBreaker) {
+        assert frozen != null && partitions.isPartitioning();
+        heap.countChains(partitions, partitionLo, partitionHi, circuitBreaker);
+    }
+
+    /**
+     * Ends a count of a frozen parallel build's key rows that ran {@link #countPartitionKeyRows}
+     * over ranges that cover every partition once, as
+     * {@link IntHashJoinBuild#endPartitionedKeyRowCount()} does. On failure all execution
+     * allocations are released.
+     */
+    public void endPartitionedKeyRowCount() {
+        try {
+            if (frozen == null || !partitions.isPartitioning()) {
+                throw new IllegalStateException("hash join build is not a frozen parallel build");
+            }
+            heap.endPartitionedChainCount();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    /**
      * Ends mutation of a build without payload columns.
      */
     public FrozenHashJoinBuild.RecordKeyed freeze() {
@@ -521,6 +554,16 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     /**
+     * How many tasks count the key rows of this frozen parallel build, each over as many consecutive
+     * partitions, through {@link #countPartitionKeyRows}, as
+     * {@link IntHashJoinBuild#getKeyRowCountTaskCount()} says for its build.
+     */
+    public int getKeyRowCountTaskCount() {
+        assert frozen != null && partitions.isPartitioning();
+        return heap.getChainCountTaskCount(partitions);
+    }
+
+    /**
      * Partitions of the last parallel build, or one for a serial build. The heap holds each
      * partition's rows in one region, frame after frame; see {@link #getSegmentStart(int, int)}.
      */
@@ -567,6 +610,15 @@ public final class MapHashJoinBuild implements Closeable {
             size += mapSizeInBytes(maps.getQuick(i));
         }
         return size;
+    }
+
+    /**
+     * True while a parallel build's frames have regions of the heap, which their rows fill; see
+     * {@link #beginUnfilteredPartitioning}.
+     */
+    @TestOnly
+    public boolean hasFrameRegions() {
+        return partitions.hasFrameRegions();
     }
 
     /**

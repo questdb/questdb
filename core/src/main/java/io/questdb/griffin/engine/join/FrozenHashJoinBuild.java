@@ -51,7 +51,9 @@ public interface FrozenHashJoinBuild {
      * {@link IntProbe#findRowCountUnchecked(int)} or {@link RecordProbe#findRowCountUnchecked(Record)}.
      * The count runs in place over the row heap, in one pass over the build's rows, and allocates
      * nothing. The owner calls it at most once per execution, after the build froze and before it
-     * publishes the build to the probes' threads. Afterwards the build keeps no chain to walk, so
+     * publishes the build to the probes' threads. A parallel build may count ranges of its partitions
+     * on the workers instead, through its builder; see
+     * {@link IntHashJoinBuild#getKeyRowCountTaskCount()}. Afterwards the build keeps no chain to walk, so
      * its probes answer those two lookups alone: no other lookup, and no {@link Probe#next()}.
      * On failure all execution allocations are released.
      */

@@ -93,6 +93,12 @@ import static io.questdb.griffin.engine.join.IntHashJoinKeyTable.SLOT_SIZE;
  * buckets where they lie, frame by frame, replacing each key with the link. A partition's rows
  * then run through every frame's region rather than filling one region of their own; see
  * {@link #beginUnfilteredPartitioning}.
+ * <p>
+ * Either way, a key's rows link only to each other, so a query that counts the key rows of a
+ * frozen parallel build counts ranges of its partitions apart, on any thread; see
+ * {@link #countPartitionKeyRows}. A partition's rows that run through every frame's region make one
+ * short run per frame, which costs a task more to walk than one region does, so such a build counts
+ * in fewer tasks, or on the owner alone; see {@link #getKeyRowCountTaskCount()}.
  */
 public final class IntHashJoinBuild implements Closeable {
     public static final int MAX_PARTITIONS = HashJoinPartitions.MAX_PARTITIONS;
@@ -355,6 +361,40 @@ public final class IntHashJoinBuild implements Closeable {
     }
 
     /**
+     * Counts the key rows of the partitions from {@code partitionLo} to {@code partitionHi},
+     * exclusive, of a frozen parallel build: their share of {@link FrozenHashJoinBuild#countKeyRows()}.
+     * Runs on any thread, concurrently with the counts of other ranges, after the build froze and
+     * before the owner publishes it to the probes' threads; the calling thread's circuit breaker
+     * cancels it. Once ranges covering every partition once have returned, the owner ends the count
+     * through {@link #endPartitionedKeyRowCount()}. On failure the caller closes the build once every
+     * task of the count has stopped, as a failed {@link FrozenHashJoinBuild#countKeyRows()} closes it.
+     * {@link #getKeyRowCountTaskCount()} says how many ranges to count apart.
+     */
+    public void countPartitionKeyRows(int partitionLo, int partitionHi, SqlExecutionCircuitBreaker circuitBreaker) {
+        assert frozen != null && partitions.isPartitioning();
+        heap.countChains(partitions, partitionLo, partitionHi, circuitBreaker);
+    }
+
+    /**
+     * Ends a count of a frozen parallel build's key rows that ran {@link #countPartitionKeyRows}
+     * over ranges that cover every partition once, every one of which returned: the probes then
+     * answer the row count lookups, as after {@link FrozenHashJoinBuild#countKeyRows()}. The owner
+     * calls it once no task of the count still runs, and before it publishes the build to the
+     * probes' threads. On failure all execution allocations are released.
+     */
+    public void endPartitionedKeyRowCount() {
+        try {
+            if (frozen == null || !partitions.isPartitioning()) {
+                throw new IllegalStateException("hash join build is not a frozen parallel build");
+            }
+            heap.endPartitionedChainCount();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    /**
      * Ends mutation of a build without payload columns.
      */
     public FrozenHashJoinBuild.IntKeyed freeze() {
@@ -419,6 +459,18 @@ public final class IntHashJoinBuild implements Closeable {
     }
 
     /**
+     * How many tasks count the key rows of this frozen parallel build, each over as many consecutive
+     * partitions, through {@link #countPartitionKeyRows}; one when a single pass on the owner,
+     * {@link FrozenHashJoinBuild#countKeyRows()}, costs less. It divides the partition count. A build
+     * whose partitions fill one region of the heap each takes a task per partition; one whose frames
+     * have regions takes fewer, or none, the smaller its frames; see {@link #beginUnfilteredPartitioning}.
+     */
+    public int getKeyRowCountTaskCount() {
+        assert frozen != null && partitions.isPartitioning();
+        return heap.getChainCountTaskCount(partitions);
+    }
+
+    /**
      * Partitions of the last parallel build, or one for a serial build. The heap holds each
      * partition's rows in one region, frame after frame; see {@link #getSegmentStart(int, int)}.
      */
@@ -462,6 +514,15 @@ public final class IntHashJoinBuild implements Closeable {
             size += tables.getQuick(i).getSizeInBytes();
         }
         return size;
+    }
+
+    /**
+     * True while a parallel build's frames have regions of the heap, which their rows fill; see
+     * {@link #beginUnfilteredPartitioning}.
+     */
+    @TestOnly
+    public boolean hasFrameRegions() {
+        return partitions.hasFrameRegions();
     }
 
     /**

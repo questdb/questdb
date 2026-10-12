@@ -43,6 +43,7 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
@@ -477,14 +478,21 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             createCountTables();
             final AtomicBoolean isArmed = new AtomicBoolean();
             final AtomicInteger countChecks = new AtomicInteger();
+            // The checks of the count that ran in a task of the frame sequence, rather than in the
+            // owner's own call: in the round that counts a build of more than one partition.
+            final AtomicInteger roundCountChecks = new AtomicInteger();
             final StackWalker stackWalker = StackWalker.getInstance();
-            // Cancels the query on the owner's check inside the pass that counts the build's key rows.
+            // Cancels the query on the first check inside the pass that counts the build's key rows.
             final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER) {
                 @Override
                 public void statefulThrowExceptionIfTrippedTimeThrottled() {
                     super.statefulThrowExceptionIfTrippedTimeThrottled();
                     if (stackWalker.walk(frames -> frames.anyMatch(frame -> frame.getMethodName().equals("countChains")))) {
                         countChecks.incrementAndGet();
+                        if (stackWalker.walk(frames -> frames.anyMatch(frame -> frame.getMethodName().equals("reduce")
+                                && frame.getClassName().equals("io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob")))) {
+                            roundCountChecks.incrementAndGet();
+                        }
                         if (isArmed.get()) {
                             throw CairoException.queryCancelled(1);
                         }
@@ -495,11 +503,18 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 context.with(AllowAllSecurityContext.INSTANCE, null, null, -1, breaker);
                 for (HashJoinBuildMode buildMode : HashJoinBuildMode.values()) {
                     buildMode.applyProperties(node1.getConfigurationOverrides());
+                    final boolean isParallel = buildMode == HashJoinBuildMode.PARALLEL;
                     for (String on : new String[]{"ca.k = cb.k", "ca.s = cb.s", "ca.l = cb.l", "ca.k = cb.k AND ca.vc = cb.vc"}) {
+                        // cb's day partitions of 100 rows are its frames. A parallel build copies a
+                        // VARCHAR key's rows into a region per partition, which the workers count; an
+                        // INT, SYMBOL or LONG key's rows run through every frame's region, in runs too
+                        // short for the count's tasks, so the owner counts them.
+                        final boolean isCountedInRounds = isParallel && on.contains("vc");
                         try (RecordCursorFactory factory = engine.select("SELECT count() FROM ca JOIN cb ON " + on, context)) {
                             final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
                             isArmed.set(true);
                             countChecks.set(0);
+                            roundCountChecks.set(0);
                             try (RecordCursor cursor = factory.getCursor(context)) {
                                 // Opening the cursor neither builds nor counts; the first read does.
                                 Assert.assertEquals(on, 0, countChecks.get());
@@ -509,18 +524,118 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             } catch (CairoException e) {
                                 Assert.assertTrue(e.isCancellation());
                             }
+                            // The first check cancels the count: the owner's pass, or the first task of
+                            // the round, after which the cancelled round runs no other task.
                             Assert.assertEquals(on, 1, countChecks.get());
+                            Assert.assertEquals(on, isCountedInRounds ? 1 : 0, roundCountChecks.get());
                             // The cancelled execution leaves no build, no counts and no acquired slot behind.
                             Assert.assertNull(on, atom.getFrozenBuild());
                             Assert.assertFalse(on, atom.isCountedByKey());
                             Assert.assertEquals(on, 0, atom.getPerWorkerLocks().getAcquiredSlotCount());
                             Assert.assertNull(on, context.getMemoryTracker());
                             isArmed.set(false);
+                            countChecks.set(0);
+                            roundCountChecks.set(0);
                             // The same factory builds and counts again.
                             assertCountExecution(factory, 15_000, true, context);
-                            Assert.assertEquals(on, 2, countChecks.get());
+                            if (isCountedInRounds) {
+                                // Each task checks once, as it starts its partition's rows, and a task
+                                // of a partition without rows does not: the build's eight keys leave
+                                // at most eight of its partitions holding rows.
+                                Assert.assertTrue(on + ", checks: " + countChecks.get(), countChecks.get() > 1 && countChecks.get() <= 8);
+                                Assert.assertEquals(on, countChecks.get(), roundCountChecks.get());
+                            } else {
+                                // The owner's pass checks once, as it starts.
+                                Assert.assertEquals(on, 1, countChecks.get());
+                                Assert.assertEquals(on, 0, roundCountChecks.get());
+                            }
                         }
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCountOverRepeatedBuildKeysCountsInRoundsOverLongEnoughFrameRuns() throws Exception {
+        assertMemoryLeak(() -> {
+            // gb, the smaller table and so the build, holds 40_920 rows of 4_096 keys, nine or ten of
+            // each; ga probes with 81_920 rows of the same keys, twenty of each: 818_400 joined pairs.
+            execute("CREATE TABLE ga (k INT, l LONG, vc VARCHAR, v INT)");
+            execute("CREATE TABLE gb (k INT, l LONG, vc VARCHAR, w INT)");
+            execute("INSERT INTO ga SELECT (x % 4_096)::INT, x % 4_096, 'v' || (x % 4_096), x::INT FROM long_sequence(81_920)");
+            execute("INSERT INTO gb SELECT (x % 4_096)::INT, x % 4_096, 'v' || (x % 4_096), x::INT FROM long_sequence(40_920)");
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // Every build runs in rounds, with 256 partitions.
+                HashJoinBuildMode.PARALLEL.applyProperties(node1.getConfigurationOverrides());
+                // gb in 39 frames of 1_049 rows on average, and then in 40 frames of 1_023 rows.
+                for (int frameRows : new int[]{1_024, 1_023}) {
+                    context.changePageFrameSizes(frameRows, frameRows);
+                    for (String on : new String[]{"ga.k = gb.k", "ga.l = gb.l", "ga.vc = gb.vc"}) {
+                        for (String where : new String[]{"", " WHERE gb.w > 0"}) {
+                            final String sql = "SELECT count() FROM ga JOIN gb ON " + on + where;
+                            // Without a build filter, an INT or a LONG key's rows run through every
+                            // frame's region of the heap; a build filter or a VARCHAR key copies each
+                            // partition's rows into a region of its own.
+                            final boolean hasFrameRegions = where.isEmpty() && !on.contains("vc");
+                            // A task of the count walks a partition's own region in one run, so every
+                            // partition takes a task. Over frame regions, a task walks a run per frame:
+                            // frames of 1_049 rows leave four tasks runs of 262 rows on average, which
+                            // the count takes, and frames of 1_023 rows leave them runs under the 256
+                            // it needs, so the owner counts instead.
+                            final boolean isCountedInRounds = !hasFrameRegions || frameRows == 1_024;
+                            assertQuery(sql)
+                                    .withContext(context)
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .withPlanContaining("countStrategy: per key")
+                                    .returns("count\n818400\n");
+                            try (RecordCursorFactory factory = engine.select(sql, context);
+                                 RecordCursor cursor = factory.getCursor(context)) {
+                                final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                                Assert.assertTrue(sql, cursor.hasNext());
+                                Assert.assertEquals(sql, 818_400, cursor.getRecord().getLong(0));
+                                Assert.assertEquals(sql, frameRows == 1_024 ? 39 : 40, atom.getBuildFrameCount());
+                                Assert.assertTrue(sql, atom.isBuiltInRounds());
+                                Assert.assertEquals(sql, 256, atom.getBuildPartitionCount());
+                                Assert.assertTrue(sql, atom.isCountedByKey());
+                                Assert.assertEquals(sql, hasFrameRegions, atom.hasBuildFrameRegions());
+                                Assert.assertEquals(sql, isCountedInRounds, atom.isCountedInRounds());
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCountOverRepeatedBuildKeysCountsPartitionsThatSpanFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountTables();
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // Frames of two or three rows leave the build in rounds a few partitions, each of
+                // whose rows run through dozens of frames: through every frame's region of the heap
+                // for an unfiltered INT, SYMBOL or LONG key, and copied frame by frame into the
+                // partition's own region for a build filter, a VARCHAR key or a composite one. The
+                // workers count the key rows of a partition's own region, over its every frame. Runs
+                // of two or three rows per frame are too short for the count's tasks, so the owner
+                // counts the rows that run through the frames' regions.
+                HashJoinBuildMode.PARALLEL.apply(node1.getConfigurationOverrides(), context);
+                for (String on : new String[]{
+                        "ca.k = cb.k",
+                        "ca.s = cb.s",
+                        "ca.l = cb.l",
+                        "ca.vc = cb.vc",
+                        "ca.k = cb.k AND ca.vc = cb.vc",
+                        "ca.s = cb.s AND ca.l = cb.l"
+                }) {
+                    assertCountPerKey("SELECT count() FROM ca JOIN cb ON " + on, "count", 15_000, true, HashJoinBuildMode.PARALLEL, context);
+                    assertCountPerKey("SELECT count() FROM ca JOIN cb ON " + on + " WHERE ca.v > 500", "count", 7_500, true, HashJoinBuildMode.PARALLEL, context);
+                    assertCountPerKey("SELECT count() FROM ca JOIN cb ON " + on + " WHERE cb.w > 100", "count", 7_400, true, HashJoinBuildMode.PARALLEL, context);
+                    assertCountPerKey("SELECT count() FROM ca JOIN cb ON " + on + " WHERE ca.v > 500 AND cb.w > 100", "count", 3_700, true,
+                            HashJoinBuildMode.PARALLEL, context);
                 }
             }
         });
@@ -642,6 +757,64 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 }
             } finally {
                 circuitBreakerConfiguration = null;
+            }
+        });
+    }
+
+    @Test
+    public void testCountOverUniqueBuildKeysAddsOnePerMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountTables();
+            // cu holds one row per key over two days: keys 5 to 9, a NULL key, and keys 12 and 13,
+            // which no probe row holds. Each of ca's 100 rows of a key from 5 to 9 joins one build
+            // row, and so does each of its 100 NULL rows, as NULL keys match in the ordinary hash
+            // join. ca's keys 1 to 4 are missing from the build, and their SYMBOL texts from its
+            // dictionary.
+            execute("CREATE TABLE cu (k INT, l LONG, s SYMBOL, vc VARCHAR, w DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cu VALUES
+                        (5, 5, 'S5', 'V5', 1, '2020-01-01'), (6, 6, 'S6', 'V6', 2, '2020-01-01'),
+                        (7, 7, 'S7', 'V7', 3, '2020-01-01'), (8, 8, 'S8', 'V8', 4, '2020-01-01'),
+                        (9, 9, 'S9', 'V9', 5, '2020-01-02'), (NULL, NULL, NULL, NULL, 6, '2020-01-02'),
+                        (12, 12, 'S12', 'V12', 7, '2020-01-02'), (13, 13, 'S13', 'V13', 8, '2020-01-02')
+                    """);
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                for (HashJoinBuildMode buildMode : HashJoinBuildMode.values()) {
+                    buildMode.applyProperties(node1.getConfigurationOverrides());
+                    // An INT key and a lone SYMBOL pair take the INT layout; a LONG key, a VARCHAR
+                    // key and both composite keys stage into the build's map.
+                    for (String on : new String[]{
+                            "ca.k = cu.k",
+                            "ca.s = cu.s",
+                            "ca.l = cu.l",
+                            "ca.vc = cu.vc",
+                            "ca.k = cu.k AND ca.vc = cu.vc",
+                            "ca.s = cu.s AND ca.l = cu.l"
+                    }) {
+                        for (int jit : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                            context.setJitMode(jit);
+                            // Every spelling of the lone count, in both join orders.
+                            assertCountPerKey("SELECT count() FROM ca JOIN cu ON " + on, "count", 600, false, buildMode, context);
+                            assertCountPerKey("SELECT count(*) FROM ca JOIN cu ON " + on, "count", 600, false, buildMode, context);
+                            assertCountPerKey("SELECT count(1) FROM ca JOIN cu ON " + on, "count", 600, false, buildMode, context);
+                            assertCountPerKey("SELECT count() c FROM cu JOIN ca ON " + on, "c", 600, false, buildMode, context);
+                            // The probe filter runs as JIT code under the JIT mode, and interpreted otherwise.
+                            final String probeFiltered = "SELECT count() FROM ca JOIN cu ON " + on + " WHERE ca.v > 500";
+                            try (RecordCursorFactory factory = engine.select(probeFiltered, context)) {
+                                Assert.assertEquals(probeFiltered, JitUtil.isJitSupported() && jit == SqlJitMode.JIT_MODE_ENABLED,
+                                        fused(factory).usesCompiledFilter());
+                            }
+                            assertCountPerKey(probeFiltered, "count", 300, false, buildMode, context);
+                            // The build filter keeps the keys 8, 9, NULL, 12 and 13.
+                            assertCountPerKey("SELECT count() FROM ca JOIN cu ON " + on + " WHERE cu.w > 3", "count", 300, false, buildMode, context);
+                            assertCountPerKey("SELECT count() FROM ca JOIN cu ON " + on + " WHERE ca.v > 500 AND cu.w > 3", "count", 150, false, buildMode, context);
+                            // No probe row passes, and then no build row.
+                            assertCountPerKey("SELECT count() FROM ca JOIN cu ON " + on + " WHERE ca.v > 1_000", "count", 0, false, buildMode, context);
+                            assertCountPerKey("SELECT count() FROM ca JOIN cu ON " + on + " WHERE cu.w > 200", "count", 0, false, buildMode, context);
+                        }
+                        context.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                    }
+                }
             }
         });
     }
@@ -1932,6 +2105,20 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         }
     }
 
+    // Whether the open cursor's build counts its key rows on the workers. A build of more than one
+    // partition does when each partition's rows fill a region of their own. When the rows run through
+    // every frame's region instead, a task of the count walks a run of them per frame, and the count
+    // takes the round only with at least four tasks whose runs average 256 rows or more: at least
+    // four partitions, and frames of 1_024 rows or more on average; see
+    // IntHashJoinBuild.getKeyRowCountTaskCount().
+    private static boolean isKeyRowCountInRounds(AsyncHashJoinGroupByAtom atom) {
+        if (!atom.isCountedByKey() || atom.getBuildPartitionCount() < 2) {
+            return false;
+        }
+        return !atom.hasBuildFrameRegions()
+                || atom.getBuildPartitionCount() >= 4 && atom.getFrozenBuild().getRowCount() >= 1_024L * atom.getBuildFrameCount();
+    }
+
     // Runs the lone count's factory once, and checks the count and where the execution took it from.
     private static void assertCountExecution(
             RecordCursorFactory factory,
@@ -1943,18 +2130,27 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         try (RecordCursor cursor = factory.getCursor(context)) {
             // The first read builds and counts; an open cursor has done neither.
             Assert.assertFalse(atom.isCountedByKey());
+            Assert.assertFalse(atom.isCountedByMatch());
             Assert.assertTrue(cursor.hasNext());
             Assert.assertEquals(isCountedByKey, atom.isCountedByKey());
+            // A build of one row per key, an empty one included, counts by match instead.
+            Assert.assertEquals(!isCountedByKey, atom.isCountedByMatch());
+            // A build of more than one partition counts its key rows on the workers, unless its rows
+            // run through frames too small for the count's tasks.
+            Assert.assertEquals(isKeyRowCountInRounds(atom), atom.isCountedInRounds());
             Assert.assertEquals(expected, cursor.getRecord().getLong(0));
             Assert.assertFalse(cursor.hasNext());
         }
         Assert.assertFalse(atom.isCountedByKey());
+        Assert.assertFalse(atom.isCountedByMatch());
+        Assert.assertFalse(atom.isCountedInRounds());
     }
 
     /**
      * Checks the lone count against the ordinary plan and against the given total, that EXPLAIN names
      * its strategy, and that an execution over a build of the given mode takes the count from the
-     * build's key row counts when it should: when the build repeats a key.
+     * build's key row counts when it should: when the build repeats a key. Any other build counts
+     * one pair per probe row that finds its key.
      */
     private void assertCountPerKey(
             String sql,
@@ -1977,23 +2173,32 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             try (RecordCursor cursor = factory.getCursor(context)) {
                 // The first read builds and counts; an open cursor has done neither.
                 Assert.assertFalse(sql, atom.isCountedByKey());
+                Assert.assertFalse(sql, atom.isCountedByMatch());
                 Assert.assertNull(sql, atom.getFrozenBuild());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(sql, isCountedByKey, atom.isCountedByKey());
+                Assert.assertEquals(sql, !isCountedByKey, atom.isCountedByMatch());
                 Assert.assertEquals(sql, buildMode == HashJoinBuildMode.PARALLEL, atom.isBuiltInRounds());
-                if (isCountedByKey && buildMode == HashJoinBuildMode.PARALLEL) {
+                if (buildMode == HashJoinBuildMode.PARALLEL && atom.getFrozenBuild().getRowCount() > 1) {
                     // More than one hash partition, so the reducers run the loops over the partitioned probes.
                     Assert.assertTrue(sql + ", partitions: " + atom.getBuildPartitionCount(), atom.getBuildPartitionCount() > 1);
                 }
+                // The workers count the key rows of a build of more than one partition, unless its
+                // rows run through frames too small for the count's tasks, and the owner those of
+                // any other build.
+                Assert.assertEquals(sql, isKeyRowCountInRounds(atom), atom.isCountedInRounds());
                 Assert.assertEquals(sql, expected, cursor.getRecord().getLong(0));
                 // Rereading the count neither rebuilds nor recounts.
                 cursor.toTop();
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(sql, expected, cursor.getRecord().getLong(0));
                 Assert.assertEquals(sql, isCountedByKey, atom.isCountedByKey());
+                Assert.assertEquals(sql, !isCountedByKey, atom.isCountedByMatch());
             }
             // The counts belong to the execution that built them.
             Assert.assertFalse(sql, atom.isCountedByKey());
+            Assert.assertFalse(sql, atom.isCountedByMatch());
+            Assert.assertFalse(sql, atom.isCountedInRounds());
             Assert.assertNull(sql, atom.getFrozenBuild());
         }
     }
