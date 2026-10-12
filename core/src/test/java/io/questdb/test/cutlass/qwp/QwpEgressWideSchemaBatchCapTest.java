@@ -59,12 +59,26 @@ import org.junit.Test;
  * than the misleading {@code server_internal_error = 16}.
  */
 public class QwpEgressWideSchemaBatchCapTest extends AbstractBootstrapTest {
+    private static final int MAX_ROWS = QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH;
 
     @Before
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testPartialBatchIsDrainedBeforeBufferingMoreRows() throws Exception {
+        assertPartialBatchIsDrained(null, "SELECT x, x + 1, x + 2 FROM long_sequence(" + (2 * MAX_ROWS) + ")");
+    }
+
+    @Test
+    public void testPartialTableScanBatchIsDrainedBeforeBufferingMoreRows() throws Exception {
+        assertPartialBatchIsDrained(
+                "CREATE TABLE t AS (SELECT x a, x + 1 b, x + 2 c FROM long_sequence(" + (2 * MAX_ROWS) + "))",
+                "SELECT * FROM t"
+        );
     }
 
     /**
@@ -128,55 +142,6 @@ public class QwpEgressWideSchemaBatchCapTest extends AbstractBootstrapTest {
                                 + " msg=" + message[0],
                         (byte) 0x0B, status[0]);
                 TestUtils.assertContains(message[0], "single row exceeds send buffer");
-            }
-        });
-    }
-
-    @Test
-    public void testPartialBatchIsDrainedBeforeBufferingMoreRows() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K")) {
-                final IntList batchRows = new IntList();
-                final int maxBatchRows = QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH;
-                try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=" + maxBatchRows + ";")) {
-                    client.connect();
-                    client.execute(
-                            "SELECT x, x + 1, x + 2 FROM long_sequence(" + (2 * maxBatchRows) + ")",
-                            new QwpColumnBatchHandler() {
-                                @Override
-                                public void onBatch(QwpColumnBatch batch) {
-                                    batchRows.add(batch.getRowCount());
-                                }
-
-                                @Override
-                                public void onEnd(long rows) {
-                                }
-
-                                @Override
-                                public void onError(byte status, String message) {
-                                    Assert.fail("egress error status=0x" + Integer.toHexString(status & 0xff)
-                                            + " msg=" + message);
-                                }
-                            });
-                }
-
-                Assert.assertTrue("query must be split into multiple frames", batchRows.size() > 2);
-                int rowsReceived = 0;
-                for (int i = 0, n = batchRows.size(); i < n; i++) {
-                    rowsReceived += batchRows.getQuick(i);
-                }
-                Assert.assertEquals(2 * maxBatchRows, rowsReceived);
-                final int firstFrameRows = batchRows.getQuick(0);
-                final int secondFrameRows = batchRows.getQuick(1);
-                Assert.assertTrue("first frame must force a partial emit", firstFrameRows < maxBatchRows);
-                Assert.assertTrue("remaining suffix must fit in the second frame", firstFrameRows > maxBatchRows / 2);
-                Assert.assertEquals(
-                        "the second frame must drain the first scratch population",
-                        maxBatchRows,
-                        firstFrameRows + secondFrameRows
-                );
             }
         });
     }
@@ -260,6 +225,54 @@ public class QwpEgressWideSchemaBatchCapTest extends AbstractBootstrapTest {
                 Assert.assertTrue(
                         "wide-schema query must split across multiple batches (got " + batchCount[0] + ")",
                         batchCount[0] > 1);
+            }
+        });
+    }
+
+    private static void assertPartialBatchIsDrained(String ddl, String query) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K")) {
+                if (ddl != null) {
+                    serverMain.execute(ddl);
+                }
+                final IntList batchRows = new IntList();
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=" + MAX_ROWS + ";")) {
+                    client.connect();
+                    client.execute(query, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            batchRows.add(batch.getRowCount());
+                        }
+
+                        @Override
+                        public void onEnd(long rows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error status=0x" + Integer.toHexString(status & 0xff)
+                                    + " msg=" + message);
+                        }
+                    });
+                }
+
+                Assert.assertTrue("query must be split into multiple frames", batchRows.size() > 2);
+                int rowsReceived = 0;
+                for (int i = 0, n = batchRows.size(); i < n; i++) {
+                    rowsReceived += batchRows.getQuick(i);
+                }
+                Assert.assertEquals(2 * MAX_ROWS, rowsReceived);
+                final int firstFrameRows = batchRows.getQuick(0);
+                final int secondFrameRows = batchRows.getQuick(1);
+                Assert.assertTrue("first frame must force a partial emit", firstFrameRows < MAX_ROWS);
+                Assert.assertTrue("remaining suffix must fit in the second frame", firstFrameRows > MAX_ROWS / 2);
+                Assert.assertEquals(
+                        "the second frame must drain the first scratch population",
+                        MAX_ROWS,
+                        firstFrameRows + secondFrameRows
+                );
             }
         });
     }
