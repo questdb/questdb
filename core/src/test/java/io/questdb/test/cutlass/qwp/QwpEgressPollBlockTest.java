@@ -40,6 +40,9 @@ import java.io.File;
 import java.io.IOException;
 import java.net.Socket;
 import java.nio.file.Files;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * While a QWP connection is open, an idle network worker waits in the HTTP dispatcher's poll ({@code http.net.poll.block.timeout})
@@ -121,6 +124,53 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
                     final long millis = (System.nanoTime() - start) / 1_000_000;
                     Assert.assertTrue("connect and request " + i + " took " + millis + "ms", millis < 2 * MAX_REQUEST_MILLIS);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testNoBlockUnderBackToBackRequests() throws Exception {
+        // a worker that just served a request spins and picks the next one up; one waiting in the
+        // poll would hold the dispatcher and keep it from doing so. Requests well under a
+        // millisecond apart never find a worker in the poll
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain ignore = startPollBlockServer("2", "100");
+                    QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
+            ) {
+                client.connect();
+                Assert.assertTrue("the dispatcher never blocked in its poll", awaitBlockedPoll());
+                assertSelectOneFast(client, 0);
+                final AtomicBoolean done = new AtomicBoolean();
+                final AtomicInteger blocked = new AtomicInteger();
+                final AtomicInteger samples = new AtomicInteger();
+                final Thread sampler = new Thread(() -> {
+                    while (!done.get()) {
+                        samples.incrementAndGet();
+                        if (isPollBlocked()) {
+                            blocked.incrementAndGet();
+                        }
+                        LockSupport.parkNanos(50_000);
+                    }
+                });
+                sampler.start();
+                try {
+                    final long deadline = System.nanoTime() + 1_500_000_000L;
+                    for (int i = 1; System.nanoTime() < deadline; i++) {
+                        assertSelectOneFast(client, i);
+                        LockSupport.parkNanos(200_000);
+                    }
+                } finally {
+                    done.set(true);
+                    sampler.join();
+                }
+                // a request delayed past a millisecond by scheduling may let a worker wait for once;
+                // waiting between back-to-back requests puts a worker there in a third of samples
+                Assert.assertTrue(samples.get() > 100);
+                Assert.assertTrue(
+                        "samples with a worker in the poll: " + blocked.get() + " of " + samples.get(),
+                        blocked.get() * 100 < samples.get()
+                );
             }
         });
     }
@@ -270,6 +320,8 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
 
     // whether, within a few seconds, a network worker of this process waits in epoll_wait
     private static boolean awaitBlockedPoll() {
+        // past the naps, into the sleep that the wait in the poll replaces
+        Os.sleep(100);
         final long deadline = System.currentTimeMillis() + 5_000;
         while (System.currentTimeMillis() < deadline) {
             if (isPollBlocked()) {
@@ -298,13 +350,15 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
         return false;
     }
 
-    // The workers back off to a sleep of PARK_MILLIS after sleepThreshold idle passes; a worker
-    // that sleeps may wait in the poll for as long instead.
-    private static TestServerMain startPollBlockServer(String networkWorkers, String sleepThreshold) {
+    // The workers nap (1 ms) after napThreshold idle passes and, about 20 naps later, sleep for
+    // PARK_MILLIS; a worker that naps or sleeps may wait in the poll for as long instead. The naps
+    // cover the dispatcher's own idle threshold (1 ms), within which no worker waits in the poll
+    // and a worker that fell asleep would answer only when it woke.
+    private static TestServerMain startPollBlockServer(String networkWorkers, String napThreshold) {
         return startServerWithRetry(
                 PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT.getEnvVarName(), PARK_MILLIS,
-                PropertyKey.SHARED_WORKER_NAP_THRESHOLD.getEnvVarName(), sleepThreshold,
-                PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD.getEnvVarName(), sleepThreshold,
+                PropertyKey.SHARED_WORKER_NAP_THRESHOLD.getEnvVarName(), napThreshold,
+                PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD.getEnvVarName(), String.valueOf(Long.parseLong(napThreshold) + 20),
                 PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT.getEnvVarName(), PARK_MILLIS,
                 PropertyKey.SHARED_NETWORK_WORKER_COUNT.getEnvVarName(), networkWorkers,
                 PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "2"

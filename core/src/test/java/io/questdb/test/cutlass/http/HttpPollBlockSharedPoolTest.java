@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.PropertyKey;
+import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -42,10 +43,11 @@ import java.util.concurrent.locks.LockSupport;
 
 /**
  * The HTTP poll wait ({@code http.net.poll.block.timeout}) is for QWP connections only and must
- * cost pg-wire nothing when there is none. HTTP and pg-wire share the network pool by default,
+ * cost pg-wire nothing when there is none, and next to nothing when there is one. HTTP and pg-wire share the network pool by default,
  * and a worker waiting in the HTTP poll serves no pg-wire request: with no QWP connection, no
  * worker waits there, so pg-wire latency stays where it is, with no HTTP connection or with an
- * idle plain HTTP one.
+ * idle plain HTTP one. With an idle QWP connection, a worker waits there in place of its nap or
+ * sleep and for no longer, so pg-wire waits for it no longer than before.
  * <p>
  * The requests come 3 ms apart, where a worker that sat out a 10 ms poll on every idle HTTP pass
  * slowed pg-wire about ten times at two workers (median 80 us to about 950 us). The bound leaves
@@ -68,10 +70,10 @@ public class HttpPollBlockSharedPoolTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testNoQwpConnectionCostsPgNothing() throws Exception {
+    public void testIdleHttpCostsPgNothing() throws Exception {
         // ABAB, so that drift on the host does not favour one arm. The timeout is far above the
         // workers' 1 ms nap and 10 ms sleep
-        final long[][] medians = new long[2][2];
+        final long[][] medians = new long[2][3];
         final String[] arms = {"0", "1000", "0", "1000"};
         for (int a = 0; a < arms.length; a++) {
             final long[] m = measureArm(arms[a]);
@@ -80,7 +82,7 @@ public class HttpPollBlockSharedPoolTest extends AbstractBootstrapTest {
                 acc[i] += m[i];
             }
         }
-        final String[] names = {"pg, no http connection", "pg, idle plain http connection"};
+        final String[] names = {"pg, no http connection", "pg, idle plain http connection", "pg, idle QWP connection"};
         final StringBuilder report = new StringBuilder();
         for (int i = 0; i < names.length; i++) {
             report.append(names[i]).append(": block off ").append(medians[0][i] / 2)
@@ -95,7 +97,7 @@ public class HttpPollBlockSharedPoolTest extends AbstractBootstrapTest {
     }
 
     private static long[] measureArm(String blockTimeout) throws Exception {
-        final long[] result = new long[2];
+        final long[] result = new long[3];
         try (TestServerMain ignore = startWithEnvVariables(
                 PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT.getEnvVarName(), blockTimeout,
                 PropertyKey.SHARED_NETWORK_WORKER_COUNT.getEnvVarName(), "2",
@@ -110,6 +112,13 @@ public class HttpPollBlockSharedPoolTest extends AbstractBootstrapTest {
                 try (Socket ignored = new Socket("127.0.0.1", HTTP_PORT)) {
                     Os.sleep(50);
                     result[1] = pgMedianMicros(st);
+                }
+                // an idle QWP connection: a worker may wait in the poll, but never for longer than
+                // the nap or sleep it would have taken, however long the timeout
+                try (QwpQueryClient qwp = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    qwp.connect();
+                    Os.sleep(50);
+                    result[2] = pgMedianMicros(st);
                 }
             }
         }
