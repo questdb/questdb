@@ -375,10 +375,7 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
 
                 // Power loss: the durable-ack frontier recorded here must survive the crash.
                 preCrashDurable = tracker.getLocalDurableSeqTxn();
-                ff.powerLoss();
-                for (WalWriter w : writers) {
-                    w.simulatePowerLossDropPending(); // distress + drop pending WITHOUT a device flush
-                }
+                powerLossDroppingPending(writers); // mark, then distress + drop pending WITHOUT a device flush
                 reachedCrash = true;
             } finally {
                 // Reclaim the held, distressed writers as a fresh boot's empty WAL-writer pool would, before crash()

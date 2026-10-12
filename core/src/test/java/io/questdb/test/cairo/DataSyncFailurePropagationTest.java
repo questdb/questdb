@@ -32,10 +32,13 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.CopyWalSegmentUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
@@ -66,18 +69,20 @@ import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * A failed disk flush in {@code sync} and {@code adaptive} mode must stop the engine wherever the flush runs: on
- * the writer thread, in an O3 or column task, in the WAL apply job, behind a wrapper or an error counter. Each
- * test runs a workload once to record its flushes, then once per distinct flush path with that flush failing, and
- * checks the engine stopped every time. A flush whose failure is dropped on its way to the handler fails the test
- * with the stack of the flush that was failed. A second engine in {@code sync} on the same facade object (a primary
- * and a replica in one JVM) runs nothing and must never stop: the stop reaches only the engine that owns the file.
+ * Each workload records its flush paths, then fails each distinct path in all four modes. The engine fence alone
+ * is not a handler oracle: durable-mode failures must retain their data-sync cause, and WAL apply and guarded
+ * engine DDL must throw a stop rather than silently suspend or succeed. Held writer workloads observe distress
+ * before close; SQL-owned writers are not directly observable through the facade, so their distress is not
+ * claimed as covered. NOSYNC/ASYNC must not fence the engine; existing housekeeping distress remains unchanged.
+ * A SYNC bystander on the same facade checks path-based ownership on Linux and the conservative broadcast on
+ * platforms that cannot resolve an fd's path.
  */
 @RunWith(Parameterized.class)
 public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     private static final int EIO = 5;
     private final String commitMode;
     private FlushFailureFacade ff;
+    private Boolean writerDistressedAtFailure;
 
     public DataSyncFailurePropagationTest(String commitMode) {
         this.commitMode = commitMode;
@@ -85,7 +90,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{{"sync"}, {"adaptive"}});
+        return Arrays.asList(new Object[][]{{"nosync"}, {"async"}, {"sync"}, {"adaptive"}});
     }
 
     @Override
@@ -102,7 +107,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointCreateAndRelease() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     try {
@@ -116,6 +121,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointCreateIsRefusedAfterAFailedFlush() throws Exception {
+        Assume.assumeTrue(CommitMode.isPowerLossDurable(CommitMode.fromString(commitMode)));
         // A checkpoint, and the Enterprise incremental backup that takes one without the final sync(), copies the
         // tables' state. Once a flush of that state has failed the copy is refused: where nothing halts the process
         // (an embedded engine, a test JVM) the fence is the stop.
@@ -145,7 +151,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAndDropLiveView() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("CREATE LIVE VIEW lv_" + table + " FLUSH EVERY 100ms START FROM NOW AS SELECT ts, s, sum(i) OVER (PARTITION BY s ORDER BY ts RANGE BETWEEN '1' SECOND PRECEDING AND CURRENT ROW) AS c FROM " + table);
@@ -156,7 +162,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAndDropView() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("CREATE VIEW v_" + table + " AS (SELECT ts, s FROM " + table + " WHERE i > 2)");
@@ -171,7 +177,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAndRefreshMatView() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("CREATE MATERIALIZED VIEW mv_" + table + " AS (SELECT ts, count() c FROM " + table + " SAMPLE BY 1h) PARTITION BY DAY");
@@ -184,7 +190,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateNonWalTable() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                 },
                 table -> execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL")
@@ -193,7 +199,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testCreateWalTable() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                 },
                 table -> execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL")
@@ -207,11 +213,11 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final StringBuilder failures = new StringBuilder();
             final String[] everyFlush = {"barrierFsync", "fdatasync", "fsync", "fsyncAndClose", "fsyncDurable", "msync", "syncfs"};
-            assertFlushFailuresStopEngine("FilesFacadeImpl", new FilesFacadeImpl(), everyFlush, failures);
-            assertFlushFailuresStopEngine("FailureFileFacade", new FailureFileFacade(new FilesFacadeImpl()), everyFlush, failures);
+            assertFlushFailuresFollowMode("FilesFacadeImpl", new FilesFacadeImpl(), everyFlush, failures);
+            assertFlushFailuresFollowMode("FailureFileFacade", new FailureFileFacade(new FilesFacadeImpl()), everyFlush, failures);
             // syncfs is the one interface default that flushes on its own; barrierFsync and fsyncDurable default to
             // the facade's fdatasync and fsync.
-            assertFlushFailuresStopEngine("interface defaults", facadeWithInterfaceDefaults(new FilesFacadeImpl()), new String[]{"syncfs"}, failures);
+            assertFlushFailuresFollowMode("interface defaults", facadeWithInterfaceDefaults(new FilesFacadeImpl()), new String[]{"syncfs"}, failures);
             if (!failures.isEmpty()) {
                 Assert.fail("[mode=" + commitMode + "]\n" + failures);
             }
@@ -220,6 +226,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testInVolumeTableFailureStopsOnlyTheEngineThatOwnsIt() throws Exception {
+        Assume.assumeTrue(CommitMode.isPowerLossDurable(CommitMode.fromString(commitMode)));
         // A table created IN VOLUME lives behind a soft link, so the OS names its files by the volume's path and not
         // by the database root's. A failed flush of one of them must still stop only the engine whose volume it is,
         // not a second engine on the same facade object.
@@ -252,8 +259,47 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHeldTableWriterAddColumn() throws Exception {
+        assertEveryFlushFailureFollowsMode(
+                DataSyncFailurePropagationTest::createNonWalTable,
+                table -> {
+                    try (SqlCompiler compiler = engine.getSqlCompiler();
+                         AlterOperation operation = compiler.compile("ALTER TABLE " + table + " ADD COLUMN c LONG", sqlExecutionContext).getAlterOperation();
+                         TableWriter writer = getWriter(table)) {
+                        try {
+                            writer.applyOutsideWal(operation, true);
+                        } finally {
+                            // Observe before close/rollback can distress or discard the owner for another reason.
+                            writerDistressedAtFailure = ff.getInjection() != null ? writer.isDistressed() : null;
+                        }
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testHeldWalWriterCommit() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+        assertEveryFlushFailureFollowsMode(
+                DataSyncFailurePropagationTest::createWalTable,
+                table -> {
+                    try (WalWriter writer = getWalWriter(table)) {
+                        try {
+                            final TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor("2024-01-04"));
+                            row.putInt(1, 42);
+                            row.append();
+                            writer.commit();
+                        } finally {
+                            writerDistressedAtFailure = ff.getInjection() != null ? writer.isDistressed() : null;
+                        }
+                    }
+                }
+        );
+    }
+
+    @Test
     public void testNonWalAddColumn() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> execute("ALTER TABLE " + table + " ADD COLUMN c LONG")
         );
@@ -261,7 +307,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalAlterColumnType() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> execute("ALTER TABLE " + table + " ALTER COLUMN i TYPE LONG")
         );
@@ -269,7 +315,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalColumnPurge() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> {
                     execute("UPDATE " + table + " SET i = i + 1");
@@ -281,7 +327,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalConvertPartitionToNative() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                     createNonWalTable(table);
                     execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
@@ -292,7 +338,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalConvertPartitionToParquet() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'")
         );
@@ -300,7 +346,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalDetachAttachPartition() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> {
                     execute("ALTER TABLE " + table + " DETACH PARTITION LIST '2024-01-01'");
@@ -312,7 +358,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalDropAndRenameColumnAndAddIndex() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> {
                     execute("ALTER TABLE " + table + " RENAME COLUMN v TO v2");
@@ -324,7 +370,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalDropPartition() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> execute("ALTER TABLE " + table + " DROP PARTITION LIST '2024-01-01'")
         );
@@ -334,7 +380,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     public void testNonWalInsertAcrossPages() throws Exception {
         // Small pages, so the row API releases (and in sync flushes) pages as it appends.
         node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 4096);
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> insertDays(table, "2024-01-04", 200)
         );
@@ -342,7 +388,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalO3MergeIntoNativePartitions() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                     execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
                     insertDays(table, "2024-01-01", 3);
@@ -353,7 +399,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalO3MergeIntoParquetPartition() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                     execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
                     insertDays(table, "2024-01-01", 3);
@@ -365,7 +411,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalTtlDropsPartitions() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                     execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY TTL 1 DAY BYPASS WAL");
                     insertDays(table, "2024-01-01", 3);
@@ -376,7 +422,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalTruncate() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> execute("TRUNCATE TABLE " + table)
         );
@@ -384,7 +430,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalUpdate() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createNonWalTable,
                 table -> execute("UPDATE " + table + " SET i = i + 1 WHERE ts < '2024-01-02'")
         );
@@ -392,7 +438,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalAddColumn() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("ALTER TABLE " + table + " ADD COLUMN c LONG");
@@ -403,7 +449,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalAddColumnRollsUncommittedRows() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     // A column added while the writer holds uncommitted rows moves them into a new segment.
@@ -425,7 +471,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalAlterColumnType() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("ALTER TABLE " + table + " ALTER COLUMN i TYPE LONG");
@@ -436,7 +482,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalApplyBlockOfTransactions() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                     execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
                     insertDays(table, "2024-01-01", 3);
@@ -453,7 +499,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalApplyO3MergeIntoNativePartitions() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                     execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
                     insertDays(table, "2024-01-01", 3);
@@ -468,7 +514,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalApplyO3MergeIntoParquetPartition() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                     execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
                     insertDays(table, "2024-01-01", 3);
@@ -485,7 +531,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalConvertPartitionToParquet() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
@@ -496,7 +542,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalDedupUpsert() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> {
                     execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
                     insertDays(table, "2024-01-01", 3);
@@ -511,7 +557,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalDropAndRenameTable() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     // The dropped table's writer is closed by the next apply, outside the workload: a failed flush
@@ -525,7 +571,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalDropPartition() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("ALTER TABLE " + table + " DROP PARTITION LIST '2024-01-01'");
@@ -536,7 +582,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalFirstInsert() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, s SYMBOL, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL"),
                 table -> {
                     insertDays(table, "2024-01-01", 1);
@@ -551,7 +597,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         // Fixed-size columns only: a rollback after a failed page flip of a VARCHAR column crashes the JVM in a test
         // (production halts at the failed flush first).
         node1.setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, 4096);
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 table -> execute("CREATE TABLE " + table + " (ts TIMESTAMP, i INT, l LONG) TIMESTAMP(ts) PARTITION BY DAY WAL"),
                 table -> {
                     execute("INSERT INTO " + table + " SELECT timestamp_sequence('2024-01-01', 60_000_000L), x::INT, x FROM long_sequence(3000)");
@@ -562,6 +608,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalSegmentCopyFlushFailureKeepsItsCause() throws Exception {
+        Assume.assumeTrue(CommitMode.isPowerLossDurable(CommitMode.fromString(commitMode)));
         // Uncommitted rows roll into a new segment when a column's type changes under them. A flush failure inside
         // that copy is wrapped in "failed to copy column file" and must stay its cause: the writer's handler then
         // sees the flag, drops the pending durable txn and raises the stop, with or without a halt installed.
@@ -593,7 +640,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalTruncate() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("TRUNCATE TABLE " + table);
@@ -604,7 +651,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
 
     @Test
     public void testWalUpdate() throws Exception {
-        assertEveryFlushFailureStopsEngine(
+        assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,
                 table -> {
                     execute("UPDATE " + table + " SET i = i + 1 WHERE ts < '2024-01-02'");
@@ -704,18 +751,18 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
                 "(1_000 + x)::INT, rnd_symbol('a', 'b', 'z'), rnd_varchar(1, 40, 0) FROM long_sequence(12)");
     }
 
-    private void assertEveryFlushFailureStopsEngine(Workload setup, Workload action) throws Exception {
+    private void assertEveryFlushFailureFollowsMode(Workload setup, Workload action) throws Exception {
         assertMemoryLeak(ff, () -> {
             // its own install root, so it shares no checkpoint or COPY directory with the engine under test
             final File bystanderRoot = new File(temp.newFolder(), "db");
             Assert.assertTrue(bystanderRoot.mkdir());
             try (CairoEngine bystander = new CairoEngine(bystanderConfiguration(bystanderRoot.getAbsolutePath(), ff))) {
-                assertEveryFlushFailureStopsEngine(setup, action, bystander);
+                assertEveryFlushFailureFollowsMode(setup, action, bystander);
             }
         });
     }
 
-    private void assertEveryFlushFailureStopsEngine(Workload setup, Workload action, CairoEngine bystander) throws Exception {
+    private void assertEveryFlushFailureFollowsMode(Workload setup, Workload action, CairoEngine bystander) throws Exception {
         setup.run("dry_run");
         ff.arm(-1);
         action.run("dry_run");
@@ -735,11 +782,13 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
             final HashSet<String> openFilesBefore = openFiles();
             final long openOsFilesBefore = io.questdb.std.Files.getOpenFileCount();
             setup.run(table);
+            writerDistressedAtFailure = null;
             ff.arm(failAt);
+            Throwable outcome = null;
             try {
                 action.run(table);
-            } catch (Throwable ignore) {
-                // the statement or the apply fails; the check is on the engine
+            } catch (Throwable failure) {
+                outcome = failure;
             } finally {
                 ff.disarm();
             }
@@ -747,14 +796,37 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
             if (injection != null) {
                 injectedCount++;
             }
-            if (injection != null && !engine.isDurabilityFailed()) {
+            if (injection != null && engine.isDurabilityFailed() != isDurableMode()) {
                 failures.append("flush ").append(failAt).append(" of ").append(flushCount)
-                        .append(" failed without stopping the engine, at:\n").append(stackOf(injection));
+                        .append(" has the wrong engine fence for the mode, at:\n").append(stackOf(injection));
             }
-            // The owner is found by the failed file's path, which only Linux tells.
-            if (injection != null && bystander.isDurabilityFailed() && Os.isLinux()) {
+            if (injection != null && isDurableMode()) {
+                // A factory-set fence alone proves nothing about propagation. Apply and the engine's guarded DDL
+                // must stop, not merely suspend. Other paths must at least retain the data-sync cause; the held
+                // writer workloads additionally observe distress before the pool can discard their owner.
+                if (!CairoException.isDataSyncFailure(outcome) || requiresStop(injection) && !(outcome instanceof CairoError)) {
+                    final TableToken token = engine.getTableTokenIfExists(table);
+                    failures.append("flush ").append(failAt).append(" of ").append(flushCount)
+                            .append(" lost its required data-sync outcome [requiresStop=").append(requiresStop(injection))
+                            .append(", outcome=").append(outcome)
+                            .append(", suspended=").append(token != null && engine.getTableSequencerAPI().isSuspended(token))
+                            .append("], at:\n").append(stackOf(injection));
+                }
+            }
+            // Base already distresses a TableWriter on a failed _todo_ housekeeping flush in every mode:
+            // clearTodoLog -> handleHousekeepingException. Do not demand that NOSYNC/ASYNC undo that behaviour.
+            final boolean expectedDistress = isDurableMode()
+                    || hasFrame(injection, "io.questdb.cairo.TableWriter", "clearTodoLog");
+            if (injection != null && writerDistressedAtFailure != null
+                    && writerDistressedAtFailure != expectedDistress) {
+                failures.append("flush ").append(failAt).append(" has wrong held-writer distress: ")
+                        .append(writerDistressedAtFailure).append(", at:\n").append(stackOf(injection));
+            }
+            // Linux locates the owner by path. Elsewhere the path is unknown and every durable engine sharing the
+            // facade must be fenced; the bystander is SYNC even when the tested engine is NOSYNC/ASYNC.
+            if (injection != null && bystander.isDurabilityFailed() != !Os.isLinux()) {
                 failures.append("flush ").append(failAt).append(" of ").append(flushCount)
-                        .append(" stopped an engine that does not own the file [failure=")
+                        .append(" has the wrong bystander fence [failure=")
                         .append(bystander.getDurabilityFailure()).append("], at:\n").append(stackOf(injection));
             }
             bystander.resetDurabilityFailure();
@@ -784,7 +856,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         Assert.assertTrue("most flushes of the dry run were not reached again", injectedCount * 2 >= firstOfEachPath.size());
     }
 
-    private void assertFlushFailuresStopEngine(String shape, FilesFacade facade, String[] operations, StringBuilder failures) throws Exception {
+    private void assertFlushFailuresFollowMode(String shape, FilesFacade facade, String[] operations, StringBuilder failures) throws Exception {
         final File root = new File(temp.newFolder(), "db");
         Assert.assertTrue(root.mkdir());
         try (CairoEngine owner = new CairoEngine(engineConfiguration(root.getAbsolutePath(), facade, CommitMode.fromString(commitMode)))) {
@@ -798,12 +870,27 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
                                 .append(e.getFlyweightMessage()).append("]\n");
                     }
                 }
-                if (!owner.isDurabilityFailed()) {
-                    failures.append(shape).append(' ').append(operation).append(": the engine did not stop\n");
+                if (owner.isDurabilityFailed() != isDurableMode()) {
+                    failures.append(shape).append(' ').append(operation).append(": wrong fence for mode\n");
                 }
                 owner.resetDurabilityFailure();
             }
         }
+    }
+
+    private static boolean hasFrame(Throwable injection, String className, String methodName) {
+        if (injection != null) {
+            for (StackTraceElement frame : injection.getStackTrace()) {
+                if (className.equals(frame.getClassName()) && (methodName == null || methodName.equals(frame.getMethodName()))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isDurableMode() {
+        return "sync".equals(commitMode) || "adaptive".equals(commitMode);
     }
 
     private static HashSet<String> openFiles() {
@@ -838,6 +925,13 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         // A table or view the failed workload left behind keeps its pooled WAL writer until the pool's TTL.
         engine.releaseAllWalWriters();
         engine.releaseAllViewWalWriters();
+    }
+
+    private static boolean requiresStop(Throwable injection) {
+        return hasFrame(injection, "io.questdb.cairo.wal.ApplyWal2TableJob", null)
+                || hasFrame(injection, "io.questdb.cairo.CairoEngine", "checkpointRecover")
+                || hasFrame(injection, "io.questdb.cairo.CairoEngine", "completeInit")
+                || hasFrame(injection, "io.questdb.cairo.CairoEngine", "createTableOrViewOrMatViewUnsecure");
     }
 
     private static void renameDetachedToAttachable(String table, String partition) throws Exception {

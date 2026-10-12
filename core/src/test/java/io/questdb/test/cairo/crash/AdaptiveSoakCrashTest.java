@@ -414,8 +414,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
 
     /**
      * W&gt;0 crashable tail: commit TAIL_ROWS pending on a held writer ({@code msync(MS_ASYNC)}, not device-durable),
-     * assert the durable-ack lags the committed frontier (the RPO precondition), then
-     * {@code simulatePowerLossDropPending}: the unflushed tail is lost. Then the reboot.
+     * assert the durable-ack lags the committed frontier (the RPO precondition), then the power loss: the pending
+     * tail is dropped without a flush ({@code powerLossDroppingPending}), the writer's close comes after the mark so
+     * its page releases add no durability, and the reboot rolls the files back.
      */
     private void crashTailWN(TableToken tt, TableToken[] tokens, SeqTxnTracker tracker, int startId) {
         WalWriter w = engine.getWalWriter(tt);
@@ -426,11 +427,11 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
             }
             Assert.assertTrue("W>0 tail must be PENDING (durable-ack must lag the committed frontier)",
                     tracker.getLocalDurableSeqTxn() < tracker.getSeqTxn());
-            w.simulatePowerLossDropPending(); // drop the un-flushed tail; no false durable-ack advance
+            powerLossDroppingPending(w); // the power loss is now: drop the un-flushed tail, no false durable-ack advance
         } finally {
-            w.close();
+            w.close(); // after the mark, so the distressed close's page releases are not durable
         }
-        recoverAfterCrash(tokens); // recoverAfterCrash performs crash(dbRoot) -> rolls back the non-durable tail
+        recoverAfterCrash(tokens); // marks again (a no-op), releases the engine's handles, then crash(dbRoot) rolls back the non-durable tail
     }
 
     /**

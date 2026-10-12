@@ -316,6 +316,10 @@ public class Overrides {
         // DefaultTestCairoConfiguration, but a test that sets any property switches to
         // PropServerConfiguration and would inherit the shipped default instead of the suite's mode.
         properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), TEST_COMMIT_MODE);
+        // The same trap for the epoch interval: the interface default is 1 s, the shipped default 60 s, so a test
+        // that set an unrelated property would silently run on the shipped cadence. The suite's value is the
+        // interface default; TestCommitModeSwitchTest pins both paths to it.
+        properties.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL.getPropertyPath(), "1000");
         properties.setProperty(PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE.getPropertyPath(), "5");
         properties.setProperty(PropertyKey.QUERY_TIMEOUT.getPropertyPath(), "0");

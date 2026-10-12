@@ -640,6 +640,20 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             });
             ff.powerLoss();
         });
+        ways.put("durable bytes, kill image taken before P existed", (ff, p) -> {
+            // A kill rollback deletes P the same way, and the next power loss in the same facade lifetime must not
+            // bring A's bytes back either.
+            final String dir = Paths.get(p).getParent().toString();
+            try {
+                java.nio.file.Files.delete(Paths.get(p));
+                ff.takeKillImage(dir);
+                java.nio.file.Files.createDirectories(Paths.get(p));
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            rewriteAndSync(ff, p, "a.d", (f, m) -> f.fsync(m.fd));
+            // no power loss: the next crash() restores the kill image instead
+        });
         final String[] names = {"a.d", "c.d"};
         final StringBuilder failures = new StringBuilder();
         int i = 0;
@@ -723,6 +737,72 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             }
         }
         Assert.assertEquals("", failures.toString());
+    }
+
+    /**
+     * Test 23: a handle from before the power loss cannot mutate after the rollback.
+     * P/A durable (PRIOR), A open and mapped -> NEW in the mapping -> power loss, crash -> every mutation through
+     * the pre-crash fd or mapping (write, truncate, allocate, msync, fsync, fdatasync, sync_file_range) is refused;
+     * munmap and close are not; a fresh handle on the same path works -> A holds PRIOR. The rollback is the reboot,
+     * and crash() ends in the baseline: a writer released after it would flush into files recovery reads, and the
+     * model would count that as durable. A file directly under the root (an engine singleton's) is exempt.
+     */
+    @Test
+    public void test23_aHandleFromBeforeThePowerLossCannotMutateAfterTheRollback() throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("model23").getAbsolutePath();
+        final String p = Paths.get(dir, "p").toString();
+        java.nio.file.Files.createDirectories(Paths.get(p));
+        final long buf = Unsafe.malloc(SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (Path a = new Path().of(p).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
+            unmapAndClose(ff, mapAndFill(ff, a, PRIOR));
+            unmapAndClose(ff, mapAndFill(ff, b, PRIOR));
+            ff.markDurableBaseline(dir);
+            final Mapped ma = mapAndFill(ff, a, NEW);
+            final Mapped mb = mapAndFill(ff, b, NEW);
+            ff.powerLoss();
+            ff.crash(dir);
+
+            final StringBuilder failures = new StringBuilder();
+            expectRefused(failures, "write", () -> ff.write(ma.fd, buf, SIZE, 0));
+            expectRefused(failures, "append", () -> ff.append(ma.fd, buf, SIZE));
+            expectRefused(failures, "truncate", () -> ff.truncate(ma.fd, 0));
+            expectRefused(failures, "allocate", () -> ff.allocate(ma.fd, 2 * SIZE));
+            expectRefused(failures, "allocateRange", () -> ff.allocateRange(ma.fd, 0, 2 * SIZE));
+            expectRefused(failures, "msync", () -> ff.msync(ma.addr, SIZE, false));
+            expectRefused(failures, "msync-async", () -> ff.msync(ma.addr, SIZE, true));
+            expectRefused(failures, "syncFileRange", () -> ff.syncFileRange(ma.fd, 0, SIZE, Files.SYNC_FILE_RANGE_WRITE));
+            expectRefused(failures, "fdatasync", () -> ff.fdatasync(ma.fd));
+            expectRefused(failures, "fsync", () -> ff.fsync(ma.fd));
+            expectRefused(failures, "syncfs", () -> ff.syncfs(ma.fd));
+            final boolean[] isClosed = {false};
+            expectRefused(failures, "fsyncAndClose", () -> {
+                ff.fsyncAndClose(ma.fd);
+                isClosed[0] = true;
+            });
+            // an engine-root file's handle outlives the simulated restart
+            ff.msync(mb.addr, SIZE, false);
+            ff.fsync(mb.fd);
+            unmapAndClose(ff, mb);
+            // Releasing a stale handle is allowed. Keep the negative control's missing-fence assertion visible
+            // even if fsyncAndClose above wrongly succeeded and already closed it.
+            ff.munmap(ma.addr, SIZE, MemoryTag.MMAP_DEFAULT);
+            if (!isClosed[0]) {
+                ff.close(ma.fd);
+            }
+            Assert.assertEquals("", failures.toString());
+            assertAllBytes("test23: a mutation through a pre-crash handle changed the rolled-back file", ff, a, PRIOR);
+
+            // a fresh handle on the same path is not stale
+            final Mapped fresh = mapAndFill(ff, a, NEW);
+            ff.msync(fresh.addr, SIZE, false);
+            unmapAndClose(ff, fresh);
+            ff.powerLoss();
+            ff.crash(dir);
+            assertAllBytes("test23: a fresh handle after the rollback must work", ff, a, NEW);
+        } finally {
+            Unsafe.free(buf, SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private static final class Mapped {
@@ -949,6 +1029,17 @@ public class CrashModelSelfCheckTest extends AbstractTest {
             syncDirectory(ff, dir);
         });
         return flushes;
+    }
+
+    private static void expectRefused(StringBuilder failures, String op, Runnable mutation) {
+        try {
+            mutation.run();
+            failures.append(op).append(" through a pre-crash handle was not refused\n");
+        } catch (IllegalStateException refused) {
+            if (!refused.getMessage().contains("before the power loss")) {
+                failures.append(op).append(": ").append(refused.getMessage()).append('\n');
+            }
+        }
     }
 
     private static boolean exists(String dir, String name) {

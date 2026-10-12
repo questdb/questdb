@@ -5,6 +5,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
@@ -52,7 +53,17 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
         // Scope process-death fd reclamation to per-table files; engine-root files (tables.d, the table-id
         // generator, config) are owned by long-lived singletons that outlive releaseEngineHandles().
         crashFf.setDbRoot(root);
-        assertMemoryLeak(crashFf, body);
+        try {
+            assertMemoryLeak(crashFf, body);
+        } finally {
+            // A test that trips the facade's stale-handle fence fails loudly with the writer's close half done,
+            // which leaves the writer owned in its pool; the next test's CREATE TABLE would then spin on its lock
+            // for the whole timeout. Drop the fence (the facade is no longer the engine's) and reclaim what the
+            // failed close left behind, as after a simulated crash. No-op on a healthy engine.
+            crashFf.reset();
+            engine.releaseCrashOrphanedWalWriters();
+            engine.releaseCrashOrphanedWriters();
+        }
     }
 
     /**
@@ -72,7 +83,25 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
         crashFf.powerLoss();
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+        // A freshly booted engine's WAL-writer pool is empty: a pooled WAL writer released after the rollback would
+        // truncate its segment files against the rolled-back state.
+        engine.releaseCrashOrphanedWalWriters();
+        engine.releaseAllWalWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
+    }
+
+    /**
+     * The power loss at the instant the writers' batches are still pending: marks it, then drops every writer's
+     * pending without a flush. The writers are closed after this and before {@link CrashFaultFilesFacade#crash}
+     * rolls the files back: the mark keeps their close-time flushes out of the durable state, and the rollback's
+     * stale-handle fence refuses a mutation through a handle that survived it.
+     */
+    protected void powerLossDroppingPending(WalWriter... writers) {
+        if (crashFf == null) throw new IllegalStateException("call runWithCrashFacade(...) first");
+        crashFf.powerLoss();
+        for (WalWriter writer : writers) {
+            writer.simulatePowerLossDropPending();
+        }
     }
 
     /**

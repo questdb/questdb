@@ -24,11 +24,15 @@
 
 package io.questdb.test.cairo.crash;
 
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.Files;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
+
+import java.util.function.Predicate;
 
 /**
  * Base for the adaptive exhaustive crash-point sweep. {@link #forEachAdaptiveCrashPoint} runs a caller-supplied
@@ -186,6 +190,48 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         public int[] recoveredByK() {
             return recoveredByK;
         }
+    }
+
+    /**
+     * The negative control of {@link #forEachAdaptiveCrashPoint}: sweeps {@code workload} with every durability op
+     * whose first {@code io.questdb.cairo} frame matches {@code flushClass} removed
+     * ({@link CrashFaultFilesFacade#neuterFlushesAt}), and fails when the sweep stays green. A removed flush
+     * shrinks N instead of failing anything, so a sweep that cannot tell the difference proves nothing about the
+     * class; the oracle going red at some crash point, or recovery failing loudly, is the pass, and is returned.
+     * A workload in which the class takes no flush fails too, so the control doubles as the coverage ledger.
+     */
+    protected Throwable assertSweepGoesRedWithNeuteredFlushes(
+            AdaptiveCrashWorkload workload,
+            String flushClassDescription,
+            Predicate<StackWalker.StackFrame> flushClass
+    ) throws Exception {
+        if (crashFf == null) {
+            throw new IllegalStateException("call runWithCrashFacade(...) first");
+        }
+        final java.util.Set<Long> nonCacheFdBaseline = new java.util.HashSet<>(crashFf.noCacheOpenFdsSnapshot());
+        crashFf.neuterFlushesAt(flushClass);
+        try {
+            forEachAdaptiveCrashPoint(workload);
+        } catch (AssertionError | CairoException | CairoError red) {
+            if (crashFf.neuteredOpCount() == 0
+                    || red instanceof AssertionError && red.getMessage() != null && red.getMessage().contains("nothing to control")) {
+                throw red;
+            }
+            // The sweep stops at the red point without its own cleanup; release what it left checked out.
+            workload.teardown();
+            releaseEngineHandles();
+            reclaimLingeringNonCacheFds(nonCacheFdBaseline);
+            final String redMessage = red.getMessage();
+            LOG.info().$("[neutered sweep] ").$(flushClassDescription).$(" neutered, ")
+                    .$(crashFf.neuteredOpCount()).$(" op(s) removed, the sweep went red as it must: ")
+                    .$safe(redMessage).$();
+            return red;
+        } finally {
+            crashFf.neuterFlushesAt(null);
+        }
+        Assert.fail("the sweep stayed green with " + flushClassDescription + " neutered ("
+                + crashFf.neuteredOpCount() + " op(s) removed): a removed flush there is not caught");
+        return null;
     }
 
     /**
@@ -370,8 +416,10 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         // 1. Count pass: no fault armed; N = durability ops performed by the commit phase.
         final TableToken[] countPassTokens = workload.setup(0);
         final int opsBeforeCommit = crashFf.durabilityOpCount();
+        final int neuteredBeforeCommit = crashFf.neuteredOpCount();
         workload.commit();
         final int n = crashFf.durabilityOpCount() - opsBeforeCommit;
+        final int neutered = crashFf.neuteredOpCount() - neuteredBeforeCommit;
         // Record the count pass's window so a pinned-op-count assertion can name the ops it saw. Recorded before
         // teardown, whose own ops would otherwise count as the phase's.
         phaseFirstOp = opsBeforeCommit + 1; // the facade numbers ops from 1
@@ -388,6 +436,15 @@ public abstract class AbstractAdaptiveCrashSweepTest extends AbstractAdaptiveCra
         reclaimLingeringNonCacheFds(nonCacheFdBaseline);
         if (uncrashedSuspend != null) {
             throw new WorkloadNotCrashTestableException(uncrashedSuspend);
+        }
+        if (crashFf.isNeutering()) {
+            // The negative control is only a control where the class takes a flush: a green sweep with nothing
+            // neutered would say nothing about the class.
+            Assert.assertTrue(
+                    "the neutered flush class performs no flush in this workload's commit phase (N=" + n
+                            + "): nothing to control",
+                    neutered > 0
+            );
         }
         Assert.assertTrue("workload commit phase must perform >= 1 durability op (N=" + n + ")", n > 0);
 

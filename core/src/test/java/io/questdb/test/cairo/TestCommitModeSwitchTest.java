@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CommitMode;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -62,6 +64,32 @@ public class TestCommitModeSwitchTest extends AbstractCairoTest {
                 expected,
                 new DefaultTestCairoConfiguration(root).getCommitMode()
         );
+    }
+
+    /**
+     * The same two paths for the adaptive settings: the interface defaults ({@code DefaultTestCairoConfiguration})
+     * and the shipped ones ({@code PropServerConfiguration}) differ for the epoch interval (1 s against 60 s), and
+     * which one a test gets is decided by whether it set any property at all. Every adaptive getter must agree on
+     * both paths, so a test's save point cadence does not depend on an unrelated property.
+     */
+    @Test
+    public void testEveryConfigurationPathAgreesOnTheAdaptiveSettings() {
+        // Any override that differs from its default puts this test on the properties path (an override equal to
+        // the default is dropped); a pool capacity moves nothing the assertions read.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 17);
+        final CairoConfiguration viaProperties = engine.getConfiguration();
+        final CairoConfiguration viaDefaults = new DefaultTestCairoConfiguration(root);
+        Assert.assertTrue(
+                "the override must have switched this test to the properties path",
+                node1.getConfigurationOverrides().isPropertySet(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY)
+        );
+        Assert.assertEquals("adaptive epoch interval", viaDefaults.getAdaptiveEpochIntervalMs(), viaProperties.getAdaptiveEpochIntervalMs());
+        Assert.assertEquals("adaptive epoch max rows", viaDefaults.getAdaptiveEpochMaxRows(), viaProperties.getAdaptiveEpochMaxRows());
+        Assert.assertEquals("adaptive commit group window", viaDefaults.getAdaptiveCommitGroupWindowUs(), viaProperties.getAdaptiveCommitGroupWindowUs());
+        Assert.assertEquals("adaptive recovery roll forward", viaDefaults.isAdaptiveRecoveryRollForwardEnabled(), viaProperties.isAdaptiveRecoveryRollForwardEnabled());
+        Assert.assertEquals("adaptive epoch flush on close", viaDefaults.isAdaptiveEpochFlushOnClose(), viaProperties.isAdaptiveEpochFlushOnClose());
+        Assert.assertEquals("adaptive epoch column sync batched", viaDefaults.isAdaptiveEpochColumnSyncBatched(), viaProperties.isAdaptiveEpochColumnSyncBatched());
+        Assert.assertEquals("commit mode", viaDefaults.getCommitMode(), viaProperties.getCommitMode());
     }
 
     /**
