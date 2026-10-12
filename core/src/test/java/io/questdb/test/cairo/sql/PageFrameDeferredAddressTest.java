@@ -25,13 +25,17 @@
 package io.questdb.test.cairo.sql;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -65,6 +69,7 @@ public class PageFrameDeferredAddressTest extends AbstractCairoTest {
                     "select * from t where ts in '1970-01-02'",
                     "select * from t where ts between '1970-01-01T05:00' and '1970-01-03T07:00'",
                     "select v, arr, b, extra, extra_v from t",
+                    "select late_l, short_v, extra, a from t where ts > '1970-01-02T12:00'",
             };
             int deferredSeen = 0;
             for (int frameRows : new int[]{1, 3, 64, 1_000, 1_000_000}) {
@@ -165,6 +170,51 @@ public class PageFrameDeferredAddressTest extends AbstractCairoTest {
                 // while the cursor and its partitions are still open
                 assertSameCache(query, eager, deferred, frameCount);
             }
+            // a frame's first navigation through the record overload fills it too, and the record
+            // reads the eager frame's values
+            try (
+                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, order);
+                    PageFrameAddressCache deferred2 = new PageFrameAddressCache();
+                    PageFrameAddressCache eager2 = new PageFrameAddressCache();
+                    PageFrameMemoryPool deferredPool = new PageFrameMemoryPool(configuration, 0L);
+                    PageFrameMemoryPool eagerPool = new PageFrameMemoryPool(configuration, 0L);
+                    PageFrameMemoryRecord deferredRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+                    PageFrameMemoryRecord eagerRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)
+            ) {
+                cursor.deferFrameAddresses();
+                fill(factory, cursor, deferred2);
+                deferredPool.of(deferred2);
+                deferredRecord.of(cursor);
+                try (
+                        RecordCursorFactory eagerFactory = select(query);
+                        PageFrameCursor eagerCursor = eagerFactory.getPageFrameCursor(sqlExecutionContext, order)
+                ) {
+                    fill(eagerFactory, eagerCursor, eager2);
+                    eagerPool.of(eager2);
+                    eagerRecord.of(eagerCursor);
+                    final RecordMetadata metadata = factory.getMetadata();
+                    final StringSink a = new StringSink();
+                    final StringSink b = new StringSink();
+                    for (int f = 0; f < frameCount; f++) {
+                        if (deferred2.getFrameFormat(f) != PartitionFormat.NATIVE) {
+                            continue;
+                        }
+                        deferredPool.navigateTo(f, deferredRecord);
+                        eagerPool.navigateTo(f, eagerRecord);
+                        Assert.assertTrue(deferred2.isFrameReady(f));
+                        final long size = deferred2.getFrameSize(f);
+                        for (long r : new long[]{0, size / 2, size - 1}) {
+                            deferredRecord.setRowIndex(r);
+                            eagerRecord.setRowIndex(r);
+                            a.clear();
+                            b.clear();
+                            CursorPrinter.println(eagerRecord, metadata, a);
+                            CursorPrinter.println(deferredRecord, metadata, b);
+                            TestUtils.assertEquals(query + " frame " + f + " row " + r, a, b);
+                        }
+                    }
+                }
+            }
             return deferredFrames;
         }
     }
@@ -199,20 +249,23 @@ public class PageFrameDeferredAddressTest extends AbstractCairoTest {
 
     private void createTable() throws Exception {
         execute("create table t (a int, s symbol, v varchar, st string, b binary, arr double[], d double, ts timestamp) timestamp(ts) partition by DAY");
-        // day 1 and 2 without the extra columns
+        // day 1 and the start of day 2 without the extra columns: day 1 lacks them altogether
         execute("insert into t select x::int, 'k' || (x % 5), case when x % 4 = 0 then null when x % 4 = 1 then 'v' || x else 'a long varchar value ' || x end, "
                 + "case when x % 3 = 0 then null else 'st' || x end, rnd_bin(1, 8, 2), case when x % 5 = 0 then null else array[x::double, 1.5] end, "
                 + "rnd_double(), (x * 60_000_000L)::timestamp from long_sequence(2_000)");
         execute("alter table t add column extra int");
         execute("alter table t add column extra_v varchar");
-        // the rest of day 2 and day 3: the new columns start mid-partition, a column top
+        // the rest of day 2 and day 3: the new columns start mid-day 2, a column top
         execute("insert into t select (2000 + x)::int, 'k' || (x % 5), 'v' || x, 'st' || x, rnd_bin(1, 8, 2), array[x::double], rnd_double(), "
                 + "((2000 + x) * 60_000_000L)::timestamp, x::int, case when x % 2 = 0 then null else 'e' || x end from long_sequence(2_000)");
-        // a short varchar column of inlined values only: no data memory
+        // a short varchar column of inlined values only (no data memory), and a fixed-size one, both
+        // starting mid-day 3, then days 4 and 5
         execute("alter table t add column short_v varchar");
-        execute("insert into t select (4000 + x)::int, 'k1', 'v', 'st', null, null, rnd_double(), ((4000 + x) * 60_000_000L)::timestamp, x::int, 'e', 'ab' "
-                + "from long_sequence(500)");
-        execute("alter table t convert partition to parquet list '1970-01-02'");
+        execute("alter table t add column late_l long");
+        execute("insert into t select (4000 + x)::int, 'k1', 'v', 'st', null, null, rnd_double(), ((4000 + x) * 60_000_000L)::timestamp, x::int, 'e', 'ab', x "
+                + "from long_sequence(3_000)");
+        // a Parquet partition among the native ones
+        execute("alter table t convert partition to parquet list '1970-01-04'");
     }
 
     private int fill(RecordCursorFactory factory, PageFrameCursor cursor, PageFrameAddressCache addressCache) {
@@ -228,7 +281,7 @@ public class PageFrameDeferredAddressTest extends AbstractCairoTest {
     private String print(String query) throws Exception {
         final StringSink sink = new StringSink();
         try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            io.questdb.cairo.CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
+            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
         }
         return sink.toString();
     }

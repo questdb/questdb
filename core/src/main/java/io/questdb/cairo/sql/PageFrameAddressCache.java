@@ -37,7 +37,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
-import io.questdb.std.Vect;
+import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
 
@@ -214,8 +214,12 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     private void appendZeros(DirectLongList list) {
+        // a frame holds a handful of columns: a plain loop beats a native memset call
         list.ensureCapacity(columnCount);
-        Vect.memset(list.getAppendAddress(), (long) columnCount * Long.BYTES, 0);
+        final long address = list.getAppendAddress();
+        for (int i = 0; i < columnCount; i++) {
+            Unsafe.putLong(address + (long) i * Long.BYTES, 0);
+        }
         list.skip(columnCount);
     }
 
