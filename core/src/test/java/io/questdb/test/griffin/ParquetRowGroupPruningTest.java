@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
@@ -5638,6 +5639,30 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinMaxPruningMicroTimestampColumnWithNanoBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "0", "5");
+            final String zero = "c6\n1970-01-01T00:00:00.000000Z\n";
+            final String five = "c6\n1970-01-01T00:00:00.000005Z\n";
+            final String both = "c6\n1970-01-01T00:00:00.000000Z\n1970-01-01T00:00:00.000005Z\n";
+            assertNanoBindVarBoundMatchesNative("<", 1, zero);
+            assertNanoBindVarBoundMatchesNative("<=", 1, zero);
+            assertNanoBindVarBoundMatchesNative(">", 1, five);
+            assertNanoBindVarBoundMatchesNative(">=", 1, five);
+            assertNanoBindVarBoundMatchesNative("<", -1, "c6\n");
+            assertNanoBindVarBoundMatchesNative("<=", -1, "c6\n");
+            assertNanoBindVarBoundMatchesNative(">", -1, both);
+            assertNanoBindVarBoundMatchesNative(">=", -1, both);
+            assertNanoBindVarBoundMatchesNative("<", 5_001, both);
+            assertNanoBindVarBoundMatchesNative("<=", 4_999, zero);
+            assertNanoBindVarBoundMatchesNative(">", 4_999, five);
+            assertNanoBindVarBoundMatchesNative(">=", 5_001, "c6\n");
+            assertNanoBindVarBoundMatchesNative("=", 0, zero);
+            assertNanoBindVarBoundMatchesNative("=", 1, "c6\n");
+        });
+    }
+
+    @Test
     public void testMinMaxPruningSkippedAfterAlterColumnTypeTimestampToTimestampNs() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -6828,6 +6853,19 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setDouble("b", bound);
         assertQuery("SELECT c6 FROM tp WHERE c6 " + op + " :b ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+    }
+
+    private void assertNanoBindVarBoundMatchesNative(String op, long boundNanos, String expected) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setTimestampWithType(0, ColumnType.TIMESTAMP_NANO, boundNanos);
+        assertQuery("SELECT c6 FROM tn WHERE c6 " + op + " $1 ORDER BY ts")
+                .noLeakCheck()
+                .returns(expected);
+        bindVariableService.clear();
+        bindVariableService.setTimestampWithType(0, ColumnType.TIMESTAMP_NANO, boundNanos);
+        assertQuery("SELECT c6 FROM tp WHERE c6 " + op + " $1 ORDER BY ts")
                 .noLeakCheck()
                 .returns(expected);
     }

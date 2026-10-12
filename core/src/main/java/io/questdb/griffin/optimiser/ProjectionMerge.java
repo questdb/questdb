@@ -252,7 +252,7 @@ final class ProjectionMerge implements OptimiserPass {
                     && !project.hasTimestampDeclaration()
                     && sort.getInput() instanceof JoinPlan
                     && !sort.isMarkoutHorizon()
-                    && projectsSortKeys(project, sort)) {
+                    && LogicalPlans.projectsSortKeys(project, sort)) {
                 return sortOverProject(project, sort);
             }
             return plan;
@@ -265,7 +265,7 @@ final class ProjectionMerge implements OptimiserPass {
             if (isCompleteColumnPermutation(project) && input instanceof AggregatePlan aggregate
                     && aggregate.getGroupingExpressions().size() > 0
                     || (input instanceof JoinPlan || sort.getInput() instanceof WindowPlan)
-                    && !sort.isMarkoutHorizon() && projectsSortKeys(project, sort)) {
+                    && !sort.isMarkoutHorizon() && LogicalPlans.projectsSortKeys(project, sort)) {
                 return sortOverProject(project, sort);
             }
             if (sort.getInput() instanceof ProjectPlan grouped && isSortableBelow(grouped, sort)) {
@@ -337,15 +337,6 @@ final class ProjectionMerge implements OptimiserPass {
         project.replaceInput(0, sort.getInput());
         sort.replaceInput(0, project.rewriteBottomUp(columnProjectCollapses));
         return sort;
-    }
-
-    static boolean projectsSortKeys(ProjectPlan project, SortPlan sort) {
-        for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
-            if (LogicalPlans.projectedUncastColumnIndex(project, sort.getColumnIds().getQuick(i)) < 0) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**

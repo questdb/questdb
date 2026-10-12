@@ -311,6 +311,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    /**
+     * Whether {@link #getReader} serves the table at a transaction this context fixed; the compiler keeps such a
+     * reader at that transaction.
+     */
+    default boolean isReaderPinned(TableToken tableToken) {
+        return false;
+    }
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {

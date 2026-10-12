@@ -377,6 +377,26 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedJoinsDeriveEachInputOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n (x INT)");
+            execute("INSERT INTO n VALUES (1), (2), (3)");
+            final StringBuilder sql = new StringBuilder("SELECT x FROM n");
+            for (int i = 0; i < 40; i++) {
+                sql.insert(0, "SELECT a.x FROM (").append(") a JOIN n b ON a.x = b.x");
+            }
+            assertQuery(sql.append(" ORDER BY 1").toString())
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            1
+                            2
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testPatternResidualFilterAlgorithm() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE p (s SYMBOL INDEX, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

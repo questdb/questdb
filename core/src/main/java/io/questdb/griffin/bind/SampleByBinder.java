@@ -120,11 +120,6 @@ final class SampleByBinder {
         this.joinBinder = joinBinder;
     }
 
-    private static boolean hasFill(QueryModel source) {
-        final ObjList<ExpressionNode> fill = source.getSampleByFill();
-        return fill.size() > 1 || fill.size() == 1 && !SqlKeywords.isNoneKeyword(fill.getQuick(0).token);
-    }
-
     private static boolean hasLinearFill(QueryModel source) {
         final ObjList<ExpressionNode> fill = source.getSampleByFill();
         for (int i = 0, n = fill.size(); i < n; i++) {
@@ -572,6 +567,11 @@ final class SampleByBinder {
      * A {@link FillPlan} above the aggregate fills the gaps: any FILL other than NONE, in both SAMPLE BY
      * shapes. Only a FILL that interpolates stays in the SAMPLE BY cursor.
      */
+    static boolean hasFill(QueryModel source) {
+        final ObjList<ExpressionNode> fill = source.getSampleByFill();
+        return fill.size() > 1 || fill.size() == 1 && !SqlKeywords.isNoneKeyword(fill.getQuick(0).token);
+    }
+
     static boolean isFillPlanned(QueryModel source) {
         return hasFill(source) && !hasLinearFill(source);
     }

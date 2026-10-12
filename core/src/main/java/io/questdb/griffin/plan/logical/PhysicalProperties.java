@@ -77,14 +77,14 @@ public final class PhysicalProperties {
      * follows the order advice of the scans under it.
      */
     public static Capability masterFollowsOrderAdvice(JoinPlan join, int inputCount) {
-        return capability(join(join, inputCount, false), ORDER_ADVICE);
+        return capability(join(join, inputCount), ORDER_ADVICE);
     }
 
     /**
      * The order the factory of the first {@code inputCount} ordered inputs of the join emits its rows in.
      */
     public static ScanDirection masterScanDirection(JoinPlan join, int inputCount) {
-        return direction(join(join, inputCount, false));
+        return direction(join(join, inputCount));
     }
 
     /**
@@ -92,14 +92,14 @@ public final class PhysicalProperties {
      * access.
      */
     public static Capability masterSupportsRandomAccess(JoinPlan join, int inputCount) {
-        return capability(join(join, inputCount, false), RANDOM_ACCESS);
+        return capability(join(join, inputCount), RANDOM_ACCESS);
     }
 
     /**
      * The designated timestamp of the factory of the first {@code inputCount} ordered inputs of the join.
      */
     public static int masterTimestampIndex(JoinPlan join, int inputCount) {
-        return join(join, inputCount, true);
+        return joinTimestamp(join, inputCount);
     }
 
     /**
@@ -199,7 +199,7 @@ public final class PhysicalProperties {
         }
         final ScanDirection direction = switch (aggregate.getAlgorithm()) {
             case PARALLEL -> direction(input);
-            case PARALLEL_STOLEN_FILTER -> stolenFilterDirection(aggregate.getInput());
+            case PARALLEL_STOLEN_FILTER -> stolenFilterDirection(aggregate.getInput(), input);
             case VECTORISED, SERIAL -> ScanDirection.FORWARD;
             case null -> ScanDirection.UNKNOWN;
         };
@@ -332,7 +332,7 @@ public final class PhysicalProperties {
                     computed(Capability.NO, ScanDirection.FORWARD, capability(derive(fill.getInput(), null), LONG_SEQUENCE));
             case LatestByPlan latest -> latestBy(latest);
             case WindowPlan window -> window(window);
-            case JoinPlan join -> join(join, join.getOrderedInputs().size(), false);
+            case JoinPlan join -> join(join, join.getOrderedInputs().size());
             case WindowJoinPlan windowJoin -> windowJoin(windowJoin);
             case SetOperationPlan operation -> setOperation(operation);
             case HorizonJoinPlan _ -> unknown(ScanDirection.UNKNOWN, Capability.UNKNOWN);
@@ -414,13 +414,11 @@ public final class PhysicalProperties {
     }
 
     /**
-     * Folds the steps of the join, returning the properties of its factory, or the index of its designated timestamp.
+     * Folds the steps of the join, returning the properties of its factory.
      */
-    private static int join(JoinPlan join, int inputCount, boolean isTimestampIndex) {
+    private static int join(JoinPlan join, int inputCount) {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
-        final JoinInput first = ordered.getQuick(0);
-        int properties = derive(first.getInput(), null);
-        int timestampIndex = timestamp(first.getInput(), null, false);
+        int properties = derive(ordered.getQuick(0).getInput(), null);
         for (int i = 1; i < inputCount; i++) {
             final JoinInput step = ordered.getQuick(i);
             final JoinKind joinType = step.getJoinType();
@@ -428,14 +426,9 @@ public final class PhysicalProperties {
             final ScanDirection direction = direction(properties);
             BoundExpression filter = step.getPostJoinFilter();
             switch (joinType) {
-                case UNNEST, ASOF, LT -> properties = joined(isFollowingAdvice, direction);
-                case SPLICE -> {
-                    properties = joined(isFollowingAdvice, direction);
-                    timestampIndex = -1;
-                }
+                case UNNEST, ASOF, LT, SPLICE -> properties = joined(isFollowingAdvice, direction);
                 default -> {
-                    final Capability isMarkout = step.getAlgorithm() == null ? Capability.UNKNOWN
-                            : Capability.of(step.getAlgorithm() == JoinInput.Algorithm.MARKOUT);
+                    final Capability isMarkout = markout(step);
                     final boolean isMasterNullExtended = joinType == JoinKind.RIGHT_OUTER || joinType == JoinKind.FULL_OUTER;
                     final boolean isSwappable = step.getMasterSide() == JoinInput.MasterSide.SMALLER;
                     final boolean isKeyed = step.getMasterKeyColumnIds().size() > 0;
@@ -443,7 +436,6 @@ public final class PhysicalProperties {
                                                                                            : isMasterNullExtended ? capability(derive(step.getInput(), null), ORDER_ADVICE) : isFollowingAdvice;
                     properties = joined(choose(isMarkout, Capability.YES, isJoinFollowingAdvice),
                             choose(isMarkout, direction, isKeyed && isMasterNullExtended || isSwappable ? ScanDirection.OTHER : direction));
-                    timestampIndex = chooseTimestamp(isMarkout, -1, isMasterNullExtended || isSwappable ? -1 : timestampIndex);
                     // An outer join applies its ON residual itself; an inner one filters the matched pairs with it.
                     if (!isMasterNullExtended && joinType != JoinKind.LEFT_OUTER && step.getOnResidual() != null) {
                         if (filter == null) {
@@ -460,7 +452,26 @@ public final class PhysicalProperties {
                 properties = filtered(filter, properties, Capability.NO, false, PlanToFactoryRules.isPostJoinFilterFolded(step, filter));
             }
         }
-        return isTimestampIndex ? timestampIndex : properties;
+        return properties;
+    }
+
+    /**
+     * Folds the steps of the join, returning the index of the designated timestamp of its factory.
+     */
+    private static int joinTimestamp(JoinPlan join, int inputCount) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        int timestampIndex = timestamp(ordered.getQuick(0).getInput(), null, false);
+        for (int i = 1; i < inputCount; i++) {
+            final JoinInput step = ordered.getQuick(i);
+            final JoinKind joinType = step.getJoinType();
+            if (joinType == JoinKind.SPLICE) {
+                timestampIndex = -1;
+            } else if (joinType != JoinKind.UNNEST && joinType != JoinKind.ASOF && joinType != JoinKind.LT) {
+                timestampIndex = chooseTimestamp(markout(step), -1, joinType == JoinKind.RIGHT_OUTER || joinType == JoinKind.FULL_OUTER
+                        || step.getMasterSide() == JoinInput.MasterSide.SMALLER ? -1 : timestampIndex);
+            }
+        }
+        return timestampIndex;
     }
 
     /**
@@ -495,6 +506,13 @@ public final class PhysicalProperties {
     private static int limited(int input) {
         return properties(capability(input, RANDOM_ACCESS), Capability.NO, Capability.YES, Capability.NO, direction(input),
                 capability(input, LONG_SEQUENCE));
+    }
+
+    /**
+     * Whether the join step runs the markout join, UNKNOWN before operator planning records its algorithm.
+     */
+    private static Capability markout(JoinInput step) {
+        return step.getAlgorithm() == null ? Capability.UNKNOWN : Capability.of(step.getAlgorithm() == JoinInput.Algorithm.MARKOUT);
     }
 
     private static int merge(int left, int right) {
@@ -696,9 +714,9 @@ public final class PhysicalProperties {
 
     /**
      * The direction of the factory under the filter a parallel GROUP BY or window join steals from the plan: the
-     * frames of a self-filtering pattern scan, else the direction the filter passes through from its input.
+     * frames of a self-filtering pattern scan, else the direction of {@code properties}, the properties of the plan.
      */
-    private static ScanDirection stolenFilterDirection(LogicalPlan plan) {
+    private static ScanDirection stolenFilterDirection(LogicalPlan plan, int properties) {
         LogicalPlan filtered = plan;
         while (true) {
             if (filtered instanceof ProjectPlan project && !LogicalPlans.isComputedProjection(project)) {
@@ -714,7 +732,7 @@ public final class PhysicalProperties {
                 && scan.getAccessPath() == ScanPlan.AccessPath.SYMBOL_PATTERN && scan.getIndexRead() != ScanPlan.IndexRead.COVERING) {
             return ScanDirection.of(scan.getScanDirection());
         }
-        return direction(derive(plan, null));
+        return direction(properties);
     }
 
     private static Capability supportsLongTopK(LogicalPlan plan, @Nullable LimitPlan sortedLimit, int columnIndex) {
@@ -891,7 +909,7 @@ public final class PhysicalProperties {
             }
             case WindowPlan window -> forwarded(timestamp(window.getInput(), null, false), isSource);
             case WindowJoinPlan windowJoin -> forwarded(timestamp(windowJoin.getMaster(), null, false), isSource);
-            case JoinPlan join -> forwarded(join(join, join.getOrderedInputs().size(), true), isSource);
+            case JoinPlan join -> forwarded(joinTimestamp(join, join.getOrderedInputs().size()), isSource);
             case AggregatePlan aggregate -> isSource ? -1 : aggregateTimestampIndex(aggregate);
             case ScanPlan scan -> isSource ? -1 : scanTimestampIndex(scan);
             case DistinctPlan _, FillPlan _ -> forwarded(plan.getOutput().getTimestampIndex(), isSource);
@@ -919,7 +937,8 @@ public final class PhysicalProperties {
         if (windowJoin.isEmpty()) {
             return EMPTY;
         }
-        int properties = derive(windowJoin.getMaster(), null);
+        final int master = derive(windowJoin.getMaster(), null);
+        int properties = master;
         final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
         for (int i = 0, n = steps.size(); i < n; i++) {
             final WindowJoinStep step = steps.getQuick(i);
@@ -927,7 +946,7 @@ public final class PhysicalProperties {
                 final WindowJoinStep.Algorithm algorithm = step.getAlgorithm();
                 final Capability isSerial = algorithm == null ? Capability.UNKNOWN : Capability.of(algorithm == WindowJoinStep.Algorithm.SERIAL);
                 final ScanDirection direction = algorithm == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
-                        ? stolenFilterDirection(windowJoin.getMaster()) : direction(properties);
+                        ? stolenFilterDirection(windowJoin.getMaster(), master) : direction(properties);
                 properties = properties(Capability.NO, Capability.NO, Capability.NO, and(isSerial, capability(properties, ORDER_ADVICE)),
                         direction, and(isSerial, capability(properties, LONG_SEQUENCE)));
             }

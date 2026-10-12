@@ -126,16 +126,19 @@ public final class PlanTables implements Closeable, Mutable {
     }
 
     /**
-     * Moves every reader to its table's latest transaction before the plan is optimised and generated, and rejects
-     * the plan when a table's metadata changed since binding read it, so the compiler binds it again.
+     * Moves every reader the execution context does not pin to its table's latest transaction before the plan is
+     * optimised and generated, and rejects the plan when a table's metadata changed since binding read it, so the
+     * compiler binds it again.
      */
-    public void reload() {
+    public void reload(SqlExecutionContext executionContext) {
         for (int i = 0, n = readers.size(); i < n; i++) {
             final TableReader reader = readers.getQuick(i);
-            reader.reload();
+            final TableToken token = tokens.getQuick(i);
+            if (!executionContext.isReaderPinned(token)) {
+                reader.reload();
+            }
             final long metadataVersion = reader.getMetadata().getMetadataVersion();
             if (metadataVersion != metadataVersions.getQuick(i)) {
-                final TableToken token = tokens.getQuick(i);
                 throw TableReferenceOutOfDateException.of(token, token.getTableId(), reader.getMetadata().getTableId(),
                         metadataVersions.getQuick(i), metadataVersion);
             }

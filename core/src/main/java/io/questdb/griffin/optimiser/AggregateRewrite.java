@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.optimiser;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
@@ -33,36 +32,20 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
 /**
- * Rewrites an aggregate read by a projection, directly or through a sort of its rows, in two steps.
- * <p>
- * First, sum normalisation: a {@code sum(c * k)} the projection selects as a whole value becomes
- * {@code sum(c) * k}, and {@code sum(c + k)} or {@code sum(c - k)} becomes {@code sum(c) + count(c) * k}
- * or {@code sum(c) - count(c) * k}, either operand order, for a BYTE, SHORT, INT or LONG column
- * {@code c} and an integer literal {@code k}; BYTE and SHORT, which have no NULL, count with
- * {@code count()}. The aggregate must read tables without a sub-query, see
- * {@link AggregatePlan#hasDirectTableInput()}, and no SAMPLE BY FILL may read its aggregates by
- * position. The projection computes the arithmetic in place of each whole reference; an expression
- * that reads the sum keeps the original aggregate. The rewrite is exact except on overflow: the
- * original sums values computed per row in the column's type, the rewrite computes in LONG.
- * <p>
- * Second, key lifting, which reads whether the projection computes a value, so it sees the
- * normalised sums.
+ * Rewrites an aggregate read by a projection, directly or through a sort of its rows.
  * <p>
  * Drops a grouping key that is arithmetic over constants and one column the aggregate also groups by:
  * {@code GROUP BY a, a + 1} forms the same groups as {@code GROUP BY a}. The projection above the
@@ -80,8 +63,6 @@ final class AggregateRewrite implements OptimiserPass {
     private final OptimiserContext context;
     private final ProjectionMerge projectionMerge;
     private final ObjectPool<ProjectPlan> projects;
-    private final IntList removedAggregates;
-    private final IntList replacedSumIds;
     private final IntList sortKeyIndexes;
     // The projection whose aggregate the last rewriteProjectedAggregate call lifted keys from.
     private ProjectPlan liftedProject;
@@ -93,16 +74,12 @@ final class AggregateRewrite implements OptimiserPass {
             ProjectionMerge projectionMerge,
             ObjectPool<ColumnExpression> columns,
             ObjectPool<ProjectPlan> projects,
-            IntList removedAggregates,
-            IntList replacedSumIds,
             IntList sortKeyIndexes
     ) {
         this.context = context;
         this.projectionMerge = projectionMerge;
         this.columns = columns;
         this.projects = projects;
-        this.removedAggregates = removedAggregates;
-        this.replacedSumIds = replacedSumIds;
         this.sortKeyIndexes = sortKeyIndexes;
     }
 
@@ -150,21 +127,6 @@ final class AggregateRewrite implements OptimiserPass {
         return count;
     }
 
-    /**
-     * The index of the aggregate {@code name(column)}, or of {@code name()} when columnId is -1; -1 when absent.
-     */
-    private static int findAggregate(ObjList<FunctionExpression> aggregates, CharSequence name, int columnId) {
-        for (int i = 0, n = aggregates.size(); i < n; i++) {
-            final FunctionExpression aggregate = aggregates.getQuick(i);
-            if (Chars.equalsIgnoreCase(aggregate.getName(), name) && (columnId < 0 ? aggregate.getArgumentCount() == 0
-                    : aggregate.getArgumentCount() == 1 && aggregate.argumentAt(0) instanceof ColumnExpression column
-                      && !column.isCast() && column.getColumnId() == columnId)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     private static ColumnExpression firstColumn(BoundExpression expression) {
         if (expression instanceof ColumnExpression column) {
             return column;
@@ -206,17 +168,6 @@ final class AggregateRewrite implements OptimiserPass {
         return false;
     }
 
-    private static boolean hasNestedReference(ProjectPlan project, int columnId) {
-        final ObjList<BoundExpression> expressions = project.getExpressions();
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            final BoundExpression expression = expressions.getQuick(i);
-            if (!isSelectedReference(expression, columnId) && LogicalPlans.readsColumn(expression, columnId)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static boolean hasRepeatedKeyColumn(AggregatePlan aggregate) {
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
         final OutputSchema input = aggregate.getInput().getOutput();
@@ -228,16 +179,6 @@ final class AggregateRewrite implements OptimiserPass {
                         return true;
                     }
                 }
-            }
-        }
-        return false;
-    }
-
-    private static boolean hasSelectedReference(ProjectPlan project, int columnId) {
-        final ObjList<BoundExpression> expressions = project.getExpressions();
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            if (isSelectedReference(expressions.getQuick(i), columnId)) {
-                return true;
             }
         }
         return false;
@@ -263,10 +204,6 @@ final class AggregateRewrite implements OptimiserPass {
         };
     }
 
-    private static boolean isNullableInteger(int type) {
-        return type == ColumnType.INT || type == ColumnType.LONG;
-    }
-
     private static boolean isSelected(ProjectPlan project, int columnId) {
         final OutputSchema output = project.getOutput();
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
@@ -276,20 +213,6 @@ final class AggregateRewrite implements OptimiserPass {
             }
         }
         return false;
-    }
-
-    /**
-     * The projection selects the column unchanged, as a whole value.
-     */
-    private static boolean isSelectedReference(BoundExpression expression, int columnId) {
-        return expression instanceof ColumnExpression column && !column.isCast() && column.getColumnId() == columnId;
-    }
-
-    /**
-     * No FILL reads the aggregates by position.
-     */
-    private static boolean isUnfilled(GroupingPlan aggregate) {
-        return !(aggregate instanceof SampleByPlan sampleBy) || sampleBy.getFillTokens().size() == 0;
     }
 
     /**
@@ -326,27 +249,6 @@ final class AggregateRewrite implements OptimiserPass {
             return index < aggregate.getGroupingExpressions().size() ? index : -1;
         }
         return -1;
-    }
-
-    private int addAggregate(GroupingPlan aggregate, FunctionExpression function, String name) {
-        aggregate.getAggregates().add(function);
-        aggregate.getOutput().add(context.newColumnId(), context.uniqueName(aggregate.getOutput(), name), function.getDataType(), false);
-        return aggregate.getAggregates().size() - 1;
-    }
-
-    /**
-     * Binds the aggregate {@code name} over {@link OptimiserContext#getCallArguments}, which it clears.
-     */
-    private FunctionExpression bindAggregate(CharSequence name, int position, OutputSchema input) throws SqlException {
-        final BoundExpression bound = context.bindCall(name, position, input);
-        if (bound instanceof FunctionExpression function && function.isAggregate()) {
-            return function;
-        }
-        throw new IllegalStateException("aggregate expected");
-    }
-
-    private ColumnExpression inputColumn(OutputSchema input, int index, int position) {
-        return columns.next().of(input.getColumnId(index), input.getColumnType(index), position);
     }
 
     private void liftKey(ProjectPlan project, AggregatePlan aggregate, int keyIndex, ColumnExpression column, int columnKeyIndex) {
@@ -398,101 +300,6 @@ final class AggregateRewrite implements OptimiserPass {
         return isLifted;
     }
 
-    /**
-     * {@code sum op k} or, with a count, {@code sum op count * k}, keeping the operand order of {@code operation}.
-     */
-    private BoundExpression normalisedSum(
-            FunctionExpression operation, boolean isColumnOnLeft, OutputSchema output, int sumIndex, int countIndex, int position
-    ) throws SqlException {
-        BoundExpression value = operation.argumentAt(isColumnOnLeft ? 1 : 0);
-        if (countIndex >= 0) {
-            value = context.bindCall("*", position, inputColumn(output, countIndex, position), value, output);
-        }
-        final ColumnExpression sum = inputColumn(output, sumIndex, position);
-        return context.bindCall(operation.getName(), operation.getPosition(), isColumnOnLeft ? sum : value, isColumnOnLeft ? value : sum, output);
-    }
-
-    /**
-     * Rewrites each sum of the aggregate that the projection selects as a whole value; returns whether
-     * the projection changed. The original sum stays while the projection reads it inside an expression.
-     */
-    private boolean normaliseSums(ProjectPlan project, GroupingPlan aggregate) throws SqlException {
-        if (!isUnfilled(aggregate)) {
-            return false;
-        }
-        final ObjList<FunctionExpression> functions = aggregate.getAggregates();
-        final OutputSchema output = aggregate.getOutput();
-        final OutputSchema input = aggregate.getInput().getOutput();
-        final int keyCount = aggregate.getGroupingExpressions().size();
-        removedAggregates.clear();
-        replacedSumIds.clear();
-        boolean isNormalised = false;
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            final FunctionExpression sum = functions.getQuick(i);
-            final FunctionExpression operation = LogicalPlans.normalisableSumOperation(aggregate, sum);
-            final int sumId = output.getColumnId(keyCount + i);
-            if (operation == null || !hasSelectedReference(project, sumId)) {
-                continue;
-            }
-            final boolean isColumnOnLeft = LogicalPlans.isIntegerLiteral(operation.argumentAt(1));
-            if (!(operation.argumentAt(isColumnOnLeft ? 0 : 1) instanceof ColumnExpression column)) {
-                continue;
-            }
-            final int columnIndex = input.getColumnIndexById(column.getColumnId());
-            final int columnType = input.getColumnType(columnIndex);
-            final boolean isKept = hasNestedReference(project, sumId);
-            int sumIndex = findAggregate(functions, "sum", column.getColumnId());
-            if (sumIndex < 0) {
-                context.getCallArguments().add(inputColumn(input, columnIndex, column.getPosition()));
-                final FunctionExpression columnSum = bindAggregate("sum", sum.getPosition(), input);
-                if (isKept) {
-                    sumIndex = addAggregate(aggregate, columnSum, "sum");
-                } else {
-                    functions.setQuick(i, columnSum);
-                    output.setColumnType(keyCount + i, columnSum.getDataType());
-                    replacedSumIds.add(sumId);
-                    sumIndex = i;
-                }
-            }
-            if (!isKept && sumIndex != i) {
-                removedAggregates.add(i);
-            }
-            int countIndex = -1;
-            if (operation.getName().charAt(0) != '*') {
-                final int countColumnId = isNullableInteger(columnType) ? column.getColumnId() : -1;
-                countIndex = findAggregate(functions, "count", countColumnId);
-                if (countIndex < 0) {
-                    if (countColumnId >= 0) {
-                        context.getCallArguments().add(inputColumn(input, columnIndex, column.getPosition()));
-                    }
-                    countIndex = addAggregate(aggregate, bindAggregate("count", sum.getPosition(), input), "COUNT");
-                }
-            }
-            final ObjList<BoundExpression> expressions = project.getExpressions();
-            for (int k = 0, m = expressions.size(); k < m; k++) {
-                if (isSelectedReference(expressions.getQuick(k), sumId)) {
-                    final BoundExpression normalised = normalisedSum(operation, isColumnOnLeft, output, keyCount + sumIndex,
-                            countIndex < 0 ? -1 : keyCount + countIndex, sum.getPosition());
-                    assert normalised.getDataType() == project.getOutput().getColumnType(k);
-                    expressions.setQuick(k, normalised);
-                }
-            }
-            isNormalised = true;
-        }
-        for (int i = removedAggregates.size() - 1; i >= 0; i--) {
-            final int index = removedAggregates.getQuick(i);
-            functions.remove(index);
-            output.remove(keyCount + index);
-        }
-        for (int i = 0, n = replacedSumIds.size(); i < n; i++) {
-            final int index = output.getColumnIndexById(replacedSumIds.getQuick(i));
-            if (!Chars.equalsIgnoreCase(output.getColumnName(index), "sum")) {
-                output.setColumnName(index, context.uniqueName(output, "sum"), output.getColumnQualifier(index));
-            }
-        }
-        return isNormalised;
-    }
-
     private LogicalPlan rewrite(LogicalPlan plan) throws SqlException {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             final LogicalPlan input = plan.inputAt(i);
@@ -524,25 +331,23 @@ final class AggregateRewrite implements OptimiserPass {
     }
 
     /**
-     * Normalises the selected integer sums of an aggregate read by a projection and lifts its derived
-     * keys, directly or through a sort of the aggregate's rows. A projection that now computes a value
-     * no longer passes the sort its keys unchanged, so the sort moves above it. Returns the plan that
-     * replaces {@code plan}.
+     * Lifts the derived keys of an aggregate read by a projection, directly or through a sort of the
+     * aggregate's rows. A projection that now computes a value no longer passes the sort its keys
+     * unchanged, so the sort moves above it. Returns the plan that replaces {@code plan}.
      */
-    private LogicalPlan rewriteProjectedAggregate(LogicalPlan plan, boolean isKeyLiftable) throws SqlException {
-        if (!(plan instanceof ProjectPlan project)) {
+    private LogicalPlan rewriteProjectedAggregate(LogicalPlan plan, boolean isKeyLiftable) {
+        if (!isKeyLiftable || !(plan instanceof ProjectPlan project)) {
             return plan;
         }
         final LogicalPlan input = project.getInput();
-        if (input instanceof GroupingPlan grouped) {
-            normaliseSums(project, grouped);
-            if (isKeyLiftable && grouped instanceof AggregatePlan aggregate && liftKeys(project, aggregate)) {
+        if (input instanceof AggregatePlan aggregate) {
+            if (liftKeys(project, aggregate)) {
                 liftedProject = project;
             }
             return project;
         }
-        if (!(input instanceof SortPlan sort) || !(sort.getInput() instanceof GroupingPlan aggregate)
-                || !ProjectionMerge.projectsSortKeys(project, sort)) {
+        if (!(input instanceof SortPlan sort) || !(sort.getInput() instanceof AggregatePlan aggregate)
+                || !LogicalPlans.projectsSortKeys(project, sort)) {
             return project;
         }
         sortKeyIndexes.clear();
@@ -550,15 +355,11 @@ final class AggregateRewrite implements OptimiserPass {
             sortKeyIndexes.add(LogicalPlans.projectedUncastColumnIndex(project, sort.getColumnIds().getQuick(i)));
         }
         project.replaceInput(0, aggregate);
-        final boolean isNormalised = normaliseSums(project, aggregate);
-        final boolean isLifted = isKeyLiftable && aggregate instanceof AggregatePlan grouped && liftKeys(project, grouped);
-        if (!isNormalised && !isLifted) {
+        if (!liftKeys(project, aggregate)) {
             project.replaceInput(0, sort);
             return project;
         }
-        if (isLifted) {
-            liftedProject = project;
-        }
+        liftedProject = project;
         final OutputSchema output = project.getOutput();
         for (int i = 0, n = sortKeyIndexes.size(); i < n; i++) {
             sort.getColumnIds().setQuick(i, output.getColumnId(sortKeyIndexes.getQuick(i)));

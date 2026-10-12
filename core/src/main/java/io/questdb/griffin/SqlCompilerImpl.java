@@ -5687,7 +5687,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private RecordCursorFactory generatePlan(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory;
         try {
-            planTables.reload();
+            planTables.reload(executionContext);
             optimiser.planAccessPaths(root, codeGenerator.getGenerationDepth(), executionContext.isTimestampRequired(), executionContext);
             factory = codeGenerator.generate(root, executionContext);
         } catch (Throwable th) {

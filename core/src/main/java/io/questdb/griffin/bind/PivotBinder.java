@@ -301,7 +301,7 @@ final class PivotBinder implements Mutable {
         bindScope.substitutionNodes.clear();
         bindScope.substitutionColumns.clear();
         temporalJoinBinder.collectWindowJoinAggregateOccurrences(windowAggregates, plan, bindScope.substitutionNodes, bindScope.substitutionColumns);
-        bindScope.aggregateNodes.clear();
+        bindScope.clearAggregateNodes();
         final ObjList<QueryColumn> measures = pivot.getPivotGroupByColumns();
         for (int i = 0, n = measures.size(); i < n; i++) {
             aggregateBinder.collectAggregateNodes(measures.getQuick(i).getAst(), true);
@@ -536,7 +536,7 @@ final class PivotBinder implements Mutable {
 
     private ExpressionNode windowJoinPivotInputs(QueryModel pivot) throws SqlException {
         final BindScope scope = ctx.scope();
-        scope.aggregateNodes.clear();
+        scope.clearAggregateNodes();
         final ObjList<QueryColumn> measures = pivot.getPivotGroupByColumns();
         for (int i = 0, n = measures.size(); i < n; i++) {
             aggregateBinder.collectAggregateNodes(measures.getQuick(i).getAst(), true);
@@ -669,7 +669,7 @@ final class PivotBinder implements Mutable {
         final AggregatePlan grouped = ctx.planNodes.aggregates.next().of(source, pivot.getModelPosition());
         grouped.setExplicitGrouping(true);
         scope.groupingNodes.clear();
-        scope.aggregateNodes.clear();
+        scope.clearAggregateNodes();
         scope.resetAliases();
         scope.pivotKeyAliases.clear();
         scope.pivotKeyIndexes.clear();

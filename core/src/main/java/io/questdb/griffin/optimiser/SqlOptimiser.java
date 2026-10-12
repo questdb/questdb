@@ -113,7 +113,7 @@ public final class SqlOptimiser implements Mutable {
         final ColumnPruning columnPruning = new ColumnPruning(context, aggregateInputOrder, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
                 columnIds, tmpPlans, tmpSchema);
         final ProjectionMerge projectionMerge = new ProjectionMerge(context);
-        final AggregateRewrite aggregateRewrite = new AggregateRewrite(context, projectionMerge, columns, projects, tmpIndexes, tmpValues, tmpKeys);
+        final AggregateRewrite aggregateRewrite = new AggregateRewrite(context, projectionMerge, columns, projects, tmpKeys);
         passes.add(new JoinOrdering(context, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys),
                 tmpConjuncts));
         passes.add(decorrelation);

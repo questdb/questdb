@@ -66,12 +66,10 @@ final class JoinBinder implements Mutable {
     private final CairoConfiguration configuration;
     private final BindContext ctx;
     private final IntList deferredJoinInputs = new IntList();
-    private final ObjList<JoinEquality> derivedEqualities = new ObjList<>();
     private final ObjList<ExpressionNode> forwardJoinReferences = new ObjList<>();
     private final IntList forwardLeftJoinInputs = new IntList();
     private final IntList inputModels = new IntList();
     private final JoinGraphBuilder joinGraphBuilder;
-    private final ObjList<ExpressionNode> joinOnNodes = new ObjList<>();
     private final LateralBinder lateralBinder;
     private final IntList lateralDependencyInputs = new IntList();
     private final IntList lateralDependencyParents = new IntList();
@@ -101,11 +99,9 @@ final class JoinBinder implements Mutable {
     @Override
     public void clear() {
         deferredJoinInputs.clear();
-        derivedEqualities.clear();
         forwardJoinReferences.clear();
         forwardLeftJoinInputs.clear();
         inputModels.clear();
-        joinOnNodes.clear();
         joinGraphBuilder.clear();
         lateralDependencyInputs.clear();
         lateralDependencyParents.clear();
@@ -469,7 +465,7 @@ final class JoinBinder implements Mutable {
         final JoinGraph graph = ctx.planNodes.joinGraphs.next();
         try {
             final ExpressionNode constantFilter = collectJoinGraph(join, graph, source, where, dependencyBase, modelBase, hasBarriers);
-            derivedEqualities.addAll(joinGraphBuilder.getSourceFilters());
+            scope.joinDerivedEqualities.addAll(joinGraphBuilder.getSourceFilters());
             joinGraphBuilder.clear();
             final int firstTimestampId = inputs.getQuick(0).getSourceOutput().getTimestampColumnId();
             int timestampId = firstTimestampId;
@@ -482,7 +478,7 @@ final class JoinBinder implements Mutable {
                 }
                 validateJoinKeys(join, dependency);
                 validateTemporalKeys(step, dependency, timestampId);
-                bindJoinOnResidual(joinOnNodes.getQuick(i), join, step, source, i, executionContext);
+                bindJoinOnResidual(scope.joinOnNodes.getQuick(i), join, step, source, i, executionContext);
                 bindJoinResiduals(join, graph, source, i, executionContext);
                 bindTolerance(join, step, joinModel(source, modelBase, i), timestampId);
                 if (step.getJoinType().isMasterNulling() && !join.hasExplicitTimestamp()) {
@@ -496,6 +492,7 @@ final class JoinBinder implements Mutable {
 
             final int lastInput = inputs.size() - 1;
             bindJoinResiduals(join, graph, source, -1, executionContext);
+            final ObjList<JoinEquality> derivedEqualities = scope.joinDerivedEqualities;
             for (int i = 0, n = derivedEqualities.size(); i < n; i++) {
                 final JoinEquality equality = derivedEqualities.getQuick(i);
                 final ExpressionNode comparison = ctx.bindingExpressions.next().of(ExpressionNode.OPERATION, "=", 0, equality.getLeftPosition());
@@ -516,8 +513,8 @@ final class JoinBinder implements Mutable {
             join.setGraph(graph);
         } finally {
             joinGraphBuilder.clear();
-            derivedEqualities.clear();
-            joinOnNodes.clear();
+            scope.joinDerivedEqualities.clear();
+            scope.joinOnNodes.clear();
             scope.joinResidualNodes.clear();
             scope.joinResidualOrigins.clear();
             forwardJoinReferences.clear();
@@ -875,8 +872,8 @@ final class JoinBinder implements Mutable {
         joinGraphBuilder.collect(join, graph);
         scope.joinResidualNodes.clear();
         scope.joinResidualOrigins.clear();
-        joinOnNodes.clear();
-        joinOnNodes.setPos(join.getInputs().size());
+        scope.joinOnNodes.clear();
+        scope.joinOnNodes.setPos(join.getInputs().size());
         deferredJoinInputs.clear();
         forwardJoinReferences.clear();
         if (!isForwardLeftKeyFiltered) {
@@ -935,7 +932,7 @@ final class JoinBinder implements Mutable {
                 collectJoinDependencies(onCriteria, join, i, isDeferred || isForwardLeftJoin);
             }
             if (isBarrier) {
-                joinOnNodes.setQuick(i, collectJoinConditions(onCriteria, join, i, true, hasNonEquiNullingJoin));
+                scope.joinOnNodes.setQuick(i, collectJoinConditions(onCriteria, join, i, true, hasNonEquiNullingJoin));
                 if (isNonEquiNullingJoin) {
                     constrainNullingJoinPrefix(0, i);
                     joinGraphBuilder.addLateInput(i);

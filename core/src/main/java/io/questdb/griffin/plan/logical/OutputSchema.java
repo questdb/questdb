@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 import java.util.Objects;
@@ -43,12 +44,18 @@ public final class OutputSchema implements Mutable {
     private static final int VISIBLE = 1;
     private static final int SYMBOL_TABLE_STATIC = 2;
     private static final int NAME_PROTECTED = 4;
+    private static final int NAME_INDEX_MIN_COLUMNS = 16;
+    private static final int NAME_INDEX_MIN_SCANS = 8;
     private final IntList columnIds = new IntList();
     private final ObjList<OutputSchema> columnMetadata = new ObjList<>();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<CharSequence> columnQualifiers = new ObjList<>();
     private final IntList columnTypes = new IntList();
     private final IntList columnFlags = new IntList();
+    private final IntList nameSlots = new IntList();
+    private final IntList sameNamePrevious = new IntList();
+    private int nameIndexedCount;
+    private int nameScanCount;
     private int timestampIndex = -1;
 
     public OutputSchema add(int columnId, CharSequence name, int type, boolean isVisible) {
@@ -162,6 +169,8 @@ public final class OutputSchema implements Mutable {
         columnQualifiers.clear();
         columnTypes.clear();
         columnFlags.clear();
+        nameIndexedCount = 0;
+        nameScanCount = 0;
         timestampIndex = -1;
     }
 
@@ -195,6 +204,15 @@ public final class OutputSchema implements Mutable {
     }
 
     public int getColumnIndexQuiet(CharSequence name, int lo, int hi) {
+        if (isNameIndexWorthwhile()) {
+            int index = findIndexedColumn(name, lo, hi);
+            if (index > -1) {
+                for (int previous = sameNamePrevious.getQuick(index); previous > -1; previous = sameNamePrevious.getQuick(previous)) {
+                    index = previous;
+                }
+            }
+            return index;
+        }
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence column = columnNames.getQuick(i);
             if (isReferenceable(i) && column.length() == hi - lo && Chars.equalsIgnoreCase(column, name, lo, hi)) {
@@ -211,6 +229,17 @@ public final class OutputSchema implements Mutable {
      */
     public int getColumnIndexQuiet(CharSequence qualifier, CharSequence name, int lo, int hi) {
         int index = -1;
+        if (isNameIndexWorthwhile()) {
+            for (int i = findIndexedColumn(name, lo, hi); i > -1; i = sameNamePrevious.getQuick(i)) {
+                if (qualifier == null || Chars.equalsIgnoreCaseNc(qualifier, columnQualifiers.getQuick(i))) {
+                    if (index != -1) {
+                        return COLUMN_AMBIGUOUS;
+                    }
+                    index = i;
+                }
+            }
+            return index;
+        }
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence column = columnNames.getQuick(i);
             if (isReferenceable(i) && (qualifier == null || Chars.equalsIgnoreCaseNc(qualifier, columnQualifiers.getQuick(i)))
@@ -309,10 +338,12 @@ public final class OutputSchema implements Mutable {
      * A compiler-protected name (dotted, or an operator token) that enclosing queries cannot reference.
      */
     public void protectName(int index) {
+        invalidateNameIndex(index);
         columnFlags.setQuick(index, columnFlags.getQuick(index) | NAME_PROTECTED);
     }
 
     public void remove(int index) {
+        invalidateNameIndex(index);
         columnIds.removeIndex(index);
         columnMetadata.remove(index);
         columnNames.remove(index);
@@ -351,6 +382,7 @@ public final class OutputSchema implements Mutable {
         columnQualifiers.setPos(n);
         columnTypes.setPos(n);
         columnFlags.setPos(n);
+        nameIndexedCount = 0;
         setTimestampColumnId(timestampId);
     }
 
@@ -362,6 +394,7 @@ public final class OutputSchema implements Mutable {
     }
 
     public void setColumnName(int index, CharSequence name, CharSequence qualifier) {
+        invalidateNameIndex(index);
         columnNames.setQuick(index, name);
         columnQualifiers.setQuick(index, qualifier);
     }
@@ -387,6 +420,70 @@ public final class OutputSchema implements Mutable {
             throw new IndexOutOfBoundsException("timestamp column index: " + index);
         }
         timestampIndex = index;
+    }
+
+    /**
+     * Returns the last referenceable column named {@code name[lo, hi)} in any case, or -1; earlier ones chain
+     * through {@link #sameNamePrevious}.
+     */
+    private int findIndexedColumn(CharSequence name, int lo, int hi) {
+        indexNames();
+        final int mask = nameSlots.size() - 1;
+        for (int slot = Chars.lowerCaseHashCode(name, lo, hi) & mask; ; slot = (slot + 1) & mask) {
+            final int index = nameSlots.getQuick(slot) - 1;
+            if (index < 0) {
+                return -1;
+            }
+            final CharSequence column = columnNames.getQuick(index);
+            if (column.length() == hi - lo && Chars.equalsIgnoreCase(column, name, lo, hi)) {
+                return index;
+            }
+        }
+    }
+
+    /**
+     * Extends the name index over the columns appended since the last lookup, rebuilding it after an
+     * invalidation or when it must grow.
+     */
+    private void indexNames() {
+        final int count = columnNames.size();
+        if (nameIndexedCount == count) {
+            return;
+        }
+        final int capacity = Numbers.ceilPow2(count * 2);
+        if (nameIndexedCount == 0 || nameSlots.size() < capacity) {
+            nameIndexedCount = 0;
+            nameSlots.setAll(Math.max(capacity, nameSlots.size()), 0);
+        }
+        sameNamePrevious.setPos(count);
+        final int mask = nameSlots.size() - 1;
+        for (int i = nameIndexedCount; i < count; i++) {
+            if (isReferenceable(i)) {
+                final CharSequence name = columnNames.getQuick(i);
+                int slot = Chars.lowerCaseHashCode(name) & mask;
+                int indexed;
+                while ((indexed = nameSlots.getQuick(slot)) != 0 && !Chars.equalsIgnoreCase(columnNames.getQuick(indexed - 1), name)) {
+                    slot = (slot + 1) & mask;
+                }
+                sameNamePrevious.setQuick(i, indexed - 1);
+                nameSlots.setQuick(slot, i + 1);
+            }
+        }
+        nameIndexedCount = count;
+    }
+
+    private void invalidateNameIndex(int index) {
+        if (index < nameIndexedCount) {
+            nameIndexedCount = 0;
+        }
+    }
+
+    /**
+     * Whether a lookup should use the name index: the schema is wide, and the index is built or the schema has
+     * already been scanned often enough to amortise building it.
+     */
+    private boolean isNameIndexWorthwhile() {
+        return columnNames.size() >= NAME_INDEX_MIN_COLUMNS && (nameIndexedCount > 0 || ++nameScanCount > NAME_INDEX_MIN_SCANS);
     }
 
     private boolean isReferenceable(int index) {

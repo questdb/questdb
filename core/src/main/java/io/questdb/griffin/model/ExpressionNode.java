@@ -183,6 +183,28 @@ public class ExpressionNode implements Mutable, Sinkable {
         return copy;
     }
 
+    /**
+     * A hash of the node that agrees with {@link #compareNodesExact}: nodes that compare equal hash equally.
+     */
+    public static int hashNodesExact(ExpressionNode node) {
+        if (node == null) {
+            return 0;
+        }
+        int hash = node.token == null ? 0
+                : node.type == FUNCTION || node.type == LITERAL ? Chars.lowerCaseHashCode(node.token) : Chars.hashCode(node.token);
+        hash = 31 * hash + node.type;
+        final int argCount = node.args.size();
+        hash = 31 * hash + argCount;
+        if (argCount < 3) {
+            hash = 31 * hash + hashNodesExact(node.lhs);
+            return 31 * hash + hashNodesExact(node.rhs);
+        }
+        for (int i = 0; i < argCount; i++) {
+            hash = 31 * hash + hashNodesExact(node.args.getQuick(i));
+        }
+        return hash;
+    }
+
     @Override
     public void clear() {
         args.clear();

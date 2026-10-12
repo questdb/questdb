@@ -36,7 +36,6 @@ import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
-import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -548,34 +547,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * The arithmetic {@code c * k}, {@code c + k} or {@code c - k}, either operand order, that an aggregate
-     * reading tables without a sub-query sums, where {@code c} is a BYTE, SHORT, INT or LONG input column and
-     * {@code k} an integer literal; otherwise null. {@code AggregateRewrite} normalises such a sum.
-     */
-    public static FunctionExpression normalisableSumOperation(GroupingPlan aggregate, FunctionExpression sum) {
-        if (!aggregate.hasDirectTableInput() || !Chars.equalsIgnoreCase(sum.getName(), "sum") || sum.getArgumentCount() != 1
-                || !(sum.argumentAt(0) instanceof FunctionExpression operation) || operation.getArgumentCount() != 2) {
-            return null;
-        }
-        final String name = operation.getName();
-        if (name.length() != 1 || name.charAt(0) != '*' && name.charAt(0) != '+' && name.charAt(0) != '-') {
-            return null;
-        }
-        final boolean isColumnOnLeft = isIntegerLiteral(operation.argumentAt(1));
-        if (!isColumnOnLeft && !isIntegerLiteral(operation.argumentAt(0))
-                || !(operation.argumentAt(isColumnOnLeft ? 0 : 1) instanceof ColumnExpression column)) {
-            return null;
-        }
-        final OutputSchema input = aggregate.getInput().getOutput();
-        final int index = input.getColumnIndexById(column.getColumnId());
-        if (index < 0) {
-            return null;
-        }
-        final int type = input.getColumnType(index);
-        return type == ColumnType.BYTE || type == ColumnType.SHORT || type == ColumnType.INT || type == ColumnType.LONG ? operation : null;
-    }
-
-    /**
      * The join's steps in the order the join runs them, or in binding order before the order is decided.
      */
     public static ObjList<JoinInput> orderedSteps(JoinPlan join) {
@@ -611,6 +582,18 @@ public final class LogicalPlans {
             }
         }
         return -1;
+    }
+
+    /**
+     * The projection passes every key of the sort below it through unchanged.
+     */
+    public static boolean projectsSortKeys(ProjectPlan project, SortPlan sort) {
+        for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
+            if (projectedUncastColumnIndex(project, sort.getColumnIds().getQuick(i)) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -734,6 +717,23 @@ public final class LogicalPlans {
             plan = project.getInput();
         }
         return plan;
+    }
+
+    /**
+     * The name, or the name with the lowest numeric suffix, that no column of the output has in any case.
+     */
+    public static CharSequence uniqueName(OutputSchema output, CharSequence name, CharacterStore store) {
+        if (!output.hasColumnName(name)) {
+            return name;
+        }
+        for (int suffix = 1; ; suffix++) {
+            final CharacterStoreEntry entry = store.newEntry();
+            entry.put(name).put(suffix);
+            final CharSequence candidate = entry.toImmutable();
+            if (!output.hasColumnName(candidate)) {
+                return candidate;
+            }
+        }
     }
 
     /**

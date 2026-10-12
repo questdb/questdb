@@ -32,6 +32,10 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GroupingPlan;
+import io.questdb.griffin.plan.logical.JoinEquality;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.Subquery;
@@ -72,7 +76,15 @@ public final class BindScope implements Mutable {
     final ObjList<QueryModel> hintAliasModels = new ObjList<>();
     final ObjList<CharSequence> hintAliases = new ObjList<>();
     final IntHashSet intrinsicTimestampColumnIds = new IntHashSet();
+    /**
+     * The equalities between two columns of one join input that the join graph derived, pending binding as filters.
+     */
+    final ObjList<JoinEquality> joinDerivedEqualities = new ObjList<>();
     final IntHashSet joinNativeTimestampIds = new IntHashSet();
+    /**
+     * Per join input, the residual of its outer ON clause, pending binding.
+     */
+    final ObjList<ExpressionNode> joinOnNodes = new ObjList<>();
     final ObjList<ExpressionNode> joinResidualNodes = new ObjList<>();
     final IntList joinResidualOrigins = new IntList();
     final IntHashSet keySubqueryColumnIds = new IntHashSet();
@@ -127,6 +139,13 @@ public final class BindScope implements Mutable {
     final ObjList<ExpressionNode> windowSelectExpressions = new ObjList<>();
     final LowerCaseCharSequenceIntHashMap windowSelfReferences = new LowerCaseCharSequenceIntHashMap();
     final LongList withinPrefixes = new LongList();
+    private final IntList aggregateHashes = new IntList();
+    /**
+     * Per plan aggregate of the block being bound, by its index in {@link GroupingPlan#getAggregates()} rather than in
+     * {@link #aggregateNodes}, the integer literal {@code k} of a {@code sum(c op k)} or {@code sum(k op c)} the binder
+     * bound as {@code sum(c)} pending normalisation, otherwise null. The plan methods below change both lists together.
+     */
+    private final ObjList<ConstantExpression> pendingSumLiterals = new ObjList<>();
     FunctionBinder.BindingRole bindingRole;
     ExpressionNode bindingRoot;
     Subquery boundLowerBound;
@@ -159,7 +178,7 @@ public final class BindScope implements Mutable {
 
     @Override
     public void clear() {
-        aggregateNodes.clear();
+        clearAggregateNodes();
         aliasSequences.clear();
         aliases.clear();
         ambiguousTimestampColumnIds.clear();
@@ -170,7 +189,9 @@ public final class BindScope implements Mutable {
         hintAliasModels.clear();
         hintAliases.clear();
         intrinsicTimestampColumnIds.clear();
+        joinDerivedEqualities.clear();
         joinNativeTimestampIds.clear();
+        joinOnNodes.clear();
         joinResidualNodes.clear();
         joinResidualOrigins.clear();
         keySubqueryColumnIds.clear();
@@ -227,6 +248,73 @@ public final class BindScope implements Mutable {
     }
 
     /**
+     * Adds an aggregate of the block being bound, see {@link #findAggregateNode}.
+     */
+    void addAggregateNode(ExpressionNode node) {
+        aggregateNodes.add(node);
+        aggregateHashes.add(ExpressionNode.hashNodesExact(node));
+    }
+
+    /**
+     * Appends an aggregate to the plan of the block, with the literal of the sum it holds pending normalisation, or null.
+     */
+    void addPlanAggregate(GroupingPlan aggregate, FunctionExpression function, ConstantExpression pendingSumLiteral) {
+        assert pendingSumLiterals.size() == aggregate.getAggregates().size();
+        aggregate.getAggregates().add(function);
+        pendingSumLiterals.add(pendingSumLiteral);
+    }
+
+    void clearAggregateNodes() {
+        aggregateNodes.clear();
+        aggregateHashes.clear();
+        pendingSumLiterals.clear();
+    }
+
+    /**
+     * The index of the aggregate of the block that is {@code node} or computes the same value: the same node, an equal
+     * expression tree, or another row count; -1 when there is none.
+     */
+    int findAggregateNode(ExpressionNode node) {
+        final int identity = aggregateNodes.indexOf(node);
+        if (identity >= 0) {
+            return identity;
+        }
+        final boolean isRowCount = BindContext.isRowCount(node);
+        final int hash = ExpressionNode.hashNodesExact(node);
+        for (int i = 0, n = aggregateNodes.size(); i < n; i++) {
+            final ExpressionNode aggregate = aggregateNodes.getQuick(i);
+            if (aggregateHashes.getQuick(i) == hash && ExpressionNode.compareNodesExact(node, aggregate)
+                    || isRowCount && BindContext.isRowCount(aggregate)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The literal of the sum the plan aggregate at {@code index} holds pending normalisation, or null.
+     */
+    ConstantExpression pendingSumLiteral(GroupingPlan aggregate, int index) {
+        assert pendingSumLiterals.size() == aggregate.getAggregates().size();
+        return pendingSumLiterals.getQuick(index);
+    }
+
+    void removeAggregateNode(int index) {
+        aggregateNodes.remove(index);
+        aggregateHashes.removeIndex(index);
+    }
+
+    /**
+     * Removes the plan aggregate at {@code index} with its output column.
+     */
+    void removePlanAggregate(GroupingPlan aggregate, int index) {
+        assert pendingSumLiterals.size() == aggregate.getAggregates().size();
+        aggregate.getAggregates().remove(index);
+        pendingSumLiterals.remove(index);
+        aggregate.getOutput().remove(aggregate.getGroupingExpressions().size() + index);
+    }
+
+    /**
      * Starts a projection's alias space afresh.
      */
     void resetAliases() {
@@ -242,6 +330,15 @@ public final class BindScope implements Mutable {
         for (int i = 0, n = seed.getColumnCount(); i < n; i++) {
             aliases.add(seed.getColumnName(i));
         }
+    }
+
+    /**
+     * Replaces the plan aggregate at {@code index} with one no normalisation is pending for.
+     */
+    void setPlanAggregate(GroupingPlan aggregate, int index, FunctionExpression function) {
+        assert pendingSumLiterals.size() == aggregate.getAggregates().size();
+        aggregate.getAggregates().setQuick(index, function);
+        pendingSumLiterals.setQuick(index, null);
     }
 
     /**

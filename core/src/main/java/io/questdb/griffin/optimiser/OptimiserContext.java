@@ -28,8 +28,8 @@ import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.CharacterStore;
-import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.FunctionInstantiator;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
@@ -155,16 +155,6 @@ final class OptimiserContext implements Mutable {
      * The name, or the name with the lowest numeric suffix, that no column of the output has in any case.
      */
     CharSequence uniqueName(OutputSchema output, CharSequence name) {
-        if (!output.hasColumnName(name)) {
-            return name;
-        }
-        for (int suffix = 1; ; suffix++) {
-            final CharacterStoreEntry entry = characterStore.newEntry();
-            entry.put(name).put(suffix);
-            final CharSequence candidate = entry.toImmutable();
-            if (!output.hasColumnName(candidate)) {
-                return candidate;
-            }
-        }
+        return LogicalPlans.uniqueName(output, name, characterStore);
     }
 }

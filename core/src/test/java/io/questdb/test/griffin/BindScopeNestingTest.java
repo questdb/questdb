@@ -35,6 +35,59 @@ import org.junit.Test;
 public class BindScopeNestingTest extends AbstractCairoTest {
 
     @Test
+    public void testDerivedEqualityAfterScalarSubquery() throws Exception {
+        assertDerivedEquality("""
+                SELECT a.id, a.val FROM outer_t a JOIN outer_t b ON a.id = b.id
+                WHERE a.val >= (SELECT min(a.val) FROM inner_t a JOIN inner_t b ON a.id = b.id) AND a.id = a.val
+                ORDER BY a.id
+                """);
+    }
+
+    @Test
+    public void testDerivedEqualityBeforeScalarSubquery() throws Exception {
+        assertDerivedEquality("""
+                SELECT a.id, a.val FROM outer_t a JOIN outer_t b ON a.id = b.id
+                WHERE a.id = a.val AND a.val >= (SELECT min(a.val) FROM inner_t a JOIN inner_t b ON a.id = b.id)
+                ORDER BY a.id
+                """);
+    }
+
+    @Test
+    public void testDerivedEqualityBeforeScalarSubqueryWithOtherAliases() throws Exception {
+        assertDerivedEquality("""
+                SELECT a.id, a.val FROM outer_t a JOIN outer_t b ON a.id = b.id
+                WHERE a.id = a.val AND a.val >= (SELECT min(u.val) FROM inner_t u JOIN inner_t v ON u.id = v.id)
+                ORDER BY a.id
+                """);
+    }
+
+    @Test
+    public void testDerivedEqualityInsideCorrelatedLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, val INT)");
+            execute("INSERT INTO outer_t VALUES (1, 1), (2, 20), (3, 3)");
+            execute("CREATE TABLE inner_t (id INT, val INT)");
+            execute("INSERT INTO inner_t VALUES (5, 1), (2, 2)");
+            assertQuery("""
+                    SELECT a.id, l.m
+                    FROM outer_t a
+                    CROSS JOIN LATERAL (
+                        SELECT max(x.val) m FROM outer_t x JOIN outer_t y ON x.id = y.id
+                        WHERE x.id = x.val AND x.val >= (SELECT min(a.val) FROM inner_t a JOIN inner_t b ON a.id = b.id) AND x.id <= a.id
+                    ) l
+                    ORDER BY a.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tm
+                            1\t1
+                            2\t1
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupedSubqueryInsideAggregateArgument() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -205,5 +258,21 @@ public class BindScopeNestingTest extends AbstractCairoTest {
                 """);
         execute("CREATE TABLE u (k SYMBOL, w INT)");
         execute("INSERT INTO u VALUES ('a', 10), ('b', 20)");
+    }
+
+    private void assertDerivedEquality(String query) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, val INT)");
+            execute("INSERT INTO outer_t VALUES (1, 1), (2, 20), (3, 3)");
+            execute("CREATE TABLE inner_t (id INT, val INT)");
+            execute("INSERT INTO inner_t VALUES (5, 1), (2, 2)");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tval
+                            1\t1
+                            3\t3
+                            """);
+        });
     }
 }

@@ -876,7 +876,7 @@ final class TemporalJoinBinder {
         output.addColumnsFrom(masterOutput, masterAlias);
         output.setTimestampIndex(masterOutput.getTimestampIndex());
 
-        bindScope.aggregateNodes.clear();
+        bindScope.clearAggregateNodes();
         if (aggregates != null) {
             aggregateBinder.collectAggregateNodes(aggregates, true);
         } else {
