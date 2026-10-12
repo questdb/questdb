@@ -526,14 +526,24 @@ public final class BoundExpressionRewriter implements Mutable {
             isReplacementPlaced = true;
             return replacement;
         }
-        if (expression instanceof FunctionExpression call && LogicalPlans.readsColumn(call, columnId)) {
-            final ObjList<BoundExpression> args = rewriteArguments.next();
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                args.add(substituteColumn0(call.argumentAt(i), columnId, replacement));
-            }
-            return functions.next().of(call, args, substitutedFlags(call, args));
+        if (!(expression instanceof FunctionExpression call)) {
+            return expression;
         }
-        return expression;
+        ObjList<BoundExpression> args = null;
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            final BoundExpression argument = call.argumentAt(i);
+            final BoundExpression substituted = substituteColumn0(argument, columnId, replacement);
+            if (args == null && substituted != argument) {
+                args = rewriteArguments.next();
+                for (int k = 0; k < i; k++) {
+                    args.add(call.argumentAt(k));
+                }
+            }
+            if (args != null) {
+                args.add(substituted);
+            }
+        }
+        return args == null ? expression : functions.next().of(call, args, substitutedFlags(call, args));
     }
 
     static ColumnExpression projectionColumn(ProjectPlan projection, int columnId, int type) {

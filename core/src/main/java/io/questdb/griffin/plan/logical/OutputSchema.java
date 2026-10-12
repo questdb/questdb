@@ -26,6 +26,7 @@ package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -44,16 +45,20 @@ public final class OutputSchema implements Mutable {
     private static final int VISIBLE = 1;
     private static final int SYMBOL_TABLE_STATIC = 2;
     private static final int NAME_PROTECTED = 4;
+    private static final int ID_INDEX_MIN_COLUMNS = 64;
+    private static final int INDEX_MIN_SCANS = 8;
     private static final int NAME_INDEX_MIN_COLUMNS = 16;
-    private static final int NAME_INDEX_MIN_SCANS = 8;
     private final IntList columnIds = new IntList();
     private final ObjList<OutputSchema> columnMetadata = new ObjList<>();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<CharSequence> columnQualifiers = new ObjList<>();
     private final IntList columnTypes = new IntList();
     private final IntList columnFlags = new IntList();
+    private final IntIntHashMap idIndexes = new IntIntHashMap();
     private final IntList nameSlots = new IntList();
     private final IntList sameNamePrevious = new IntList();
+    private int idIndexedCount;
+    private int idScanCount;
     private int nameIndexedCount;
     private int nameScanCount;
     private int timestampIndex = -1;
@@ -169,6 +174,8 @@ public final class OutputSchema implements Mutable {
         columnQualifiers.clear();
         columnTypes.clear();
         columnFlags.clear();
+        idIndexedCount = 0;
+        idScanCount = 0;
         nameIndexedCount = 0;
         nameScanCount = 0;
         timestampIndex = -1;
@@ -196,7 +203,12 @@ public final class OutputSchema implements Mutable {
     }
 
     public int getColumnIndexById(int columnId) {
-        return columnIds.indexOf(columnId, 0, columnIds.size());
+        if (!isIdIndexWorthwhile()) {
+            return columnIds.indexOf(columnId, 0, columnIds.size());
+        }
+        indexIds();
+        final int keyIndex = idIndexes.keyIndex(columnId);
+        return keyIndex < 0 ? idIndexes.valueAt(keyIndex) : -1;
     }
 
     public int getColumnIndexQuiet(CharSequence name) {
@@ -343,6 +355,7 @@ public final class OutputSchema implements Mutable {
     }
 
     public void remove(int index) {
+        invalidateIdIndex(index);
         invalidateNameIndex(index);
         columnIds.removeIndex(index);
         columnMetadata.remove(index);
@@ -382,6 +395,7 @@ public final class OutputSchema implements Mutable {
         columnQualifiers.setPos(n);
         columnTypes.setPos(n);
         columnFlags.setPos(n);
+        idIndexedCount = 0;
         nameIndexedCount = 0;
         setTimestampColumnId(timestampId);
     }
@@ -390,6 +404,7 @@ public final class OutputSchema implements Mutable {
         if (columnId < 0) {
             throw new IllegalArgumentException("negative logical column ID");
         }
+        invalidateIdIndex(index);
         columnIds.setQuick(index, columnId);
     }
 
@@ -442,6 +457,24 @@ public final class OutputSchema implements Mutable {
     }
 
     /**
+     * Extends the id index over the columns appended since the last lookup, rebuilding it after an invalidation;
+     * an id keeps its first index.
+     */
+    private void indexIds() {
+        final int count = columnIds.size();
+        if (idIndexedCount == 0) {
+            idIndexes.clear();
+        }
+        for (int i = idIndexedCount; i < count; i++) {
+            final int keyIndex = idIndexes.keyIndex(columnIds.getQuick(i));
+            if (keyIndex >= 0) {
+                idIndexes.putAt(keyIndex, columnIds.getQuick(i), i);
+            }
+        }
+        idIndexedCount = count;
+    }
+
+    /**
      * Extends the name index over the columns appended since the last lookup, rebuilding it after an
      * invalidation or when it must grow.
      */
@@ -472,6 +505,12 @@ public final class OutputSchema implements Mutable {
         nameIndexedCount = count;
     }
 
+    private void invalidateIdIndex(int index) {
+        if (index < idIndexedCount) {
+            idIndexedCount = 0;
+        }
+    }
+
     private void invalidateNameIndex(int index) {
         if (index < nameIndexedCount) {
             nameIndexedCount = 0;
@@ -479,11 +518,19 @@ public final class OutputSchema implements Mutable {
     }
 
     /**
+     * Whether a lookup should use the id index: the schema is wide, and the index is built or the schema has
+     * already been scanned often enough to amortise building it.
+     */
+    private boolean isIdIndexWorthwhile() {
+        return columnIds.size() >= ID_INDEX_MIN_COLUMNS && (idIndexedCount > 0 || ++idScanCount > INDEX_MIN_SCANS);
+    }
+
+    /**
      * Whether a lookup should use the name index: the schema is wide, and the index is built or the schema has
      * already been scanned often enough to amortise building it.
      */
     private boolean isNameIndexWorthwhile() {
-        return columnNames.size() >= NAME_INDEX_MIN_COLUMNS && (nameIndexedCount > 0 || ++nameScanCount > NAME_INDEX_MIN_SCANS);
+        return columnNames.size() >= NAME_INDEX_MIN_COLUMNS && (nameIndexedCount > 0 || ++nameScanCount > INDEX_MIN_SCANS);
     }
 
     private boolean isReferenceable(int index) {

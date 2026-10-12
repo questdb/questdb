@@ -1021,6 +1021,12 @@ public interface CairoConfiguration {
 
     int getSqlWindowInitialRangeBufferSize();
 
+    /**
+     * The model levels a statement may nest below its top level before the binder rejects it as too complex. A
+     * sub-query and its query block each add a level, and every further branch of a set operation chain nests one
+     * level below the branch before it, so the default 128 admits 63 nested sub-queries, 62 chained CTEs or 128
+     * UNION branches.
+     */
     int getSqlWindowMaxRecursion();
 
     long getSqlWindowRowIdMaxBytes();

@@ -246,6 +246,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeeplyNestedOffsetsCompile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 0), (2, 100_000_000), (3, 1_000_000_000)");
+            String source = "t";
+            for (int i = 0; i < 60; i++) {
+                source = "(SELECT x, dateadd('s', 1, ts) ts FROM " + source + " TIMESTAMP(ts))";
+            }
+            assertQuery("SELECT x FROM " + source + " WHERE ts > 0 AND ts < 100_000_000 OR ts = 1_060_000_000")
+                    .returns("""
+                            x
+                            1
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testDynamicBoundOffsetPredicateRemainsAsFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

@@ -41,8 +41,10 @@ public final class ScanPlan extends LogicalPlan {
     public static final int HINT_NO_INDEX = 1;
     public static final int HINT_NO_SYMBOL_PATTERN_INDEX = 8;
     public static final int HINT_PRE_TOUCH = 16;
+    private static final int NO_ORIGIN = Integer.MIN_VALUE;
     private final IntList authorizedColumnIndexes = new IntList();
-    private final IntList authorizedColumns = new IntList();
+    private final LongList authorizedColumns = new LongList();
+    private final IntList authorizedOrigins = new IntList();
     private final ObjList<BoundExpression> excludedKeys = new ObjList<>();
     private final IntList indexedColumnIds = new IntList();
     private final ObjList<BoundExpression> indexKeys = new ObjList<>();
@@ -86,6 +88,7 @@ public final class ScanPlan extends LogicalPlan {
         super.clear();
         authorizedColumnIndexes.clear();
         authorizedColumns.clear();
+        authorizedOrigins.clear();
         indexedColumnIds.clear();
         referencedColumnIndexes.clear();
         referencedColumnNames.clear();
@@ -138,8 +141,9 @@ public final class ScanPlan extends LogicalPlan {
      * then the ones only the scan reads, in table order.
      */
     public void collectAuthorizedColumnNames(ObjList<CharSequence> sink) {
-        for (int i = 0, n = orderAuthorizedColumns(); i < n; i += 3) {
-            final int origin = authorizedColumns.getQuick(i + 2);
+        orderAuthorizedColumns();
+        for (int i = 0, n = authorizedColumns.size(); i < n; i++) {
+            final int origin = authorizedOrigins.getQuick((int) authorizedColumns.getQuick(i));
             sink.add(origin < 0 ? getOutput().getColumnName(-origin - 1) : referencedColumnNames.getQuick(origin));
         }
     }
@@ -156,8 +160,9 @@ public final class ScanPlan extends LogicalPlan {
      */
     public IntList getAuthorizedColumnIndexes() {
         authorizedColumnIndexes.clear();
-        for (int i = 0, n = orderAuthorizedColumns(); i < n; i += 3) {
-            authorizedColumnIndexes.add(authorizedColumns.getQuick(i + 1));
+        orderAuthorizedColumns();
+        for (int i = 0, n = authorizedColumns.size(); i < n; i++) {
+            authorizedColumnIndexes.add((int) authorizedColumns.getQuick(i));
         }
         return authorizedColumnIndexes;
     }
@@ -596,38 +601,42 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
-     * Fills {@link #authorizedColumns} with one (first reference position, table index, origin) triple per column
-     * the scan authorizes, ordered by position then table index, and returns its size. An origin indexes the
-     * referenced columns, or is {@code -1 - i} for output column {@code i}.
+     * Fills {@link #authorizedColumns} with one {@code position << 32 | table index} key per column the scan
+     * authorizes, ordered by its first reference position then table index, and {@link #authorizedOrigins}, by table
+     * index, with the origin of each: an index into the referenced columns, or {@code -1 - i} for output column
+     * {@code i}, which takes the position {@link Integer#MAX_VALUE}.
      */
-    private int orderAuthorizedColumns() {
-        authorizedColumns.clear();
+    private void orderAuthorizedColumns() {
+        int columnCount = 0;
         for (int i = 0, n = referencedColumnIndexes.size(); i < n; i++) {
-            authorizedColumns.add(referencedColumnIndexes.getQuick(i));
-            authorizedColumns.add(referencedColumnPositions.getQuick(i));
-            authorizedColumns.add(i);
+            columnCount = Math.max(columnCount, referencedColumnIndexes.getQuick(i) + 1);
         }
         for (int i = 0, n = sourceColumnIndexes.size(); i < n; i++) {
-            authorizedColumns.add(sourceColumnIndexes.getQuick(i));
-            authorizedColumns.add(Integer.MAX_VALUE);
-            authorizedColumns.add(-i - 1);
+            columnCount = Math.max(columnCount, sourceColumnIndexes.getQuick(i) + 1);
         }
-        authorizedColumns.sortGroups(3);
-        int size = 0;
-        for (int i = 0, n = authorizedColumns.size(); i < n; i += 3) {
-            final int columnIndex = authorizedColumns.getQuick(i);
-            if (size == 0 || authorizedColumns.getQuick(size - 2) != columnIndex) {
-                final int position = authorizedColumns.getQuick(i + 1);
-                final int origin = authorizedColumns.getQuick(i + 2);
-                authorizedColumns.setQuick(size, position);
-                authorizedColumns.setQuick(size + 1, columnIndex);
-                authorizedColumns.setQuick(size + 2, origin);
-                size += 3;
+        authorizedOrigins.setAll(columnCount, NO_ORIGIN);
+        for (int i = 0, n = referencedColumnIndexes.size(); i < n; i++) {
+            final int columnIndex = referencedColumnIndexes.getQuick(i);
+            final int origin = authorizedOrigins.getQuick(columnIndex);
+            if (origin == NO_ORIGIN || referencedColumnPositions.getQuick(i) < referencedColumnPositions.getQuick(origin)) {
+                authorizedOrigins.setQuick(columnIndex, i);
             }
         }
-        authorizedColumns.setPos(size);
-        authorizedColumns.sortGroups(3);
-        return size;
+        for (int i = 0, n = sourceColumnIndexes.size(); i < n; i++) {
+            final int columnIndex = sourceColumnIndexes.getQuick(i);
+            if (authorizedOrigins.getQuick(columnIndex) < 0) {
+                authorizedOrigins.setQuick(columnIndex, -i - 1);
+            }
+        }
+        authorizedColumns.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final int origin = authorizedOrigins.getQuick(columnIndex);
+            if (origin != NO_ORIGIN) {
+                final int position = origin < 0 ? Integer.MAX_VALUE : referencedColumnPositions.getQuick(origin);
+                authorizedColumns.add((long) position << 32 | columnIndex);
+            }
+        }
+        authorizedColumns.sort();
     }
 
     /**

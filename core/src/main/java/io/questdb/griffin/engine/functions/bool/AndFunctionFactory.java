@@ -119,6 +119,12 @@ public class AndFunctionFactory implements FunctionFactory {
             return right;
         }
 
+        // newInstance() folds a constant operand away, so no operand is constant.
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
         @Override
         public void toPlan(PlanSink sink) {
             sink.val('(');
@@ -168,6 +174,11 @@ public class AndFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val('(');
             sink.val(func0);
@@ -210,6 +221,11 @@ public class AndFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
         }
 
         @Override

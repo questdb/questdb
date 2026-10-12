@@ -210,6 +210,20 @@ public class MemoizationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStoredBinaryColumnReadTwiceIsNotMemoized() throws Exception {
+        assertMemoryLeak(() -> {
+            allowFunctionMemoization();
+            execute("CREATE TABLE lp_bin AS (SELECT x, rnd_bin(16, 16, 0) b FROM long_sequence(3))");
+            assertRowsAndMemoizers("SELECT length(z) + y n, length(z) m FROM (SELECT b z, x + 1 y FROM lp_bin)",
+                    "n\tm\n18\t16\n19\t16\n20\t16\n", 0);
+            assertRowsAndMemoizers("SELECT count() FROM (SELECT z, z z2, y FROM (SELECT b z, x + 1 y FROM lp_bin)) WHERE base64(z, 100) <> base64(z2, 100)",
+                    "count\n0\n", 0);
+            assertRowsAndMemoizers("SELECT count() FROM (SELECT rnd_bin(16, 16, 0) v, v v2 FROM long_sequence(50)) WHERE base64(v, 100) <> base64(v2, 100)",
+                    "count\n0\n", 1);
+        });
+    }
+
+    @Test
     public void testVolatileValueOfEveryTypeReadTwiceIsEvaluatedOnce() throws Exception {
         assertMemoryLeak(() -> {
             final String[][] cases = {

@@ -58,7 +58,8 @@ import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
 
 /**
  * Restores the values a keyless aggregate takes over no rows once decorrelation keys it by the outer columns:
- * counts read zero, and a LIMIT or ON condition guards the restored values.
+ * counts read zero, and a LIMIT or ON condition guards the restored values, as does a row marker of the inputs
+ * before the step when a later step null-extends them.
  */
 final class ScalarCompensation implements Mutable {
     static final String OUTER_LIMIT_OVER_COUNT = "LIMIT referencing an outer column is not supported over a scalar count in a correlated lateral sub-query; use a constant or bind variable";
@@ -76,6 +77,8 @@ final class ScalarCompensation implements Mutable {
     private final DecorrelationContext ctx;
     private final DecorrelationDomains domains;
     private final ObjList<BoundExpression> hoistedConjuncts = new ObjList<>();
+    private final ObjList<JoinInput> markedInputs = new ObjList<>();
+    private final IntList markerColumnIds = new IntList();
     private final ConjunctTest uncompensatedConjuncts = this::keepsUncompensatedConjunct;
     AggregatePlan scalarAggregate;
     private BoundExpression pendingConjuncts;
@@ -97,6 +100,8 @@ final class ScalarCompensation implements Mutable {
         drivenInputs.clear();
         drivenScalars.clear();
         hoistedConjuncts.clear();
+        markedInputs.clear();
+        markerColumnIds.clear();
         scalarAggregates.clear();
         uncompensatedScalars.clear();
         pendingConjuncts = null;
@@ -162,18 +167,6 @@ final class ScalarCompensation implements Mutable {
             case ColumnType.LONG -> constant.getLongValue() != Numbers.LONG_NULL;
             default -> false;
         };
-    }
-
-    private static boolean isNullPropagating(BoundExpression expression) {
-        if (expression instanceof ColumnExpression || expression instanceof OuterColumnExpression) {
-            return true;
-        }
-        if (!(expression instanceof FunctionExpression call) || call.getArgumentCount() != 2) {
-            return false;
-        }
-        final String name = call.getName();
-        return (Chars.equals(name, '+') || Chars.equals(name, '-') || Chars.equals(name, '*') || Chars.equals(name, '/'))
-                && isNullPropagating(call.argumentAt(0)) && isNullPropagating(call.argumentAt(1));
     }
 
     private static boolean isZeroOnEmpty(FunctionExpression aggregate) {
@@ -269,7 +262,13 @@ final class ScalarCompensation implements Mutable {
                 replacement = isZeroOnEmpty(aggregate.getAggregates().getQuick(aggregateIndex - keyCount)) ? zeroCoalesce(carrier, input) : carrier;
             } else {
                 final int substitute = ctx.substitution.get(columnId);
-                replacement = substitute < 0 ? null : ctx.planNodes.columns.next().of(substitute, type, expression.getPosition());
+                if (substitute > -1) {
+                    replacement = ctx.planNodes.columns.next().of(substitute, type, expression.getPosition());
+                } else if (aggregate.getGroupingExpressions().getQuick(aggregateIndex) instanceof OuterColumnExpression outer) {
+                    replacement = ctx.planNodes.outerColumns.next().of(outer.getColumnId(), type, expression.getPosition());
+                } else {
+                    replacement = null;
+                }
             }
             if (replacement != null) {
                 value = ctx.context.getRewriter().substituteColumn(value, columnId, replacement);
@@ -323,6 +322,55 @@ final class ScalarCompensation implements Mutable {
     }
 
     /**
+     * A condition over the master join that holds on each row of the inputs before the step being decorrelated
+     * and fails on a row a later step null-extends them on: each such row holds a row of the first input or of
+     * an input that a step before joins RIGHT or FULL.
+     */
+    private BoundExpression outerRowMarker(int position) throws SqlException {
+        final JoinPlan join = ctx.master;
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
+        BoundExpression marker = null;
+        for (int i = 0, n = steps.indexOf(join.getInputs().getQuick(ctx.masterLimit)); i < n; i++) {
+            final JoinInput input = steps.getQuick(i);
+            if (i == 0 || input.getJoinType().isMasterNulling()) {
+                final BoundExpression guard = rowGuard(join, input, position);
+                marker = marker == null ? guard : ctx.context.bindCall("or", position, marker, guard, join.getOutput());
+            }
+        }
+        return marker;
+    }
+
+    /**
+     * A condition that holds on each row of the join input and fails where the join null-extends it: its
+     * designated timestamp is not NULL, or, for an input without one, its row marker, which a projection over
+     * the input defines.
+     */
+    private BoundExpression rowGuard(JoinPlan join, JoinInput input, int position) throws SqlException {
+        final OutputSchema output = input.getInput().getOutput();
+        final int timestampIndex = output.getTimestampIndex();
+        if (timestampIndex > -1) {
+            return ctx.context.bindCall("!=", position,
+                    ctx.planNodes.columns.next().of(output.getColumnId(timestampIndex), output.getColumnType(timestampIndex), position),
+                    ctx.planNodes.constants.next().ofNull(position), join.getOutput());
+        }
+        final int index = markedInputs.indexOf(input);
+        if (index > -1) {
+            return ctx.planNodes.columns.next().of(markerColumnIds.getQuick(index), ColumnType.BOOLEAN, position);
+        }
+        final ProjectPlan project = ctx.planNodes.projects.next().of(input.getInput(), position);
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            project.getExpressions().add(ctx.planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), position));
+        }
+        project.getOutput().copyFrom(output);
+        final int markerId = ctx.markRows(project, position);
+        input.setInput(project);
+        join.addMissingInputColumns();
+        markedInputs.add(input);
+        markerColumnIds.add(markerId);
+        return ctx.planNodes.columns.next().of(markerId, ColumnType.BOOLEAN, position);
+    }
+
+    /**
      * The index in the scalar projection, which {@link #scalarProjection} then holds, of the column {@code columnId}
      * of {@code node} reads through column projections and filters, or -1.
      */
@@ -370,6 +418,18 @@ final class ScalarCompensation implements Mutable {
             }
         }
         return true;
+    }
+
+    static boolean isNullPropagating(BoundExpression expression) {
+        if (expression instanceof ColumnExpression || expression instanceof OuterColumnExpression) {
+            return true;
+        }
+        if (!(expression instanceof FunctionExpression call) || call.getArgumentCount() != 2) {
+            return false;
+        }
+        final String name = call.getName();
+        return (Chars.equals(name, '+') || Chars.equals(name, '-') || Chars.equals(name, '*') || Chars.equals(name, '/'))
+                && isNullPropagating(call.argumentAt(0)) && isNullPropagating(call.argumentAt(1));
     }
 
     static BoundExpression outerLimit(LimitPlan limit) {
@@ -579,6 +639,12 @@ final class ScalarCompensation implements Mutable {
         if (guard != null) {
             for (int i = start, n = compensations.size(); i < n; i++) {
                 compensations.setQuick(i, guarded(guard, compensations.getQuick(i), input, step.getPosition()));
+            }
+        }
+        if (compensations.size() > start && ctx.isStepNullExtendedLater()) {
+            final BoundExpression marker = outerRowMarker(step.getPosition());
+            for (int i = start, n = compensations.size(); i < n; i++) {
+                compensations.setQuick(i, guarded(marker, compensations.getQuick(i), input, step.getPosition()));
             }
         }
     }

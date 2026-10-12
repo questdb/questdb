@@ -106,6 +106,12 @@ public class OrFunctionFactory implements FunctionFactory {
             return right;
         }
 
+        // newInstance() folds a constant operand away, so no operand is constant.
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
         @Override
         public void toPlan(PlanSink sink) {
             sink.val('(').val(left).val(" or ").val(right).val(')');

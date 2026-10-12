@@ -118,6 +118,8 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -336,6 +338,32 @@ public class FunctionResolver implements Mutable {
             for (int i = 0, n = args.size(); i < n; i++) {
                 final Function arg = args.getQuick(i);
                 if (RuntimeConstFunction.isFoldable(arg)) {
+                    args.setQuick(i, RuntimeConstFunction.newInstance(arg));
+                }
+            }
+        }
+    }
+
+    /**
+     * Wraps the arguments built for {@code call} as {@link #wrapRuntimeConstants(ObjList)} does, reading each
+     * argument's constness from its bound flags instead of walking the built functions. The flags must describe the
+     * built arguments, which a shared scalar subquery bound does not: its reference is runtime constant.
+     */
+    public static void wrapRuntimeConstants(FunctionExpression call, ObjList<Function> args) {
+        boolean allConstOrRuntimeConst = true;
+        boolean anyRuntimeConst = false;
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final int flags = call.argumentAt(i).getFunctionFlags();
+            if ((flags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == 0) {
+                allConstOrRuntimeConst = false;
+            } else if ((flags & BoundExpression.RUNTIME_CONSTANT) != 0) {
+                anyRuntimeConst = true;
+            }
+        }
+        if (!(allConstOrRuntimeConst && anyRuntimeConst)) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                final Function arg = args.getQuick(i);
+                if (RuntimeConstFunction.isFoldable(arg, call.argumentAt(i).getFunctionFlags())) {
                     args.setQuick(i, RuntimeConstFunction.newInstance(arg));
                 }
             }

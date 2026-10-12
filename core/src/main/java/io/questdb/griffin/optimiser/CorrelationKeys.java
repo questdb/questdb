@@ -178,6 +178,15 @@ final class CorrelationKeys implements Mutable {
         return false;
     }
 
+    /**
+     * The key at the index of the step as an equality of its slave and master columns over the join output.
+     */
+    private BoundExpression keyEquality(JoinInput step, int index, OutputSchema output) throws SqlException {
+        final int position = step.getKeyPositions().getQuick(index);
+        return ctx.context.bindCall("=", position, ctx.column(output, step.getSlaveKeyColumnIds().getQuick(index), position),
+                ctx.column(output, step.getMasterKeyColumnIds().getQuick(index), position), output);
+    }
+
     static boolean hasOuterCondition(JoinInput input) {
         return switch (input.getJoinType()) {
             case CROSS -> input.getPostJoinFilter() != null && LogicalPlans.hasOuterColumn(input.getPostJoinFilter());
@@ -374,6 +383,23 @@ final class CorrelationKeys implements Mutable {
     }
 
     /**
+     * Moves each key of the join's steps that reads the column to its step's ON condition, as an equality.
+     */
+    void moveKeyReads(JoinPlan join, int columnId) throws SqlException {
+        for (int i = 1, n = join.getInputs().size(); i < n; i++) {
+            final JoinInput step = join.getInputs().getQuick(i);
+            for (int k = step.getMasterKeyColumnIds().size() - 1; k > -1; k--) {
+                if (step.getMasterKeyColumnIds().getQuick(k) == columnId || step.getSlaveKeyColumnIds().getQuick(k) == columnId) {
+                    final BoundExpression equality = keyEquality(step, k, join.getOutput());
+                    step.setOnResidual(isTrue(step.getOnResidual()) ? equality
+                            : ctx.context.getRewriter().combineConjunction(step.getOnResidual(), equality, equality.getPosition()));
+                    step.removeKey(k);
+                }
+            }
+        }
+    }
+
+    /**
      * Takes the ON condition of a LEFT step, its first {@code keyCount} keys as equalities and its residual,
      * as one predicate over the join output; the step loses both. A scalar body evaluates it over its
      * empty-input values.
@@ -383,22 +409,10 @@ final class CorrelationKeys implements Mutable {
         if (keyCount == 0 && isTrue(condition)) {
             return null;
         }
-        final OutputSchema output = join.getOutput();
         for (int i = 0; i < keyCount; i++) {
-            final int masterId = step.getMasterKeyColumnIds().getQuick(i);
-            final int slaveId = step.getSlaveKeyColumnIds().getQuick(i);
-            final int position = step.getKeyPositions().getQuick(i);
-            final BoundExpression equality = ctx.context.bindCall("=", position,
-                    ctx.planNodes.columns.next().of(slaveId, output.getColumnType(output.getColumnIndexById(slaveId)), position),
-                    ctx.planNodes.columns.next().of(masterId, output.getColumnType(output.getColumnIndexById(masterId)), position), output);
+            final BoundExpression equality = keyEquality(step, 0, join.getOutput());
             condition = condition == null ? equality : ctx.context.getRewriter().combineConjunction(condition, equality, step.getPosition());
-        }
-        for (int i = 0; i < keyCount; i++) {
-            step.getMasterKeyColumnIds().removeIndex(0);
-            step.getSlaveKeyColumnIds().removeIndex(0);
-            step.getMasterKeyNames().remove(0);
-            step.getSlaveKeyNames().remove(0);
-            step.getKeyPositions().removeIndex(0);
+            step.removeKey(0);
         }
         step.setOnResidual(null);
         return condition;

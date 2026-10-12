@@ -122,6 +122,26 @@ public class IntervalExtractionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntegerBoundsAreEpochsInColumnUnit() throws Exception {
+        for (boolean isNanos : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE lp_epoch (id INT, ts " + (isNanos ? "TIMESTAMP_NS" : "TIMESTAMP") + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO lp_epoch VALUES (1, 0), (2, 1_000_000), (3, 2_000_000), (4, 3_000_000), (5, 3_000_000_000)");
+                assertEpochScan("ts = 0 OR ts = 1000000 OR ts = 2000000", isNanos, points(isNanos, 0, 1_000_000, 2_000_000), 1, 2, 3);
+                assertEpochScan("ts = 3000000000 OR 1000000 = ts", isNanos, points(isNanos, 1_000_000, 3_000_000_000L), 2, 5);
+                assertEpochScan("ts = 2::BYTE OR ts = 2000000::LONG OR ts = 7::SHORT", isNanos, points(isNanos, 2, 7, 2_000_000), 3);
+                assertEpochScan("ts IN (0, 3000000000)", isNanos, points(isNanos, 0, 3_000_000_000L), 1, 5);
+                assertEpochScan("ts IN (1000000) OR ts = 0", isNanos, points(isNanos, 0, 1_000_000), 1, 2);
+                assertEpochScan("ts = NULL OR ts = 1000000", isNanos, "(\"MIN\",\"MIN\")," + points(isNanos, 1_000_000), 2);
+                assertEpochScan("ts > 2000000", isNanos, "(\"" + epoch(2_000_001, isNanos) + "\",\"MAX\")", 4, 5);
+                assertEpochScan("ts BETWEEN 1000000 AND 3000000000", isNanos,
+                        "(\"" + epoch(1_000_000, isNanos) + "\",\"" + epoch(3_000_000_000L, isNanos) + "\")", 2, 3, 4, 5);
+                execute("DROP TABLE lp_epoch");
+            });
+        }
+    }
+
+    @Test
     public void testMicrosecondAndNanosecondComparisonDirections() throws Exception {
         for (boolean nanos : new boolean[]{false, true}) {
             assertMemoryLeak(() -> {
@@ -632,6 +652,25 @@ public class IntervalExtractionTest extends AbstractCairoTest {
         }
     }
 
+    private static String epoch(long value, boolean isNanos) {
+        final long unit = isNanos ? 1_000_000_000L : 1_000_000L;
+        final long seconds = value / unit;
+        return String.format(isNanos ? "1970-01-01T%02d:%02d:%02d.%09dZ" : "1970-01-01T%02d:%02d:%02d.%06dZ",
+                seconds / 3600, seconds / 60 % 60, seconds % 60, value % unit);
+    }
+
+    private static String points(boolean isNanos, long... values) {
+        final StringBuilder sb = new StringBuilder();
+        for (long value : values) {
+            if (!sb.isEmpty()) {
+                sb.append(',');
+            }
+            final String text = epoch(value, isNanos);
+            sb.append("(\"").append(text).append("\",\"").append(text).append("\")");
+        }
+        return sb.toString();
+    }
+
     private static String rows(String header, boolean isNanos, String ids) {
         final StringBuilder sink = new StringBuilder(header).append('\n');
         if (!ids.isEmpty()) {
@@ -647,6 +686,23 @@ public class IntervalExtractionTest extends AbstractCairoTest {
             }
         }
         return sink.toString();
+    }
+
+    private void assertEpochScan(String predicate, boolean isNanos, String intervals, long... ids) throws Exception {
+        final long[] values = {0, 1_000_000, 2_000_000, 3_000_000, 3_000_000_000L};
+        final StringBuilder expected = new StringBuilder("id\tts\n");
+        for (long id : ids) {
+            expected.append(id).append('\t').append(epoch(values[(int) id - 1], isNanos)).append('\n');
+        }
+        assertQuery("SELECT * FROM lp_epoch WHERE " + predicate)
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: lp_epoch
+                              intervals: [""" + intervals + "]\n")
+                .returns(expected);
     }
 
     private void setTimestamp(int index, long value, boolean isNanos) throws SqlException {

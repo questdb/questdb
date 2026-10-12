@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.optimiser;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
@@ -61,6 +62,7 @@ import org.jetbrains.annotations.Nullable;
  */
 final class DecorrelationContext implements Mutable {
     static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
+    private static final String ROW_MARKER_PREFIX = "__qdb_row_marker__";
     final ObjList<JoinInput> carrierSteps = new ObjList<>();
     final ObjList<LogicalPlan> chain;
     final IntList chainOuterIds = new IntList();
@@ -357,6 +359,13 @@ final class DecorrelationContext implements Mutable {
         copy.clear();
     }
 
+    /**
+     * True when a step the join orders after the step being decorrelated null-extends it.
+     */
+    boolean isStepNullExtendedLater() {
+        return LogicalPlans.lastMasterNullingStep(master) > LogicalPlans.orderedSteps(master).indexOf(master.getInputs().getQuick(masterLimit));
+    }
+
     CharSequence joinedName(OutputSchema output, int columnId) {
         final int index = output.getColumnIndexById(columnId);
         return qualifiedName(output.getColumnQualifier(index), output.getColumnName(index));
@@ -388,6 +397,18 @@ final class DecorrelationContext implements Mutable {
             }
         }
         return -1;
+    }
+
+    /**
+     * Appends a hidden TRUE column to the projection, which a row a join null-extends reads FALSE; returns its id.
+     */
+    int markRows(ProjectPlan project, int position) {
+        project.getExpressions().add(planNodes.constants.next().ofBoolean(true, position));
+        final int markerId = context.newColumnId();
+        final CharacterStoreEntry name = characterStore.newEntry();
+        name.put(ROW_MARKER_PREFIX).put(carrierSequence++);
+        project.getOutput().add(markerId, name.toImmutable(), ColumnType.BOOLEAN, false);
+        return markerId;
     }
 
     /**

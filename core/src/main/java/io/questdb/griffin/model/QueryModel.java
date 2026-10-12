@@ -56,7 +56,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_ASOF = 4;
     public static final int JOIN_CROSS = 3;
     public static final int JOIN_CROSS_FULL = 12;
-    public static final int JOIN_CROSS_LEFT = 8;
     public static final int JOIN_CROSS_RIGHT = 11;
     public static final int JOIN_FULL_OUTER = 10;
     public static final int JOIN_HORIZON = 13;

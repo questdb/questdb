@@ -153,11 +153,7 @@ public final class IntervalExtractor implements Mutable {
             return constant.getTimestampText() != null ? driver.parseFloorLiteral(constant.getTimestampText())
                     : driver.from(constant.getLongValue(), ColumnType.getTimestampType(type));
         }
-        return switch (type) {
-            case ColumnType.NULL -> Numbers.LONG_NULL;
-            case ColumnType.INT -> Numbers.intToLong((int) constant.getLongValue());
-            default -> constant.getLongValue();
-        };
+        return pointValue(constant);
     }
 
     private static CharSequence constantText(ConstantExpression constant) {
@@ -232,6 +228,11 @@ public final class IntervalExtractor implements Mutable {
         return constant.isLiteral() && constant.getSource() == null;
     }
 
+    private static boolean isRuntimePoint(BoundExpression bound) {
+        final int type = bound.getDataType();
+        return (ColumnType.isTimestamp(type) || isIntegralType(type)) && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0;
+    }
+
     private static boolean isSameOffset(BoundExpression left, BoundExpression right) {
         if (left instanceof ColumnExpression l && right instanceof ColumnExpression r) {
             return l.getColumnId() == r.getColumnId();
@@ -252,6 +253,14 @@ public final class IntervalExtractor implements Mutable {
     private static boolean isTimestampCursor(CursorExpression cursor) {
         final OutputSchema output = cursor.getPlan().getOutput();
         return !cursor.isBoolean() && output.getColumnCount() == 1 && ColumnType.isTimestamp(output.getColumnType(0));
+    }
+
+    private static long pointValue(ConstantExpression constant) {
+        return switch (ColumnType.tagOf(constant.getDataType())) {
+            case ColumnType.NULL -> Numbers.LONG_NULL;
+            case ColumnType.INT, ColumnType.SHORT, ColumnType.BYTE -> Numbers.intToLong((int) constant.getLongValue());
+            default -> constant.getLongValue();
+        };
     }
 
     // A literal bound must parse as a date; a computed bound must cast to TIMESTAMP.
@@ -383,9 +392,7 @@ public final class IntervalExtractor implements Mutable {
         final boolean isCursorBound = bound instanceof CursorExpression cursor && isTimestampCursor(cursor)
                 && column.isDirectReference() && column.getDataType() == timestampType;
         final boolean isRuntimeTimestampBound = isCursorBound || !(bound instanceof ConstantExpression) && column.isDirectReference()
-                && column.getDataType() == timestampType
-                && (ColumnType.isTimestamp(bound.getDataType()) || isIntegralType(bound.getDataType()))
-                && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0;
+                && column.getDataType() == timestampType && isRuntimePoint(bound);
         final long convertedBound = bound instanceof ConstantExpression constantBound && isLosslessPrecisionBound(column, constantBound, timestampType)
                 ? ColumnType.getTimestampDriver(timestampType).from(constantBound.getLongValue(), ColumnType.getTimestampType(bound.getDataType()))
                 : Numbers.LONG_NULL;
@@ -419,9 +426,7 @@ public final class IntervalExtractor implements Mutable {
             }
         }
         if (bound instanceof ConstantExpression constant) {
-            final long value = convertedBound != Numbers.LONG_NULL ? convertedBound
-                    : isIntegralBound && ColumnType.tagOf(constant.getDataType()) != ColumnType.LONG
-                      ? Numbers.intToLong((int) constant.getLongValue()) : constant.getLongValue();
+            final long value = convertedBound != Numbers.LONG_NULL ? convertedBound : pointValue(constant);
             if (value == Numbers.LONG_NULL && !isExclusion) {
                 if (isNestedOffset) {
                     intersectEmpty();
@@ -941,11 +946,17 @@ public final class IntervalExtractor implements Mutable {
     }
 
     private boolean isTimestampPoint(ColumnExpression column, BoundExpression bound, int timestampColumnId, int timestampType) {
-        return column.getColumnId() == timestampColumnId && column.getDataType() == timestampType
-                && (bound instanceof ConstantExpression && (bound.getDataType() == timestampType || bound.getDataType() == ColumnType.NULL)
-                || bound.getDataType() == timestampType && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0
-                || bound instanceof CursorExpression cursor && isBoundSpeculationAllowed && isTimestampCursor(cursor)
-                && cursor.getPlan().getOutput().getColumnType(0) == timestampType);
+        if (column.getColumnId() != timestampColumnId || column.getDataType() != timestampType) {
+            return false;
+        }
+        if (bound instanceof ConstantExpression) {
+            final int type = bound.getDataType();
+            return type == timestampType || type == ColumnType.NULL || isIntegralType(type);
+        }
+        if (bound instanceof CursorExpression cursor) {
+            return isBoundSpeculationAllowed && isTimestampCursor(cursor);
+        }
+        return isRuntimePoint(bound);
     }
 
     private boolean isTimestampUnion(BoundExpression expression, int timestampColumnId, int timestampType) {
@@ -967,8 +978,7 @@ public final class IntervalExtractor implements Mutable {
                     if (isUnusableTimestampBound(bound) || ColumnType.isTimestamp(bound.getDataType()) && bound.getDataType() != timestampType) {
                         return false;
                     }
-                } else if (bound.getDataType() != timestampType
-                        || (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) == 0) {
+                } else if (bound instanceof CursorExpression || !isRuntimePoint(bound)) {
                     return false;
                 }
             }
@@ -1084,7 +1094,7 @@ public final class IntervalExtractor implements Mutable {
         } else {
             final BoundExpression bound = call.argumentAt(0) instanceof ColumnExpression ? call.argumentAt(1) : call.argumentAt(0);
             if (bound instanceof ConstantExpression constant) {
-                final long value = constant.getDataType() == ColumnType.NULL ? Numbers.LONG_NULL : constant.getLongValue();
+                final long value = pointValue(constant);
                 intervals.union(value, value);
             } else {
                 intervals.unionRuntimeTimestamp(boundFunction(bound, input, executionContext), bound.getPosition());

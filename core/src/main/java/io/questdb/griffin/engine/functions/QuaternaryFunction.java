@@ -110,13 +110,11 @@ public interface QuaternaryFunction extends Function {
         final boolean brc = getFunc1().isRuntimeConstant();
         final boolean crc = getFunc2().isRuntimeConstant();
         final boolean drc = getFunc3().isRuntimeConstant();
-
-        final boolean ac = getFunc0().isConstant();
-        final boolean bc = getFunc1().isConstant();
-        final boolean cc = getFunc2().isConstant();
-        final boolean dc = getFunc3().isConstant();
-
-        return (ac || arc) && (bc || brc) && (cc || crc) && (dc || drc) && (arc || brc || crc || drc);
+        return (arc || brc || crc || drc)
+                && (arc || getFunc0().isConstant())
+                && (brc || getFunc1().isConstant())
+                && (crc || getFunc2().isConstant())
+                && (drc || getFunc3().isConstant());
     }
 
     @Override

@@ -210,14 +210,14 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testOrderedProjectionEvaluatesStatefulArgumentOnce() throws Exception {
-        assertMemoryLeak(() -> assertQuery("SELECT x, concat(timestamp_sequence(0, 1), '') c FROM long_sequence(3) ORDER BY x DESC")
+        assertQuery("SELECT x, concat(timestamp_sequence(0, 1), '') c FROM long_sequence(3) ORDER BY x DESC")
                 .expectSize()
                 .returns("""
                         x\tc
                         3\t1970-01-01T00:00:00.000002Z
                         2\t1970-01-01T00:00:00.000001Z
                         1\t1970-01-01T00:00:00.000000Z
-                        """));
+                        """);
     }
 
     @Test

@@ -107,15 +107,13 @@ public interface TernaryFunction extends Function {
 
     @Override
     default boolean isRuntimeConstant() {
-        boolean arc = getLeft().isRuntimeConstant();
-        boolean brc = getCenter().isRuntimeConstant();
-        boolean crc = getRight().isRuntimeConstant();
-
-        boolean ac = getLeft().isConstant();
-        boolean bc = getCenter().isConstant();
-        boolean cc = getRight().isConstant();
-
-        return (ac || arc) && (bc || brc) && (cc || crc) && (arc || brc || crc);
+        final boolean arc = getLeft().isRuntimeConstant();
+        final boolean brc = getCenter().isRuntimeConstant();
+        final boolean crc = getRight().isRuntimeConstant();
+        return (arc || brc || crc)
+                && (arc || getLeft().isConstant())
+                && (brc || getCenter().isConstant())
+                && (crc || getRight().isConstant());
     }
 
     @Override

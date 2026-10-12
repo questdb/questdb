@@ -132,14 +132,7 @@ public final class LogicalPlans {
             case FilterPlan filter ->
                     isOrderIndependent(filter.getPredicate()) && canPushSetTimestampThrough(filter, columnIndex);
             case SortPlan sort -> canPushSetTimestampThrough(sort, columnIndex);
-            case SetOperationPlan operation -> {
-                final int type = output.getColumnType(columnIndex);
-                yield setTimestampIndex(operation) == columnIndex
-                        && operation.getLeft().getOutput().getColumnType(columnIndex) == type
-                        && operation.getRight().getOutput().getColumnType(columnIndex) == type
-                        && canPushSetTimestamp(operation.getLeft(), columnIndex)
-                        && canPushSetTimestamp(operation.getRight(), columnIndex);
-            }
+            case SetOperationPlan operation -> canPushSetTimestampThrough(operation, columnIndex);
             default -> false;
         };
     }
@@ -735,6 +728,30 @@ public final class LogicalPlans {
             }
         }
         return true;
+    }
+
+    /**
+     * Walks the left-deep chain of set operations once: every operation keeps the column type and either declares
+     * no timestamp or declares the column, and the bottom operation resolves its timestamp to the column.
+     */
+    private static boolean canPushSetTimestampThrough(SetOperationPlan operation, int columnIndex) {
+        final int type = operation.getOutput().getColumnType(columnIndex);
+        while (true) {
+            final LogicalPlan left = operation.getLeft();
+            final LogicalPlan right = operation.getRight();
+            if (left.getOutput().getColumnType(columnIndex) != type || right.getOutput().getColumnType(columnIndex) != type
+                    || !canPushSetTimestamp(right, columnIndex)) {
+                return false;
+            }
+            if (!(left instanceof SetOperationPlan next)) {
+                return setTimestampIndex(operation) == columnIndex && canPushSetTimestamp(left, columnIndex);
+            }
+            final int timestampIndex = operation.getOutput().getTimestampIndex();
+            if (timestampIndex >= 0 && timestampIndex != columnIndex) {
+                return false;
+            }
+            operation = next;
+        }
     }
 
     private static boolean canPushSetTimestampThrough(UnaryPlan plan, int columnIndex) {

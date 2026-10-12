@@ -96,6 +96,11 @@ public final class SqlBinder implements Mutable {
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<CharSequence>> hintScopes;
     private final JoinBinder joinBinder;
     private final LateralBinder lateralBinder;
+    /**
+     * The deepest model a statement may nest: its own top level and {@link CairoConfiguration#getSqlWindowMaxRecursion()}
+     * levels below it.
+     */
+    private final int maxModelDepth;
     private final OrderBinder orderBinder;
     private final PivotBinder pivotBinder;
     private final ReferencedColumns referencedColumns = new ReferencedColumns();
@@ -104,6 +109,7 @@ public final class SqlBinder implements Mutable {
     private final IntList tmpOutputColumns = new IntList();
     private final UpdateBinder updateBinder;
     private final WindowBinder windowBinder;
+    private int modelDepth;
     private SqlParserCallback parserCallback;
     private LogicalPlan predicateSource;
 
@@ -134,6 +140,7 @@ public final class SqlBinder implements Mutable {
     ) {
         this.configuration = configuration;
         this.functionParser = functionParser;
+        this.maxModelDepth = configuration.getSqlWindowMaxRecursion() + 1;
         this.hintScopes = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 4, configuration.getSqlModelPoolCapacity());
         this.ctx = new BindContext(subqueryCompiler, functionParser, scopes, sqlNodePool, characterStore, planNodePools, planTables,
                 preparedFunctions, functionSources, expressionRewriter, functionInstantiator, tmpArguments, tmpPositions, tmpScope, tmpIndexes);
@@ -373,6 +380,7 @@ public final class SqlBinder implements Mutable {
     }
 
     private LogicalPlan bindQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        enterModel();
         final BindScope scope = ctx.scope();
         final LowerCaseCharSequenceObjHashMap<CharSequence> previousHints = scope.currentHints;
         final ExpressionNode originatingView = model.getOriginatingViewNameExpr();
@@ -382,6 +390,7 @@ public final class SqlBinder implements Mutable {
         try {
             return bindQueryWithHints(model, executionContext);
         } finally {
+            modelDepth--;
             scope.currentHints = previousHints;
             if (originatingView != null) {
                 functionParser.getFunctionResolver().restoreExecutionRequirementPosition(previousRequirementPosition);
@@ -390,6 +399,7 @@ public final class SqlBinder implements Mutable {
     }
 
     private LogicalPlan bindQueryBlock(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        enterModel();
         final BindScope scope = ctx.scope();
         final LowerCaseCharSequenceObjHashMap<CharSequence> previousHints = scope.currentHints;
         scope.currentHints = mergeHints(model, scope.currentHints);
@@ -399,6 +409,7 @@ public final class SqlBinder implements Mutable {
         try {
             return bindQueryBlockWithHints(model, executionContext);
         } finally {
+            modelDepth--;
             scope.currentHints = previousHints;
         }
     }
@@ -583,7 +594,7 @@ public final class SqlBinder implements Mutable {
                 : isOrderBound && (hasComputedOrder(project, source)
                 || source.getOrderBy().size() > 0 && (hasComputedProjection(project) || sourcePlan instanceof JoinPlan
                 || sourcePlan instanceof SetOperationPlan && isSelectedOrder(project, source, sourcePlan.getOutput(), sourceAlias(source)))
-                || LogicalPlans.hasRepeatedColumn(project) && hasProjectedOrder(project, source)
+                || source.getOrderBy().size() > 0 && LogicalPlans.hasRepeatedColumn(project) && hasProjectedOrder(project, source)
         )
                   ? orderBinder.bindOutputOrder(model, sourcePlan, project, source, sourceAlias(source), hasWindows ? bindScope.windowOrderExpressions : null, executionContext)
                   : isOrderBound ? orderBinder.bindSourceOrder(sourcePlan, project, source, sourceAlias(source)) : orderBinder.designateTimestamp(project);
@@ -637,12 +648,12 @@ public final class SqlBinder implements Mutable {
             return bindQueryBlock(model, executionContext);
         }
         final LogicalPlan show = bindShow(model, executionContext);
-        LogicalPlan result = show != null ? show : bindSetOperationBranch(model, executionContext);
+        LogicalPlan result = show != null ? show : bindSetOperationBranch(model, 0, executionContext);
         QueryModel branch = model;
-        while (branch.getUnionModel() != null) {
+        for (int branchIndex = 1; branch.getUnionModel() != null; branchIndex++) {
             final QueryModel next = branch.getUnionModel();
             final LogicalPlan nextShow = bindShow(next, executionContext);
-            LogicalPlan right = nextShow != null ? nextShow : bindSetOperationBranch(next, executionContext);
+            LogicalPlan right = nextShow != null ? nextShow : bindSetOperationBranch(next, branchIndex, executionContext);
             final boolean continuesUnion = next.getUnionModel() != null
                     && (next.getSetOperationType() == QueryModel.SET_OPERATION_UNION
                     || next.getSetOperationType() == QueryModel.SET_OPERATION_UNION_ALL);
@@ -690,11 +701,17 @@ public final class SqlBinder implements Mutable {
         return orderBinder.bindLimit(result, branch, executionContext);
     }
 
-    private LogicalPlan bindSetOperationBranch(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    /**
+     * Binds the branch at the index of its set operation chain, which nests one model level below the branch before
+     * it.
+     */
+    private LogicalPlan bindSetOperationBranch(QueryModel model, int branchIndex, SqlExecutionContext executionContext) throws SqlException {
         ctx.isSetOperationBranch = true;
+        modelDepth += branchIndex;
         try {
             return bindQueryBlock(model, executionContext);
         } finally {
+            modelDepth -= branchIndex;
             ctx.isSetOperationBranch = false;
         }
     }
@@ -890,6 +907,17 @@ public final class SqlBinder implements Mutable {
             }
         }
         return true;
+    }
+
+    /**
+     * Enters a sub-query or query block one level below the current model, rejecting a level past
+     * {@link #maxModelDepth}.
+     */
+    private void enterModel() throws SqlException {
+        if (modelDepth >= maxModelDepth) {
+            throw SqlException.$(0, "SQL model is too complex to evaluate");
+        }
+        modelDepth++;
     }
 
     private boolean isCursorNameTaken(CharSequence name) {

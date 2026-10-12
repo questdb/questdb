@@ -41,11 +41,12 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private SampleByFillValueNotKeyedRecordCursor cursor;
+    private ObjList<Function> fillValues;
     private SimpleMapValue value;
     private SimpleMapValue valueB;
 
     /**
-     * Placeholders contain resource-free constants or functions owned through recordFunctions.
+     * Owns fillValues. Placeholders borrow fill values, functions owned through recordFunctions or resource-free constants.
      */
     public SampleByFillValueNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -53,6 +54,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
             @NotNull ObjList<Function> placeholderFunctions,
+            @NotNull ObjList<Function> fillValues,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
@@ -69,6 +71,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             int sampleToFuncPos
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
+        this.fillValues = fillValues;
         try {
             this.value = new SimpleMapValue(valueCount);
             this.valueB = new SimpleMapValue(valueCount);
@@ -117,11 +120,14 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     @Override
     protected void _close() {
         final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
+        final ObjList<Function> fillValues = this.fillValues;
+        this.fillValues = null;
         final SimpleMapValue value = this.value;
         this.value = null;
         final SimpleMapValue valueB = this.valueB;
         this.valueB = null;
         Throwable failure = closeSampleByOwnersBestEffort(null);
+        failure = Misc.freeObjListBestEffort(failure, fillValues);
         failure = Misc.freeBestEffort(failure, value);
         if (valueB != value) {
             failure = Misc.freeBestEffort(failure, valueB);

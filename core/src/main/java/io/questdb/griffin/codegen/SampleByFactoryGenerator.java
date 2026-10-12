@@ -153,7 +153,6 @@ final class SampleByFactoryGenerator {
                     recordFunctions.set(i, interpolation);
                 } else {
                     placeholderFunctions.add(fillConstants.getQuick(fillIndex - 1));
-                    fillConstants.setQuick(fillIndex - 1, null);
                 }
             } else {
                 placeholderFunctions.add(function);
@@ -603,6 +602,7 @@ final class SampleByFactoryGenerator {
                     base,
                     timestampSampler,
                     placeholders,
+                    fillConstants,
                     projectionMetadata,
                     groupByFunctions,
                     recordFunctions,

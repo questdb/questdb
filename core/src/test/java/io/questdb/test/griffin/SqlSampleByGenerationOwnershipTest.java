@@ -73,6 +73,17 @@ public class SqlSampleByGenerationOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMixedLinearFillOwnsArrayConstantOnSuccessAndFailure() throws Exception {
+        assertSampleBy((fixture, compiler) -> {
+            fixture.table("ts", ColumnType.TIMESTAMP_MICRO, "v", ColumnType.DOUBLE, "arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+                    .timestamp(0).closeFailure = new RuntimeException("input close");
+            final String sql = "SELECT ts, sum(v), array_elem_sum(arr) FROM owned_table(0) SAMPLE BY 1h FILL(LINEAR, ARRAY[9.0]) ALIGN TO FIRST OBSERVATION";
+            fixture.assertMetadataFaultSweep(compiler, sqlExecutionContext, sql);
+            fixture.assertCompileOomSweep(compiler, sqlExecutionContext, sql);
+        });
+    }
+
+    @Test
     public void testMixedLinearFillOwnsWrappedAggregateOnSuccessAndFailure() throws Exception {
         assertSampleBy((fixture, compiler) -> {
             fixture.table("ts", ColumnType.TIMESTAMP_MICRO, "v", ColumnType.LONG).timestamp(0);

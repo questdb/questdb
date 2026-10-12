@@ -57,6 +57,7 @@ import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
+import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -90,6 +91,7 @@ final class ColumnPruning implements OptimiserPass {
         }
     };
     private final IntList retainedColumnIndexes;
+    private final BitSet retainedColumns = new BitSet();
     private final OutputSchema tmpSchema;
     private final ObjList<LogicalPlan> sharedSetOperations = new ObjList<>();
     private final IntList tmpUpdateTypes;
@@ -158,15 +160,20 @@ final class ColumnPruning implements OptimiserPass {
         }
     }
 
-    private static boolean isUnionAllChain(LogicalPlan plan) {
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final LogicalPlan input = plan.inputAt(i);
-            if (input instanceof SetOperationPlan operation
-                    && (operation.getOperation() != SetOperationKind.UNION_ALL || !isUnionAllChain(operation))) {
+    private static boolean isUnionAllChain(SetOperationPlan plan) {
+        while (true) {
+            if (plan.getRight() instanceof SetOperationPlan right
+                    && (right.getOperation() != SetOperationKind.UNION_ALL || !isUnionAllChain(right))) {
                 return false;
             }
+            if (!(plan.getLeft() instanceof SetOperationPlan left)) {
+                return true;
+            }
+            if (left.getOperation() != SetOperationKind.UNION_ALL) {
+                return false;
+            }
+            plan = left;
         }
-        return true;
     }
 
     private void alignScanColumns(ProjectPlan project) {
@@ -190,6 +197,7 @@ final class ColumnPruning implements OptimiserPass {
         final LogicalPlan scan = input;
         final OutputSchema output = scan.getOutput();
         retainedColumnIndexes.clear();
+        retainedColumns.clear();
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             final BoundExpression expression = project.getExpressions().getQuick(i);
             if (expression instanceof FunctionExpression) {
@@ -204,14 +212,10 @@ final class ColumnPruning implements OptimiserPass {
                 continue;
             }
             assert index >= 0;
-            if (!retainedColumnIndexes.contains(index)) {
-                retainedColumnIndexes.add(index);
-            }
+            retainColumn(index);
         }
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            if (!retainedColumnIndexes.contains(i)) {
-                retainedColumnIndexes.add(i);
-            }
+            retainColumn(i);
         }
         boolean isReordered = false;
         for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
@@ -838,6 +842,12 @@ final class ColumnPruning implements OptimiserPass {
         }
     }
 
+    private void retainColumn(int index) {
+        if (!retainedColumns.getAndSet(index)) {
+            retainedColumnIndexes.add(index);
+        }
+    }
+
     /**
      * A grouping key stays in the aggregate output anyway; dropping its selection only adds a remapping.
      */
@@ -874,8 +884,8 @@ final class ColumnPruning implements OptimiserPass {
     private void retainReferencedColumns(BoundExpression expression, OutputSchema output) {
         if (expression instanceof ColumnExpression column) {
             final int index = output.getColumnIndexById(column.getColumnId());
-            if (index >= 0 && !retainedColumnIndexes.contains(index)) {
-                retainedColumnIndexes.add(index);
+            if (index >= 0) {
+                retainColumn(index);
             }
         } else if (expression instanceof FunctionExpression function) {
             for (int i = 0, n = function.getArgumentCount(); i < n; i++) {

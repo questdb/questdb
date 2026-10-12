@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -703,11 +704,13 @@ public final class FunctionInstantiator implements Mutable {
                 frame.functions.setQuick(i, child);
                 frame.positions.setQuick(i, call.getArgumentPosition(i));
             }
-            FunctionResolver.wrapRuntimeConstants(frame.functions);
             FunctionFactoryDescriptor overload = call.getOverload();
             final boolean hasSharedBound = hasSharedBoundArgument(call);
             if (hasSharedBound) {
+                FunctionResolver.wrapRuntimeConstants(frame.functions);
                 overload = sharedBoundOverload(overload);
+            } else {
+                FunctionResolver.wrapRuntimeConstants(call, frame.functions);
             }
             Function function = resolver.createFunction(overload, call.getPosition(), overload.getName(),
                     count == 0 ? null : frame.functions, count == 0 ? null : frame.positions, executionContext);
@@ -726,8 +729,8 @@ public final class FunctionInstantiator implements Mutable {
                 // Optimiser-built calls may record a weaker stability than the built function proves; the bound
                 // flags stay the conservative ones optimisations relied on.
                 final int flags = call.getFunctionFlags();
-                if (function.getType() != call.getDataType()
-                        || (BoundExpression.functionFlags(function) & (flags | ~BoundExpression.STABLE_WITHIN_EXECUTION)) != flags) {
+                if (function.getType() != call.getDataType() || ParanoiaState.PLAN_PARANOIA_MODE
+                        && (BoundExpression.functionFlags(function) & (flags | ~BoundExpression.STABLE_WITHIN_EXECUTION)) != flags) {
                     throw new IllegalStateException("bound function semantics have changed");
                 }
                 return function;

@@ -181,29 +181,31 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
 
     @Test
     public void testFillValueNotKeyedConstructorFailureClosesAdoptedResources() throws Exception {
-        assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture ->
-                new SampleByFillValueNotKeyedRecordCursorFactory(
-                        new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
-                        configuration,
-                        fixture.base(),
-                        fixture.sampler(),
-                        new ObjList<>(fixture.recordFunctions),
-                        fixture.groupByMetadata,
-                        new ObjList<>(),
-                        fixture.recordFunctions,
-                        1,
-                        1,
-                        ColumnType.TIMESTAMP,
-                        fixture.timezoneNameFunc,
-                        0,
-                        fixture.offsetFunc,
-                        0,
-                        fixture.sampleFromFunc,
-                        0,
-                        fixture.sampleToFunc,
-                        0
-                )
-        );
+        assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture -> {
+            fixture.fillValues.add(fixture.fillValue);
+            new SampleByFillValueNotKeyedRecordCursorFactory(
+                    new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
+                    configuration,
+                    fixture.base(),
+                    fixture.sampler(),
+                    new ObjList<>(fixture.recordFunctions),
+                    fixture.fillValues,
+                    fixture.groupByMetadata,
+                    new ObjList<>(),
+                    fixture.recordFunctions,
+                    1,
+                    1,
+                    ColumnType.TIMESTAMP,
+                    fixture.timezoneNameFunc,
+                    0,
+                    fixture.offsetFunc,
+                    0,
+                    fixture.sampleFromFunc,
+                    0,
+                    fixture.sampleToFunc,
+                    0
+            );
+        });
     }
 
     @Test
@@ -589,6 +591,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                 Assert.assertEquals("record functions must close exactly once", 1, fixture.recordFunc.closeCount);
             }
             Assert.assertEquals("adopted base factory must be closed", 1, fixture.baseFactory.closeCount);
+            Assert.assertEquals("adopted fill values must close exactly once", fixture.fillValues.size(), fixture.fillValue.closeCount);
             Assert.assertEquals("timezone function must close exactly once", 1, fixture.timezoneNameFunc.closeCount);
             Assert.assertEquals("offset function must close exactly once", 1, fixture.offsetFunc.closeCount);
             Assert.assertEquals("FROM function must close exactly once", 1, fixture.sampleFromFunc.closeCount);
@@ -640,6 +643,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
     private static class Fixture {
         final GenericRecordMetadata baseMetadata = new GenericRecordMetadata();
         CloseCountingBaseFactory baseFactory;
+        final CloseCountingFunction fillValue = new CloseCountingFunction();
+        final ObjList<Function> fillValues = new ObjList<>();
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         final ListColumnFilter listColumnFilter = new ListColumnFilter();

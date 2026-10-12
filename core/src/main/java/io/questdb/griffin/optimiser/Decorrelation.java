@@ -80,7 +80,8 @@ import static io.questdb.griffin.optimiser.ScalarCompensation.*;
  * A keyless aggregate yields one row even over no rows. For the body itself, or a body that wraps it in
  * null-propagating arithmetic, the step becomes a LEFT join and a projection over the join restores the
  * empty-input values (zero for counts), applies the body's LIMIT and, for a LEFT LATERAL with an ON condition,
- * that condition over the restored values; consumers of the join read the projection's renamed columns. In the
+ * that condition over the restored values; when a later step null-extends the step, a row marker of the inputs
+ * before it keeps those rows NULL. Consumers of the join read the projection's renamed columns. In the
  * body of a LEFT LATERAL, a count joined without a condition joins LEFT to the column its outer columns map to
  * and the body's projection restores its values. A WHERE or ON that drops the empty row needs no restoring.
  * Any other keyless aggregate restores its empty values with a LEFT join from its own domain.
@@ -101,6 +102,7 @@ final class Decorrelation implements OptimiserPass {
     private final ConjunctTest bodyConjuncts = this::keepsBodyConjunct;
     private final IntList liftedSelectionIds = new IntList();
     private final ObjList<BoundExpression> liftedSelections = new ObjList<>();
+    private final IntList markedSelectionIds = new IntList();
     private final CorrelatedChainRewriter rewriter;
     private LogicalPlan branchTop;
     private int liftBase;
@@ -144,6 +146,7 @@ final class Decorrelation implements OptimiserPass {
     public void clear() {
         liftedSelectionIds.clear();
         liftedSelections.clear();
+        markedSelectionIds.clear();
         branchTop = null;
         pendingJoin = null;
         ctx.clear();
@@ -463,6 +466,7 @@ final class Decorrelation implements OptimiserPass {
         final JoinPlan previousMaster = ctx.master;
         final int previousLimit = ctx.masterLimit;
         final int uncompensatedBase = compensation.uncompensatedScalars.size();
+        final int scalarAggregateBase = compensation.scalarAggregates.size();
         final int masterBase = ctx.masterOuterIds.size();
         ctx.master = join;
         ctx.masterLimit = index;
@@ -485,6 +489,7 @@ final class Decorrelation implements OptimiserPass {
             liftedConjuncts.clear();
             liftedSelectionIds.clear();
             liftedSelections.clear();
+            markedSelectionIds.clear();
             final LimitPlan limit = step.getInput() instanceof LimitPlan l ? l : null;
             final BoundExpression outerLimit = limit == null ? null : outerLimit(limit);
             final BoundExpression limitLo = limit == null ? null : limit.getLo();
@@ -530,8 +535,8 @@ final class Decorrelation implements OptimiserPass {
                 if (!isLeft && isTrivialCondition) {
                     step.setJoinType(JoinKind.LEFT_OUTER);
                     compensation.compensateStep(step, scalarBody, base, null, null);
-                    if (guard != null) {
-                        step.setPostJoinFilter(guard);
+                    if (!isTrue(guard)) {
+                        step.setPostJoinFilter(context.getRewriter().combineConjunction(step.getPostJoinFilter(), guard, guard.getPosition()));
                     }
                 } else {
                     compensation.compensateStep(step, scalarBody, base, guard, isLeft ? keys.stepCondition(join, step, conditionKeyCount) : null);
@@ -544,6 +549,7 @@ final class Decorrelation implements OptimiserPass {
             ctx.master = previousMaster;
             ctx.masterLimit = previousLimit;
             compensation.uncompensatedScalars.setPos(uncompensatedBase);
+            compensation.scalarAggregates.setPos(scalarAggregateBase);
         }
     }
 
@@ -600,6 +606,54 @@ final class Decorrelation implements OptimiserPass {
     }
 
     /**
+     * True when every key of the join's steps that reads the column can join its step's ON condition instead:
+     * the step is an inner or left join that keeps a key on columns other than the body's, or the step being
+     * decorrelated, which decorrelation keys by the mapped columns.
+     */
+    private boolean isKeyReadMovable(int columnId, OutputSchema body, int base) {
+        final ObjList<JoinInput> inputs = ctx.master.getInputs();
+        for (int i = 1, n = inputs.size(); i < n; i++) {
+            final JoinInput input = inputs.getQuick(i);
+            final IntList masterKeys = input.getMasterKeyColumnIds();
+            final IntList slaveKeys = input.getSlaveKeyColumnIds();
+            if (!masterKeys.contains(columnId) && !slaveKeys.contains(columnId)) {
+                continue;
+            }
+            if (input.getJoinType() != JoinKind.INNER && input.getJoinType() != JoinKind.LEFT_OUTER || input.getKeyFilter() != null) {
+                return false;
+            }
+            boolean hasOtherKey = i == ctx.masterLimit && ctx.mappedOuterIds.size() > base;
+            for (int k = 0, m = masterKeys.size(); k < m && !hasOtherKey; k++) {
+                hasOtherKey = body.getColumnIndexById(masterKeys.getQuick(k)) < 0 && body.getColumnIndexById(slaveKeys.getQuick(k)) < 0;
+            }
+            if (!hasOtherKey) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when the projection column computes a value over outer columns no equality satisfies that the step
+     * can compute above the join instead, with each join key that reads it joining its step's ON condition.
+     */
+    private boolean isLiftableSelection(ProjectPlan project, int index, int base) {
+        final OutputSchema output = project.getOutput();
+        final BoundExpression expression = project.getExpressions().getQuick(index);
+        return output.isVisible(index) && !(expression instanceof OuterColumnExpression) && ctx.readsUnmappedOuter(expression, base)
+                && isLiftable(expression) && hasNullableOuterTypes(expression) && isKeyReadMovable(output.getColumnId(index), output, base);
+    }
+
+    /**
+     * True when the step's rows can be null-extended and the expression need not be NULL over a null-extended
+     * row: it is not null-propagating arithmetic over a column of the projection's input.
+     */
+    private boolean isNonNullOverExtendedRow(ProjectPlan project, BoundExpression expression) {
+        return (ctx.master.getInputs().getQuick(ctx.masterLimit).getJoinType() == JoinKind.LEFT_OUTER || ctx.isStepNullExtendedLater())
+                && !(isNullPropagating(expression) && ctx.readsAnyColumn(expression, project.getInput().getOutput()));
+    }
+
+    /**
      * Keeps a conjunct in the body unless it reads outer columns no equality satisfies, which it records in
      * {@link #liftedConjuncts} instead.
      */
@@ -613,7 +667,9 @@ final class Decorrelation implements OptimiserPass {
 
     /**
      * Joins the lifted conjuncts to the step's ON and computes the lifted columns above the join, reading the
-     * master's columns for the outer columns and the body's exposed columns for its own.
+     * master's columns for the outer columns and the body's exposed columns for its own; the ON conditions of
+     * the join read the lifted columns' values. A lifted column that is not NULL over a null-extended row reads
+     * NULL where the body's row marker reads FALSE, which the step's own ON condition never sees.
      */
     private void liftAboveStep(JoinPlan join, JoinInput step, LogicalPlan body, int masterBase) throws SqlException {
         LogicalPlan node = body;
@@ -631,6 +687,8 @@ final class Decorrelation implements OptimiserPass {
         for (int i = 0, n = liftedSelections.size(); i < n; i++) {
             exposeLiftedColumns(project, liftedSelections.getQuick(i));
         }
+        final int markerId = markedSelectionIds.size() > 0 ? ctx.markRows(project, project.getPosition()) : -1;
+        ctx.realignAbove(body, project);
         join.addMissingInputColumns();
         for (int i = 0, n = liftedConjuncts.size(); i < n; i++) {
             final BoundExpression conjunct = context.getRewriter().remapColumns(liftedConjuncts.getQuick(i), ctx.substitution);
@@ -640,13 +698,25 @@ final class Decorrelation implements OptimiserPass {
         for (int i = 0, n = liftedSelections.size(); i < n; i++) {
             final int columnId = liftedSelectionIds.getQuick(i);
             final int index = output.getColumnIndexById(columnId);
+            final BoundExpression value = context.getRewriter().remapColumns(liftedSelections.getQuick(i), ctx.substitution);
+            final int position = value.getPosition();
+            final BoundExpression lifted = markedSelectionIds.contains(columnId)
+                    ? ctx.caseWhen(ctx.column(join.getOutput(), markerId, position), value, ctx.planNodes.constants.next().ofNull(position), join.getOutput(), position)
+                    : value;
+            for (int s = 1, m = join.getInputs().size(); s < m; s++) {
+                final JoinInput input = join.getInputs().getQuick(s);
+                if (input.getOnResidual() != null) {
+                    input.setOnResidual(context.getRewriter().substituteColumn(input.getOnResidual(), columnId, input == step ? value : lifted));
+                }
+            }
             compensation.compensatedIds.add(columnId);
             compensation.compensatedNames.add(output.getColumnName(index));
-            compensation.compensations.add(context.getRewriter().remapColumns(liftedSelections.getQuick(i), ctx.substitution));
+            compensation.compensations.add(lifted);
             project.getExpressions().remove(index);
             output.remove(index);
             join.getOutput().remove(join.getOutput().getColumnIndexById(columnId));
         }
+        ctx.realignAbove(body, project);
     }
 
     private CharSequence liftedName(OutputSchema output, CharSequence name) {
@@ -661,7 +731,8 @@ final class Decorrelation implements OptimiserPass {
     /**
      * Moves the conjuncts of the body's WHERE and the computed columns of its projection that read outer
      * columns no equality satisfies above the step: the conjuncts join its ON, the columns a projection over
-     * the join computes. The outer columns they read are then no longer the body's.
+     * the join computes, and the join keys that read such a column join their steps' ON conditions. The outer
+     * columns they read are then no longer the body's.
      */
     private void liftOuterTerms(FilterPlan filter, LogicalPlan source, int chainBase, int chainOuterBase, int deferredBase, int base) throws SqlException {
         liftBase = base;
@@ -682,10 +753,14 @@ final class Decorrelation implements OptimiserPass {
             if (ctx.chain.getQuick(i) instanceof ProjectPlan project) {
                 final ObjList<BoundExpression> expressions = project.getExpressions();
                 for (int k = 0, m = expressions.size(); k < m; k++) {
-                    final BoundExpression expression = expressions.getQuick(k);
-                    if (project.getOutput().isVisible(k) && !(expression instanceof OuterColumnExpression) && ctx.readsUnmappedOuter(expression, base)
-                            && isLiftable(expression) && hasNullableOuterTypes(expression)) {
-                        liftedSelectionIds.add(project.getOutput().getColumnId(k));
+                    if (isLiftableSelection(project, k, base)) {
+                        final BoundExpression expression = expressions.getQuick(k);
+                        final int columnId = project.getOutput().getColumnId(k);
+                        keys.moveKeyReads(ctx.master, columnId);
+                        if (isNonNullOverExtendedRow(project, expression)) {
+                            markedSelectionIds.add(columnId);
+                        }
+                        liftedSelectionIds.add(columnId);
                         liftedSelections.add(expression);
                         expressions.setQuick(k, ctx.planNodes.constants.next().ofNull(expression.getPosition()));
                     }

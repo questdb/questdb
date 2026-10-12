@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -1728,6 +1729,161 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiftedSelectionReadByJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k INT, n INT)");
+            execute("INSERT INTO m VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE s (k INT, v INT)");
+            execute("INSERT INTO s VALUES (1, 1)");
+            execute("CREATE TABLE q (x INT)");
+            execute("INSERT INTO q VALUES (11), (20)");
+            execute("CREATE TABLE q2 (x INT, k INT)");
+            execute("INSERT INTO q2 VALUES (11, 1), (20, 2), (11, 2)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v FROM m
+                            LEFT JOIN LATERAL (SELECT s.v + m.n v FROM s WHERE s.k = m.k) l ON l.v > 5 ORDER BY m.k
+                            """, """
+                            k\tv
+                            1\t11
+                            2\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v FROM m
+                            LEFT JOIN LATERAL (SELECT s.v + m.n v FROM s WHERE s.k = m.k) l ON l.v > 50 ORDER BY m.k
+                            """, """
+                            k\tv
+                            1\tnull
+                            2\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v FROM m
+                            INNER JOIN LATERAL (SELECT s.v + m.n v FROM s WHERE s.k = m.k) l ON l.v > 5 ORDER BY m.k
+                            """, """
+                            k\tv
+                            1\t11
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v, l.w FROM m
+                            LEFT JOIN LATERAL (SELECT s.v + m.n v, s.v w FROM s WHERE s.k = m.k) l ON l.v > 5 AND l.w = 1 ORDER BY m.k
+                            """, """
+                            k\tv\tw
+                            1\t11\t1
+                            2\tnull\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v FROM m
+                            LEFT JOIN LATERAL (SELECT s.v + m.n v FROM s WHERE s.k = m.k) l ON true WHERE l.v > 5 ORDER BY m.k
+                            """, """
+                            k\tv
+                            1\t11
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v FROM m
+                            LEFT JOIN LATERAL (SELECT coalesce(s.v, 0) + m.n v FROM s WHERE s.k = m.k) l ON true ORDER BY m.k
+                            """, """
+                            k\tv
+                            1\t11
+                            2\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.x FROM m
+                            LEFT JOIN LATERAL (SELECT m.n + 1 x FROM s WHERE s.k = m.k) l ON true ORDER BY m.k
+                            """, """
+                            k\tx
+                            1\t11
+                            2\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v, q.x FROM m
+                            CROSS JOIN LATERAL (SELECT s.v + m.n v FROM s WHERE s.k = m.k) l
+                            JOIN q ON q.x = l.v ORDER BY m.k
+                            """, """
+                            k\tv\tx
+                            1\t11\t11
+                            """, isFullFat, true);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v, q.x FROM m
+                            CROSS JOIN LATERAL (SELECT s.v + m.n v FROM s WHERE s.k = m.k) l
+                            LEFT JOIN q ON q.x < l.v ORDER BY m.k
+                            """, """
+                            k\tv\tx
+                            1\t11\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v FROM m
+                            LEFT JOIN LATERAL (SELECT s.v + m.n - 1 v FROM s WHERE s.k = m.k) l ON l.v = m.n ORDER BY m.k
+                            """, """
+                            k\tv
+                            1\t10
+                            2\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v, q2.x FROM m
+                            CROSS JOIN LATERAL (SELECT s.v + m.n v FROM s WHERE s.k = m.k) l
+                            JOIN q2 ON q2.x = l.v AND q2.k = m.k ORDER BY m.k
+                            """, """
+                            k\tv\tx
+                            1\t11\t11
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.v, q.x FROM m
+                            CROSS JOIN LATERAL (SELECT coalesce(s.v + m.n, -1) v FROM s WHERE s.k = m.k) l
+                            RIGHT JOIN q ON q.x = m.n + 1 ORDER BY q.x
+                            """, """
+                            k\tv\tx
+                            1\t11\t11
+                            null\tnull\t20
+                            """);
+                }
+            }
+            assertQuery("""
+                    SELECT m.k, l.v FROM m
+                    LEFT JOIN LATERAL (SELECT s.v + m.n v FROM s WHERE s.k = m.k) l ON l.v > 5
+                    """)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            VirtualRecord
+                              functions: [m.k,l.__qdb_lifted_0_v+m.n]
+                                Hash Left Outer Join Light
+                                  condition: l.__qdb_outer_ref__0_k=m.k
+                                  filter: 5<l.__qdb_lifted_0_v+m.n
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: m
+                                    Hash
+                                        SelectedRecord
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: s
+                            """);
+            assertQuery("""
+                    SELECT m.k, l.v FROM m
+                    LEFT JOIN LATERAL (SELECT s.v + m.n - 1 v FROM s WHERE s.k = m.k) l ON l.v = m.n
+                    """)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            VirtualRecord
+                              functions: [m.k,case([l.__qdb_row_marker__1,l.__qdb_lifted_0_v+m.n-1,null])]
+                                Hash Left Outer Join Light
+                                  condition: l.__qdb_outer_ref__0_k=m.k
+                                  filter: l.__qdb_lifted_0_v+m.n-1=m.n
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: m
+                                    Hash
+                                        VirtualRecord
+                                          functions: [k,v,true]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: s
+                            """);
+        });
+    }
+
+    @Test
     public void testLimitBodySelectingCorrelatedColumnOrWildcard() throws Exception {
         // #7803 section 10
         assertMemoryLeak(() -> {
@@ -1960,6 +2116,120 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitScalarBodyKeepsJoinCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k INT, n INT)");
+            execute("INSERT INTO m VALUES (1, 10), (2, 20)");
+            execute("CREATE TABLE s (k INT, v INT)");
+            execute("INSERT INTO s VALUES (1, 1)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            INNER JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l ON l.c > 0 ORDER BY m.k
+                            """, """
+                            k\tc
+                            1\t1
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            INNER JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l ON l.c = 0 ORDER BY m.k
+                            """, """
+                            k\tc
+                            2\t0
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            INNER JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 0) l ON l.c > 0 ORDER BY m.k
+                            """, """
+                            k\tc
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            INNER JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l ON m.k > 1 ORDER BY m.k
+                            """, """
+                            k\tc
+                            2\t0
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            INNER JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l ON l.c > 0 AND m.k > 0 ORDER BY m.k
+                            """, """
+                            k\tc
+                            1\t1
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            INNER JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l ON true WHERE l.c > 0 ORDER BY m.k
+                            """, """
+                            k\tc
+                            1\t1
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.s FROM m
+                            INNER JOIN LATERAL (SELECT sum(v) s FROM s WHERE s.k = m.k LIMIT 1) l ON l.s > 0 ORDER BY m.k
+                            """, """
+                            k\ts
+                            1\t1
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.s FROM m
+                            INNER JOIN LATERAL (SELECT sum(v) s FROM s WHERE s.k = m.k LIMIT m.k - 1) l ON m.k > 0 ORDER BY m.k
+                            """, """
+                            k\ts
+                            2\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            CROSS JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l WHERE l.c > 0 ORDER BY m.k
+                            """, """
+                            k\tc
+                            1\t1
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            CROSS JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 0) l ORDER BY m.k
+                            """, """
+                            k\tc
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            CROSS JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l WHERE m.k > 1 ORDER BY m.k
+                            """, """
+                            k\tc
+                            2\t0
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            LEFT JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l ON l.c > 0 ORDER BY m.k
+                            """, """
+                            k\tc
+                            1\t1
+                            2\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            LEFT JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 0) l ON l.c >= 0 ORDER BY m.k
+                            """, """
+                            k\tc
+                            1\tnull
+                            2\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT m.k, l.c FROM m
+                            LEFT JOIN LATERAL (SELECT count() c FROM s WHERE s.k = m.k LIMIT 1) l ON m.k > 1 ORDER BY m.k
+                            """, """
+                            k\tc
+                            1\tnull
+                            2\t0
+                            """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNestedLateralReadingCorrelatedSubQueryColumn() throws Exception {
         // #7803 section 15
         assertMemoryLeak(() -> {
@@ -2083,6 +2353,142 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             2\t5\t10\tnull
                             2\t5\t11\t6
                             """);
+        });
+    }
+
+    @Test
+    public void testNestedScalarAggregateCorrelatedWithBothLevels() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT)");
+            execute("INSERT INTO o VALUES (1, 1), (2, 2), (3, 3)");
+            execute("CREATE TABLE t (k INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 11), (2, 20)");
+            execute("CREATE TABLE r (id INT, k INT)");
+            execute("INSERT INTO r VALUES (10, 1), (20, 9)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, y.cnt FROM o CROSS JOIN LATERAL (
+                                SELECT x.cnt FROM r r2
+                                CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k AND t.k = r2.k) x
+                            ) y ORDER BY o.id, y.cnt
+                            """, """
+                            id\tcnt
+                            1\t0
+                            1\t2
+                            2\t0
+                            2\t0
+                            3\t0
+                            3\t0
+                            """, true, true);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, y.cnt FROM o CROSS JOIN LATERAL (
+                                SELECT x.cnt FROM r r2
+                                CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = r2.k AND t.v > o.id LIMIT 1) x
+                            ) y ORDER BY o.id, y.cnt
+                            """, """
+                            id\tcnt
+                            1\t0
+                            1\t2
+                            2\t0
+                            2\t2
+                            3\t0
+                            3\t2
+                            """, true, true);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, y.cnt FROM o CROSS JOIN LATERAL (
+                                SELECT x.cnt FROM r r2
+                                LEFT JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = r2.k AND t.v > o.id) x ON x.cnt > 0
+                            ) y ORDER BY o.id, y.cnt
+                            """, """
+                            id\tcnt
+                            1\tnull
+                            1\t2
+                            2\tnull
+                            2\t2
+                            3\tnull
+                            3\t2
+                            """, true, true);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, y.cnt FROM o CROSS JOIN LATERAL (
+                                SELECT x.cnt FROM r r2
+                                CROSS JOIN LATERAL (SELECT count(*) + o.id cnt FROM t WHERE t.k = r2.k) x
+                            ) y ORDER BY o.id, y.cnt
+                            """, """
+                            id\tcnt
+                            1\t1
+                            1\t3
+                            2\t2
+                            2\t4
+                            3\t3
+                            3\t5
+                            """, true, true);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, y.s FROM o CROSS JOIN LATERAL (
+                                SELECT x.s FROM r r2
+                                CROSS JOIN LATERAL (SELECT sum(v) s FROM t WHERE t.k = r2.k AND t.v > o.id + 9) x
+                            ) y ORDER BY o.id, y.s
+                            """, """
+                            id\ts
+                            1\tnull
+                            1\t11
+                            2\tnull
+                            2\tnull
+                            3\tnull
+                            3\tnull
+                            """, true, true);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, y.cnt FROM o LEFT JOIN LATERAL (
+                                SELECT x.cnt FROM r r2
+                                CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = r2.k AND t.v > o.id) x
+                                WHERE r2.k = o.k
+                            ) y ON true ORDER BY o.id, y.cnt
+                            """, """
+                            id\tcnt
+                            1\t2
+                            2\tnull
+                            3\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, y.cnt FROM o CROSS JOIN LATERAL (
+                                SELECT z.cnt FROM r r2 CROSS JOIN LATERAL (
+                                    SELECT x.cnt FROM r r4
+                                    CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = r4.k AND t.k = r2.k AND t.v > o.id) x
+                                ) z
+                            ) y ORDER BY o.id, y.cnt
+                            """, """
+                            id\tcnt
+                            1\t0
+                            1\t0
+                            1\t0
+                            1\t2
+                            2\t0
+                            2\t0
+                            2\t0
+                            2\t2
+                            3\t0
+                            3\t0
+                            3\t0
+                            3\t2
+                            """, true, true);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, y.cnt, y.rid FROM o CROSS JOIN LATERAL (
+                                SELECT x.cnt, r3.id rid FROM r r2
+                                CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = r2.k AND t.v > o.id) x
+                                RIGHT JOIN r r3 ON r3.k = r2.k + o.k - 1
+                            ) y ORDER BY o.id, y.rid
+                            """, """
+                            id\tcnt\trid
+                            1\t2\t10
+                            1\t0\t20
+                            2\tnull\t10
+                            2\tnull\t20
+                            3\tnull\t10
+                            3\tnull\t20
+                            """, true, true);
+                }
+            }
         });
     }
 
@@ -3170,6 +3576,268 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarCountGuardedByOuterDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO o VALUES (1, 1, '2024-01-01T00:00:01.000000Z'), (2, 2, '2024-01-01T00:00:02.000000Z'), (3, 3, '2024-01-01T00:00:03.000000Z')");
+            execute("CREATE TABLE t (k INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 11), (2, 20)");
+            execute("CREATE TABLE r (id INT, k INT)");
+            execute("INSERT INTO r VALUES (10, 1), (20, 9)");
+            final String sql = """
+                    SELECT o.id, x.cnt, r.id rid FROM o
+                    CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                    FULL JOIN r ON r.k = o.k ORDER BY o.id, rid
+                    """;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    assertQueryReturns(compiler, sql, """
+                            id\tcnt\trid
+                            null\tnull\t20
+                            1\t2\t10
+                            2\t1\tnull
+                            3\t0\tnull
+                            """);
+                }
+            }
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("__qdb_row_marker__", "true]");
+        });
+    }
+
+    @Test
+    public void testScalarCountMarksOuterRowsOfRightJoinedPrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT)");
+            execute("INSERT INTO o VALUES (1, 1), (2, 2), (3, 3)");
+            execute("CREATE TABLE t (k INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 11), (2, 20)");
+            execute("CREATE TABLE r (id INT, k INT)");
+            execute("INSERT INTO r VALUES (10, 1), (20, 9)");
+            execute("CREATE TABLE r2 (id INT, k INT)");
+            execute("INSERT INTO r2 VALUES (100, 1), (200, 7)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, r2.id r2id, x.cnt, r.id rid FROM o
+                            RIGHT JOIN r2 ON r2.k = o.k
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = r2.k) x
+                            FULL JOIN r ON r.k = r2.k ORDER BY r2id, rid
+                            """, """
+                            id\tr2id\tcnt\trid
+                            null\tnull\tnull\t20
+                            1\t100\t2\t10
+                            null\t200\t0\tnull
+                            """);
+                }
+            }
+            assertQuery("""
+                    SELECT o.id, x.cnt, r.id rid FROM o
+                    CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                    RIGHT JOIN r ON r.k = o.k
+                    """)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            VirtualRecord
+                              functions: [o.id,case([o.__qdb_row_marker__0,coalesce(x.cnt,0),null]),r.id]
+                                Hash Right Outer Join Light
+                                  condition: r.k=o.k
+                                    Hash Left Outer Join Light
+                                      condition: x.__qdb_outer_ref__0_k=o.k
+                                        VirtualRecord
+                                          functions: [id,k,true]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: o
+                                        Hash
+                                            SelectedRecord
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [count(*)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: r
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarCountNullExtendedByLaterOuterJoin() throws Exception {
+        // #7875
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT)");
+            execute("INSERT INTO o VALUES (1, 1), (2, 2), (3, 3)");
+            execute("CREATE TABLE t (k INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 11), (2, 20)");
+            execute("CREATE TABLE r (id INT, k INT)");
+            execute("INSERT INTO r VALUES (10, 1), (20, 9)");
+            final String rightJoined = """
+                    id\tcnt\trid
+                    1\t2\t10
+                    null\tnull\t20
+                    """;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            RIGHT JOIN r ON r.k = o.k ORDER BY rid
+                            """, rightJoined);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(v) cnt FROM t WHERE t.k = o.k) x
+                            RIGHT JOIN r ON r.k = o.k ORDER BY rid
+                            """, rightJoined);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o
+                            JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x ON true
+                            RIGHT JOIN r ON r.k = o.k ORDER BY rid
+                            """, rightJoined);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o
+                            LEFT JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x ON true
+                            RIGHT JOIN r ON r.k = o.k ORDER BY rid
+                            """, rightJoined);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, x.s, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(*) cnt, sum(v) s FROM t WHERE t.k = o.k) x
+                            RIGHT JOIN r ON r.k = o.k ORDER BY rid
+                            """, """
+                            id\tcnt\ts\trid
+                            1\t2\t21\t10
+                            null\tnull\tnull\t20
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            RIGHT JOIN r ON r.k = o.k WHERE x.cnt IS NULL
+                            """, """
+                            id\tcnt\trid
+                            null\tnull\t20
+                            """, false, false);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            FULL JOIN r ON r.k = o.k ORDER BY o.id, rid
+                            """, """
+                            id\tcnt\trid
+                            null\tnull\t20
+                            1\t2\t10
+                            2\t1\tnull
+                            3\t0\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.c2, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(*) + 2 c2 FROM t WHERE t.k = o.k) x
+                            FULL JOIN r ON r.k = o.k ORDER BY o.id, rid
+                            """, """
+                            id\tc2\trid
+                            null\tnull\t20
+                            1\t4\t10
+                            2\t3\tnull
+                            3\t2\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            RIGHT JOIN r ON r.k < o.k ORDER BY rid, o.id
+                            """, """
+                            id\tcnt\trid
+                            2\t1\t10
+                            3\t0\t10
+                            null\tnull\t20
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, y.cnt, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k + 1) y
+                            FULL JOIN r ON r.k = o.k ORDER BY o.id, rid
+                            """, """
+                            id\tcnt\tcnt1\trid
+                            null\tnull\tnull\t20
+                            1\t2\t1\t10
+                            2\t1\t0\tnull
+                            3\t0\t0\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o
+                            LEFT JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x ON x.cnt = 0
+                            FULL JOIN r ON r.k = o.k ORDER BY o.id, rid
+                            """, """
+                            id\tcnt\trid
+                            null\tnull\t20
+                            1\tnull\t10
+                            2\tnull\tnull
+                            3\t0\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k LIMIT 0) x
+                            FULL JOIN r ON r.k = o.k ORDER BY rid
+                            """, """
+                            id\tcnt\trid
+                            null\tnull\t10
+                            null\tnull\t20
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.s, x.five, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT sum(v) s, 5 five FROM t WHERE t.k = o.k) x
+                            FULL JOIN r ON r.k = o.k ORDER BY o.id, rid
+                            """, """
+                            id\ts\tfive\trid
+                            null\tnull\tnull\t20
+                            1\t21\t5\t10
+                            2\t20\t5\tnull
+                            3\tnull\t5\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, y.cnt, r.id rid FROM o
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            RIGHT JOIN r ON r.k = o.k
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = r.k) y ORDER BY rid
+                            """, """
+                            id\tcnt\tcnt1\trid
+                            1\t2\t2\t10
+                            null\tnull\t0\t20
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, y.cnt, y.rid FROM o CROSS JOIN LATERAL (
+                                SELECT x.cnt, r3.id rid FROM r r2
+                                CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = r2.k) x
+                                RIGHT JOIN r r3 ON r3.k = r2.k + o.k - 1
+                            ) y ORDER BY o.id, y.rid
+                            """, """
+                            id\tcnt\trid
+                            1\t2\t10
+                            1\t0\t20
+                            2\tnull\t10
+                            2\tnull\t20
+                            3\tnull\t10
+                            3\tnull\t20
+                            """, true, true);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt FROM o
+                            LEFT JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x ON x.cnt = 0 ORDER BY o.id
+                            """, """
+                            id\tcnt
+                            1\tnull
+                            2\tnull
+                            3\t0
+                            """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSharedDomainReadByMoreThanOneConsumer() throws Exception {
         // #7803 section 3
         assertMemoryLeak(() -> {
@@ -3691,6 +4359,20 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         execute("DROP TABLE o");
         execute("DROP TABLE c");
         execute("DROP TABLE d");
+    }
+
+    private void assertQueryReturns(SqlCompiler compiler, String sql, String expected) throws Exception {
+        assertQueryReturns(compiler, sql, expected, false, true);
+    }
+
+    private void assertQueryReturns(SqlCompiler compiler, String sql, String expected, boolean isSizeKnown, boolean supportsRandomAccess) throws Exception {
+        assertQuery(sql)
+                .withCompiler(compiler)
+                .withContext(sqlExecutionContext)
+                .noLeakCheck()
+                .expectSize(isSizeKnown)
+                .supportsRandomAccess(supportsRandomAccess)
+                .returns(expected);
     }
 
     private void assertSpliceCorrelationRejected(String sql) throws Exception {

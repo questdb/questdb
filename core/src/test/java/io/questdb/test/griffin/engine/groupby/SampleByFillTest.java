@@ -1255,6 +1255,51 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillLinearMixedArrayValueClosesConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE, arr DOUBLE[]) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1.0, ARRAY[1.0]), ('2024-01-01T02:00:00', 3.0, ARRAY[3.0])");
+            final String sql = "SELECT ts, sum(v), array_elem_sum(arr) FROM t SAMPLE BY 1h FILL(LINEAR, ARRAY[9.0]) ALIGN TO FIRST OBSERVATION";
+            for (int i = 0; i < 3; i++) {
+                select(sql).close();
+            }
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum\tarray_elem_sum
+                            2024-01-01T00:00:00.000000Z\t1.0\t[1.0]
+                            2024-01-01T01:00:00.000000Z\t2.0\t[9.0]
+                            2024-01-01T02:00:00.000000Z\t3.0\t[3.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillLinearMixedArrayValuePrevAndNullClosesConstantOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE, arr DOUBLE[]) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1.0, ARRAY[1.0]), ('2024-01-01T02:00:00', 3.0, ARRAY[3.0])");
+            final String sql = """
+                    SELECT ts, sum(v), array_elem_sum(arr) a, array_elem_sum(arr) b, array_elem_sum(arr) c
+                    FROM t SAMPLE BY 1h FILL(LINEAR, ARRAY[7.0, 8.0], PREV, NULL) ALIGN TO FIRST OBSERVATION
+                    """;
+            select(sql).close();
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum\ta\tb\tc
+                            2024-01-01T00:00:00.000000Z\t1.0\t[1.0]\t[1.0]\t[1.0]
+                            2024-01-01T01:00:00.000000Z\t2.0\t[7.0,8.0]\t[1.0]\tnull
+                            2024-01-01T02:00:00.000000Z\t3.0\t[3.0]\t[3.0]\t[3.0]
+                            """);
+        });
+    }
+
+    @Test
     public void testFillOffsetInvalidString() throws Exception {
         // Bind variable holding an unparseable offset value: SqlException at
         // cursor.of() time (runtime), pointing at the offset bind-variable

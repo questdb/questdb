@@ -109,6 +109,38 @@ public class AggregatePruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWideScanAuthorizesColumnsInFirstReferenceOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final int columnCount = 300;
+            final StringSink ddl = new StringSink();
+            final StringSink tableOrder = new StringSink();
+            final StringSink reversedSelect = new StringSink();
+            final StringSink reversedOrder = new StringSink();
+            ddl.put("CREATE TABLE lp_wide (");
+            tableOrder.put('[');
+            reversedSelect.put("SELECT ");
+            reversedOrder.put('[');
+            for (int i = 0; i < columnCount; i++) {
+                final String separator = i > 0 ? "," : "";
+                ddl.put(separator).put('c').put(i).put(" INT");
+                tableOrder.put(separator).put('c').put(i);
+                reversedSelect.put(separator).put('c').put(columnCount - 1 - i);
+                reversedOrder.put(separator).put('c').put(columnCount - 1 - i);
+            }
+            ddl.put(')');
+            execute(ddl);
+            reversedSelect.put(" FROM lp_wide");
+            tableOrder.put("]\n");
+            reversedOrder.put("]\n");
+            assertAuthorizedColumns("SELECT * FROM lp_wide", tableOrder);
+            assertAuthorizedColumns(reversedSelect, reversedOrder);
+            assertAuthorizedColumns("SELECT c299, c0, c299 + c5 x, c0 y FROM lp_wide", """
+                    [c299,c0,c5]
+                    """);
+        });
+    }
+
+    @Test
     public void testOrderingDependsOnRetainedAggregate() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -172,7 +204,7 @@ public class AggregatePruningTest extends AbstractCairoTest {
         }
     }
 
-    private void assertAuthorizedColumns(String sql, String expected) throws Exception {
+    private void assertAuthorizedColumns(CharSequence sql, CharSequence expected) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
              RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             final StringSink sink = new StringSink();

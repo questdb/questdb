@@ -265,6 +265,17 @@ public final class JoinInput implements Mutable {
      * Records the algorithm; the master side of a light INNER hash join stays undecided until operator planning decides
      * it.
      */
+    /**
+     * Drops the key at the index, master and slave column alike.
+     */
+    public void removeKey(int index) {
+        masterKeyColumnIds.removeIndex(index);
+        slaveKeyColumnIds.removeIndex(index);
+        masterKeyNames.remove(index);
+        slaveKeyNames.remove(index);
+        keyPositions.removeIndex(index);
+    }
+
     public void setAlgorithm(Algorithm algorithm) {
         this.algorithm = algorithm;
         masterSide = algorithm == Algorithm.LIGHT_HASH && joinType == JoinKind.INNER ? null : MasterSide.FIXED;

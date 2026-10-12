@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.plan.logical.BoundExpression;
 
 /**
  * Wraps a runtime-constant subtree of a fixed-width scalar type, evaluates it once per cursor in
@@ -55,6 +56,18 @@ import io.questdb.griffin.SqlExecutionContext;
 public interface RuntimeConstFunction extends UnaryFunction {
 
     /**
+     * True if the function computes its value from the argument functions it holds, as a unary, binary, ternary,
+     * quaternary or multi-argument function.
+     */
+    static boolean isComposite(Function function) {
+        return function instanceof UnaryFunction
+                || function instanceof BinaryFunction
+                || function instanceof TernaryFunction
+                || function instanceof QuaternaryFunction
+                || function instanceof MultiArgFunction;
+    }
+
+    /**
      * True if the function is worth folding: runtime constant (but not compile-time constant), of a
      * fixed-width type, and composite (performs per-row work). Trivial runtime-constant leaves
      * (bind variables, {@code now()}) already cache their value, so wrapping them only adds overhead.
@@ -62,13 +75,16 @@ public interface RuntimeConstFunction extends UnaryFunction {
     static boolean isFoldable(Function function) {
         // O(1) gates first; the two recursive predicates (isConstant/isRuntimeConstant walk the whole
         // arg subtree) run last, so a non-composite or non-foldable-type arg never pays for them.
-        return function != null
-                && function.extendedOps() == null
-                && !(function instanceof RuntimeConstFunction)
-                && isComposite(function)
-                && isFoldableType(function.getType())
-                && !function.isConstant()
-                && function.isRuntimeConstant();
+        return isFoldableShape(function) && !function.isConstant() && function.isRuntimeConstant();
+    }
+
+    /**
+     * True if the function is worth folding as {@link #isFoldable(Function)} decides, reading its constness from
+     * {@code functionFlags}, the {@link BoundExpression} flags it was built from.
+     */
+    static boolean isFoldable(Function function, int functionFlags) {
+        return (functionFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == BoundExpression.RUNTIME_CONSTANT
+                && isFoldableShape(function);
     }
 
     static boolean isFoldableType(int type) {
@@ -145,12 +161,12 @@ public interface RuntimeConstFunction extends UnaryFunction {
     // functions (e.g. arithmetic over a column) correctly report isRuntimeConstant()==false. Trivial
     // runtime-constant leaves (bind variables, now()) are deliberately excluded by the composite check:
     // they already cache their value, so wrapping them would only add an indirection.
-    private static boolean isComposite(Function function) {
-        return function instanceof UnaryFunction
-                || function instanceof BinaryFunction
-                || function instanceof TernaryFunction
-                || function instanceof QuaternaryFunction
-                || function instanceof MultiArgFunction;
+    private static boolean isFoldableShape(Function function) {
+        return function != null
+                && function.extendedOps() == null
+                && !(function instanceof RuntimeConstFunction)
+                && isComposite(function)
+                && isFoldableType(function.getType());
     }
 
     @Override

@@ -533,21 +533,16 @@ final class FilterPushdown implements OptimiserPass {
                 return RUNTIME_LEAVES;
             }
             int leaves = STATIC_LEAVES;
+            boolean hasRuntimeArgument = false;
             for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
                 final int argument = projectedLeaves(call.argumentAt(i), project);
                 if (argument == OTHER_LEAVES) {
                     return OTHER_LEAVES;
                 }
+                hasRuntimeArgument |= argument == RUNTIME_LEAVES;
                 leaves = Math.max(leaves, argument);
             }
-            if (leaves == OFFSET_LEAVES) {
-                for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                    if (projectedLeaves(call.argumentAt(i), project) == RUNTIME_LEAVES) {
-                        return OTHER_LEAVES;
-                    }
-                }
-            }
-            return leaves;
+            return leaves == OFFSET_LEAVES && hasRuntimeArgument ? OTHER_LEAVES : leaves;
         }
         if (expression instanceof ConstantExpression || expression instanceof TypeExpression) {
             return STATIC_LEAVES;

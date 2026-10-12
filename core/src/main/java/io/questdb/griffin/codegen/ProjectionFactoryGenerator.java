@@ -294,7 +294,7 @@ final class ProjectionFactoryGenerator {
             case ColumnType.SYMBOL -> new SymbolFunctionMemoizer(function);
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
                     new GeoHashFunctionMemoizer(function);
-            case ColumnType.BINARY -> new BinFunctionMemoizer(function);
+            case ColumnType.BINARY -> isVolatileReadTwice ? new BinFunctionMemoizer(function) : function;
             case ColumnType.LONG128 -> new Long128FunctionMemoizer(function);
             case ColumnType.INTERVAL -> new IntervalFunctionMemoizer(function);
             default -> function;

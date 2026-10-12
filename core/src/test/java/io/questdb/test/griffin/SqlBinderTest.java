@@ -699,6 +699,34 @@ public class SqlBinderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testModelDepthLimitsCteChain() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(cteChain(63)).noLeakCheck().fails(0, "SQL model is too complex to evaluate");
+            assertQuery(cteChain(62)).noLeakCheck().expectSize().returns("x\n1\n");
+        });
+    }
+
+    @Test
+    public void testModelDepthLimitsNestedSubqueries() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(nestedQuery(64)).noLeakCheck().fails(0, "SQL model is too complex to evaluate");
+            assertQuery(nestedQuery(63)).noLeakCheck().expectSize().returns("x\n1\n");
+        });
+    }
+
+    @Test
+    public void testModelDepthLimitsSetOperationChain() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(unionAllChain(129)).noLeakCheck().fails(0, "SQL model is too complex to evaluate");
+            final StringBuilder expected = new StringBuilder("x\n");
+            for (int i = 0; i < 128; i++) {
+                expected.append(i).append('\n');
+            }
+            assertQuery(unionAllChain(128)).noLeakCheck().noRandomAccess().expectSize().returns(expected.toString());
+        });
+    }
+
+    @Test
     public void testNumericCastsIncludingIdentityNullAndNarrowing() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_casts (unused STRING, id INT, i INT, l LONG, f FLOAT, d DOUBLE)");
@@ -911,6 +939,14 @@ public class SqlBinderTest extends AbstractCairoTest {
         });
     }
 
+    private static String cteChain(int length) {
+        final StringBuilder sql = new StringBuilder("WITH t0 AS (SELECT x FROM long_sequence(1))");
+        for (int i = 1; i <= length; i++) {
+            sql.append(", t").append(i).append(" AS (SELECT * FROM t").append(i - 1).append(')');
+        }
+        return sql.append(" SELECT * FROM t").append(length).toString();
+    }
+
     private static String describePlan(LogicalPlan plan) {
         final StringSink sink = new StringSink();
         describePlan(plan, sink);
@@ -934,6 +970,18 @@ public class SqlBinderTest extends AbstractCairoTest {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             describePlan(plan.inputAt(i), sink);
         }
+    }
+
+    private static String nestedQuery(int depth) {
+        return "SELECT * FROM (".repeat(depth) + "SELECT x FROM long_sequence(1)" + ")".repeat(depth);
+    }
+
+    private static String unionAllChain(int branches) {
+        final StringBuilder sql = new StringBuilder("SELECT 0 x FROM long_sequence(1)");
+        for (int i = 1; i < branches; i++) {
+            sql.append(" UNION ALL SELECT ").append(i).append(" x FROM long_sequence(1)");
+        }
+        return sql.toString();
     }
 
     private void assertDesignatedTimestamp(SqlCompilerImpl compiler, String sql, int timestampIndex, int scanDirection) throws Exception {
