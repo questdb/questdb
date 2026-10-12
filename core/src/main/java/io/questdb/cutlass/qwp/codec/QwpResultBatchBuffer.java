@@ -313,11 +313,17 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     /**
      * Bulk-appends {@code (hi - lo)} rows of the given {@code frame}, driving the
      * column emit in column-major order when the frame is in NATIVE format. Each
-     * supported column type reads its page memory directly from
-     * {@link PageFrame#getPageAddress} and hands a bulk-append call to the
-     * corresponding column scratch; types without a columnar fast path fall
-     * back to per-row iteration over {@code record}, touching only the columns
+     * supported column type reads its page memory from
+     * {@link PageFrameMemoryRecord#getPageAddress}, which the caller has bound to
+     * {@code frame} through its {@code PageFrameMemoryPool}, and hands a bulk-append
+     * call to the corresponding column scratch; types without a columnar fast path
+     * fall back to per-row iteration over {@code record}, touching only the columns
      * that need it.
+     * <p>
+     * The addresses must come from the record, not from {@link PageFrame#getPageAddress}:
+     * a covering-index single-key frame is produced metadata-only, its raw addresses are
+     * zero placeholders, and only the pool's covered decode (which the record binding ran)
+     * holds its values. Reading the raw frame shipped such a frame as all-NULL columns.
      * <p>
      * The parquet-format fallback iterates rows through {@code record} /
      * {@link #appendRow}, preserving correctness without the columnar speedup.
@@ -357,7 +363,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_TIMESTAMP:
                 case QwpConstants.TYPE_TIMESTAMP_NANOS:
                 case QwpConstants.TYPE_DECIMAL64: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -366,7 +372,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_DOUBLE: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -375,7 +381,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_INT: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -385,7 +391,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_IPV4: {
                     // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -394,7 +400,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_FLOAT: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else {
@@ -404,7 +410,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_SHORT:
                 case QwpConstants.TYPE_CHAR: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
                         // Wire spec sec 11.5: SHORT / CHAR cannot carry NULL.
                         // INSERT NULL stores 0 and the wire row keeps the null
@@ -418,7 +424,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_BYTE: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
                         // Wire spec sec 11.5: BYTE cannot carry NULL. See the
                         // SHORT / CHAR case above for the column-top rationale.
@@ -429,7 +435,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     break;
                 }
                 case QwpConstants.TYPE_BOOLEAN: {
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
                         // Wire spec sec 11.5: BOOLEAN cannot carry NULL. The
                         // column-top fill is n bit-packed false values; the
@@ -442,7 +448,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 }
                 case QwpConstants.TYPE_SYMBOL: {
                     SymbolTable st = sts[ci];
-                    long base = frame.getPageAddress(ci);
+                    long base = record.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else if (st != null) {
