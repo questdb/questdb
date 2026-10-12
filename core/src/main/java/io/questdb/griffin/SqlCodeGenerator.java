@@ -4212,6 +4212,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            // SqlOptimiser.rewriteSelectClause0 re-exposes a non-NONE fill list on a
+            // group-by model only when that model's own base model carries the fill.
+            // An empty list means this group-by owns no non-NONE fill: either the
+            // fill found by the walk above belongs to an inner query (an outer GROUP
+            // BY over a SAMPLE BY ... FILL sub-query must not stack the inner fill
+            // on its own output), or its own fill is FILL(NONE). The check runs
+            // after the FILL(NONE) validation so that an all-NONE list, which carries
+            // no signal, still fails that validation as before.
+            if (model.getSampleByFill().size() == 0) {
+                return groupByFactory;
+            }
+
             ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
                 expr = fillValuesExprs.getQuick(i);
