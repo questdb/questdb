@@ -103,8 +103,10 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                         for (int i = 0; i < count; i++) {
                             final long a = src + (long) i * size;
                             switch (ColumnType.tagOf(type)) {
-                                case ColumnType.DOUBLE -> Unsafe.putDouble(a, rnd.nextInt(10) == 0 ? rnd.nextDouble() : (rnd.nextInt(100_000) / 100.0));
-                                case ColumnType.FLOAT -> Unsafe.putFloat(a, rnd.nextInt(10) == 0 ? rnd.nextFloat() : (rnd.nextInt(10_000) / 10.0f));
+                                case ColumnType.DOUBLE ->
+                                        Unsafe.putDouble(a, rnd.nextInt(10) == 0 ? rnd.nextDouble() : (rnd.nextInt(100_000) / 100.0));
+                                case ColumnType.FLOAT ->
+                                        Unsafe.putFloat(a, rnd.nextInt(10) == 0 ? rnd.nextFloat() : (rnd.nextInt(10_000) / 10.0f));
                                 case ColumnType.LONG, ColumnType.TIMESTAMP -> {
                                     acc += sortedLongs ? 1000 + rnd.nextInt(50) : 0;
                                     Unsafe.putLong(a, sortedLongs ? acc : rnd.nextLong() >> rnd.nextInt(60));
