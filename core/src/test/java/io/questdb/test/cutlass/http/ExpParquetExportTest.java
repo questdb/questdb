@@ -1740,11 +1740,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
     @Test
     public void testParquetExportPageFrameCircuitBreaker() throws Exception {
+        // A negative export timeout trips the breaker on its first check, whatever the clock says.
+        // A timeout of 1 (the "timeout" parameter is in seconds) made this race the export, which
+        // a fast enough engine wins.
         getExportTester()
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withExportTimeout(-1))
                 .run((engine, sqlExecutionContext) -> {
-                    // ~100 daily partitions with 1000 rows each.  The heavy
-                    // rnd_str() computation per row makes each page frame
-                    // slow enough for the 1ms timeout to trip the breaker.
+                    // ~100 daily partitions with 1000 rows each
                     engine.execute("""
                             CREATE TABLE cb_test AS (
                                 SELECT x,
@@ -1757,8 +1759,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     // large strings that dominate per-frame cost.
                     params.put("query", "SELECT x + 1 AS cx, rnd_str(500, 1000, 0) AS big, ts FROM cb_test");
                     params.put("fmt", "parquet");
-                    params.put("timeout", "1");
-                    // With a very short timeout the circuit breaker should trip
+                    // No "timeout" parameter: it would replace the server's
+                    // negative export timeout. The circuit breaker trips
                     // during PAGE_FRAME_BACKED export.  Depending on which code
                     // path checks first, the error is either "timeout, query
                     // aborted" (from the page-frame factory) or "cancelled by
