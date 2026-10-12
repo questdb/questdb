@@ -1975,6 +1975,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlIndexScanChoiceMaxSelectivity() {
+        return getDelegate().getSqlIndexScanChoiceMaxSelectivity();
+    }
+
+    @Override
+    public int getSqlParallelIndexGroupByFrameRows() {
+        return getDelegate().getSqlParallelIndexGroupByFrameRows();
+    }
+
+    @Override
+    public long getSqlParallelIndexGroupByTaskRows() {
+        return getDelegate().getSqlParallelIndexGroupByTaskRows();
+    }
+
+    @Override
+    public boolean isSqlIndexScanChoiceEnabled() {
+        return getDelegate().isSqlIndexScanChoiceEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelIndexGroupByEnabled() {
+        return getDelegate().isSqlParallelIndexGroupByEnabled();
+    }
+
+    @Override
     public boolean isSqlDistinctGroupByKeyPruningEnabled() {
         return getDelegate().isSqlDistinctGroupByKeyPruningEnabled();
     }

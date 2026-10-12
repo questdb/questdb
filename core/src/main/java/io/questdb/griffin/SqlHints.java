@@ -45,6 +45,7 @@ public final class SqlHints {
     public static final String NO_COVERING_HINT = "no_covering";
     public static final String NO_INDEX_HINT = "no_index";
     public static final String NO_SYMBOL_PATTERN_INDEX_HINT = "no_symbol_pattern_index";
+    public static final String USE_INDEX_HINT = "use_index";
 
     public static boolean hasAsOfDenseHint(
             @NotNull IQueryModel queryModel,
@@ -154,6 +155,14 @@ public final class SqlHints {
 
     public static boolean hasNoSymbolPatternIndexHint(@NotNull IQueryModel queryModel) {
         return queryModel.getHints().keyIndex(NO_SYMBOL_PATTERN_INDEX_HINT) < 0;
+    }
+
+    /**
+     * The {@code use_index} hint: a GROUP BY over a symbol list that an index serves takes the
+     * index plan, without the per-open choice between it and a scan.
+     */
+    public static boolean hasUseIndexHint(@NotNull IQueryModel queryModel) {
+        return queryModel.getHints().keyIndex(USE_INDEX_HINT) < 0;
     }
 
     private static boolean hasHintWithParams(

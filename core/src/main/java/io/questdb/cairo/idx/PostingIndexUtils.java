@@ -551,7 +551,9 @@ public final class PostingIndexUtils {
     public static long efLowerBoundWord(long srcAddr, long target, int ordinal) {
         final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
         final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;
-        final long position = (target >>> bitsL) + ordinal;
+        // every value is at least 0: a negative target's high part is 0, not the unsigned shift's,
+        // which would address a word far past the high vector
+        final long position = (target <= 0 ? 0 : target >>> bitsL) + ordinal;
         final int wordIndex = (int) (position >>> 6);
         final long word = Unsafe.getLong(srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL) + (long) wordIndex * Long.BYTES);
         final int bit = (int) (position & 63);
@@ -624,6 +626,11 @@ public final class PostingIndexUtils {
         final long trailer = efRankTrailerAddress(srcAddr, encodedSize);
         if (trailer == 0) {
             return -1;
+        }
+        if (target <= 0) {
+            // every value is at least 0; the unsigned shift below would take a negative target's
+            // high part past every bucket
+            return 0;
         }
         final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
         final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;

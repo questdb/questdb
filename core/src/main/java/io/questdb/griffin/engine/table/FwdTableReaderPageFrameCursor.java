@@ -75,6 +75,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     // Track the lowest partition index that has not been released yet
     private int lowestOpenPartitionIndex = 0;
     private int pageFrameMaxRows;
+    // when > 0, the frame size this cursor uses instead of the execution context's, see setPageFrameRows()
+    private int pageFrameMaxRowsOverride;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
@@ -219,10 +221,15 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         this.partitionFrameCursor = partitionFrameCursor;
         this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
-        this.pageFrameMinRows = executionContext.getPageFrameMinRows();
-        this.pageFrameMaxRows = indexScan
-                ? Math.max(executionContext.getPageFrameMaxRows(), executionContext.getCairoEngine().getConfiguration().getSqlIndexScanPageFrameMaxRows())
-                : executionContext.getPageFrameMaxRows();
+        if (pageFrameMaxRowsOverride > 0) {
+            this.pageFrameMinRows = pageFrameMaxRowsOverride;
+            this.pageFrameMaxRows = pageFrameMaxRowsOverride;
+        } else {
+            this.pageFrameMinRows = executionContext.getPageFrameMinRows();
+            this.pageFrameMaxRows = indexScan
+                    ? Math.max(executionContext.getPageFrameMaxRows(), executionContext.getCairoEngine().getConfiguration().getSqlIndexScanPageFrameMaxRows())
+                    : executionContext.getPageFrameMaxRows();
+        }
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -248,10 +255,21 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     /**
      * Marks this cursor as the frame source of a serial scan whose rows come from an index. Its native
      * frames then hold up to {@link io.questdb.cairo.CairoConfiguration#getSqlIndexScanPageFrameMaxRows()}
-     * rows, from the next {@link #of(SqlExecutionContext, PartitionFrameCursor)} on.
+     * rows, from the next {@link #of(SqlExecutionContext, PartitionFrameCursor)} on, unless
+     * {@link #setPageFrameRows(int)} fixes their size.
      */
     public void setIndexScan(boolean indexScan) {
         this.indexScan = indexScan;
+    }
+
+    /**
+     * Makes the native frames of the next {@link #of} up to {@code rows} rows each, whatever the
+     * execution context's page frame sizes and the worker count; frames still split at column
+     * tops. Zero restores the context's sizes.
+     */
+    public void setPageFrameRows(int rows) {
+        assert rows >= 0;
+        this.pageFrameMaxRowsOverride = rows;
     }
 
     @Override
@@ -467,7 +485,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
+        reenterPageFrameRowLimit = pageFrameMaxRowsOverride > 0
+                ? pageFrameMaxRowsOverride
+                : calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
     }
 

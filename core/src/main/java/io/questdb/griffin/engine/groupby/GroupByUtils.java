@@ -635,6 +635,19 @@ public class GroupByUtils {
         }
     }
 
+    /**
+     * Whether any of the functions depends on the order of the rows it aggregates.
+     */
+    public static boolean hasOrderSensitiveFunctions(ObjList<GroupByFunction> groupByFunctions) {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            final GroupByFunction f = groupByFunctions.getQuick(i);
+            if (f != null && f.isOrderSensitive()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {

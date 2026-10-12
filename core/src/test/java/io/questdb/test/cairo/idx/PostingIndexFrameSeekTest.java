@@ -184,6 +184,59 @@ public class PostingIndexFrameSeekTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEfLowerBoundNegativeTarget() throws Exception {
+        // Every value is at least 0, so the first ordinal at or above a negative target is 0. The
+        // unsigned shift that takes a target's high part must not send a negative one past the
+        // end. A legacy blob, without the rank trailer, still answers -1.
+        assertMemoryLeak(() -> {
+            final long[][] cases = {{7, 9, 4000}, {0, 5, 100}, {0, 1, 2}, {0, 1000, 2000}, {3}, {0}, {1L << 40, (1L << 40) + 5}};
+            final long[] targets = {Long.MIN_VALUE, Long.MIN_VALUE + 1, Integer.MIN_VALUE, -1000, -2, -1, 0, 1, 2, 8};
+            final int maxCount = 3;
+            final long src = Unsafe.malloc((long) maxCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long dstSize = PostingIndexUtils.computeMaxEncodedSize(maxCount);
+            final long dst = Unsafe.malloc(dstSize, MemoryTag.NATIVE_DEFAULT);
+            final boolean wasRanked = PostingIndexUtils.isEfRankTrailerEnabled;
+            int rankedChecks = 0;
+            try (PostingIndexUtils.EncodeContext ctx = new PostingIndexUtils.EncodeContext()) {
+                for (boolean ranked : new boolean[]{true, false}) {
+                    PostingIndexUtils.isEfRankTrailerEnabled = ranked;
+                    for (long[] values : cases) {
+                        for (int i = 0; i < values.length; i++) {
+                            Unsafe.putLong(src + (long) i * Long.BYTES, values[i]);
+                        }
+                        ctx.ensureCapacity(values.length);
+                        final int size = PostingIndexUtils.encodeKeyEF(src, values.length, dst, ctx);
+                        final boolean hasTrailer = PostingIndexUtils.hasEfRankTrailer(dst, size);
+                        for (long target : targets) {
+                            int expected = 0;
+                            while (expected < values.length && values[expected] < target) {
+                                expected++;
+                            }
+                            Assert.assertEquals(
+                                    "values=" + java.util.Arrays.toString(values) + ", target=" + target + ", ranked=" + hasTrailer,
+                                    hasTrailer ? expected : -1,
+                                    PostingIndexUtils.efLowerBound(dst, size, target)
+                            );
+                            if (hasTrailer) {
+                                rankedChecks++;
+                                if (target <= 0) {
+                                    // ordinal 0 starts in word 0 with no one bit before it
+                                    Assert.assertEquals("target=" + target, 0, PostingIndexUtils.efLowerBoundWord(dst, target, 0));
+                                }
+                            }
+                        }
+                    }
+                }
+            } finally {
+                PostingIndexUtils.isEfRankTrailerEnabled = wasRanked;
+                Unsafe.free(src, (long) maxCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(dst, dstSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            Assert.assertTrue("no ranked blob was checked", rankedChecks > 0);
+        });
+    }
+
+    @Test
     public void testEfLowerBoundWordMatchesBruteForce() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);

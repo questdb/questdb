@@ -178,6 +178,24 @@ public interface Map extends Mutable, Closeable, Reopenable {
     );
 
     /**
+     * {@link #probeBatchFiltered} for rows whose consecutive keys are often equal, such as one
+     * symbol's rows in time order grouped by the symbol and a time bucket: a row whose key equals
+     * the previous row's reuses that row's entry without hashing or probing. The entries written
+     * are the same as {@link #probeBatchFiltered} writes. A map that cannot compare keys cheaply
+     * probes every row.
+     */
+    default long probeBatchFilteredRepeatingKeys(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        return probeBatchFiltered(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
+    }
+
+    /**
      * Reopens previously closed map with given key capacity and initial heap size.
      * Heap size value is ignored if the map does not use heap to store keys and values, e.g. {@link Unordered8Map}.
      */
