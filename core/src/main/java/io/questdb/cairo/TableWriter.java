@@ -562,7 +562,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.engine = cairoEngine;
         final int frameCacheSize = configuration.getO3PartitionMergeAppendFrameCacheSize();
         this.compositeFrameCache = frameCacheSize > 0
-                ? new CompositeFrameCache(frameCacheSize, configuration.getO3PartitionMergeAppendFrameCacheMaxColumns())
+                ? new CompositeFrameCache(frameCacheSize)
                 : null;
         this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         this.isInCtorRecovery = true;

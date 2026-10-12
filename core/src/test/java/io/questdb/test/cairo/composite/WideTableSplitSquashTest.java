@@ -157,12 +157,11 @@ public class WideTableSplitSquashTest extends AbstractCairoTest {
             Assert.assertTrue("fixture: the O3 rows must land as a merge-append plan", isComposite());
             assertFilesOpenedOnce();
             assertFilesFsyncedOnce();
-            // Too wide for the writer's frame cache: the plan's frames hold every column file open while it runs,
-            // and close with the commit rather than stay open in an idle pooled writer.
+            // However wide the table, the writer's frame cache keeps the plan's frames open for the next commit.
             try (TableWriter writer = getWriter("w")) {
                 final CompositeFrameCache cache = writer.getCompositeFrameCache();
                 Assert.assertNotNull(cache);
-                Assert.assertEquals(0, cache.getReusableCount(writer.getTxn()));
+                Assert.assertEquals(1, cache.getReusableCount(writer.getTxn()));
             }
             assertRows();
         });

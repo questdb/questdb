@@ -127,18 +127,55 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTableWiderThanLimitKeepsNoFrames() throws Exception {
+    public void testStaleOverReservedFrameDoesNotTrimLaterWrites() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-            // One below the table's four columns. At the limit the table is cached, as every other test here shows.
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_FRAME_CACHE_MAX_COLUMNS, 3);
-            createTables();
-            insertBoth(batch("T12:00:30", 10_000, 10));
-            assertReusable(0);
-            insertBoth(batch("T06:00:30", 20_000, 10));
-            assertReusable(0);
-            insertBoth(batch("T18:00:30", 30_000, 10));
-            assertReusable(0);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1G");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, "10.0");
+            execute("CREATE TABLE t (v LONG, s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            execute("CREATE TABLE ref (v LONG, s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            final String base = "SELECT x v, 'abc' s, timestamp_sequence('" + DAY + "', 1_000_000L) ts FROM long_sequence(40_000)"
+                    + " UNION ALL SELECT 0L v, 'abc' s, '2024-01-03'::TIMESTAMP ts FROM long_sequence(1)";
+            execute("INSERT INTO t " + base);
+            execute("INSERT INTO ref " + base);
+            // Added under 40,000 rows: each has a column top in the day.
+            for (String table : new String[]{"t", "ref"}) {
+                execute("ALTER TABLE " + table + " ADD COLUMN w VARCHAR");
+                execute("ALTER TABLE " + table + " ADD COLUMN l LONG");
+                execute("ALTER TABLE " + table + " ADD COLUMN str STRING");
+            }
+            drainWalQueue();
+
+            // Every row replaces one the day holds: the plan reserves the piece's rows plus the incoming ones and
+            // writes only the piece's, over-reserving its cached frame by well over a page per column.
+            execute("INSERT INTO t (v, s, ts, w, l, str) SELECT x + 100_000 v, 'abc' s, "
+                    + "timestamp_sequence('" + DAY + "T01:00:00', 1_000_000L) ts, ('w' || x)::VARCHAR w, x l, 'str' || x str "
+                    + "FROM long_sequence(20_000)");
+            drainWalQueue();
+            execute("UPDATE ref SET v = v - 3_600 + 100_000, w = ('w' || (v - 3_600))::VARCHAR, l = v - 3_600, str = 'str' || (v - 3_600) "
+                    + "WHERE ts >= '" + DAY + "T01:00:00' AND ts < '" + DAY + "T06:33:20'");
+            assertReusable(1);
+
+            execute("ALTER TABLE t ADD COLUMN e INT");
+            execute("ALTER TABLE ref ADD COLUMN e INT");
+            drainWalQueue();
+
+            // Writes the day's files past where the over-reserved frame left them: once it has let go of its
+            // reservation, nothing may trim them back to it.
+            final String grow = "SELECT x + 500_000 v, 'xyz' s, timestamp_sequence('" + DAY + "T01:00:00.5', 1_000_000L) ts, "
+                    + "('n' || x)::VARCHAR w, -x l, 'm' || x str, x::INT e FROM long_sequence(20_000)";
+            execute("INSERT INTO t (v, s, ts, w, l, str, e) " + grow);
+            execute("INSERT INTO ref (v, s, ts, w, l, str, e) " + grow);
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+
+            final String tail = "SELECT x + 900_000 v, 'tail' s, timestamp_sequence('" + DAY + "T12:00:00', 1_000_000L) ts, "
+                    + "('t' || x)::VARCHAR w, x l, 'u' || x str, x::INT e FROM long_sequence(10)";
+            execute("INSERT INTO t (v, s, ts, w, l, str, e) " + tail);
+            execute("INSERT INTO ref (v, s, ts, w, l, str, e) " + tail);
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "t", LOG);
         });
     }
@@ -392,6 +429,45 @@ public class CompositeFrameCacheTest extends AbstractCairoTest {
             execute("ALTER TABLE ref DROP PARTITION LIST '" + DAY + "'");
             drainWalQueue();
             assertReusable(0);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "t", LOG);
+        });
+    }
+
+    @Test
+    public void testWideTableKeepsFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // Far wider than any batch of frame column tasks: every column still stays open across commits.
+            final int extraColumns = 196;
+            final StringBuilder ddl = new StringBuilder("(ts TIMESTAMP, v LONG, w VARCHAR, s SYMBOL");
+            final StringBuilder names = new StringBuilder("ts, v, w, s");
+            final StringBuilder values = new StringBuilder();
+            for (int i = 0; i < extraColumns; i++) {
+                final boolean isVar = (i & 1) == 1;
+                ddl.append(", c").append(i).append(isVar ? " VARCHAR" : " LONG");
+                names.append(", c").append(i);
+                values.append(", ").append(isVar ? "('c" + i + "-' || x)::VARCHAR" : "x * " + (i + 1));
+            }
+            ddl.append(") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t " + ddl + " WAL");
+            execute("CREATE TABLE ref " + ddl + " BYPASS WAL");
+            final String[] batches = {
+                    "SELECT timestamp_sequence('" + DAY + "', 60_000_000L) ts, x v, 'a' || x w, 's' || (x % 3) s" + values + " FROM long_sequence(1440)"
+                            + " UNION ALL SELECT '2024-01-02T00:00:00'::TIMESTAMP ts, 0L v, 'z' w, 's0' s" + values + " FROM long_sequence(1)",
+                    batch("T12:00:30", 10_000, 10).replace(" FROM long_sequence", values + " FROM long_sequence"),
+                    batch("T06:00:30", 20_000, 10).replace(" FROM long_sequence", values + " FROM long_sequence"),
+                    batch("T18:00:30", 30_000, 10).replace(" FROM long_sequence", values + " FROM long_sequence"),
+                    batch("T03:00:30", 40_000, 10).replace(" FROM long_sequence", values + " FROM long_sequence")
+            };
+            for (int i = 0; i < batches.length; i++) {
+                execute("INSERT INTO t (" + names + ") " + batches[i]);
+                execute("INSERT INTO ref (" + names + ") " + batches[i]);
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+                if (i > 1) {
+                    assertReusable(1);
+                }
+            }
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "t", LOG);
         });
     }

@@ -934,11 +934,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         // The writer keeps the frames of the partitions inserts keep landing on open across commits; a plan that
         // finds its partition there, certified by the commit right before this one, starts with every column file
-        // open and mapped. Null: the cache is off, the table is too wide for it, or every slot is busy with another
-        // partition's plan, and this one runs on frames of its own.
+        // open and mapped. Null: the cache is off, or every slot is busy with another partition's plan, and this one
+        // runs on frames of its own.
         final CompositeFrameCache frameCache = tableWriter.getCompositeFrameCache();
         final CompositeFrameCache.Entry cacheEntry = frameCache != null
-                ? frameCache.acquire(partitionTimestamp, srcNameTxn, tableWriter.getMetadataVersion(), partitionE, tableWriter.getTxn(), metadata.getColumnCount())
+                ? frameCache.acquire(partitionTimestamp, srcNameTxn, tableWriter.getMetadataVersion(), partitionE, tableWriter.getTxn())
                 : null;
         Frame target = null;
         // ONE read-only view of the partition for every MERGE below, opened at the extent this plan starts

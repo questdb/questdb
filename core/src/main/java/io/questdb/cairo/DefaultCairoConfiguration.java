@@ -765,11 +765,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PartitionMergeAppendFrameCacheMaxColumns() {
-        return 64;
-    }
-
-    @Override
     public int getO3PartitionMergeAppendFrameCacheSize() {
         return 2;
     }

@@ -93,6 +93,14 @@ public interface FrameColumn extends Closeable {
     int getStorageType();
 
     /**
+     * Whether a {@link #trimUnusedReservation} would shorten a file: this open grew one past what its writes used by
+     * at least a page. Writable file columns only, false for every other kind.
+     */
+    default boolean isOverReserved() {
+        return false;
+    }
+
+    /**
      * Whether a write under {@link io.questdb.cairo.CommitMode#SYNC} since the last {@link #sync()} left a file of
      * this column unflushed.
      */
@@ -163,5 +171,15 @@ public interface FrameColumn extends Closeable {
      * the last.
      */
     default void sync() {
+    }
+
+    /**
+     * Writable file columns only, a no-op for every other kind. Gives back now what {@link #setTrimOnClose} would
+     * give back on close, and has the close give back nothing. For a column that outlives its plan - one
+     * {@link io.questdb.cairo.frm.file.CompositeFrameCache} keeps open across commits - the end of the plan is the
+     * last moment its sizes describe the files: a later write through another handle makes them stale, and a trim
+     * by them would cut that write off.
+     */
+    default void trimUnusedReservation() {
     }
 }

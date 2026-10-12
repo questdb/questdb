@@ -341,6 +341,11 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
+    public boolean isOverReserved() {
+        return !isReadOnly && (isAuxOverReserved() || isDataOverReserved());
+    }
+
+    @Override
     public boolean isSyncPending() {
         return isAuxSyncPending || isDataSyncPending;
     }
@@ -572,6 +577,30 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         }
     }
 
+    @Override
+    public void trimUnusedReservation() {
+        // See ContiguousFileFixFrameColumn#trimUnusedReservation.
+        if (!isReadOnly) {
+            if (isAuxOverReserved()) {
+                if (auxMapAddr != 0) {
+                    ff.munmap(auxMapAddr, auxMapSize, MEMORY_TAG);
+                    auxMapAddr = 0;
+                    auxMapSize = 0;
+                }
+                allocatedAuxBytes = ContiguousFileFixFrameColumn.trimUnused(ff, auxFd, allocatedAuxBytes, usedAuxBytes, columnIndex);
+            }
+            if (isDataOverReserved()) {
+                if (dataMapAddr != 0) {
+                    ff.munmap(dataMapAddr, dataMapSize, MEMORY_TAG);
+                    dataMapAddr = 0;
+                    dataMapSize = 0;
+                }
+                allocatedDataBytes = ContiguousFileFixFrameColumn.trimUnused(ff, dataFd, allocatedDataBytes, usedDataBytes, columnIndex);
+            }
+        }
+        isTrimOnClose = false;
+    }
+
     /**
      * The exact byte length of the merged data vector for a DEDUP index whose data side reaches BELOW its column
      * top. {@link ColumnTypeDriver#dedupMergeVarColumnSize} cannot size that shape: it addresses the data side by
@@ -700,6 +729,14 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         assert isAllocatedDataBytesKnown;
         assert fileOffsetHi <= allocatedDataBytes : "positioned data write exceeds reservation [column=" + columnIndex
                 + ", writeHi=" + fileOffsetHi + ", allocated=" + allocatedDataBytes + ']';
+    }
+
+    private boolean isAuxOverReserved() {
+        return auxFd != -1 && allocatedAuxBytes > Files.ceilPageSize(usedAuxBytes);
+    }
+
+    private boolean isDataOverReserved() {
+        return dataFd != -1 && allocatedDataBytes > Files.ceilPageSize(usedDataBytes);
     }
 
     private void mapAllRows(long rowHi) {

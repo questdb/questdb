@@ -47,9 +47,9 @@ import io.questdb.std.QuietCloseable;
  * the partition's physical extent, and a lookup under any other key closes it. All of it coarse on purpose: the cache
  * is a fast path for the steady state, and anything that is not the steady state simply reopens.
  * <p>
- * A table wider than {@code maxColumnCount} is not cached at all: an entry holds up to two files per column in each of
- * its two frames, open while the writer idles in its pool, and for a wide table that is more file descriptors than the
- * saved opens are worth. Its plans still hold every column file open while they run, just not past the commit.
+ * Every table is cached whatever its width: an entry holds up to two files per column in each of its two frames, open
+ * while the writer idles in its pool, and {@code cairo.o3.partition.merge.append.frame.cache.size} is what bounds
+ * that.
  * <p>
  * Partition tasks run on worker threads, one task per partition at a time, so an entry has at most one user and the
  * lookup is the only thing several threads contend on.
@@ -57,12 +57,10 @@ import io.questdb.std.QuietCloseable;
 public class CompositeFrameCache implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(CompositeFrameCache.class);
     private final Entry[] entries;
-    private final int maxColumnCount;
     private long clock;
 
-    public CompositeFrameCache(int capacity, int maxColumnCount) {
+    public CompositeFrameCache(int capacity) {
         assert capacity > 0;
-        this.maxColumnCount = maxColumnCount;
         this.entries = new Entry[capacity];
         for (int i = 0; i < capacity; i++) {
             entries[i] = new Entry();
@@ -73,16 +71,12 @@ public class CompositeFrameCache implements QuietCloseable {
      * Hands out the entry for {@code partitionTimestamp}: a populated one when the cache holds this version of the
      * partition under this metadata version, at exactly the extent the last plan through it left, certified at the
      * table's current txn - otherwise an empty one for the caller to {@link #fill}. Null when every slot is in use by
-     * another partition's task, or when the table is wider than this cache keeps frames for, in which case the caller
-     * runs with frames of its own. Every entry returned is in use by the caller until it {@link #release}s it.
+     * another partition's task, in which case the caller runs with frames of its own. Every entry returned is in use by
+     * the caller until it {@link #release}s it.
      *
-     * @param tableTxn    the table's committed txn, the one the commit about to write builds on
-     * @param columnCount the number of columns the frames would hold, dropped ones included
+     * @param tableTxn the table's committed txn, the one the commit about to write builds on
      */
-    public synchronized Entry acquire(long partitionTimestamp, long nameTxn, long metadataVersion, long extent, long tableTxn, int columnCount) {
-        if (columnCount > maxColumnCount) {
-            return null;
-        }
+    public synchronized Entry acquire(long partitionTimestamp, long nameTxn, long metadataVersion, long extent, long tableTxn) {
         Entry victim = null;
         for (int i = 0, n = entries.length; i < n; i++) {
             final Entry e = entries[i];
@@ -198,16 +192,25 @@ public class CompositeFrameCache implements QuietCloseable {
      * Returns an entry {@link #acquire} handed out, with the extent the plan left the partition at. A plan that went
      * through MARKS the entry, which keeps it only until {@link #certify}; until then nothing reuses it. With
      * {@code success} false, or after an {@link #evictAll} that ran while the entry was in use, its frames are closed.
+     * <p>
+     * A plan that went through gives back here what it reserved and did not write, not when its frames close: they
+     * may close commits later, after a write through other frames has made their sizes stale.
      */
-    public synchronized void release(Entry entry, boolean success, long extent) {
-        assert entry.inUse;
-        entry.inUse = false;
-        entry.certifiedTxn = -1;
-        if (!success || entry.evictOnRelease) {
-            entry.evict();
-        } else {
-            entry.extent = extent;
-            entry.marked = true;
+    public void release(Entry entry, boolean success, long extent) {
+        if (success && entry.target != null) {
+            // Outside the lock: only the caller uses the entry until the release below.
+            entry.target.trimUnusedReservation(entry.source);
+        }
+        synchronized (this) {
+            assert entry.inUse;
+            entry.inUse = false;
+            entry.certifiedTxn = -1;
+            if (!success || entry.evictOnRelease) {
+                entry.evict();
+            } else {
+                entry.extent = extent;
+                entry.marked = true;
+            }
         }
     }
 
@@ -251,8 +254,8 @@ public class CompositeFrameCache implements QuietCloseable {
                         .$(", nameTxn=").$(nameTxn)
                         .I$();
             }
-            // The source first: it maps the files the target trims as it closes, and Windows refuses to shorten a
-            // file while a view of it is mapped.
+            // The source first: it maps the files the target trims as it closes after a failed plan, and Windows
+            // refuses to shorten a file while a view of it is mapped.
             source = Misc.free(source);
             target = Misc.free(target);
             partitionTimestamp = Long.MIN_VALUE;
