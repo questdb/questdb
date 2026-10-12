@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
@@ -94,6 +95,283 @@ import static org.junit.Assert.assertTrue;
  */
 public class RecoveryCoordinatorTest extends AbstractCairoTest {
     private static final int PAGE_SIZE_4K = 4096;
+
+    @Test
+    public void testManifestPartitionLookupClosesHandlesOnChecksumFailure() throws Exception {
+        assertManifestPartitionLookupOwnership("checksum");
+    }
+
+    @Test
+    public void testManifestPartitionLookupClosesHandlesOnOpenFailure() throws Exception {
+        assertManifestPartitionLookupOwnership("open");
+    }
+
+    @Test
+    public void testManifestPartitionLookupClosesHandlesOnReadFailure() throws Exception {
+        assertManifestPartitionLookupOwnership("read");
+    }
+
+    @Test
+    public void testManifestPartitionLookupClosesHandlesOnRssLimit() throws Exception {
+        assertManifestPartitionLookupOwnership("rss");
+    }
+
+    @Test
+    public void testManifestPartitionLookupClosesHandlesOnSuccess() throws Exception {
+        assertManifestPartitionLookupOwnership("none");
+    }
+
+    @Test
+    public void testPurgeClosesManifestHandlesOnRssLimit() throws Exception {
+        assertPurgeManifestOwnership(true);
+    }
+
+    @Test
+    public void testPurgeClosesManifestHandlesWithoutRssLimit() throws Exception {
+        assertPurgeManifestOwnership(false);
+    }
+
+    @Test
+    public void testRewriteManifestHeaderClosesHandleOnReadFailure() throws Exception {
+        assertRewriteManifestHeaderOwnership(false, true);
+    }
+
+    @Test
+    public void testRewriteManifestHeaderClosesHandleOnRssLimit() throws Exception {
+        assertRewriteManifestHeaderOwnership(true, false);
+    }
+
+    @Test
+    public void testRewriteManifestHeaderClosesHandleOnSuccess() throws Exception {
+        assertRewriteManifestHeaderOwnership(false, false);
+    }
+
+    private void assertManifestPartitionLookupOwnership(String fault) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE manifest_lookup (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO manifest_lookup VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("manifest_lookup");
+            try (TableWriter writer = getWriter(token)) {
+                writer.advanceDurableEpoch(1L);
+            }
+            final List<Long> open = new ArrayList<>();
+            final AtomicInteger acquisitions = new AtomicInteger();
+            final AtomicInteger sectionReads = new AtomicInteger();
+            final FilesFacade probe = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ path) {
+                    // The second open of each lookup is the saved-image acquisition, after a valid header.
+                    if (fault.equals("open") && acquisitions.get() % 2 == 1) {
+                        acquisitions.incrementAndGet();
+                        return -1;
+                    }
+                    long fd = super.openRO(path);
+                    if (fd >= 0) {
+                        acquisitions.incrementAndGet();
+                        open.add(fd);
+                    }
+                    return fd;
+                }
+
+                @Override
+                public long read(long fd, long address, long len, long offset) {
+                    if (offset == DurableEpochManifest.FILE_SIZE) {
+                        sectionReads.incrementAndGet();
+                        if (fault.equals("read")) {
+                            return -1;
+                        }
+                        long read = super.read(fd, address, len, offset);
+                        if (fault.equals("checksum") && read == len) {
+                            Unsafe.getUnsafe().putByte(address, (byte) (Unsafe.getUnsafe().getByte(address) ^ 1));
+                        }
+                        return read;
+                    }
+                    return super.read(fd, address, len, offset);
+                }
+
+                @Override
+                public boolean close(long fd) {
+                    Assert.assertTrue("close without acquisition", open.remove(Long.valueOf(fd)));
+                    return super.close(fd);
+                }
+            };
+            try (Path path = new Path()) {
+                final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                final long previousLimit = Unsafe.getRssMemLimit();
+                final long beforeMemory = Unsafe.getMemUsed();
+                final long beforeFds = io.questdb.std.Files.getOpenFileCount();
+                try {
+                    if (fault.equals("rss")) {
+                        // The 120-byte header fits, but even the creation baseline's _txn image does not.
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 256);
+                    }
+                    for (int i = 0; i < 8; i++) {
+                        // This partition is absent: true under a fault must be conservative retention.
+                        Assert.assertEquals(!fault.equals("none"), DurableEpochManifest.namesPartition(
+                                probe, path, rootLen, token.getTableId(), 0, -1));
+                        Assert.assertEquals(rootLen, path.size());
+                        Assert.assertEquals(beforeMemory, Unsafe.getMemUsed());
+                        Assert.assertTrue("manifest handles retained=" + open.size(), open.isEmpty());
+                        Assert.assertEquals(beforeFds, io.questdb.std.Files.getOpenFileCount());
+                    }
+                    Assert.assertTrue("must open the saved image", acquisitions.get() >= 16);
+                    Assert.assertEquals(fault.equals("rss") || fault.equals("open"), sectionReads.get() == 0);
+                } finally {
+                    Unsafe.setRssMemLimit(previousLimit);
+                    // Rescue only after observing production's balance, including on a failing regression.
+                    for (long fd : new ArrayList<>(open)) {
+                        probe.close(fd);
+                    }
+                }
+            }
+        });
+    }
+
+    private void assertPurgeManifestOwnership(boolean hasRssLimit) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final AtomicBoolean armed = new AtomicBoolean();
+        final AtomicInteger acquisitions = new AtomicInteger();
+        final AtomicInteger sectionReads = new AtomicInteger();
+        final List<Long> open = new ArrayList<>();
+        final FilesFacade probe = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                long fd = super.openRO(path);
+                if (armed.get() && fd >= 0 && Utf8s.containsAscii(path, DurableEpochManifest.FILE_NAME)) {
+                    acquisitions.incrementAndGet();
+                    open.add(fd);
+                    if (hasRssLimit) {
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 136);
+                    }
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long address, long len, long offset) {
+                if (open.contains(fd) && offset == DurableEpochManifest.FILE_SIZE) {
+                    sectionReads.incrementAndGet();
+                }
+                return super.read(fd, address, len, offset);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                open.remove(Long.valueOf(fd));
+                return super.close(fd);
+            }
+        };
+        assertMemoryLeak(probe, () -> {
+            execute("CREATE TABLE manifest_purge (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO manifest_purge VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("manifest_purge");
+            final long partitionNameTxn;
+            try (TableWriter writer = getWriter(token)) {
+                writer.advanceDurableEpoch(1L);
+                partitionNameTxn = writer.getTxWriter().getPartitionNameTxn(0);
+            }
+            execute("ALTER TABLE manifest_purge DROP PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            final long previousLimit = Unsafe.getRssMemLimit();
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine, 1); Path partitionPath = new Path()) {
+                partitionPath.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForNativePartition(partitionPath, ColumnType.TIMESTAMP, PartitionBy.DAY,
+                        MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2024-01-01"), partitionNameTxn);
+                Assert.assertTrue(probe.exists(partitionPath.$()));
+                final long beforeMemory = Unsafe.getRssMemUsed();
+                final long beforeFds = io.questdb.std.Files.getOpenFileCount();
+                armed.set(true);
+                try {
+                    while (purge.run()) {
+                        Os.pause();
+                    }
+                    Assert.assertTrue("purge must open the saved image", acquisitions.get() >= 2);
+                    Assert.assertEquals(hasRssLimit, sectionReads.get() == 0);
+                    Assert.assertEquals(beforeMemory, Unsafe.getRssMemUsed());
+                    Assert.assertTrue("purge manifest handles retained=" + open.size(), open.isEmpty());
+                    Assert.assertEquals(beforeFds, io.questdb.std.Files.getOpenFileCount());
+                    Assert.assertTrue("fallback still needs the dropped partition", probe.exists(partitionPath.$()));
+                } finally {
+                    armed.set(false);
+                    Unsafe.setRssMemLimit(previousLimit);
+                    for (long fd : new ArrayList<>(open)) {
+                        probe.close(fd);
+                    }
+                }
+            }
+            assertQuery("SELECT v FROM manifest_purge").expectSize().returns("v\n2\n");
+        });
+    }
+
+    private void assertRewriteManifestHeaderOwnership(boolean hasRssLimit, boolean hasReadFailure) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE manifest_rewrite (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("manifest_rewrite");
+            final List<Long> open = new ArrayList<>();
+            final AtomicInteger acquisitions = new AtomicInteger();
+            final FilesFacade probe = new TestFilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ path, int opts) {
+                    long fd = super.openRW(path, opts);
+                    if (fd >= 0) {
+                        acquisitions.incrementAndGet();
+                        open.add(fd);
+                        if (hasRssLimit) {
+                            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + DurableEpochManifest.FILE_SIZE - 1);
+                        }
+                    }
+                    return fd;
+                }
+
+                @Override
+                public long read(long fd, long address, long len, long offset) {
+                    return hasReadFailure ? -1 : super.read(fd, address, len, offset);
+                }
+
+                @Override
+                public boolean close(long fd) {
+                    Assert.assertTrue("close without acquisition", open.remove(Long.valueOf(fd)));
+                    return super.close(fd);
+                }
+            };
+            try (Path path = new Path()) {
+                final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                final long previousLimit = Unsafe.getRssMemLimit();
+                final long beforeMemory = Unsafe.getMemUsed();
+                final long beforeFds = io.questdb.std.Files.getOpenFileCount();
+                try {
+                    for (int i = 0; i < 8; i++) {
+                        try {
+                            DurableEpochManifest.rewriteHeader(probe, path, rootLen, 0, true);
+                            Assert.assertFalse(hasRssLimit || hasReadFailure);
+                        } catch (CairoException e) {
+                            Assert.assertTrue(hasRssLimit || hasReadFailure);
+                            Assert.assertEquals(hasRssLimit, e.isOutOfMemory());
+                        }
+                        Assert.assertEquals(beforeMemory, Unsafe.getMemUsed());
+                        Assert.assertTrue("rewrite handles retained=" + open.size(), open.isEmpty());
+                        Assert.assertEquals(beforeFds, io.questdb.std.Files.getOpenFileCount());
+                        Assert.assertEquals(rootLen, path.size());
+                    }
+                    Assert.assertEquals(8, acquisitions.get());
+                } finally {
+                    Unsafe.setRssMemLimit(previousLimit);
+                    for (long fd : new ArrayList<>(open)) {
+                        probe.close(fd);
+                    }
+                }
+                Assert.assertTrue(DurableEpochManifest.validateSections(configuration, token, path, rootLen, 0, 0, 0));
+            }
+        });
+    }
 
     /**
      * A table created while the instance ran nosync has no anchor: the generation-zero baseline is
@@ -2717,6 +2995,283 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                         1L, tx.unsafeReadVersion() - tx.getVersion());
             }
         });
+    }
+
+    @Test
+    public void testDetachFirstCoverFallbackAndReopen() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final AtomicInteger publications = new AtomicInteger();
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final FilesFacade facade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isFailing.get() && Utf8s.containsAscii(name, io.questdb.cairo.DurableEpochManifest.FILE_NAME)
+                        && publications.incrementAndGet() > 1) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(facade, () -> {
+            execute("CREATE TABLE detach_cover (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO detach_cover VALUES ('2024-01-01', 1), ('2024-01-01T01:00', 2), ('2024-01-02', 3), ('2024-01-03', 4)");
+            TestUtils.drainWalQueue(engine);
+            final TableToken token = engine.verifyTableName("detach_cover");
+            try (TableWriter writer = getWriter(token)) {
+                writer.advanceDurableEpoch(1);
+            }
+            isFailing.set(true);
+            try {
+                execute("ALTER TABLE detach_cover DETACH PARTITION LIST '2024-01-01'");
+                TestUtils.drainWalQueue(engine);
+                Assert.assertTrue("required second publication must suspend apply", engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals("one published cover, then one failed attempt", 2, publications.get());
+                final io.questdb.cairo.DurableEpochManifest.Candidate[] cuts = operationCompletionCuts(token);
+                Assert.assertEquals(2, cuts.length);
+                Assert.assertTrue("exactly the newest cut covers the detach", cuts[0].epochTxn > cuts[1].epochTxn);
+                Assert.assertFalse("first cover must not expose the final artifact", epochArtifactExists(token, "2024-01-01", TableUtils.DETACHED_DIR_MARKER));
+                engine.releaseAllWriters();
+                try (TableWriter ignored = getWriter(token)) {
+                    Assert.assertFalse("reopen must not finalize from the newest pin alone", epochArtifactExists(token, "2024-01-01", TableUtils.DETACHED_DIR_MARKER));
+                }
+                Assert.assertEquals("reopen cannot secretly publish a second cover", 2, publications.get());
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                isFailing.set(false);
+                corruptSavePointSection(token, cuts[0].generation);
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+            } finally {
+                isFailing.set(false);
+            }
+            execute("ALTER TABLE detach_cover RESUME WAL");
+            TestUtils.drainWalQueue(engine);
+            assertQuery("SELECT * FROM detach_cover").expectSize().timestamp("ts").returns("ts\tid\n2024-01-02T00:00:00.000000Z\t3\n2024-01-03T00:00:00.000000Z\t4\n");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            Assert.assertTrue("replay must finish the detached artifact", epochArtifactExists(token, "2024-01-01", TableUtils.DETACHED_DIR_MARKER));
+            Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(token), readTxnSeqTxn(token));
+            for (int i = 0; i < 2; i++) {
+                final io.questdb.cairo.DurableEpochManifest.Candidate[] cuts = operationCompletionCuts(token);
+                Assert.assertTrue("every selectable cut covers the completed detach", cuts.length > 0);
+                for (io.questdb.cairo.DurableEpochManifest.Candidate cut : cuts) {
+                    Assert.assertEquals(readTxnSeqTxn(token), cut.epochSeqTxn);
+                }
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                if (cuts.length == 2) {
+                    corruptSavePointSection(token, cuts[0].generation);
+                }
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                TestUtils.drainWalQueue(engine);
+                assertQuery("SELECT id FROM detach_cover ORDER BY id").expectSize().returns("id\n3\n4\n");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            }
+        });
+    }
+
+    @Test
+    public void testDetachFinalizationFailureRetriesAfterReopen() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final FilesFacade facade = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLinkDirRecursive(Path src, Path dst, int mode) {
+                return isFailing.get() && Utf8s.endsWithAscii(dst, TableUtils.DETACHED_DIR_MARKER)
+                        ? -1 : super.hardLinkDirRecursive(src, dst, mode);
+            }
+
+            @Override
+            public int copyRecursive(Path src, Path dst, int mode) {
+                return isFailing.get() && Utf8s.endsWithAscii(dst, TableUtils.DETACHED_DIR_MARKER)
+                        ? -1 : super.copyRecursive(src, dst, mode);
+            }
+        };
+        assertMemoryLeak(facade, () -> {
+            execute("CREATE TABLE detach_retry (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO detach_retry VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            TestUtils.drainWalQueue(engine);
+            final TableToken token = engine.verifyTableName("detach_retry");
+            isFailing.set(true);
+            try {
+                execute("ALTER TABLE detach_retry DETACH PARTITION LIST '2024-01-01'");
+                TestUtils.drainWalQueue(engine);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertFalse(epochArtifactExists(token, "2024-01-01", TableUtils.DETACHED_DIR_MARKER));
+                final io.questdb.cairo.DurableEpochManifest.Candidate[] cuts = operationCompletionCuts(token);
+                Assert.assertEquals(2, cuts.length);
+                Assert.assertEquals(cuts[0].epochTxn, cuts[1].epochTxn);
+                engine.releaseAllWriters();
+                Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE detach_retry RESUME WAL"));
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
+            } finally {
+                isFailing.set(false);
+            }
+            execute("ALTER TABLE detach_retry RESUME WAL");
+            TestUtils.drainWalQueue(engine);
+            Assert.assertTrue(epochArtifactExists(token, "2024-01-01", TableUtils.DETACHED_DIR_MARKER));
+            assertQuery("SELECT id FROM detach_retry").expectSize().returns("id\n2\n");
+        });
+    }
+
+    @Test
+    public void testDetachRejectsUnrelatedDestination() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE detach_existing (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO detach_existing VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            TestUtils.drainWalQueue(engine);
+            final TableToken token = engine.verifyTableName("detach_existing");
+            final java.nio.file.Path destination = Paths.get(configuration.getDbRoot().toString(), token.getDirName(), "2024-01-01" + TableUtils.DETACHED_DIR_MARKER);
+            Files.createDirectories(destination);
+            Files.writeString(destination.resolve("unrelated"), "not this detach");
+            try (TableWriter writer = getWriter(token)) {
+                Assert.assertEquals(io.questdb.cairo.AttachDetachStatus.DETACH_ERR_ALREADY_DETACHED,
+                        writer.detachPartition(MicrosTimestampDriver.floor("2024-01-01")));
+            }
+            assertQuery("SELECT id FROM detach_existing ORDER BY id").expectSize().returns("id\n1\n2\n");
+            Assert.assertEquals("not this detach", Files.readString(destination.resolve("unrelated")));
+        });
+    }
+
+    @Test
+    public void testPlainResumeOutsideAdaptiveDoesNotAcquireWriter() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE resume_nosync (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("resume_nosync");
+            execute("ALTER TABLE resume_nosync SUSPEND WAL");
+            try (TableWriter ignored = getWriter(token)) {
+                execute("ALTER TABLE resume_nosync RESUME WAL");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            }
+        });
+    }
+
+    @Test
+    public void testResumeCompletionRejectsFencedPublication() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE resume_fence (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO resume_fence VALUES ('2024-01-01', 1)");
+            TestUtils.drainWalQueue(engine);
+            final TableToken token = engine.verifyTableName("resume_fence");
+            execute("ALTER TABLE resume_fence SUSPEND WAL");
+            execute("INSERT INTO resume_fence VALUES ('2024-01-02', 2)");
+            final long resumeFrom = engine.getTableSequencerAPI().lastTxn(token) + 1;
+            engine.getTableSequencerAPI().getTxnTracker(token).fenceDurableFrontier(CairoException.dataSyncFailureCarry(5, "test fence"));
+            try {
+                Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_fence RESUME WAL FROM TXN " + resumeFrom));
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_fence RESUME WAL"));
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
+            } finally {
+                engine.releaseAllWriters();
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+            }
+        });
+    }
+
+    @Test
+    public void testResumeSecondCoverFailureAndPlainRetry() throws Exception {
+        assertResumeCompletionRetry(true);
+    }
+
+    @Test
+    public void testResumeSecondCoverFailureAndRepeatedFromRetry() throws Exception {
+        assertResumeCompletionRetry(false);
+    }
+
+    private void assertResumeCompletionRetry(boolean plainRetry) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        final AtomicInteger publications = new AtomicInteger();
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final FilesFacade facade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isFailing.get() && Utf8s.containsAscii(name, io.questdb.cairo.DurableEpochManifest.FILE_NAME)
+                        && publications.incrementAndGet() > 1) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(facade, () -> {
+            execute("CREATE TABLE resume_cover (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO resume_cover VALUES ('2024-01-01', 1)");
+            TestUtils.drainWalQueue(engine);
+            final TableToken token = engine.verifyTableName("resume_cover");
+            try (TableWriter writer = getWriter(token)) {
+                writer.advanceDurableEpoch(1);
+            }
+            execute("ALTER TABLE resume_cover SUSPEND WAL");
+            execute("INSERT INTO resume_cover VALUES ('2024-01-02', 20)");
+            execute("INSERT INTO resume_cover VALUES ('2024-01-02', 21)");
+            final long skippedThrough = engine.getTableSequencerAPI().lastTxn(token);
+            execute("INSERT INTO resume_cover VALUES ('2024-01-03', 3)");
+            TestUtils.drainWalQueue(engine);
+            isFailing.set(true);
+            try {
+                Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_cover RESUME WAL FROM TXN " + (skippedThrough + 1)));
+                Assert.assertEquals(2, publications.get());
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
+                final io.questdb.cairo.DurableEpochManifest.Candidate[] cuts = operationCompletionCuts(token);
+                Assert.assertEquals(2, cuts.length);
+                Assert.assertEquals(skippedThrough, cuts[0].epochSeqTxn);
+                Assert.assertTrue(cuts[1].epochSeqTxn < skippedThrough);
+                // The failed open leaves its generation selectable and must restore its pin. Then explicitly
+                // remove that bookkeeping: neither a missing pin nor a cleared owed bit certifies disk coverage.
+                final var tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+                Assert.assertTrue(tracker.getOtherPinnedEpochTxn() >= 0);
+                try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+                    scoreboard.releaseTxn(tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A,
+                            tracker.getOtherPinnedEpochTxn());
+                }
+                tracker.setPinnedEpoch(tracker.getPinnedEpochTxn(), tracker.isPinnedEpochSlotA(), -1, tracker.getPinnedEpochGeneration());
+                tracker.setDurableEpochOwed(false);
+                Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_cover RESUME WAL" + (plainRetry ? "" : " FROM TXN " + (skippedThrough + 1))));
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
+            } finally {
+                isFailing.set(false);
+            }
+            execute("ALTER TABLE resume_cover RESUME WAL" + (plainRetry ? "" : " FROM TXN " + (skippedThrough + 1)));
+            final io.questdb.cairo.DurableEpochManifest.Candidate[] cuts = operationCompletionCuts(token);
+            Assert.assertEquals(2, cuts.length);
+            for (io.questdb.cairo.DurableEpochManifest.Candidate cut : cuts) {
+                Assert.assertEquals(skippedThrough, cut.epochSeqTxn);
+            }
+            TestUtils.drainWalQueue(engine);
+            assertQuery("SELECT id FROM resume_cover ORDER BY id").expectSize().returns("id\n1\n3\n");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            corruptSavePointSection(token, cuts[0].generation);
+            engine.getTxnScoreboardPool().remove(token);
+            engine.getTableSequencerAPI().resetForReboot(token);
+            new RecoveryCoordinator(engine).recover();
+            TestUtils.drainWalQueue(engine);
+            assertQuery("SELECT id FROM resume_cover ORDER BY id").expectSize().returns("id\n1\n3\n");
+            Assert.assertEquals(skippedThrough + 1, readTxnSeqTxn(token));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+        });
+    }
+
+    private io.questdb.cairo.DurableEpochManifest.Candidate[] operationCompletionCuts(TableToken token) {
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(token);
+            return io.questdb.cairo.DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), p, p.size(), token.getTableId());
+        }
     }
 
     private static boolean nextMix(int[] mix, int imageCount) {

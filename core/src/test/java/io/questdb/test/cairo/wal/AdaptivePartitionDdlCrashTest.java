@@ -205,8 +205,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     // a COPY, so both generations must cover it.
                     if (operation.attaches()) {
                         params.add(new Object[]{history, operation, OperationPath.WAL});
-                    } else if (operation == Operation.COPY_INTO_EXISTING_TABLE) {
+                    } else if (operation == Operation.COPY_INTO_EXISTING_TABLE || operation == Operation.RESUME_WAL_FROM_TXN) {
                         params.add(new Object[]{history, operation, OperationPath.OWN});
+                    } else if (operation.detaches() || operation == Operation.DETACH_LIST_SECOND_FAILS) {
+                        params.add(new Object[]{history, operation, OperationPath.WAL});
+                    }
+                    if (operation == Operation.DETACH || operation == Operation.DROP || operation == Operation.FORCE_DROP
+                            || operation == Operation.ATTACH_MOVED_DIR || operation == Operation.TTL) {
+                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
                     }
                     continue;
                 }
@@ -591,7 +597,18 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         if (path == OperationPath.WAL) {
             startOperation();
             try {
-                if (operation == Operation.CONVERT_LIST_SECOND_FAILS) {
+                if (requiresDurableCompletion() && history.failsSavePoint()) {
+                    // Required publication failure is no longer a successful best-effort operation. FORCE DROP
+                    // executes directly even on this path; a WAL DETACH fails in apply and suspends instead.
+                    if (operation == Operation.FORCE_DROP) {
+                        Assert.assertThrows(CairoException.class, () -> e.execute(sql));
+                    } else {
+                        e.execute(sql);
+                        TestUtils.drainWalQueue(e);
+                        Assert.assertTrue("failed required publication must suspend apply",
+                                e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")));
+                    }
+                } else if (operation == Operation.CONVERT_LIST_SECOND_FAILS) {
                     // A convert that fails in the apply job suspends the table.
                     e.execute(sql);
                     TestUtils.drainWalQueue(e);
@@ -606,8 +623,16 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             } finally {
                 endOperation();
             }
-            if (history == History.SAVE_POINT_FAILS_THEN_KILLED) {
-                // Without the kill, the next save point would finish what the failed one left.
+            if (requiresDurableCompletion() && history.failsSavePoint()) {
+                // Retry with the fault lifted. The killed history still restarts from its frozen pre-retry image.
+                if (operation == Operation.FORCE_DROP) {
+                    try (TableWriter writer = e.getWriter(e.verifyTableName("t"), "test")) {
+                        writer.completeDurableEpochAfter("forced drop retry");
+                    }
+                } else {
+                    alter(e, "ALTER TABLE t RESUME WAL");
+                }
+            } else if (history == History.SAVE_POINT_FAILS_THEN_KILLED) {
                 takeSavePoint(e);
             }
             if (operation == Operation.CONVERT_LIST_SECOND_FAILS) {
@@ -652,12 +677,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 default -> throw new AssertionError(path);
             }
             killAfterFailedSavePoint(e);
+            Assert.assertFalse("required publication must fail the statement", requiresDurableCompletion() && history.failsSavePoint());
             Assert.assertFalse("the statement must fail", operation.failsPartWay());
         } catch (CairoException | SqlException ex) {
-            if (!operation.failsPartWay()) {
+            if (!operation.failsPartWay() && !(requiresDurableCompletion() && history.failsSavePoint())) {
                 throw ex;
             }
         } finally {
+            killAfterFailedSavePoint(e);
             endOperation();
         }
         assertSavePointsOfOneStatement();
@@ -668,7 +695,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     // One statement takes one save point at most, however many partitions it changes, and none outside ADAPTIVE.
     private void assertSavePointsOfOneStatement() {
         if (!history.failsSavePoint()) {
-            Assert.assertTrue("save points of one statement: " + savePoints.get(), savePoints.get() <= (history == History.NOSYNC ? 0 : 1));
+            Assert.assertTrue("save points of one statement: " + savePoints.get(),
+                    savePoints.get() <= (history == History.NOSYNC ? 0 : requiresDurableCompletion() ? 2 : 1));
         }
     }
 
@@ -676,9 +704,13 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     // its save point. In ADAPTIVE the older save point, which recovery falls back to, may still name them, so the
     // purge the statement schedules removes them once the next save point moves past them.
     private void assertSupersededDirsRemoved(CairoEngine e, long supersededBefore) throws Exception {
+        if (history == History.NEWEST_GENERATION_DAMAGED) {
+            // Do not hide operation-completion bugs with a helper-only covering publication.
+            return;
+        }
         // The ATTACH's save point covers it in one generation; a fallback to the older generation replays the ATTACH
         // from .attachable, so it stays until a second save point puts the older generation past the attach.
-        if (operation.keepsAttachable() && !history.failsSavePoint() && !history.killed()
+        if (operation.keepsAttachable() && path == OperationPath.WAL && !history.failsSavePoint() && !history.killed()
                 && history != History.NOSYNC && history != History.NEWEST_GENERATION_DAMAGED) {
             Assert.assertTrue("the attach source must stay until the older generation covers the attach", attachableExists(e));
             if (history == History.ENROLLED_AT_CREATE) {
@@ -792,6 +824,15 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             default -> {
             }
         }
+    }
+
+    private boolean requiresDurableCompletion() {
+        return operation.detaches() || operation == Operation.DETACH_LIST_SECOND_FAILS || operation == Operation.FORCE_DROP
+                || path != OperationPath.WAL && switch (operation) {
+            case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR,
+                 ATTACH_SOFT_LINK, ATTACH_WITH_COPY_SETTING, DROP, TTL -> true;
+            default -> false;
+        };
     }
 
     private String sql(CairoEngine e) throws Exception {

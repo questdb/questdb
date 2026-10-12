@@ -360,16 +360,19 @@ public final class DurableEpochManifest {
     public static void rewriteHeader(FilesFacade ff, Path tablePath, int rootLen, int generation, boolean sync) {
         tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
         final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, CairoConfiguration.O_NONE);
-        final long header = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
         try {
-            if (ff.read(fd, header, FILE_SIZE, 0) != FILE_SIZE || ff.write(fd, header, FILE_SIZE, 0) != FILE_SIZE) {
-                throw CairoException.critical(ff.errno()).put("could not rewrite adaptive save point header [path=").put(tablePath).put(']');
-            }
-            if (sync) {
-                ff.fsyncDurable(fd);
+            final long header = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
+            try {
+                if (ff.read(fd, header, FILE_SIZE, 0) != FILE_SIZE || ff.write(fd, header, FILE_SIZE, 0) != FILE_SIZE) {
+                    throw CairoException.critical(ff.errno()).put("could not rewrite adaptive save point header [path=").put(tablePath).put(']');
+                }
+                if (sync) {
+                    ff.fsyncDurable(fd);
+                }
+            } finally {
+                Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
             }
         } finally {
-            Unsafe.free(header, FILE_SIZE, MemoryTag.NATIVE_TABLE_WRITER);
             ff.close(fd);
             tablePath.trimTo(rootLen);
         }
@@ -760,13 +763,16 @@ public final class DurableEpochManifest {
         if (fd < 0) {
             return true;
         }
-        final long buf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            return ff.read(fd, buf, size, FILE_SIZE) != size
-                    || Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE + Long.BYTES) != TableUtils.calculateCvAreaChecksum(buf, size)
-                    || TxReader.imageListsPartition(buf, size, partitionTimestamp, partitionNameTxn);
+            final long buf = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                return ff.read(fd, buf, size, FILE_SIZE) != size
+                        || Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE + Long.BYTES) != TableUtils.calculateCvAreaChecksum(buf, size)
+                        || TxReader.imageListsPartition(buf, size, partitionTimestamp, partitionNameTxn);
+            } finally {
+                Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
+            }
         } finally {
-            Unsafe.free(buf, size, MemoryTag.NATIVE_DEFAULT);
             ff.close(fd);
         }
     }

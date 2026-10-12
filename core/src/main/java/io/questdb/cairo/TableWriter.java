@@ -1100,8 +1100,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Applies a command directly to this writer. On a WAL table this bypasses the WAL (a forced ALTER, a queued
-     * command), so no WAL replay can redo the change, and an adaptive table takes a durable epoch after it,
-     * unless one already names the current txn. The dispatcher, a command run once the writer frees up and the
+     * command), so no WAL replay can redo the change. Direct logical partition changes synchronously cover every
+     * selectable epoch before completion; physical/background changes retain their best-effort epoch. The
+     * dispatcher, a command run once the writer frees up and the
      * writer's command queue end here. A WAL lag the writer holds is dropped first, so the command sees only
      * committed rows and the apply job applies the lag's transactions again afterwards. The Enterprise storage
      * policy jobs apply their commands inline, without this method; they work on partitions older than the
@@ -1124,10 +1125,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw th;
         } finally {
             // Also after a failure: a list command may have changed some partitions before it failed.
-            if (enrolledAdaptive
-                    && !distressed
-                    && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() != getTxn()) {
-                advanceDurableEpochBestEffort("direct change");
+            if (enrolledAdaptive && !distressed) {
+                if (command instanceof AlterOperation alter && switch (alter.getCommand()) {
+                    case AlterOperation.ATTACH_PARTITION, AlterOperation.DETACH_PARTITION,
+                         AlterOperation.DROP_PARTITION, AlterOperation.FORCE_DROP_PARTITION, AlterOperation.SET_TTL ->
+                            true;
+                    default -> false;
+                }) {
+                    // A no-op retry can follow a committed change whose first publication succeeded but whose
+                    // second failed. Certify disk coverage even when close or another epoch cleared the owed bit.
+                    completeDurableEpochAfter("direct partition change");
+                } else if (engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() != getTxn()) {
+                    advanceDurableEpochBestEffort("direct change");
+                }
             }
         }
     }
@@ -2209,6 +2219,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int partitionIndex = txWriter.getPartitionIndex(timestamp);
         if (partitionIndex < 0) {
             assert !txWriter.attachedPartitionsContains(timestamp);
+            // A retry after a failed covering publication still owns the temporary detached copy.
+            for (int i = 0, n = detachesAfterSavePoint.size(); i < n; i += 2) {
+                if (detachesAfterSavePoint.getQuick(i) == timestamp) {
+                    completeDurableEpochAfter("detach retry");
+                    break;
+                }
+            }
             return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION;
         }
 
@@ -7552,7 +7569,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    // An ATTACH keeps its source and a DETACH its temporary name until a save point covers it. A replica keeps no
+    // An ATTACH keeps its source and a DETACH its temporary name until all selectable cuts cover it. A replica keeps no
     // save point and never rewinds, so there they finish at once.
     private boolean defersPartitionMoves() {
         return enrolledAdaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled();
@@ -8140,7 +8157,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     // Gives a DETACH whose commit is final its .detached name: a second link, synced, then the temporary name goes.
-    private void finishDetach(long timestamp, long detachTxn) {
+    private boolean finishDetach(long timestamp, long detachTxn) {
         try {
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
             other.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
@@ -8150,7 +8167,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (ff.exists(path.$()) ? !linkMissingFiles(other, path) : !linkOrCopyDir(other, path, detachedMkDirMode)) {
                 LOG.critical().$("could not name detached partition, it stays under its temporary name [from=").$(other)
                         .$(", to=").$(path).$(", errno=").$(ff.errno()).I$();
-                return;
+                return false;
             }
             if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
                 DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size());
@@ -8159,6 +8176,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (!ff.rmdir(other)) {
                 LOG.error().$("could not remove temporary detached partition name [path=").$(other).$(", errno=").$(ff.errno()).I$();
             }
+            return true;
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
@@ -8243,7 +8261,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // A published save point covers every committed attach and detach of this writer. An ATTACH's source goes only
     // once the older generation stands at or past the attach as well (priorEpochTxn, while its generation is on
     // disk): a fallback to that generation replays the ATTACH from the source, which nothing else can redo. A DETACH
-    // takes its final name after one save point: a fallback replays it from the original, which the older pin keeps.
+    // must keep its temporary name until every selectable generation covers it: an existing final .detached name
+    // refuses whole-command replay even when the original partition's bytes survived.
     private void finishPartitionMovesAfterSavePoint(boolean priorOnDisk, long priorEpochTxn) {
         int kept = 0;
         for (int i = 0, n = attachablesAfterSavePoint.size(); i < n; i += 2) {
@@ -8263,10 +8282,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         attachablesAfterSavePoint.setPos(kept);
         other.trimTo(pathSize);
-        for (int i = 0, n = detachesAfterSavePoint.size(); i < n; i += 2) {
-            finishDetach(detachesAfterSavePoint.getQuick(i), detachesAfterSavePoint.getQuick(i + 1));
+        finishPendingDetaches();
+    }
+
+    private void finishPendingDetaches() {
+        for (int i = detachesAfterSavePoint.size() - 2; i >= 0; i -= 2) {
+            final long detachTxn = detachesAfterSavePoint.getQuick(i + 1);
+            if (hasDurableEpochCoverage(detachTxn)) {
+                if (!finishDetach(detachesAfterSavePoint.getQuick(i), detachTxn)) {
+                    throw CairoException.nonCritical().put("could not finish detached partition; retry RESUME WAL [table=")
+                            .put(tableToken.getTableName()).put(']');
+                }
+                detachesAfterSavePoint.removeIndexBlock(i, 2);
+            }
         }
-        detachesAfterSavePoint.clear();
     }
 
     private Utf8Sequence formatPartitionForTimestamp(long partitionTimestamp, long nameTxn) {
@@ -13475,10 +13504,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             LOG.error().$("could not remove temporary detached partition name [path=").$(other).$(", errno=").$(ff.errno()).I$();
                         }
                         other.trimTo(pathSize);
-                    } else if (adaptive
-                            && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()
-                            && engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() < detachTxn) {
-                        detachesAfterSavePoint.add(timestamp, detachTxn);
+                    } else if (adaptive && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+                        if (!hasDurableEpochCoverage(detachTxn) || !finishDetach(timestamp, detachTxn)) {
+                            detachesAfterSavePoint.add(timestamp, detachTxn);
+                        }
                     } else {
                         finishDetach(timestamp, detachTxn);
                     }
@@ -16322,7 +16351,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void advanceDurableEpochAfter(CharSequence operation) {
         if (enrolledAdaptive) {
             if (defersPartitionMoves()) {
-                advanceDurableEpochBestEffort(operation);
+                if (detachesAfterSavePoint.size() > 0) {
+                    completeDurableEpochAfter(operation);
+                } else {
+                    advanceDurableEpochBestEffort(operation);
+                }
             }
             if (partitionRemovalsAfterSavePoint.size() > 0) {
                 // Removed only where no pin covers them; the rest go to a later purge.
@@ -16331,6 +16364,60 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionRemovalsAfterSavePoint.clear();
                 processPartitionRemoveCandidates();
             }
+        }
+    }
+
+    /**
+     * Completes an operation that replay cannot reproduce against every surviving save point. Unlike periodic
+     * epochs this is synchronous and required: a skip or failure must not report operation completion. This is
+     * an internal writer/sequencer contract, not the earlier acknowledgement of a command enqueued in the WAL.
+     */
+    public void completeDurableEpochAfter(CharSequence operation) {
+        if (!defersPartitionMoves()) {
+            return;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        final long txn = getTxn();
+        try {
+            // There are two generation slots. No new write is needed when all actual candidates already cover
+            // the effect; no pin (including a released target pin) is evidence that its file stopped existing.
+            for (int i = 0; i < 2 && !hasDurableEpochCoverage(txn); i++) {
+                if (!advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L, false)) {
+                    break;
+                }
+            }
+            if (!hasDurableEpochCoverage(txn)) {
+                throw CairoException.nonCritical().put("could not complete durable epoch after ").put(operation)
+                        .put("; retry the operation or RESUME WAL [table=").put(tableToken.getTableName()).put(']');
+            }
+            finishPendingDetaches();
+            tracker.setDurableEpochOwed(false);
+        } catch (Throwable e) {
+            tracker.setDurableEpochOwed(true);
+            if (engine.isDataSyncFailureFatal(e)) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
+            }
+            throw e;
+        }
+    }
+
+    // Header-valid older images are conservatively included even if their sections are damaged. At least one
+    // fully validated covering image must exist; an absent tracker, pin or manifest never certifies completion.
+    private boolean hasDurableEpochCoverage(long txn) {
+        try {
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId());
+            boolean hasValidCover = false;
+            for (DurableEpochManifest.Candidate candidate : saved) {
+                if (candidate.epochTxn < txn) {
+                    return false;
+                }
+                hasValidCover |= DurableEpochManifest.validateSections(configuration, tableToken, path.trimTo(pathSize), pathSize,
+                        candidate.generation, candidate.epochSeqTxn, candidate.epochTxn);
+            }
+            return hasValidCover;
+        } finally {
+            path.trimTo(pathSize);
         }
     }
 
@@ -16452,7 +16539,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             tracker.setPinnedEpoch(priorEpochTxn, priorSlotA, -1, tracker.getPinnedEpochGeneration());
         }
         if (!txnScoreboard.incrementTxn(newSlotId, epochTxn)) {
-            // Keep the prior pin, the current save point and the frontier; the next batch retries.
+            restoreEpochPinAfterFailedPublication(tracker, newSlotId, otherEpochTxn);
+            // Keep both prior pins, the current save point and the frontier; the next batch retries.
             LOG.error().$("epoch pin slot busy, skipping epoch publish [table=").$(tableToken)
                     .$(", epochTxn=").$(epochTxn).$(", slotA=").$(newSlotA).I$();
             return false;
@@ -16476,6 +16564,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
         } catch (Throwable th) {
             txnScoreboard.releaseTxn(newSlotId, epochTxn);
+            restoreEpochPinAfterFailedPublication(tracker, newSlotId, otherEpochTxn);
             throw th;
         }
 
@@ -16519,6 +16608,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("adaptive durable epoch [table=").$(tableToken)
                 .$(", epochSeqTxn=").$(epochSeqTxn).$(", epochTxn=").$(epochTxn).I$();
         return true;
+    }
+
+    // A failed open can leave the overwritten generation entirely intact. Restore its protection before a
+    // reopen can purge its partitions. Retaining a pin for a partially overwritten image is conservative and
+    // the next successful publication releases it; a missing pin is not evidence that its image disappeared.
+    private void restoreEpochPinAfterFailedPublication(SeqTxnTracker tracker, int slotId, long txn) {
+        if (txn >= 0) {
+            if (!txnScoreboard.incrementTxn(slotId, txn)) {
+                distressed = true;
+                throw CairoException.critical(0).put("could not restore epoch pin after failed publication [table=")
+                        .put(tableToken.getTableName()).put(", txn=").put(txn).put(']');
+            }
+            tracker.setPinnedEpoch(tracker.getPinnedEpochTxn(), tracker.isPinnedEpochSlotA(), txn, tracker.getPinnedEpochGeneration());
+        }
     }
 
     // Best effort: on failure the change stays. Until an epoch covers it, a crash rewinds below it, so a failed

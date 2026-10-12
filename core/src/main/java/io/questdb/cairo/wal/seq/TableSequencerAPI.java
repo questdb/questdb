@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -578,8 +579,9 @@ public class TableSequencerAPI implements QuietCloseable {
                                 if (tableWriter.isEnrolledAdaptive()) {
                                     skipWriter = tableWriter;
                                 }
-                            } else if (tableWriter.isEnrolledAdaptive() && getTxnTracker(tableToken).isDurableEpochOwed()) {
-                                // A repeat after a failed durable epoch: nothing is left to skip, the epoch is still owed.
+                            } else if (tableWriter.isEnrolledAdaptive()) {
+                                // A repeat must verify disk coverage, not just the owed bit: another publication or
+                                // writer close may have cleared it while an older selectable cut still precedes the skip.
                                 skipWriter = tableWriter;
                             }
                         } finally {
@@ -587,9 +589,10 @@ public class TableSequencerAPI implements QuietCloseable {
                                 tableWriter.close();
                             }
                         }
-                    } else if (getTxnTracker(tableToken).isDurableEpochOwed()) {
-                        // A plain RESUME while a durable epoch is still owed, such as after a RESUME WAL FROM TXN
-                        // whose epoch failed.
+                    } else if (engine.getResolvedCommitMode() == CommitMode.ADAPTIVE || getTxnTracker(tableToken).isDurableEpochOwed()) {
+                        // Outside local adaptive durability preserve plain RESUME's no-writer fast path.
+                        // A plain RESUME also certifies the current cut, including a previous skip or a partial
+                        // direct change whose required publication failed. Missing bookkeeping is not coverage.
                         final TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON);
                         if (tableWriter.isEnrolledAdaptive()) {
                             skipWriter = tableWriter;
@@ -609,13 +612,17 @@ public class TableSequencerAPI implements QuietCloseable {
             // replay the skipped transactions; so does an epoch still owed. The epoch may take the sequencer lock
             // itself, so it is taken with the lock released; the table stays suspended meanwhile, and stays
             // suspended if the epoch fails.
-            skipWriter.advanceDurableEpochAfter("resume wal");
-            skipWriter = Misc.free(skipWriter);
-            if (getTxnTracker(tableToken).isDurableEpochOwed()) {
+            try {
+                skipWriter.completeDurableEpochAfter("resume wal");
+            } catch (CairoException e) {
+                if (engine.isDataSyncFailureFatal(e)) {
+                    engine.handleDataSyncFailure(e);
+                }
                 throw CairoException.nonCritical()
                         .put("could not take the durable epoch the table owes, the table stays suspended; retry RESUME WAL [table=")
-                        .put(tableToken.getTableName()).put(']');
+                        .put(tableToken.getTableName()).put(", reason=").put(e.getFlyweightMessage()).put(']');
             }
+            skipWriter = Misc.free(skipWriter);
             try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
                 try {
                     sequencer.resumeTable();

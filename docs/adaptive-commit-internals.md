@@ -180,9 +180,12 @@ and its partition versions are kept until the next save point overwrites it (sec
 - **Inline**, right after an operation that changes table files outside the ordinary apply
   (`TableWriter.advanceDurableEpochAfter`): ALTER COLUMN TYPE, CONVERT PARTITION TO PARQUET and TO NATIVE, the
   native-to-Parquet partition switch (Enterprise cold storage), ATTACH and DETACH PARTITION, the attach at the end
-  of a parallel COPY into an existing table, a forced change outside the WAL, and `RESUME WAL`. Each is best effort: a failure logs a
-  critical message and marks the save point owed, and the next apply pass, clean close or `RESUME WAL` takes it.
-  `RESUME WAL` is the exception: if the owed save point fails there, the table stays suspended.
+  of a parallel COPY into an existing table, a forced change outside the WAL, and `RESUME WAL`. Physical conversions
+  and WAL ATTACH remain best effort: a failure logs a critical message and marks the save point owed. DETACH,
+  RESUME, and direct logical partition changes require synchronous completion (`completeDurableEpochAfter`):
+  every selectable generation must cover the effect before completion, taking another save point if needed.
+  A skipped or failed required publication fails the operation; WAL apply or RESUME keeps the table suspended.
+  Ordinary INSERT/data commits take no additional save point.
 - **At a clean close** (`TableWriter.doClose`), when `cairo.adaptive.epoch.flush.on.close` is true and one is owed,
   or, with an interval that is not negative, when the table has transactions after its save point or its txn moved
   since the save point without a WAL transaction (`getTxn() != pinnedEpochTxn`: an Enterprise storage policy step
@@ -219,16 +222,18 @@ the save point's partition pin keeps until then.
    any more (a restore removed it) is released. Set the save point seqTxn in the tracker, record the time, clear the
    owed mark and the row count. Log `adaptive durable epoch [table=..., epochSeqTxn=..., epochTxn=...]`.
 7. Finish the partition moves the save point now covers (`finishPartitionMovesAfterSavePoint`): give this writer's
-   DETACHes their final name, and delete the `.attachable` directory of each of its ATTACHes once the older
+   DETACHes their final name only when every on-disk candidate covers the removal, and delete the `.attachable`
+   directory of each of its ATTACHes once the older
    generation also stands at or past the attach's commit (section 10). The rule for every side effect of a publish:
    a change the WAL can redo keeps its undo material until the older generation stands at or past its commit; a
    change the WAL cannot redo takes save points until both generations stand at or past it, and reports success
    only then.
 
 A failed flush stops the engine (section 9). Any other failure releases the new pin and keeps the previous save
-point, which stays valid and protected. A failure after step 4 released the older pin leaves the older generation
-valid but unpinned until the next save point; a loss through it needs the current one damaged as well and a
-partition purge in between.
+point, which stays valid and protected. A skipped reservation or failed replacement restores the released older
+pin: a failed open can leave that generation entirely intact. Even if the replacement partially truncated it,
+retaining its old pin is conservative; the next successful publication releases it. A writer reopen must not
+purge the partitions of a selectable fallback just because a failed publication released its pin.
 
 After the column flush a save point makes six sync calls on Linux: `msync` and `fsync` of `_cv`, the same of `_txn`,
 and two `fsync` of the generation file (sections, then header). In all, a save point of a 4-column table makes 47
@@ -517,13 +522,17 @@ write nothing, and the purge could remove the version the `_txn` on the device s
 - **DETACH PARTITION**, in every mode. The partition is linked (copied across devices) into a temporary directory
   `<partition>.<txn>.detaching`, where `<txn>` is the transaction of the DETACH commit, and the `_meta`, `_cv` and
   `_txn` copies go there; in `sync` and `adaptive` every file of it, the directory and its entry are synced before
-  the commit. Then `_txn` is committed. On an enrolled `adaptive` table of a primary the partition waits for the
-  next published save point (the inline one after the statement, or the next one if that fails); on any other table,
-  a replica's included, it finishes at once. Finishing (`finishDetach`) links the final `.detached` name, syncs it and the table directory in `sync` and
+  the commit. Then `_txn` is committed. On an enrolled `adaptive` table of a primary the partition keeps its temporary
+  name through the first covering save point. The statement synchronously publishes another if needed, so every
+  selectable recovery cut includes the removal before `.detached` is exposed and apply completes. This works
+  even with periodic epochs disabled. It is apply/artifact completion, not the earlier WAL enqueue acknowledgement.
+  On any other table, a replica's included, it finishes at once. Finishing (`finishDetach`) links the final `.detached` name, syncs it and the table directory in `sync` and
   `adaptive`, and deletes the temporary name; a `.detached` left half linked by a crash is completed file by file
   (`linkMissingFiles`), so the finish can be repeated after any crash. At writer open, a temporary name whose txn the
   live `_txn` has not reached is a rollback leftover and is deleted; one it has reached gets its final name (on an
-  enrolled table of a primary only once the pinned save point covers it). Without the temporary name, a crash between the link
+  enrolled table of a primary only once every on-disk candidate covers it). A failed required publication keeps
+  the temporary copy and is retryable through RESUME; fallback below the removal replays DETACH from its original
+  partition. An unrelated pre-existing `.detached` destination still refuses DETACH. Without the temporary name, a crash between the link
   and the commit, or between the commit and its save point, would leave the partition both attached and detached,
   and a replayed or repeated DETACH would be refused.
 - **Parallel COPY.** Into an existing enrolled table, the attach phase that moves the imported partitions into place
@@ -552,7 +561,18 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   whose rename did not reach the disk, partitions attached before it) and the manual steps are in guide section
   11.6. A WAL table COPY creates gets no sequencer, in every mode, a base issue (guide section 7.6), so after a
   restart it cannot be written, altered or dropped.
-- **`RESUME WAL`** takes the save point the table owes before the table resumes.
+- **`RESUME WAL`** certifies the live cut against every on-disk candidate before the table resumes. A skip is not
+  recorded in the WAL, so one covering generation is insufficient: fallback must not replay the skipped interval.
+  Required publications run while the writer is held and the table remains suspended, outside the sequencer lock.
+  A plain or repeated RESUME checks disk coverage even if an intervening publication cleared the owed bit or a
+  pin is absent. At least one fully validated covering image must exist; header-valid older cuts are included
+  conservatively. Failure keeps suspension and asks the operator to fix the logged cause and retry RESUME WAL.
+- **Direct logical partition changes** (ATTACH, DETACH, DROP, FORCE DROP and SET TTL through the direct writer or
+  its queue) use the same synchronous completion rule, including partial-list failures and no-op retries. These
+  commands have no WAL replay owner; retaining the original bytes does not preserve the requested absence or
+  membership. Structural column-type changes are not eligible for the suspended-table bypass. Physical partition
+  conversions and background storage-policy tasks retain their existing publication cadence; they do not acquire
+  a blanket two-save-point rule.
 - **The old UDP receiver** writes outside the WAL. In `adaptive` mode it refuses WAL tables
   (`LineUdpParserImpl.refuseWalTable`), because recovery would roll its rows back.
 
