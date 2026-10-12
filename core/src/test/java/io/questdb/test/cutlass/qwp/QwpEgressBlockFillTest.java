@@ -172,6 +172,8 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
                         "select ts, sym, s2, b, sh, i, l, f, d, g6, u, l256, dc128 from cv where sym = 'R' limit 3, 18000",
                         "select ts, s2, d from cv where sym = 'R' limit -500",
                         "select ts, (d + l) / 2 m from cv where sym = 'absent'",
+                        // interval bounds inside the posting blocks: a run ends at the bound
+                        "select ts, (d + l) / 2 m from cv where sym = 'R' and ts >= '1970-01-01T10:00:00.5' and ts < '1970-01-02T07:00:00.5'",
                 };
                 for (int i = 0; i < 3; i++) {
                     assertPlanContains(serverMain, sqls[i], "CoveringIndex");
