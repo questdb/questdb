@@ -143,6 +143,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS("cairo.sql.parallel.index.groupby.frame.rows"),
     CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED("cairo.sql.index.scan.choice.enabled"),
     CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY("cairo.sql.index.scan.choice.max.selectivity"),
+    CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS("cairo.sql.parallel.covering.frame.rows"),
+    CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS("cairo.sql.parallel.covering.local.max.rows"),
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),

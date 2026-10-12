@@ -1555,6 +1555,21 @@ public interface CairoConfiguration {
     double getSqlIndexScanChoiceMaxSelectivity();
 
     /**
+     * Rows of a covering-index scan's page frames, up to the page frame row cap: each frame holds
+     * the rows of one key in one partition, which a worker of a parallel GROUP BY or filter reads
+     * from the index, row ids and covered values, so a key's rows of a partition spread over the
+     * workers in frames of this size.
+     */
+    long getSqlParallelCoveringFrameRows();
+
+    /**
+     * Rows under which a parallel GROUP BY or filter over a covering-index scan reduces its page
+     * frames on the query's thread instead of dispatching them to the workers. It is decided each
+     * time the cursor opens, from the rows of the frames; 0 always dispatches.
+     */
+    long getSqlParallelCoveringLocalMaxRows();
+
+    /**
      * Rows of the posting index that one task of an index-driven parallel GROUP BY gathers, see
      * {@link #isSqlParallelIndexGroupByEnabled()}. Keys with fewer rows share a task; a key with
      * more is split by row range.

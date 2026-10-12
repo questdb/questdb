@@ -54,6 +54,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -91,6 +92,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private boolean isClosing;
     private boolean isReadyToDispatch;
     private boolean isUninterruptible;
+    // the base's local reduce threshold, see RecordCursorFactory.getLocalReduceMaxRows()
+    private long localReduceMaxRows;
+    // set once the frames are built: they hold fewer rows than localReduceMaxRows, so
+    // dispatchAndAwait() reduces them on the calling thread
+    private boolean reduceFramesLocally;
     private PageFrameMemoryRecord localRecord;
     // Set while a round of tasks other than the frames runs; see dispatchRoundAndAwait().
     private UnorderedPageFrameReducer roundReducer;
@@ -198,7 +204,28 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      * @throws CairoException if a worker encountered an error
      */
     public void dispatchAndAwait() {
+        if (reduceFramesLocally) {
+            reduceFramesLocally();
+            return;
+        }
         dispatchAndAwait(frameCount);
+    }
+
+    /**
+     * Executions, of either kind of sequence, over a base with a local reduce threshold: {frames
+     * reduced on the query's thread, frames dispatched}.
+     */
+    @TestOnly
+    public static long[] getLocalReduceOpensForTesting() {
+        return new long[]{LOCAL_FRAME_OPENS.get(), DISPATCHED_FRAME_OPENS.get()};
+    }
+
+    /**
+     * Whether the frames, once built, hold too few rows to be worth the workers, so
+     * {@link #dispatchAndAwait()} reduces them on the calling thread.
+     */
+    public boolean isReducingFramesLocally() {
+        return reduceFramesLocally;
     }
 
     /**
@@ -284,6 +311,21 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             }
         } finally {
             endRound();
+        }
+    }
+
+    private void reduceFramesLocally() {
+        hasTailSpun = false;
+        queuedCount = 0;
+        workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+        for (int i = 0; i < frameCount && isActive(); i++) {
+            reduceLocally(i);
+        }
+        if (errorState.hasError()) {
+            throw buildError();
+        }
+        if (!isActive() && getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
+            throw buildInterruptionException();
         }
     }
 
@@ -580,6 +622,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
+            localReduceMaxRows = base.getLocalReduceMaxRows(executionContext);
             symbolTableSource = frameCursor;
             frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
@@ -649,6 +692,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         roundReducer = null;
         roundTaskRowCounts = null;
         isReadyToDispatch = false;
+        reduceFramesLocally = false;
+        localReduceMaxRows = 0;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
         frameRowCounts.clear();
@@ -723,9 +768,16 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
 
     private void buildAddressCache() {
         PageFrame frame;
+        long rows = 0;
         while ((frame = frameCursor.next()) != null) {
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            final long frameRows = frame.getPartitionHi() - frame.getPartitionLo();
+            rows += frameRows;
+            frameRowCounts.add(frameRows);
             frameAddressCache.add(frameCount++, frame);
+        }
+        reduceFramesLocally = rows < localReduceMaxRows;
+        if (localReduceMaxRows > 0) {
+            (reduceFramesLocally ? LOCAL_FRAME_OPENS : DISPATCHED_FRAME_OPENS).incrementAndGet();
         }
 
         // Mirror PageFrameSequence.buildAddressCache(): covered frames decode their

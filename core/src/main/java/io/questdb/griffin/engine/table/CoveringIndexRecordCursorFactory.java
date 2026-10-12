@@ -226,8 +226,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // its answer is exact rather than sampled. See estimateRowsPerPair().
     private static final int PER_KEY_ESTIMATE_MAX_KEYS = 64;
     private static final int PER_KEY_ESTIMATE_MAX_PROBES = 8192;
-    // budget of (partition, key) count probes of one selection estimate, see estimateSelection()
-    private static final int SELECTION_ESTIMATE_MAX_PROBES = 65_536;
+    // budget of (partition, key) count probes of one selection estimate, see estimateSelection():
+    // the estimate runs on the compiling thread, and each probed partition opens its index
+    private static final int SELECTION_ESTIMATE_MAX_PROBES = 256;
     private static final Log LOG = LogFactory.getLog(CoveringIndexRecordCursorFactory.class);
     private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
     // The plan this query would have got with /*+ no_covering *//*, held so a NULL key over a
@@ -669,19 +670,24 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     /**
      * Estimates, from the posting index's per-key row counts, the rows this scan selects and the
      * rows a full scan of the same partition frames reads, the way
-     * {@link IndexGatherRecordCursorFactory#estimateSelection} does for an index gather. It reads
-     * at most {@value #SELECTION_ESTIMATE_MAX_PROBES} (partition, key) counts and samples the
-     * partitions by stride past that. A partition that has no posting reader, or whose counts
-     * the reader cannot give, counts every row as selected, which leans towards the scan.
+     * {@link IndexGatherRecordCursorFactory#estimateSelection} does for an index gather. It first
+     * counts the scanned rows from partition metadata alone, and stops there when they are fewer
+     * than {@code minScannedRows}. Then it reads at most about
+     * {@value #SELECTION_ESTIMATE_MAX_PROBES} (partition, key) counts, at least one partition's,
+     * sampling the partitions by stride past that. A partition that has no posting reader, or
+     * whose counts the reader cannot give, counts every row as selected, which leans towards the
+     * scan.
      * <p>
      * The keys must be known now, without an execution's bind values: the estimate answers
      * {@code false}, leaving the sink as it is, for a runtime-constant key (a bind variable),
      * symbol patterns and LATEST BY.
      *
-     * @param sink receives {selected, scanned}
-     * @return whether the sink holds an estimate
+     * @param minScannedRows the scanned rows under which no estimate is needed
+     * @param sink           receives {selected, scanned}
+     * @return whether the sink holds an estimate: false when the keys are not known, or fewer than
+     * {@code minScannedRows} rows are scanned
      */
-    public boolean estimateSelection(SqlExecutionContext executionContext, long[] sink) throws SqlException {
+    public boolean estimateSelection(SqlExecutionContext executionContext, long minScannedRows, long[] sink) throws SqlException {
         if (latestBy || patternKeys != null || (keyValueFuncs == null && symbolFunctionRuntimeConstant)) {
             return false;
         }
@@ -710,8 +716,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         try (PartitionFrameCursor frameCursor = dfcFactory.getCursor(executionContext, columnIndexes, PartitionFrameCursorFactory.ORDER_ASC)) {
             final TableReader reader = frameCursor.getTableReader();
             final int keyCount = keys.size();
-            final long frameCountBound = frameCursor.getFrameCountUpperBound();
-            final long frameCount = frameCountBound > 0 ? frameCountBound : reader.getPartitionCount();
+            // the scanned rows first, from partition metadata, without opening a partition
+            long frameCount = 0;
+            PartitionFrame frame;
+            while ((frame = frameCursor.next(Long.MAX_VALUE)) != null) {
+                scanned += frame.getRowHi() - frame.getRowLo();
+                frameCount++;
+            }
+            if (scanned < minScannedRows) {
+                return false;
+            }
+            frameCursor.toTop();
+            scanned = 0;
             final long stride = keyCount == 0
                     ? Long.MAX_VALUE
                     : Math.max(1, (frameCount * keyCount + SELECTION_ESTIMATE_MAX_PROBES - 1) / SELECTION_ESTIMATE_MAX_PROBES);
@@ -719,7 +735,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             while (true) {
                 final boolean probe = keyCount > 0 && frameIndex % stride == 0;
                 // a skipped frame is resolved from partition metadata, without opening the partition
-                final PartitionFrame frame = frameCursor.next(probe ? 0 : Long.MAX_VALUE);
+                frame = frameCursor.next(probe ? 0 : Long.MAX_VALUE);
                 if (frame == null) {
                     break;
                 }
@@ -864,7 +880,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // queries to the serial path, so a backward scan must never reach here.
             throw CairoException.nonCritical().put("backward covering scan is not supported for multi-key index queries");
         }
-        int configMaxRows = executionContext.getPageFrameMaxRows();
+        // Frames of up to cairo.sql.parallel.covering.frame.rows rows: each holds one key's rows of
+        // one partition, which a worker reads, row ids and covered values, from the index, so a
+        // key with many rows in a partition spreads over the workers as an index gather's tasks do.
+        int configMaxRows = (int) Math.max(1, Math.min(
+                executionContext.getPageFrameMaxRows(),
+                executionContext.getCairoEngine().getConfiguration().getSqlParallelCoveringFrameRows()
+        ));
         PartitionFrameCursor frameCursor = dfcFactory.getCursor(
                 executionContext,
                 columnIndexes,
@@ -994,6 +1016,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      */
     public boolean supportsNegativeLimitPageFrame() {
         return supportsPageFrameCursor() && singleKeyPageFrameCursor != null;
+    }
+
+    /**
+     * A parallel GROUP BY or filter over this scan's frames reduces them on the query's thread
+     * when they hold fewer than {@code cairo.sql.parallel.covering.local.max.rows} rows, counted
+     * each time it opens.
+     */
+    @Override
+    public long getLocalReduceMaxRows(SqlExecutionContext executionContext) {
+        return executionContext.getCairoEngine().getConfiguration().getSqlParallelCoveringLocalMaxRows();
     }
 
     @Override

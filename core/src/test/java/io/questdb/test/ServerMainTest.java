@@ -1092,6 +1092,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.index.groupby.frame.rows\tQDB_CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.index.scan.choice.enabled\tQDB_CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.index.scan.choice.max.selectivity\tQDB_CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY\t0.05\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.covering.frame.rows\tQDB_CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS\t65536\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.covering.local.max.rows\tQDB_CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS\t8192\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.presize.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +

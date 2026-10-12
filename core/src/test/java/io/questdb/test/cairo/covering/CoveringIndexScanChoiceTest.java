@@ -25,6 +25,9 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -34,10 +37,11 @@ import org.junit.Test;
  * The choice, when a query compiles, between a covering-index scan and a scan of the table, from
  * the posting index's per-key counts: a key that selects more than
  * {@code cairo.sql.index.scan.choice.max.selectivity} of the scanned rows takes the scan the
- * {@code no_index} hint gives, a rare key keeps the covering scan, and a covering scan that selects
- * fewer rows than one parallel task keeps its residual filter and its GROUP BY on the query's
- * thread. Hints that pick the access path are respected, a bind-variable key keeps the covering
- * plan, and every arm returns the rows of the {@code no_index} plan.
+ * {@code no_index} hint gives, and a rare key keeps the covering scan. A covering scan's residual
+ * filter and GROUP BY are parallel plans, which reduce the frames on the query's thread when, at
+ * open, they hold fewer than {@code cairo.sql.parallel.covering.local.max.rows} rows. Hints that
+ * pick the access path are respected, a bind-variable key keeps the covering plan, and every arm
+ * returns the rows of the {@code no_index} plan.
  * <p>
  * The table holds 1.2M rows (above one full-scan page frame, under which nothing changes): key F
  * about 20% of them, R about 0.4%.
@@ -145,7 +149,7 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
-    public void testRareKeyKeepsCoveringAndRunsSmallWorkSerially() throws Exception {
+    public void testRareKeyKeepsCoveringAndSmallWorkRunsLocally() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
             final String[] queries = {
@@ -157,18 +161,60 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
                 assertPlanContains(q, "CoveringIndex");
                 assertSameResult(q, q.replace("select ", "select /*+ no_index */ "));
             }
-            // fewer rows than a parallel task: the residual filter and the GROUP BY stay serial
-            final String filtered = "select ts, v from t where sym = 'R' and w > 10";
-            assertPlanContains(filtered, "CoveringIndex");
-            assertPlanLacks(filtered, "Async");
-            assertSameResult(filtered, filtered.replace("select ", "select /*+ no_index */ "));
-            final String grouped = "select timestamp_floor('1h', ts) h, s2, avg(v) a from t where sym = 'R' order by h, s2";
-            assertPlanContains(grouped, "CoveringIndex");
-            assertPlanLacks(grouped, "Async");
-            assertSameResult(grouped, grouped.replace("select ", "select /*+ no_index */ "));
-            final String notKeyed = "select count(), sum(v) from t where sym = 'R'";
-            assertPlanLacks(notKeyed, "Async");
-            assertSameResult(notKeyed, notKeyed.replace("select ", "select /*+ no_index */ "));
+            // the residual filter and the GROUP BY are parallel plans; R's ~4.9K rows are fewer than
+            // the local reduce threshold, so each open reduces the frames on the query's thread
+            final String[] parallel = {
+                    "select ts, v from t where sym = 'R' and w > 10",
+                    "select timestamp_floor('1h', ts) h, s2, avg(v) a from t where sym = 'R' order by h, s2",
+                    "select count(), sum(v) from t where sym = 'R'",
+            };
+            for (String q : parallel) {
+                assertPlanContains(q, "CoveringIndex");
+                assertPlanContains(q, "Async");
+                final long[] before = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                assertSameResult(q, q.replace("select ", "select /*+ no_index */ "));
+                final long[] after = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                Assert.assertTrue(q, after[0] > before[0]);
+                Assert.assertEquals(q, before[1], after[1]);
+            }
+            // a frequent key's covering scan, which use_index keeps, dispatches its frames
+            final String frequent = "select /*+ use_index */ count(), sum(v) from t where sym = 'F'";
+            assertPlanContains(frequent, "CoveringIndex");
+            final long[] before = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+            assertSameResult(frequent, frequent.replace("use_index", "no_index"));
+            Assert.assertTrue(UnorderedPageFrameSequence.getLocalReduceOpensForTesting()[1] > before[1]);
+        });
+    }
+
+    @Test
+    public void testLocalReduceIsDecidedPerOpen() throws Exception {
+        // a cached plan compiled while a key has few rows dispatches its frames once the key has
+        // many, and the other way round
+        assertMemoryLeak(() -> {
+            createTable();
+            final String[] queries = {
+                    "select count(), sum(v), min(ts), max(ts) from t where sym = 'NEW'",
+                    "select ts, v from t where sym = 'NEW' and w > 0",
+            };
+            execute("insert into t select (259_200_000_000L + 30_000 * 216_000L + x * 1_000L)::timestamp, 'NEW', 's1', x, x / 3.0 from long_sequence(1_000)");
+            try (RecordCursorFactory grouped = select(queries[0]); RecordCursorFactory filtered = select(queries[1])) {
+                final RecordCursorFactory[] factories = {grouped, filtered};
+                for (int i = 0; i < factories.length; i++) {
+                    final long[] before = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                    assertFactoryResult(factories[i], queries[i]);
+                    final long[] after = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                    Assert.assertTrue(queries[i], after[0] > before[0]);
+                    Assert.assertEquals(queries[i], before[1], after[1]);
+                }
+                execute("insert into t select (259_200_000_000L + 31_000 * 216_000L + x * 1_000L)::timestamp, 'NEW', 's1', x, x / 3.0 from long_sequence(300_000)");
+                for (int i = 0; i < factories.length; i++) {
+                    final long[] before = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                    assertFactoryResult(factories[i], queries[i]);
+                    final long[] after = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                    Assert.assertTrue(queries[i], after[1] > before[1]);
+                    Assert.assertEquals(queries[i], before[0], after[0]);
+                }
+            }
         });
     }
 
@@ -180,6 +226,16 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
             assertPlanContains("select ts, v from s where sym = 'F'", "CoveringIndex");
             assertPlanContains("select count(), sum(v) from s where sym = 'R'", "Async");
         });
+    }
+
+    private void assertFactoryResult(RecordCursorFactory factory, String query) throws Exception {
+        final StringSink actual = new StringSink();
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            println(factory.getMetadata(), cursor, actual);
+        }
+        final StringSink expected = new StringSink();
+        printSql(query.replaceFirst("select ", "select /*+ no_index */ "), expected);
+        TestUtils.assertEquals(query, expected, actual);
     }
 
     private void assertPlanContains(String query, String fragment) throws Exception {

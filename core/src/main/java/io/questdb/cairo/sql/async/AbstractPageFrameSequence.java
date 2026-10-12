@@ -41,6 +41,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 abstract class AbstractPageFrameSequence {
+    // test-only: executions of a base with a local reduce threshold, see
+    // RecordCursorFactory.getLocalReduceMaxRows(), whose frames were reduced on the query's
+    // thread, and those whose frames were dispatched
+    static final AtomicLong DISPATCHED_FRAME_OPENS = new AtomicLong();
+    static final AtomicLong LOCAL_FRAME_OPENS = new AtomicLong();
     private static final int CANCEL_REASON_REDUCER_ERROR = -2;
     private static final int CANCEL_REASON_UNSET = -1;
     private final AtomicInteger cancelReason = new AtomicInteger(CANCEL_REASON_UNSET);

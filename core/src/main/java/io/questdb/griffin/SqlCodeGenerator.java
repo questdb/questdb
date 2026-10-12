@@ -455,9 +455,9 @@ import static io.questdb.griffin.model.IQueryModel.isWindowJoin;
 import static io.questdb.griffin.model.QueryModel.CREATE_MAT_VIEW;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
-    // the scans a covering-index choice applies to, see scanInPlaceOfFrequentCovering() and
-    // isSmallCoveringSelection(): smaller tables keep their plans, which all run in well under a
-    // millisecond there, and so do the plans tests pin over small fixtures
+    // the scans the covering-or-scan choice applies to, see scanInPlaceOfFrequentCovering():
+    // smaller tables keep their plans, which all run in well under a millisecond there, and so do
+    // the plans tests pin over small fixtures
     static final long COVERING_CHOICE_MIN_SCANNED_ROWS = 1 << 20;
     public static final int GKK_MICRO_HOUR_INT = 1;
     public static final int GKK_NANO_HOUR_INT = 2;
@@ -12501,10 +12501,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata baseMetadata = factory.getMetadata();
 
-            // a covering scan that selects fewer rows than a parallel task holds groups them faster
-            // on the query's thread than the workers do
-            boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled()
-                    && !(pageFramingSupported && isSmallCoveringSelection(factory, executionContext));
+            // a covering scan whose frames hold few rows is reduced on the query's thread, which
+            // the async GROUP BY decides each time it opens, see getLocalReduceMaxRows()
+            boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled();
             // The vectorized (Rosti) group-by runs SIMD over raw page addresses with no
             // type-cast guard and no row-wise fallback, so it cannot read a column decoded
             // in its pre-conversion source type. Let the guarded Async group-by handle those.
@@ -16602,24 +16601,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model == forcedScanModel || SqlHints.hasNoIndexHint(model);
     }
 
-    /**
-     * Whether the covering-index scan under {@code factory}, with or without its residual filter,
-     * selects fewer rows than one parallel task holds
-     * ({@code cairo.sql.parallel.index.groupby.task.rows}), going by the posting index's per-key
-     * counts of the keys the plan was compiled with. Such a selection runs faster on the query's
-     * thread than spread over the workers, whose dispatch costs more than the rows. Scans of fewer
-     * than {@link #COVERING_CHOICE_MIN_SCANNED_ROWS} rows keep their plans: there both run in well
-     * under a millisecond.
-     */
-    private boolean isSmallCoveringSelection(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
-        final CoveringIndexRecordCursorFactory covering = coveringBaseOf(factory);
-        return covering != null
-                && configuration.isSqlIndexScanChoiceEnabled()
-                && covering.estimateSelection(executionContext, coveringEstimate)
-                && coveringEstimate[1] >= COVERING_CHOICE_MIN_SCANNED_ROWS
-                && coveringEstimate[0] < configuration.getSqlParallelIndexGroupByTaskRows();
-    }
-
     private RecordCursorFactory newIndexGather(
             FilterOnValuesRecordCursorFactory filterOnValues,
             @Nullable ExpressionNode filterExpr,
@@ -19904,9 +19885,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final CoveringIndexRecordCursorFactory covering = coveringBaseOf(coveringPlan);
         try {
+            // the one estimate of this compilation, bounded, see estimateSelection()
             if (covering == null
-                    || !covering.estimateSelection(executionContext, coveringEstimate)
-                    || coveringEstimate[1] < COVERING_CHOICE_MIN_SCANNED_ROWS
+                    || !covering.estimateSelection(executionContext, COVERING_CHOICE_MIN_SCANNED_ROWS, coveringEstimate)
                     || coveringEstimate[0] <= configuration.getSqlIndexScanChoiceMaxSelectivity() * coveringEstimate[1]) {
                 return coveringPlan;
             }
@@ -19944,9 +19925,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // functions), the filter, and the limit function we may create here.
         Function limitLoFunction = null;
         try {
+            // a selection of few rows is filtered on the query's thread, which the async filter
+            // decides each time it opens, see getLocalReduceMaxRows()
             if (executionContext.isParallelFilterEnabled()
-                    && coveringFactory.supportsPageFrameCursor()
-                    && !isSmallCoveringSelection(coveringFactory, executionContext)) {
+                    && coveringFactory.supportsPageFrameCursor()) {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 // A pushed-down LIMIT lets the async filter stop early (positive limit)
                 // or scan the tail backward (negative limit). Both are correct only

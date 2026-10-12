@@ -91,7 +91,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // this off the task via task.getFrameSequence().getMemoryTracker() to charge
     // their allocations to the active workload.
     private MemoryTracker memoryTracker;
+    // the base's local reduce threshold, see RecordCursorFactory.getLocalReduceMaxRows()
+    private long localReduceMaxRows;
     private boolean readyToDispatch;
+    // set once the frames are built: they hold fewer rows than localReduceMaxRows, so next()
+    // reduces each of them on the query's thread
+    private boolean reduceFramesLocally;
     private RingQueue<PageFrameReduceTask> reduceQueue;
     private int shard;
     private SqlExecutionContext sqlExecutionContext;
@@ -372,6 +377,18 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
 
         assert collectedFrameIndex < frameCount - 1;
+        if (reduceFramesLocally) {
+            // nothing is ever dispatched: the frames are reduced one after another here
+            assert dispatchStartFrameIndex == collectedFrameIndex + 1;
+            if (!isActive()) {
+                if (getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
+                    throw buildInterruptionException();
+                }
+                return -2;
+            }
+            reduceLocally(countOnly);
+            return LOCAL_TASK_CURSOR;
+        }
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         final boolean canPark = dispatcher != null && isFiberSuspendable();
         while (true) {
@@ -460,6 +477,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
+            localReduceMaxRows = base.getLocalReduceMaxRows(executionContext);
 
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
@@ -511,6 +529,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
         readyToDispatch = false;
+        reduceFramesLocally = false;
+        localReduceMaxRows = 0;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
         frameRowCounts.clear();
@@ -612,9 +632,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     private void buildAddressCache() {
         PageFrame frame;
+        long rows = 0;
         while ((frame = frameCursor.next()) != null) {
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            final long frameRows = frame.getPartitionHi() - frame.getPartitionLo();
+            rows += frameRows;
+            frameRowCounts.add(frameRows);
             frameAddressCache.add(frameCount++, frame);
+        }
+        reduceFramesLocally = rows < localReduceMaxRows;
+        if (localReduceMaxRows > 0) {
+            (reduceFramesLocally ? LOCAL_FRAME_OPENS : DISPATCHED_FRAME_OPENS).incrementAndGet();
         }
 
         // Covered frames decode their columns on the async workers (in
