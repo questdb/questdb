@@ -9473,24 +9473,32 @@ public class SqlOptimiser implements Mutable {
                         && Chars.equalsIgnoreCase("sum", agg.token)
                         && op.type == OPERATION
                         && op.paramCount == 2
+                        && (Chars.equals(op.token, '*') || Chars.equals(op.token, '+') || Chars.equals(op.token, '-'))
         ) {
-            if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
-                if (isSimpleIntegerColumn(op.lhs, model) && isIntegerAggregateConstant(op.rhs, sqlExecutionContext)) {
-                    agg.rhs = op.lhs;
-                    op.lhs = agg;
-                    return op;
-                } else if (isSimpleIntegerColumn(op.rhs, model) && isIntegerAggregateConstant(op.lhs, sqlExecutionContext)) {
-                    agg.rhs = op.rhs;
-                    op.rhs = agg;
-                    return op;
-                }
-            } else if (Chars.equals(op.token, '+') || Chars.equals(op.token, '-')) { // sum(x+10) == sum(x)+count(x)*10 , sum(x-10) == sum(x)-count(x)*10
-                if (isIntegerAggregateConstant(op.rhs, sqlExecutionContext)) {
-                    return pushOperationOutsideAgg(agg, op, op.lhs, op.rhs, model);
-                } else if (isIntegerAggregateConstant(op.lhs, sqlExecutionContext)) {
-                    return pushOperationOutsideAgg(agg, op, op.rhs, op.lhs, model);
-                }
+            final boolean isColumnLhs;
+            if (isSimpleIntegerColumn(op.lhs, model) && isIntegerAggregateConstant(op.rhs, sqlExecutionContext)) {
+                isColumnLhs = true;
+            } else if (isSimpleIntegerColumn(op.rhs, model) && isIntegerAggregateConstant(op.lhs, sqlExecutionContext)) {
+                isColumnLhs = false;
+            } else {
+                return agg;
             }
+
+            agg = ExpressionNode.deepClone(expressionNodePool, agg);
+            op = agg.rhs;
+            final ExpressionNode column = isColumnLhs ? op.lhs : op.rhs;
+            final ExpressionNode constant = isColumnLhs ? op.rhs : op.lhs;
+            if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
+                agg.rhs = column;
+                if (isColumnLhs) {
+                    op.lhs = agg;
+                } else {
+                    op.rhs = agg;
+                }
+                return op;
+            }
+            // sum(x+10) == sum(x)+count(x)*10, sum(x-10) == sum(x)-count(x)*10
+            return pushOperationOutsideAgg(agg, op, column, constant, model);
         }
 
         return agg;

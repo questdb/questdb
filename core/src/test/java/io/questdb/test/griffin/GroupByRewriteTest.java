@@ -326,6 +326,44 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumDeclaredOperandReusedOutsideAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (1), (2)");
+            bindVariableService.setInt("k", 3);
+            bindVariableService.setStr("s", "3");
+            for (String operand : new String[]{"3", ":k", ":s::INT"}) {
+                final String declare = "DECLARE @v := x * " + operand + ", @s := SUM(x * " + operand + ") ";
+                assertQuery(declare + "SELECT @v AS v, SUM(@v) AS s FROM t ORDER BY v")
+                        .noLeakCheck().expectSize().returns("""
+                                v\ts
+                                3\t6
+                                6\t6
+                                """);
+                assertQuery(declare + "SELECT @v AS v, SUM(@v) AS s FROM t GROUP BY @v ORDER BY v")
+                        .noLeakCheck().expectSize().returns("""
+                                v\ts
+                                3\t6
+                                6\t6
+                                """);
+                assertQuery(declare + "SELECT SUM(@v) AS s FROM t WHERE @v > 3")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("s\n6\n");
+                assertQuery(declare + "SELECT SUM(@v) AS s, AVG(@v) AS a FROM t")
+                        .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("values: [sum(x),")
+                        .returns("""
+                                s\ta
+                                12\t4.0
+                                """);
+                assertQuery(declare + "SELECT @s AS a, @s AS b FROM t")
+                        .noLeakCheck().noRandomAccess().expectSize().returns("""
+                                a\tb
+                                12\t12
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testSumEmptyAndNullInputs() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT)");
@@ -354,15 +392,16 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             // including when a floating-point operand promotes an integer column.
             assertQuery("""
                     SELECT SUM(i + 1.0) AS int_literal, SUM(i + :d) AS int_bind,
+                           SUM(i + :f) AS int_float_bind, SUM(i + 1::DOUBLE) AS int_double_cast,
                            SUM(d + 1.0) AS double_literal, SUM(d + :d) AS double_bind,
                            SUM(f + 1::FLOAT4) AS float_literal, SUM(f + :f) AS float_bind,
                            SUM(i) + COUNT(i) * 1.0 AS hoisted
                     FROM t
                     """)
                     .noLeakCheck().noRandomAccess().expectSize()
-                    .columnType(4, ColumnType.FLOAT).columnType(5, ColumnType.FLOAT).returns("""
-                            int_literal\tint_bind\tdouble_literal\tdouble_bind\tfloat_literal\tfloat_bind\thoisted
-                            0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t2.0
+                    .columnType(6, ColumnType.FLOAT).columnType(7, ColumnType.FLOAT).returns("""
+                            int_literal\tint_bind\tint_float_bind\tint_double_cast\tdouble_literal\tdouble_bind\tfloat_literal\tfloat_bind\thoisted
+                            0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t2.0
                             """);
         });
     }
@@ -428,6 +467,27 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             assertSumArithmetic(":s::INT", expected);
             assertSumArithmetic(":s::LONG", expected);
             assertSumArithmetic("(:s::SHORT)::INT", expected);
+        });
+    }
+
+    @Test
+    public void testSumIntegerBindUnderflowMatchesLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (-2_147_483_647), (null), (1)");
+            String expected = """
+                    a\tb\tc\td\te\tf
+                    -4294967292\t-4294967292\t-2147483642\t-2147483642\t-2147483650\t2147483650
+                    """;
+            assertSumArithmetic("2", expected);
+            bindVariableService.setByte("b", (byte) 2);
+            assertSumArithmetic(":b", expected);
+            bindVariableService.setInt("k", 2);
+            assertSumArithmetic(":k", expected);
+            bindVariableService.setInt(0, 2);
+            assertSumArithmetic("$1", expected);
+            bindVariableService.setStr("s", "2");
+            assertSumArithmetic(":s::INT", expected);
         });
     }
 
@@ -840,19 +900,19 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testSumRebindLongMultiplierThroughOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x LONG)");
-            execute("INSERT INTO t VALUES (4_611_686_018_427_387_903), (1), (null)");
+            execute("INSERT INTO t VALUES (-4_611_686_018_427_387_904), (1), (null)");
             assertQuery("SELECT SUM(x * 2) AS s FROM t")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("s\nnull\n");
+                    .noLeakCheck().noRandomAccess().expectSize().returns("s\n-9223372036854775806\n");
             assertQuery("SELECT SUM(x * 3) AS s FROM t")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("s\n-4611686018427387904\n");
+                    .noLeakCheck().noRandomAccess().expectSize().returns("s\n4611686018427387907\n");
 
             ObjList<BindVarTuple> cases = new ObjList<>();
-            cases.add(BindVarTuple.ok("fits", "s\n4611686018427387904\n", b -> b.setLong("k", 1)));
-            cases.add(BindVarTuple.ok("null sentinel", "s\nnull\n", b -> b.setLong("k", 2)));
-            cases.add(BindVarTuple.ok("wrapped", "s\n-4611686018427387904\n", b -> b.setLong("k", 3)));
+            cases.add(BindVarTuple.ok("fits", "s\n-4611686018427387903\n", b -> b.setLong("k", 1)));
+            cases.add(BindVarTuple.ok("per-row null sentinel", "s\n-9223372036854775806\n", b -> b.setLong("k", 2)));
+            cases.add(BindVarTuple.ok("wrapped", "s\n4611686018427387907\n", b -> b.setLong("k", 3)));
             cases.add(BindVarTuple.ok("zero", "s\n0\n", b -> b.setLong("k", 0)));
             cases.add(BindVarTuple.ok("bound null", "s\nnull\n", b -> b.setLong("k", Numbers.LONG_NULL)));
-            cases.add(BindVarTuple.ok("fits again", "s\n4611686018427387904\n", b -> b.setLong("k", 1)));
+            cases.add(BindVarTuple.ok("fits again", "s\n-4611686018427387903\n", b -> b.setLong("k", 1)));
             assertQuery("SELECT SUM(x * :k) AS s FROM t")
                     .noLeakCheck().noRandomAccess().expectSize().assertBinds(cases);
         });
