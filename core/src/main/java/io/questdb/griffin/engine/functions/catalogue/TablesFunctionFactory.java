@@ -176,7 +176,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final CairoEngine engine = executionContext.getCairoEngine();
             // Reconciles against the table registry before snapshotting, so the
             // catalogue is complete even mid startup hydration.
@@ -226,7 +226,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (iteratorIdx < iteratorLim) {
                     record.of(tableCache.getAt(++iteratorIdx), recentWriteTracker, tableSequencerAPI);
                     return true;

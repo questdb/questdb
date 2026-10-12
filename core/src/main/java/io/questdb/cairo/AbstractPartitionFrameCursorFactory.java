@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -48,6 +49,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final String viewName;
     private final int viewPosition;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
+    private long pushdownPartitionTableVersion = -1;
 
     AbstractPartitionFrameCursorFactory(
             TableToken tableToken,
@@ -86,20 +88,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     @Override
-    public boolean hasParquetFormatPartitions(SqlExecutionContext executionContext) {
-        // The token is resolved from the synchronously loaded registry, but the metadata
-        // cache is hydrated lazily; hydrate on demand so parquet row-group pruning is not
-        // silently skipped for a registered-but-not-yet-cached table during the startup
-        // hydration window.
-        executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
-        try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
-            CairoTable table = metadataRO.getTable(tableToken);
-            return table != null && table.hasParquetPartitions();
-        }
-    }
-
-    @Override
-    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+    public void setPushdownFilterCondition(
+            long partitionTableVersion,
+            @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
+    ) {
+        this.pushdownPartitionTableVersion = partitionTableVersion;
         this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
@@ -167,9 +160,22 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     TableReader getReader(SqlExecutionContext executionContext) {
-        return executionContext.getReader(
+        final TableReader reader = executionContext.getReader(
                 tableToken,
                 metadataVersion
         );
+        if (pushdownPartitionTableVersion > -1) {
+            final long currentPartitionTableVersion = reader.getTxFile().getPartitionTableVersion();
+            if (currentPartitionTableVersion != pushdownPartitionTableVersion) {
+                final boolean hasParquetPushdown = pushdownFilterConditions != null;
+                if (!executionContext.isPartitionFormatChangeTolerated()
+                        && reader.hasParquetPartitions() != hasParquetPushdown) {
+                    Misc.free(reader);
+                    throw TableReferenceOutOfDateException.ofPartitionFormatChange(tableToken);
+                }
+                pushdownPartitionTableVersion = currentPartitionTableVersion;
+            }
+        }
+        return reader;
     }
 }

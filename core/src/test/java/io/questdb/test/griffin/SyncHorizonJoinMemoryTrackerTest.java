@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFacto
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -97,7 +98,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // and keepClosed horizon iterator therefore hold no backing until then, so a never-opened
         // close() leaves nothing behind. assertMemoryLeak catches a regression of that property.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -123,6 +124,38 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinFilterKeyMissesStayWithinLimit() throws Exception {
+        // Once the scan has exhausted the prefix, further misses are not recorded, so the key miss
+        // map stays constant however many distinct master keys miss.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE trades AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x k FROM long_sequence(500_000)) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "CREATE TABLE prices AS (SELECT x::TIMESTAMP ts, x k, x::DOUBLE price FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        final String query = "SELECT count(p.price) " +
+                                "FROM trades t HORIZON JOIN prices p ON (t.k = p.k AND p.price < 0) " +
+                                "LIST (0s) AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, HorizonJoinNotKeyedRecordCursorFactory.class);
+                            assertReleasesAllocations(factory, sqlExecutionContext, 1);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testKeyedHorizonJoinArrayAggFailsOnLargeSet() throws Exception {
         // Keyed array_agg over a HORIZON JOIN routes through HorizonJoinRecordCursorFactory. Each
         // group accumulates the matched slave prices across a wide horizon window into a growing
@@ -138,7 +171,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // the build loop, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -165,7 +198,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // skip reopen() and not breach). The getCursor() catch frees the cursor under the tracker.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -192,7 +225,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // Repeated getCursor/close cycles on the same factory, wrapped by assertMemoryLeak, would
         // expose a malloc/free asymmetry or a tracker imbalance.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -226,7 +259,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // the build loop, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -252,7 +285,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // Multi-slave keyed variant of testKeyedHorizonJoinOpenFailureReleasesAllocations.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -279,7 +312,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // per-slave ASOF maps are bound on each open and must release every byte on close. Repeated
         // getCursor/close cycles, wrapped by assertMemoryLeak, would expose a malloc/free asymmetry.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -304,7 +337,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
     public void testMultiHorizonJoinCompileWithoutOpenDoesNotLeak() throws Exception {
         // Multi-slave variant of testHorizonJoinCompileWithoutOpenDoesNotLeak.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -346,7 +379,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // the build loop, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -372,7 +405,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // bound on each open and must release every byte on close. Repeated getCursor/close cycles,
         // wrapped by assertMemoryLeak, would expose a malloc/free asymmetry.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -404,7 +437,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // the build loop, far above the first chunk malloc.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -430,7 +463,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // A small non-keyed multi-slave array_agg fits the per-query limit; the allocator and per-slave
         // ASOF maps are bound on each open and must release every byte on close.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

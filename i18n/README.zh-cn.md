@@ -85,32 +85,30 @@ QuestDB 尤其擅长处理：
 
 ### QuestDB 与其他数据库的性能比较
 
-在多项性能基准测试中，QuestDB 相比其他替代方案表现优异。
+TSBS 摄取基准测试：100,000 台主机，32 个 worker，运行于一台 AWS r8a.8xlarge（32 vCPU，256 GB 内存）。竞品于 2026 年 8 月测得，QuestDB 9.3.3 在同一实例上测得。
 
-如需深入了解内部机制与性能表现，请参阅以下技术博客：
+| 数据库 | 版本 | 摄取速率 |
+|---|---|---|
+| QuestDB | 9.3.3 | 每秒 859 万行 |
+| ClickHouse | 26.7.5.10 | 每秒 175 万行 |
+| TimescaleDB | 2.29.1 | 每秒 108 万行 |
+| InfluxDB | 1.12.4 | 每秒 54.1 万行 |
 
-- [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
-- [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
+完整对比（摄取与查询）：
+
+- [QuestDB vs InfluxDB](https://questdb.com/blog/influxdb-vs-questdb-comparison/)
+- [QuestDB vs InfluxDB 3](https://questdb.com/blog/influxdb3-core-benchmarks/)
+- [QuestDB vs ClickHouse](https://questdb.com/blog/clickhouse-vs-questdb-comparison/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
-- [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
+- [QuestDB vs kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 
 我们推荐您亲自运行基准测试以获得最直观的性能体验。
-
-<div align="center">
-  <img alt="比较 QuestDB、InfluxDB 和 TimescaleDB 摄取速率的图表。" src="../.github/readme-benchmark.webp" width="600"/>
-</div>
 
 ## AI 编程智能体
 
 QuestDB 开箱即用地支持 AI 编程智能体。安装
 [QuestDB 智能体技能](https://questdb.com/agents/)，60 秒内即可从提示词到生产环境：
 流式数据写入、物化视图和实时分析，无需手动编写代码。
-
-<div align="center">
-  <a href="https://questdb.com/agents/">
-    <img alt="AI 编程智能体将外汇数据流式写入 QuestDB 并分析流动性" src="../.github/agents-demo.jpg" width="600"/>
-  </a>
-</div>
 
 ## 快速开始
 
@@ -211,7 +209,7 @@ QuestDB 同时支持以下兼容协议，现有工具链无需改动即可接入
 ### 📚 查阅文档
 
 - [QuestDB 文档：](https://questdb.com/docs/)开始您的探索之旅
-- [产品路线图：](https://github.com/orgs/questdb/projects/1/views/5)了解未来版本规划
+- [产品路线图：](https://github.com/orgs/questdb/projects/15/views/4)了解未来版本规划
 - [教程：](https://questdb.com/tutorial/)通过步骤化教学掌握 QuestDB 的各种应用场景
 
 ### ❓ 获取支持

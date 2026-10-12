@@ -47,6 +47,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
@@ -240,7 +241,14 @@ public class TableTransactionLog implements Closeable {
     }
 
     TransactionLogCursor getCursor(long txnLo) {
-        return txnLogFile.getCursor(txnLo, Path.getThreadLocal(rootPath));
+        return getCursor(txnLo, null);
+    }
+
+    TransactionLogCursor getCursor(long txnLo, @Nullable TableSequencerCursorHolder cursorHolder) {
+        final Path cursorPath = cursorHolder != null
+                ? cursorHolder.getPath(rootPath)
+                : Path.getThreadLocal(rootPath);
+        return txnLogFile.getCursor(txnLo, cursorPath, cursorHolder);
     }
 
     long getMaxMetadataVersion() {
@@ -249,8 +257,36 @@ public class TableTransactionLog implements Closeable {
 
     @NotNull
     TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer) {
-        final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
-        cursor.of(ff, structureVersionLo, serializer, Path.getThreadLocal(rootPath), maxMetadataVersion.get(), this.configuration.getBypassWalFdCache());
+        return getTableMetadataChangeLog(structureVersionLo, serializer, null);
+    }
+
+    @NotNull
+    TableMetadataChangeLog getTableMetadataChangeLog(
+            long structureVersionLo,
+            MemorySerializer serializer,
+            @Nullable TableSequencerCursorHolder cursorHolder
+    ) {
+        TableMetadataChangeLogImpl cursor;
+        final Path cursorPath;
+        if (cursorHolder != null) {
+            cursor = (TableMetadataChangeLogImpl) cursorHolder.getMetadataChangeLog();
+            if (cursor == null) {
+                cursor = new TableMetadataChangeLogImpl();
+                cursorHolder.setMetadataChangeLog(cursor);
+            }
+            cursorPath = cursorHolder.getPath(rootPath);
+        } else {
+            cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
+            cursorPath = Path.getThreadLocal(rootPath);
+        }
+        cursor.of(
+                ff,
+                structureVersionLo,
+                serializer,
+                cursorPath,
+                maxMetadataVersion.get(),
+                configuration.getBypassWalFdCache()
+        );
         return cursor;
     }
 

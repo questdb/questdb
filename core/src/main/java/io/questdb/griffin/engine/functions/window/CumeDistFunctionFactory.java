@@ -331,6 +331,13 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            if (partitionByRecord != null) {
+                Function.cursorClosed(partitionByRecord.getFunctions());
+            }
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return CUME_DIST_CONST;
         }
@@ -438,6 +445,11 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             Misc.freeObjList(rankMaps);
             deferredOffsets.close();
             freeList.clear();
+        }
+
+        @Override
+        public void cursorClosed() {
+            Function.cursorClosed(partitionByRecord.getFunctions());
         }
 
         @Override

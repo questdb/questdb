@@ -933,6 +933,21 @@ public interface CairoConfiguration {
      */
     int getSqlJoinMetadataPageSize();
 
+    /**
+     * Number of entries at which each master-to-slave symbol key translation cache stops
+     * allocating memory. Hash, LT, HORIZON and multi-key ASOF joins on SYMBOL keys build these
+     * caches when the two sides have different symbol tables. Past the limit, a cache still
+     * stores the symbol keys that fall into its allocated pages, and the join translates the
+     * other symbol keys via their string values on every lookup.
+     * <p>
+     * ASOF joins on a single SYMBOL key, and multi-key ASOF joins where no SYMBOL key can
+     * use this cache (e.g. because the master SYMBOL key columns are computed by a function),
+     * cache the translations under {@link #getSqlAsOfJoinShortCircuitCacheCapacity()} instead.
+     *
+     * @return number of symbol key translations per join key column at which the cache stops allocating
+     */
+    int getSqlJoinSymbolTranslationCacheCapacity();
+
     long getSqlLatestByRowCount();
 
     int getSqlLexerPoolCapacity();
@@ -1021,6 +1036,12 @@ public interface CairoConfiguration {
     int getSqlWindowTreeKeyPageSize();
 
     int getStrFunctionMaxBufferLength();
+
+    default long getSubsampleMaxRows() {
+        return 100_000_000L;
+    }
+
+    int getSymbolPatternIndexThreshold();
 
     long getSymbolTableMaxAllocationPageSize();
 
@@ -1170,6 +1191,13 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    /**
+     * When true, SQL compilation does not reject UPDATE, ALTER COLUMN TYPE and ADD INDEX on
+     * tables whose partition layout (parquet, read-only or cold storage partitions) cannot
+     * support them. Such statements then fail when applied, which suspends a WAL table.
+     */
+    boolean isAllPartitionOperationsAllowed();
+
     boolean isCairoMetadataCacheSnapshotOrdered();
 
     /**
@@ -1315,6 +1343,8 @@ public interface CairoConfiguration {
      * {@code EXPLAIN} included, differs between the two settings.
      */
     boolean isSqlWindowMapFusionEnabled();
+
+    boolean isSymbolPatternIndexEnabled();
 
     boolean isTableTypeConversionEnabled();
 

@@ -392,6 +392,80 @@ Before opening a PR, please ensure:
   Reviewers should not have to reverse-engineer algorithms from code to understand
   what the PR does.
 
+## Secret scanning
+
+The `Gitleaks` check scans your branch's own commits for credentials. If it
+fails on a real secret, rotate it before doing anything else.
+
+For a false positive, the failing job's summary carries ready-to-paste
+`.gitleaksignore` lines under "What to do with these findings", in the
+commit-independent three-part `<file>:<rule-id>:<start-line>` form. Do not paste
+the four-part `Fingerprint:` line that gitleaks prints in the job log: PRs here
+are squash-merged, so the commit it names never reaches `master`, and the entry
+silences your PR and then fails the push scan of `master`.
+
+An ignore entry still pins a path and a line number, so anything that moves the
+finding before the squash lands — a later commit, an unrelated pull request
+shifting that line on `master`, a rename — stops it matching, leaving the PR
+green and `master` red with nothing warning you. It is also blind to the secret
+itself, silencing whatever that rule reports at that file and line from then on,
+a real credential later written there included. Use one only for a settled file
+and a value that will not change; `.gitleaksignore` has the full detail.
+
+For a false positive that recurs, or one in a file anyone is still changing, add
+an allowlist to `.gitleaks.toml` instead. It matches content rather than
+position, so none of those cases can shift the finding out from under it. Match
+the placeholder value itself, not the line it sits on: the default target is the
+secret gitleaks extracted, so a substituted value stops matching and the finding
+comes back. Wrap the value in `^\Q...\E$`, as below: `regexes` holds a Go RE2
+regexp matched as an unanchored substring, so `\Q...\E` takes the placeholder
+literally (an unescaped `.` would otherwise match any character) and `^...$`
+keeps it from suppressing a longer, real secret that merely contains it.
+
+```toml
+[[rules]]
+id = "generic-api-key"
+  [[rules.allowlists]]
+  description = "why this is not a secret"
+  regexes = ['''^\QdGhlIHNhbXBsZSBub25jZQ==\E$''']
+```
+
+Reach for `regexTarget = "line"` only where there is no stable value to match —
+the rule fires on a different string each time, or the placeholder itself keeps
+changing. It trades a line number for a piece of content, but keeps the blind
+spot above, silencing whatever that rule reports on any matching line.
+
+```toml
+[[rules]]
+id = "generic-api-key"
+  [[rules.allowlists]]
+  description = "why this is not a secret"
+  regexTarget = "line"
+  regexes = ['''Sec-WebSocket-Key''']
+```
+
+Two ways a hand-written allowlist fails quietly. The `id` must name an existing
+default rule exactly — `[extend]` disables rule validation, so a misspelled id
+is accepted in silence, allowlists nothing, and leaves the job red on the
+byte-identical finding. And add the `[[rules.allowlists]]` to the `[[rules]]`
+block already present for that id, as there usually is one, because
+`generic-api-key` raises nearly every finding here: a second block with the same
+id replaces the first, discarding its allowlist with no warning.
+
+The check reads each commit separately rather than the squashed diff, so a
+secret-shaped line added in one commit and removed in a later one still fails.
+
+Three limits are worth knowing, because in all three the push scan of `master`
+is the first thing that reads the code:
+
+- Fork pull requests do not receive the license secret, so the job skips the
+  scan and reports success without reading anything.
+- The action reads only a pull request's first 30 commits.
+- The scan walks only your branch's first-parent line and skips merge commits,
+  so nothing reachable only through a merge's second parent is read — neither a
+  conflict resolution written into a merge commit nor a side branch you merged
+  in.
+
 ## Branching
 
 External contributors should contribute from forks of the repository. Internal

@@ -112,7 +112,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
@@ -196,7 +196,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
 
     private void buildChain() {
         // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final Record placeHolderRecord = baseCursor.getRecordB();
         if (limit != 0) {
             // first record ever, we've to find the timestamp value
@@ -215,7 +215,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
             }
 
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 long currentTimestamp = baseRecord.getTimestamp(timestampIndex);
                 if (groupTimestamp == currentTimestamp) {

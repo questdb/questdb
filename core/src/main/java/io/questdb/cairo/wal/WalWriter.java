@@ -675,12 +675,33 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         rowValueIsNotNull.setQuick(columnIndex, lastWrittenRow);
     }
 
+    @TestOnly
+    public void setSymbolMapReader(int columnIndex, SymbolMapReader symbolMapReader) {
+        symbolMapReaders.setQuick(columnIndex, symbolMapReader);
+    }
+
     /**
-     * Validates that a designated timestamp value is within allowed bounds.
-     * Used by columnar appender to match the validation in {@link #newRow(long)}.
+     * Validates that a designated timestamp value is within allowed bounds. The columnar
+     * appender calls this per row to match the validation in {@link #newRow(long)}.
+     * <p>
+     * The driver refuses an out-of-range or NULL value with a plain non-critical
+     * {@link CairoException}, which the QWP NACK classifier maps to a retriable write error,
+     * so a producer replays the same bytes until the poison-frame detector gives up. The
+     * refusal is deterministic under byte-identical replay, so this method re-throws it as
+     * {@link CairoException#schemaMismatch()}, the marker every other per-value refusal in the
+     * columnar appender carries, and keeps the driver's message. The try/catch adds nothing to
+     * the accepting path.
      */
     void validateDesignatedTimestampBounds(long timestamp) {
-        timestampDriver.validateBounds(timestamp);
+        try {
+            timestampDriver.validateBounds(timestamp);
+        } catch (CairoException e) {
+            throw CairoException.schemaMismatch()
+                    .put(e.getFlyweightMessage())
+                    .put(" [column=").put(metadata.getColumnName(timestampIndex))
+                    .put(", value=").put(timestamp)
+                    .put(']');
+        }
     }
 
     @Override
@@ -2171,9 +2192,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             if (key == SymbolTable.VALUE_NOT_FOUND) {
                 // Add it to in-memory symbol map
                 final int initialSymCount = initialSymbolCounts.get(columnIndex);
-                key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
+                key = initialSymCount + localSymbolIds.get(columnIndex);
+                utf16Map.putAt(index, symbolValue, key, hashCode);
+                localSymbolIds.increment(columnIndex);
+            } else {
+                utf16Map.putAt(index, symbolValue, key, hashCode);
             }
-            utf16Map.putAt(index, symbolValue, key, hashCode);
             return key;
         } else {
             return utf16Map.valueAt(index);
@@ -2206,9 +2230,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     if (key == SymbolTable.VALUE_NOT_FOUND) {
                         // Add it to in-memory symbol map
                         // Locally added symbols must have a continuous range of keys
-                        key = localSymbolIds.postIncrement(columnIndex);
+                        key = localSymbolIds.get(columnIndex);
+                        utf16Map.putAt(index, utf16Value, key, hashCode);
+                        localSymbolIds.increment(columnIndex);
+                    } else {
+                        utf16Map.putAt(index, utf16Value, key, hashCode);
                     }
-                    utf16Map.putAt(index, utf16Value, key, hashCode);
                 } else {
                     key = utf16Map.valueAt(index);
                 }
@@ -3098,9 +3125,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // Add it to in-memory symbol map
                         // Locally added symbols must have a continuous range of keys
                         final int initialSymCount = initialSymbolCounts.get(columnIndex);
-                        key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
+                        key = initialSymCount + localSymbolIds.get(columnIndex);
+                        utf16Map.putAt(index, utf16Value, key, hashCode);
+                        localSymbolIds.increment(columnIndex);
+                    } else {
+                        utf16Map.putAt(index, utf16Value, key, hashCode);
                     }
-                    utf16Map.putAt(index, utf16Value, key, hashCode);
                 } else {
                     key = utf16Map.valueAt(index);
                 }

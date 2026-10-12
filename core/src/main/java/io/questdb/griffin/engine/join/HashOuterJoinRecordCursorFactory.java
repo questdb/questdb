@@ -91,7 +91,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             this.joinType = joinType;
             if (masterSymbolKeyColumnIndices != null) {
                 assert slaveSymbolKeyColumnIndices != null;
-                this.symbolTranslatingRecord = new SymbolTranslatingRecord(slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
+                this.symbolTranslatingRecord = new SymbolTranslatingRecord(configuration, slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
             } else {
                 this.symbolTranslatingRecord = null;
             }
@@ -151,8 +151,8 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
-            // of() reopens the join map under the bound per-query tracker before it can throw;
-            // close() frees it (and the slave chain) under that tracker and resets isOpen for reuse.
+            // of() reopens the join map and caches under the bound per-query tracker before it adopts the cursors;
+            // close() frees them (and the slave chain) under that tracker and resets isOpen for reuse.
             Misc.free(cursor);
             throw e;
         }
@@ -208,7 +208,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Map joinKeyMap,
                 RecordChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new FullOuterJoinRecord(columnSplit, masterNullRecord, slaveNullRecord);
         }
 
@@ -234,12 +234,12 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
 
             if (useSlaveCursor && slaveChain.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return true;
             }
 
             if (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
@@ -260,7 +260,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             record.hasMaster(false);
             record.hasSlave(true);
             while (mapCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(3)) { // if not matched
                     slaveChain.of(value.getLong(0));
@@ -284,13 +284,16 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-            super.of(masterCursor, slaveCursor, sqlExecutionContext);
+            ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor);
             }
             this.mapCursor = Misc.free(mapCursor);
+            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -303,7 +306,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Map joinKeyMap,
                 RecordChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new OuterJoinRecord(columnSplit, nullRecord);
         }
 
@@ -320,7 +323,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isMapBuilt = true;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
@@ -353,12 +356,15 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-            super.of(masterCursor, slaveCursor, sqlExecutionContext);
+            ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor);
             }
+            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 
@@ -372,7 +378,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Map joinKeyMap,
                 RecordChain slaveChain
         ) {
-            super(columnSplit, joinKeyMap, slaveChain);
+            super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
             record = new RightOuterJoinRecord(columnSplit, nullRecord);
         }
 
@@ -398,12 +404,12 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
 
             if (useSlaveCursor && slaveChain.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return true;
             }
 
             while (masterCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
@@ -418,7 +424,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
             record.hasMaster(false);
             while (mapCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(3)) { // if not matched
                     slaveChain.of(value.getLong(0));
@@ -442,13 +448,16 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-            super.of(masterCursor, slaveCursor, sqlExecutionContext);
+            ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());
                 symbolTranslatingRecord.initSources(slaveCursor, masterCursor);
             }
             this.mapCursor = Misc.free(mapCursor);
+            // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
         }
     }
 }

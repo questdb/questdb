@@ -36,19 +36,36 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
     @Override
     public boolean isWindow() {
         return true;
+    }
+
+    // Reject SYMBOL arguments that the parser routes to these TIMESTAMP factories via implicit casting.
+    // These functions preserve the argument's type for timestamp precision, so a SYMBOL argument
+    // would produce a column that advertises SYMBOL but stores a long without a symbol table.
+    static void checkTimestampArg(String name, Function arg, int argPosition) throws SqlException {
+        final int argTypeTag = ColumnType.tagOf(arg.getType());
+        if (argTypeTag == ColumnType.SYMBOL) {
+            throw SqlException.$(argPosition, "there is no matching window function `").put(name)
+                    .put("` with the argument type: ").put(ColumnType.nameOf(arg.getType()));
+        }
     }
 
     // Snapshots the partition key types. The code generator hands out a reusable buffer it clears and
@@ -112,6 +129,63 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         final long dstAddress = dstArena.appendAddressFor(bytes);
         Vect.memcpy(dstAddress, srcArena.getPageAddress(0) + startOffset, bytes);
         dstValue.putLong(startOffsetValueIndex, dstAddress - dstArena.getPageAddress(0));
+    }
+
+    // Mirrors SqlCodeGenerator's private coerceRuntimeConstantType and preserves the former SUBSAMPLE
+    // target/stride validation contract: resolve a still-UNDEFINED bind-variable arg to `type`, otherwise
+    // require the arg to already be a constant/runtime-constant whose type is convertible to `type`
+    // (message/pos on mismatch). Shared by the keep-flag window factories
+    // (uniform/cadence/m4/minmax/lttb/lttb-gap).
+    static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
+        if (ColumnType.isUndefined(func.getType())) {
+            func.assignType(type, context.getBindVariableService());
+        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isConvertibleFrom(func.getType(), type)) {
+            throw SqlException.$(pos, message);
+        }
+    }
+
+    static long validateStride(long stride, int position) throws SqlException {
+        if (stride == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "stride must be set");
+        }
+        if (stride < 1) {
+            throw SqlException.$(position, "stride must be at least 1");
+        }
+        if (stride > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return stride;
+    }
+
+    static long validateTarget(long target, int position) throws SqlException {
+        if (target == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "target point count must be set");
+        }
+        if (target < 2) {
+            throw SqlException.$(position, "target points must be at least 2");
+        }
+        if (target > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return target;
+    }
+
+    // The downsampling window functions (m4/minmax/lttb/sdt) bucket or corridor-walk their input
+    // in pass1 traversal order and require that order to be ascending. Called from
+    // initRecordComparator with the pass1 traversal directions: SqlCodeGenerator flips the
+    // as-written directions first for Pass1ScanDirection.BACKWARD functions, and the downsampling
+    // functions all scan forward, so these are the directions exactly as written in the OVER
+    // clause. A null list (no ORDER BY reached this path) validates nothing here; the factories
+    // separately require ORDER BY, and getOrderByScanDirection() covers the order-dismissed path.
+    static void validateAscendingOrder(@Nullable IntList orderByDirections, int position, String name) throws SqlException {
+        if (orderByDirections == null) {
+            return;
+        }
+        for (int i = 0, n = orderByDirections.size(); i < n; i++) {
+            if (orderByDirections.getQuick(i) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                throw SqlException.$(position, name).put("() requires ascending ORDER BY");
+            }
+        }
     }
 
     static void expandRingBuffer(MemoryARW memory, RingBufferDesc desc, int recordSize) {

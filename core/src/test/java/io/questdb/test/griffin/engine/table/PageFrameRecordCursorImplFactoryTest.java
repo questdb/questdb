@@ -39,10 +39,13 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
@@ -814,6 +817,35 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         testFwdPageFrameCursor(64, 64, 64, 32);
         // pageFrameMaxSize > rowCount
         testFwdPageFrameCursor(63, 64, 64, 61);
+    }
+
+    @Test
+    public void testPageFrameMemoryRecordOfNullDropsSymbolTableSource() {
+        class TestPageFrameMemoryRecord extends PageFrameMemoryRecord {
+            private boolean hasSymbolTableSource() {
+                return symbolTableSource != null;
+            }
+        }
+
+        final TestPageFrameMemoryRecord record = new TestPageFrameMemoryRecord();
+        try {
+            record.of(new SymbolTableSource() {
+                @Override
+                public SymbolTable getSymbolTable(int columnIndex) {
+                    return null;
+                }
+
+                @Override
+                public SymbolTable newSymbolTable(int columnIndex) {
+                    return null;
+                }
+            });
+            Assert.assertTrue(record.hasSymbolTableSource());
+            record.of(null);
+            Assert.assertFalse(record.hasSymbolTableSource());
+        } finally {
+            record.close();
+        }
     }
 
     private void populateColumnTypes(RecordMetadata metadata, IntList columnIndexes, IntList columnSizes) {

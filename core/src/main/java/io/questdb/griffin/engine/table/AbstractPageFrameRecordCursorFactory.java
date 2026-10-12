@@ -25,7 +25,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -106,8 +109,14 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public boolean hasParquetConvertedColumns(SqlExecutionContext executionContext) {
-        if (!partitionFrameCursorFactory.hasParquetFormatPartitions(executionContext)) {
-            return false;
+        final CairoEngine engine = executionContext.getCairoEngine();
+        final TableToken tableToken = partitionFrameCursorFactory.getTableToken();
+        engine.getMetadataCache().hydrateTableOnDemand(tableToken);
+        try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+            final CairoTable table = metadataRO.getTable(tableToken);
+            if (table == null || !table.hasParquetPartitions()) {
+                return false;
+            }
         }
         // A column re-keyed by ALTER COLUMN TYPE has writerIndex != originalWriterIndex.
         // The reader metadata held by partitionFrameCursorFactory carries the chain head

@@ -24,15 +24,36 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler;
+import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.test.tools.LogCapture;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
 public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTest {
     private static final LogCapture capture = new LogCapture();
+
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        LogFactory.enableGuaranteedLogging(LineTcpMeasurementScheduler.class);
+    }
+
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        try {
+            super.tearDown();
+        } finally {
+            LogFactory.disableGuaranteedLogging(LineTcpMeasurementScheduler.class);
+        }
+    }
 
     @Test
     public void testBrokenUTF8Encoding() throws Exception {
@@ -124,8 +145,11 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
             try {
                 handleContextIO0();
                 Assert.assertFalse("malformed UTF8 must not disconnect the client", disconnected);
-                // handleWriterException() logs this immediately before setWriterInError() drops
-                // the writer, so its absence is the assertion that the writer survived.
+                // handleWriterException() marks the writer in error before logging. Wait for
+                // delivery before asserting that this path never ran.
+                final String sentinel = "malformed-utf8-writer-health-" + table;
+                LOG.advisory().$(sentinel).$();
+                capture.waitFor(sentinel);
                 capture.assertNotLogged("closing writer because of error");
             } finally {
                 capture.stop();

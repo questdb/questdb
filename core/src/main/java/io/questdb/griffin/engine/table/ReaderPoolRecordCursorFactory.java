@@ -41,10 +41,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Numbers;
-
-import java.util.Iterator;
-import java.util.Map;
 
 public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int CURRENT_TXN_COLUMN_INDEX = 3;
@@ -61,9 +59,9 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
-        ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor();
-        readerPoolCursor.of(cairoEngine.getReaderPoolEntries(), cairoEngine.getConfiguration().getPoolSegmentSize());
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor(cairoEngine.getConfiguration().getPoolSegmentSize());
+        cairoEngine.getReaderPoolEntries(readerPoolCursor);
         return readerPoolCursor;
     }
 
@@ -77,20 +75,25 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         sink.type("reader_pool");
     }
 
-    private static class ReaderPoolCursor implements NoRandomAccessRecordCursor {
+    private static class ReaderPoolCursor extends ConcurrentHashMap.EntryCursor<AbstractMultiTenantPool.Entry<ReaderPool.R>> implements NoRandomAccessRecordCursor {
+        private final int poolSegmentSize;
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private int allocationIndex = 0;
         private long currentTxn;
-        private Iterator<Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
         private long lastAccessTimestamp;
         private long owner_thread;
         private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
-        private int poolSegmentSize;
-        private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
         private TableToken tableToken;
+
+        private ReaderPoolCursor(int poolSegmentSize) {
+            this.poolSegmentSize = poolSegmentSize;
+        }
 
         @Override
         public void close() {
+            clear();
+            poolEntry = null;
+            tableToken = null;
         }
 
         @Override
@@ -121,12 +124,6 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             return true;
         }
 
-        public void of(Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries, int poolSegmentSize) {
-            this.readerPoolEntries = readerPoolEntries;
-            this.poolSegmentSize = poolSegmentSize;
-            toTop();
-        }
-
         @Override
         public long preComputedStateSize() {
             return 0;
@@ -139,7 +136,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
         @Override
         public void toTop() {
-            iterator = readerPoolEntries.entrySet().iterator();
+            super.toTop();
             allocationIndex = 0;
             poolEntry = null;
         }
@@ -150,11 +147,10 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     // either we just started the iteration or the last Entry did not have
                     // anything chained. let's advance in the CHM iterator
                     assert allocationIndex == 0;
-                    if (!iterator.hasNext()) {
+                    if (!super.hasNext()) {
                         return false;
                     }
-                    Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> mapEntry = iterator.next();
-                    poolEntry = mapEntry.getValue();
+                    poolEntry = getValue();
                     return true;
                 } else if (allocationIndex == poolSegmentSize) {
                     // we exhausted all slots in the current Entry

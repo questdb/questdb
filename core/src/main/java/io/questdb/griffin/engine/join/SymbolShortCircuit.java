@@ -24,10 +24,30 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
-public interface SymbolShortCircuit {
+/**
+ * Detects master rows whose join keys the slave symbol tables lack.
+ * <p>
+ * An implementation may hold native memory, for example a symbol key cache. The owning
+ * cursor binds the per-query tracker via {@link #setMemoryTracker}, calls {@link #reopen()}
+ * before it adopts the master and slave cursors, {@link #of} after, and {@link #close()}
+ * when it closes.
+ */
+public interface SymbolShortCircuit extends QuietCloseable, Reopenable {
+
+    /**
+     * Releases the native memory. The instance stays reusable: the next
+     * {@link #reopen()} call allocates it again.
+     */
+    @Override
+    default void close() {
+    }
 
     /**
      * When joining on one or more symbol columns, detects when any slave column
@@ -37,4 +57,20 @@ public interface SymbolShortCircuit {
     boolean isShortCircuit(Record masterRecord);
 
     void of(TimeFrameCursor slaveCursor);
+
+    /**
+     * Allocates the native memory. The owning cursor calls it before it adopts the
+     * master and slave cursors, so that an allocation failure leaves the cursors to
+     * the caller to free.
+     */
+    @Override
+    default void reopen() {
+    }
+
+    /**
+     * Binds the per-query native memory tracker. Call before {@link #reopen()}, so
+     * that the native memory gets allocated under the tracker.
+     */
+    default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
 }

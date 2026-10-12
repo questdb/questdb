@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -47,17 +46,16 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -67,33 +65,30 @@ import java.util.concurrent.atomic.AtomicLong;
  * Completion is tracked via an {@link SOUnboundedCountDownLatch}.
  * Designed for factories that don't need ordered results (GROUP BY, top-K).
  */
-public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Closeable {
+public class UnorderedPageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
-    private T atom;
-    private final AtomicInteger cancelReason = new AtomicInteger(SqlExecutionCircuitBreaker.STATE_OK);
+    private static final long MAX_TAIL_SPIN_NANOS = 16_000L;
+    private static final int TAIL_SPIN_OUTSTANDING_FRAMES = 2;
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-    private final StringSink errorMsg = new StringSink();
-    private PageFrameAddressCache frameAddressCache;
+    private final AsyncQueryErrorState errorState = new AsyncQueryErrorState("unexpected reduce error");
     private final LongList frameRowCounts = new LongList();
-    private final AtomicBoolean isValid = new AtomicBoolean(true);
+    private final MessageBus messageBus;
     private final MPSequence reducePubSeq;
     private final RingQueue<UnorderedPageFrameReduceTask> reduceQueue;
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
+    private final long tailSpinTimeoutNanos;
     private final WorkStealingStrategy workStealingStrategy;
-    private int errno = CairoException.NON_CRITICAL;
-    private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
-    private int errorMessagePosition;
+    private T atom;
+    private PageFrameAddressCache frameAddressCache;
     private int frameCount;
     private PageFrameCursor frameCursor;
+    private boolean hasTailSpun;
     private long id;
-    private boolean isCancelled;
     private boolean isClosing;
-    private boolean isInterrupted;
-    private boolean isOutOfMemory;
     private boolean isReadyToDispatch;
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
@@ -118,8 +113,13 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         try {
             this.atom = atom;
             this.frameAddressCache = new PageFrameAddressCache();
+            this.messageBus = messageBus;
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
+            this.tailSpinTimeoutNanos = Math.max(
+                    0,
+                    Math.min(configuration.getSqlParallelWorkStealingSpinTimeout(), MAX_TAIL_SPIN_NANOS)
+            );
             this.workStealingStrategy = configuration.getFactoryProvider()
                     .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
@@ -138,11 +138,21 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             return;
         }
         // Wait for all queued frames to complete.
-        while (!doneLatch.done(queuedCount)) {
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        while (true) {
+            final long observedProgress = canPark ? getProgressVersion() : 0;
+            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            if (doneLatch.done(queuedCount)) {
+                break;
+            }
             if (stealWork()) {
                 workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            } else if (canPark) {
+                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
+            } else {
+                Os.pause();
             }
-            Os.pause();
         }
     }
 
@@ -152,25 +162,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
      * {@link PageFrameReduceTask#buildError()} for the filter/top-K paths.
      */
     public RuntimeException buildError() {
-        return switch (errorKind) {
-            case AsyncQueryErrorKind.KIND_IMPLICIT_CAST ->
-                    ImplicitCastException.instance().position(errorMessagePosition).put(errorMsg);
-            case AsyncQueryErrorKind.KIND_NUMERIC ->
-                    NumericException.instance().position(errorMessagePosition).put(errorMsg);
-            // critical(errno) preserves the worker's errno and, with it, isCritical();
-            // errno == NON_CRITICAL reduces to the previous nonCritical() behaviour.
-            default -> CairoException.critical(errno)
-                    .position(errorMessagePosition)
-                    .put(errorMsg)
-                    .setCancellation(isCancelled)
-                    .setInterruption(isInterrupted)
-                    .setOutOfMemory(isOutOfMemory);
-        };
-    }
-
-    public void cancel(int reason) {
-        isValid.compareAndSet(true, false);
-        cancelReason.set(reason);
+        return errorState.buildException();
     }
 
     @Override
@@ -201,6 +193,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
      * @throws CairoException if a worker encountered an error
      */
     public void dispatchAndAwait() {
+        hasTailSpun = false;
         if (frameCount == 0) {
             return;
         }
@@ -210,81 +203,154 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
 
         int queued = 0;
         int localCount = 0;
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
 
         // Phase 1: Dispatch all frames.
         // The try/finally ensures queuedCount is set even if reduceLocally() throws,
         // so that await() in close() properly drains in-flight tasks.
+        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
         try {
-            for (int i = 0; i < frameCount; i++) {
-                while (true) {
-                    long cursor = reducePubSeq.next();
-                    if (cursor > -1) {
-                        reduceQueue.get(cursor).of(this, i);
-                        reducePubSeq.done(cursor);
-                        queued++;
-                        break;
-                    } else if (cursor == -1) {
-                        // Queue full.
-                        if (workStealingStrategy.shouldSteal(localCount)) {
-                            if (stealWork()) {
-                                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
-                            }
-                            continue;
-                        }
-                        // Reduce locally as fallback.
+            if (!hasPublication) {
+                if (dispatcher.isCurrentFiberOwned()) {
+                    for (int i = 0; i < frameCount && isActive(); i++) {
                         reduceLocally(i);
                         localCount++;
-                        break;
-                    } else {
-                        Os.pause();
+                    }
+                } else {
+                    cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                }
+            } else {
+                DISPATCH:
+                for (int i = 0; i < frameCount; i++) {
+                    while (true) {
+                        if (!isActive()) {
+                            break DISPATCH;
+                        }
+                        if (dispatcher != null && !hasPublication) {
+                            hasPublication = dispatcher.tryAcquirePublication();
+                            if (!hasPublication) {
+                                if (dispatcher.isCurrentFiberOwned()) {
+                                    reduceLocally(i);
+                                    localCount++;
+                                    break;
+                                }
+                                cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
+                                break DISPATCH;
+                            }
+                        }
+                        final long observedProgress = canPark ? getProgressVersion() : 0;
+                        final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+                        final long cursor;
+                        cursor = reducePubSeq.next();
+                        if (cursor > -1) {
+                            reduceQueue.get(cursor).of(this, i);
+                            reducePubSeq.done(cursor);
+                        }
+                        if (cursor > -1) {
+                            queued++;
+                            break;
+                        } else if (cursor == -1) {
+                            if (dispatcher != null) {
+                                dispatcher.releasePublication();
+                                hasPublication = false;
+                                workStealingStrategy.onBeforeDirectSteal();
+                                if (!stealWork()) {
+                                    if (!isUninterruptible
+                                            && hasCircuitBreakerInterruptionBeenSuperseded(
+                                            workStealCircuitBreaker,
+                                            false
+                                    )) {
+                                        break DISPATCH;
+                                    }
+                                    if (canPark) {
+                                        awaitProgress(
+                                                dispatcher,
+                                                observedProgress,
+                                                observedGlobalProgress,
+                                                false
+                                        );
+                                        continue;
+                                    }
+                                    reduceLocally(i);
+                                    localCount++;
+                                    break;
+                                }
+                                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                                continue;
+                            }
+                            if (workStealingStrategy.shouldSteal(localCount)) {
+                                if (stealWork()) {
+                                    workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                                }
+                                continue;
+                            }
+                            // Reduce locally as fallback.
+                            reduceLocally(i);
+                            localCount++;
+                            break;
+                        } else {
+                            Os.pause();
+                        }
                     }
                 }
             }
         } finally {
             this.queuedCount = queued;
+            if (dispatcher != null && hasPublication) {
+                dispatcher.releasePublication();
+            }
         }
 
         // Phase 2: Wait for all queued frames to complete.
         final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-        while (!doneLatch.done(queued)) {
+        while (true) {
+            final long observedProgress = canPark ? getProgressVersion() : 0;
+            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            if (doneLatch.done(queued)) {
+                break;
+            }
             if (!isActive()) {
                 break;
             }
-            if (!isUninterruptible) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            if (!isUninterruptible
+                    && hasCircuitBreakerInterruptionBeenSuperseded(circuitBreaker, true)) {
+                break;
             }
+            workStealingStrategy.onBeforeDirectSteal();
             if (stealWork()) {
                 workStealCircuitBreaker.init(circuitBreaker);
+            } else if (canPark) {
+                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, false);
+            } else {
+                Os.pause();
             }
-            Os.pause();
         }
 
         // If we exited early due to cancellation, still wait for in-flight tasks
         // to complete to avoid data races with setError().
-        while (!doneLatch.done(queued)) {
+        while (true) {
+            final long observedProgress = canPark ? getProgressVersion() : 0;
+            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            if (doneLatch.done(queued)) {
+                break;
+            }
             if (stealWork()) {
                 workStealCircuitBreaker.init(circuitBreaker);
+            } else if (canPark) {
+                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
+            } else {
+                Os.pause();
             }
-            Os.pause();
         }
 
         // Phase 3: Check for errors.
-        if (hasError()) {
-            if (isOutOfMemory) {
-                throw CairoException.nonCritical().setOutOfMemory(true).put(errorMsg);
-            }
-            if (isCancelled) {
-                throw CairoException.queryCancelled();
-            }
+        if (errorState.hasError()) {
             throw buildError();
         }
 
-        if (!isActive()) {
-            if (cancelReason.get() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-                throw CairoException.queryCancelled();
-            } else {
-                throw CairoException.queryTimedOut();
-            }
+        if (!isActive() && getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
+            throw buildInterruptionException();
         }
     }
 
@@ -292,10 +358,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return atom;
     }
 
-    public int getCancelReason() {
-        return cancelReason.get();
-    }
-
+    @Override
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return sqlExecutionContext.getCircuitBreaker();
     }
@@ -355,10 +418,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return workStealingStrategy;
     }
 
-    public boolean isActive() {
-        return isValid.get();
-    }
-
+    @Override
     public boolean isUninterruptible() {
         return isUninterruptible;
     }
@@ -383,18 +443,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             id = ID_SEQ.incrementAndGet();
-            isValid.set(true);
-            cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
+            resetCancellation();
             doneLatch.reset();
             reduceStartedCounter.set(0);
             workStealingStrategy.of(reduceStartedCounter);
-            errorMsg.clear();
-            errorMessagePosition = 0;
-            errno = CairoException.NON_CRITICAL;
-            errorKind = AsyncQueryErrorKind.KIND_NONE;
-            isCancelled = false;
-            isInterrupted = false;
-            isOutOfMemory = false;
+            errorState.clear();
 
             atom.init(frameCursor, executionContext);
         } catch (TableReferenceOutOfDateException e) {
@@ -425,6 +478,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
         frameRowCounts.clear();
+        // Drop the retained Throwable so a pooled sequence does not pin it while idle.
+        errorState.clear();
 
         Throwable cleanupFailure = null;
         try {
@@ -465,34 +520,30 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     /**
      * Stores the first error from a worker thread. Thread-safe (synchronized).
      */
-    public synchronized void setError(Throwable th) {
-        // First error wins.
-        if (!errorMsg.isEmpty()) {
-            return;
+    public void setError(Throwable th) {
+        if (errorState.setError(th)) {
+            cancelOnReducerError(th);
         }
-        errorKind = AsyncQueryErrorKind.of(th);
-        if (th instanceof CairoException e) {
-            errorMsg.put(e.getFlyweightMessage());
-            errorMessagePosition = e.getPosition();
-            errno = e.getErrno();
-            isCancelled = e.isCancellation();
-            isInterrupted = e.isInterruption();
-            isOutOfMemory = e.isOutOfMemory();
-            cancel(e.getInterruptionReason());
-        } else if (th instanceof FlyweightMessageContainer fmc) {
-            // ImplicitCastException / NumericException: a legitimate user-facing error.
-            // Preserve the message and position verbatim so the collector can re-throw
-            // the same class via buildError().
-            errorMsg.put(fmc.getFlyweightMessage());
-            errorMessagePosition = fmc.getPosition();
-            cancel(SqlExecutionCircuitBreaker.STATE_OK);
-        } else {
-            errorMsg.put("unexpected reduce error");
-            if (th.getMessage() != null) {
-                errorMsg.put(": ").put(th.getMessage());
+    }
+
+    boolean isDoneAfterTailSpin() {
+        if (hasTailSpun
+                || tailSpinTimeoutNanos == 0
+                || !isActive()
+                || isUninterruptible
+                || queuedCount < 1
+                || !doneLatch.done(Math.max(0, queuedCount - TAIL_SPIN_OUTSTANDING_FRAMES))) {
+            return false;
+        }
+        hasTailSpun = true;
+        final long startNanos = System.nanoTime();
+        do {
+            if (doneLatch.done(queuedCount)) {
+                return true;
             }
-            cancel(SqlExecutionCircuitBreaker.STATE_OK);
-        }
+            Thread.onSpinWait();
+        } while (isActive() && System.nanoTime() - startNanos < tailSpinTimeoutNanos);
+        return doneLatch.done(queuedCount);
     }
 
     private void buildAddressCache() {
@@ -512,11 +563,48 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         frameAddressCache.freezeCoveredReaders();
     }
 
-    private boolean hasError() {
-        return !errorMsg.isEmpty();
+    private boolean hasCircuitBreakerInterruptionBeenSuperseded(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            boolean isTimeThrottled
+    ) {
+        try {
+            if (isTimeThrottled) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            } else {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            }
+            return false;
+        } catch (CairoException e) {
+            if (isInterruptionSuperseded(e)) {
+                return true;
+            }
+            throw e;
+        }
     }
 
     private void reduceLocally(int frameIndex) {
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final SuspensionScope.CarrierScope suspensionScope = isFiberSuspendable
+                ? null
+                : SuspensionScope.scope();
+        final SuspensionScope.Mode previousMode = isFiberSuspendable
+                ? null
+                : SuspensionScope.enterBlocking(suspensionScope);
+        final FiberCancellationSignal previousCancellationSignal = isFiberSuspendable
+                ? SuspensionScope.getCancellationSignal()
+                : null;
+        final long previousCancellationSignalGeneration = isFiberSuspendable
+                ? SuspensionScope.getCancellationSignalGeneration()
+                : CancellationBinding.NO_GENERATION;
+        final FiberCancellationSignal previousSupplementalCancellationSignal = isFiberSuspendable
+                ? SuspensionScope.getSupplementalCancellationSignal()
+                : null;
+        final long previousSupplementalCancellationSignalGeneration = isFiberSuspendable
+                ? SuspensionScope.getSupplementalCancellationSignalGeneration()
+                : CancellationBinding.NO_GENERATION;
+        if (isFiberSuspendable) {
+            enterReducerCancellationScope();
+        }
         try {
             if (isActive()) {
                 localRecord.of(getSymbolTableSource());
@@ -524,21 +612,29 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                 reducer.reduce(-1, localRecord, frameIndex, workStealCircuitBreaker, this, this);
             }
         } catch (Throwable th) {
-            LOG.error()
-                    .$("local reduce error [error=").$(th)
-                    .$(", id=").$(id)
-                    .$(", frameIndex=").$(frameIndex)
-                    .$(", frameCount=").$(frameCount)
-                    .I$();
-            int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
-            if (th instanceof CairoException e) {
-                interruptReason = e.getInterruptionReason();
+            if (isReducerFailureReportable(th)) {
+                LOG.error()
+                        .$("local reduce error [error=").$(th)
+                        .$(", id=").$(id)
+                        .$(", frameIndex=").$(frameIndex)
+                        .$(", frameCount=").$(frameCount)
+                        .I$();
+                // Record the error so dispatchAndAwait applies the same normalization as queued reducers.
+                setError(th);
             }
-            // Record the error on the sequence and let dispatchAndAwait surface it
-            // via buildError(). Re-throwing here would propagate through the owner
-            // thread and bypass the kind-aware rebuild, losing the original class.
-            setError(th);
-            cancel(interruptReason);
+        } finally {
+            if (isFiberSuspendable) {
+                SuspensionScope.restoreCancellationSignal(
+                        previousCancellationSignal,
+                        previousCancellationSignalGeneration
+                );
+                SuspensionScope.enterSupplementalCancellationSignal(
+                        previousSupplementalCancellationSignal,
+                        previousSupplementalCancellationSignalGeneration
+                );
+            } else {
+                SuspensionScope.restoreMode(suspensionScope, previousMode);
+            }
         }
     }
 
@@ -548,12 +644,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         // breaker wrapper for the foreign sequence. Callers must not assume their
         // state is preserved across this call and must re-init the wrapper when
         // this method returns true (a task was consumed).
-        return !UnorderedPageFrameReduceJob.consumeQueue(
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        final boolean isEmpty = UnorderedPageFrameReduceJob.consumeQueue(
                 reduceQueue,
                 reduceSubSeq,
                 localRecord,
                 workStealCircuitBreaker,
-                this
+                this,
+                dispatcher
         );
+        return !isEmpty;
     }
 }

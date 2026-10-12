@@ -321,8 +321,9 @@ public interface TimestampDriver {
      * Returns the largest value a designated timestamp column of this type can hold. The write
      * path ({@code TableWriter}/{@code WalWriter} via {@link #validateBounds(long)}) rejects any
      * larger value, so no partition ever stores a timestamp above this ceiling. Micros are capped
-     * at {@code 9999-12-31}; nanos have no cap below the {@code long} range, so this returns
-     * {@code Long.MAX_VALUE}.
+     * at {@code 9999-12-31} and report it; nanos are capped at {@code 2261-12-31} but still report
+     * {@code Long.MAX_VALUE}, because the nano cap did not reject positive values until it was
+     * fixed and older tables can hold rows above it.
      *
      * @return the inclusive maximum storable designated timestamp
      */

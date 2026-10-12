@@ -31,6 +31,7 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -894,6 +895,23 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         row.putLong(2, iv);
         row.putDouble(3, xv);
         row.append();
+    }
+
+    // Asserts the view has a checkpoint timeline on disk for a restart to restore from.
+    // Without one, LiveViewRefreshJob.tryRestoreFromTimeline rebuilds from the applied
+    // base instead, so a crash-recovery arm that needs the restore path checks this
+    // precondition up front rather than failing later on a symptom.
+    private static void assertCheckpointTimelineExists() {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        try (Path checkpointsDir = new Path(); Path timelinePath = new Path()) {
+            checkpointsDir.of(configuration.getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            Assert.assertTrue("the checkpoint timeline must exist on disk: " + timelinePath,
+                    configuration.getFilesFacade().exists(timelinePath.$()));
+        }
     }
 
     // Asserts the lead-ordering invariant on a view's published slot: no un-flushed
@@ -3108,16 +3126,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // is gone with the floor it protected: BEGINNING now has no lower bound at all.)
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
         final int startMode = rnd.nextInt(START_FROM_MODES);
-        // Only the crash-recovery arm needs a bounded cut. It restores the view from a sealed
-        // checkpoint timeline, and a boundary at or above the last row's ts leaves the view empty for
-        // the whole run, so nothing ever seals and restartAndRecoverLead falls back to the
-        // applied-base rebuild - which publishes straight to LV disk and leaves no lead for
-        // assertLeadReadBack to find. The plain lead read-back arm does not: buildLeadForReadBack
-        // inserts its own two rows above the global max ts with i > 0, and those clear every boundary
-        // the draw can produce, so its lead is non-empty at any cut. Capping it too would drop the
-        // upper half of the range for nothing. nextInt takes one draw whatever the bound, so the rest
-        // of the run is unaffected either way.
-        final long boundary = startBoundary(rnd, startMode, tsv, false, leadReadBack && restart ? rowCount / 2 : rowCount);
+        // The lead read-back arms take the full cut range too, empty view included: the rows they
+        // insert above the global max ts carry i > 0 and clear every boundary the draw can produce,
+        // and the crash arm seals its own checkpoint root before building the lead (see below).
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
         final String viewSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
         final String oracleSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, boundary);
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
@@ -3200,12 +3212,31 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 refreshCycle(job);
                 driveRefreshToQuiescence(job);
             } else if (leadReadBack) {
+                long leadFloorTs = tsv[rowCount - 1];
+                if (restart) {
+                    // The crash below recovers the lead by restoring a sealed checkpoint root,
+                    // but the run can end with no timeline on disk: a boundary above every row
+                    // keeps the view empty, so nothing ever seals, and an O3 resume replay that
+                    // emits no row (every row above its anchor fails the WHERE) retires the
+                    // timeline by design. The un-flushed lead seals nothing either, so the
+                    // restart would rebuild from the applied base, which publishes straight to
+                    // LV disk and leaves no lead for assertLeadReadBack to find. Flush one
+                    // forward row first: its flush seals a fresh root the crash restores from.
+                    // i > 0 keeps the row past the optional WHERE, and the recompute oracle
+                    // naturally includes it.
+                    leadFloorTs++;
+                    execute("INSERT INTO base (ts, sym, i, x) VALUES (" + leadFloorTs + "::timestamp, 'AA', 1, 1.0)");
+                    drainWalQueue();
+                    refreshCycle(job);
+                    driveRefreshToQuiescence(job);
+                    assertCheckpointTimelineExists();
+                }
                 // Build a deterministic un-flushed lead on top of the applied
                 // state: pin the flush clock to now and refresh a forward batch
                 // above the global max ts so it publishes into the tier as the lead
                 // without crossing FLUSH EVERY (no flush, so disk keeps only the
                 // applied prefix). The clock is not advanced, so the lead stays.
-                buildLeadForReadBack(job, tsv[rowCount - 1]);
+                buildLeadForReadBack(job, leadFloorTs);
             }
         } finally {
             Misc.free(job);

@@ -1,168 +1,156 @@
-# Carrier-keyed thread-local storage
+# Carrier-keyed and fiber-owned local storage
 
-Background and rationale for `io.questdb.std.CarrierLocal` and
-`io.questdb.mp.CarrierIdentity`. Read this if you are touching either class,
-the worker continuation machinery, or anything that stores per-thread state on
-threads that run inside `Worker.loopBody`.
+This note explains `io.questdb.mp.CarrierIdentity`,
+`io.questdb.std.CarrierLocal` and `io.questdb.std.FiberLocal`.
+`CarrierIdentity` answers which OS thread is executing. `CarrierLocal` keys
+state by that carrier and suits state that describes the carrier.
+`FiberLocal` keys mutable scratch by the running fiber, so a reference cached
+before a yield stays valid after the fiber resumes on another carrier.
 
-## Problem
+## Why ThreadLocal is unsafe in a migrating fiber
 
-QuestDB's worker pool runs each iteration of `Worker.loopBody` inside a raw
-`jdk.internal.vm.Continuation`. Suspending functions (`TxnWaiter.suspend`,
-`Worker.loopBody`'s handoff yield) call `Continuation.yield(SCOPE)`, freezing
-the cont's frame state. The cont can later be remounted by a *different*
-worker carrier via `Continuation.run()`.
+`Fiber` uses a raw `jdk.internal.vm.Continuation`. A query can yield on
+one worker and resume on another worker in the same Fiber-host pool.
 
-`java.lang.ThreadLocal.get()` resolves through `Thread.currentThread()`,
-which is the `_currentThread` HotSpot intrinsic. C2 models `_currentThread`
-as a thread-pinned constant and is free to hoist its result out of loops via
-LICM. Inside the C2-compiled `Worker.loopBody`, this hoisting moves the
-`Thread` reference into the loop preheader, where it becomes part of the
-cont's frozen frame state on yield.
+`ThreadLocal.get()` resolves through `Thread.currentThread()`. HotSpot models
+that call as the `_currentThread` intrinsic, and C2 may treat its value as
+loop-invariant. User-space raw continuation code cannot use the boot-loader
+only `@ChangesCurrentThread` annotation that protects JDK virtual threads.
 
-The failure sequence:
+A compiled query-fiber body can therefore retain carrier A's Java `Thread`
+reference in a frozen frame and observe A's `ThreadLocal` map after carrier B
+resumes it. If A concurrently uses the same entry, both carriers mutate
+single-threaded state through one holder.
 
-1. Carrier A enters `loopBody`. Preheader caches `t = currentThread()` -> A's
-   `Thread`.
-2. A runs work. `tl.get()` resolves `t.threadLocals.getEntry(tl)` -> holder
-   `H_A`.
-3. A's loopBody yields. Cont frames freeze, including the cached `t`.
-4. Carrier B remounts the cont. Frames thaw. Cached `t` is restored unchanged
-   - still A's `Thread`.
-5. The body resumes on B but every `tl.get()` still resolves through cached
-   `t` to A's `threadLocals`, returning `H_A`.
-6. Concurrently, A is running its own fresh cont and also hits `H_A`.
-7. Both carriers read and write `H_A` without synchronization. Cross-carrier
-   corruption.
+The worker loop itself is not a continuation. The hazard exists only for code
+that runs inside a mounted fiber, but shared SQL, logging, exception, and
+protocol helpers cannot safely assume that their caller is outside one.
 
-The JDK's defense for its own continuation user (`VirtualThread`) is
-`@ChangesCurrentThread` on `VirtualThread.runContinuation`, which tells C2
-that `_currentThread` may change across the call and forces re-evaluation.
-The annotation lives in `jdk.internal.vm.annotation` and is honored only on
-boot-loader-loaded classes. User-space continuation consumers (such as
-`WorkerContinuation`) cannot apply it.
+## CarrierIdentity
 
-For a full reproducible-failure analysis with experiment data, see the
-investigation notes attached to the original incident
-(`wait_wal_table` cross-carrier holder corruption).
+`CarrierIdentity.bind()` assigns a process-wide integer to the current OS
+thread. Worker threads and timer-shard threads bind on entry and unbind on
+exit. Pool-local worker ids are unsuitable because different pools reuse the
+same small ids.
 
-## Solution
+`CarrierIdentity.current()` reads a Rust `thread_local!` slot through an FFI
+critical downcall:
 
-Replace `java.lang.ThreadLocal` with carrier-keyed storage that does not go
-through `_currentThread`.
+- `qdb_carrier_bind(int)` stores the id;
+- `qdb_carrier_current()` reads it.
 
-Two pieces:
+The opaque native call prevents C2 from replacing the current carrier with a
+hoisted Java `Thread` reference. The Rust slot uses a const initializer, so
+the normal read is a direct native TLS access without lazy initialization.
 
-- `io.questdb.mp.CarrierIdentity` - one integer per OS thread, stored in TLS
-  on the native side. Read via an FFI critical downcall into Rust
-  (`qdb_carrier_current` in `core/rust/qdbr/src/carrier.rs`). C2 cannot fold
-  the downcall with hoisted `_currentThread` because the linker emits an
-  opaque call site that the optimizer is not allowed to elide. Each call
-  re-reads native TLS and reflects the actual carrier executing now.
+Both OSS and enterprise code must use the symbols from `libquestdbr`.
+Independent `cdylib` files have independent native TLS slots.
 
-- `io.questdb.std.CarrierLocal` - a `ThreadLocal`-shaped class whose `get()`
-  uses `CarrierIdentity.current()` as an index into a `[carrierId][slot]`
-  array. The array entries are never aliased across carriers because the
-  carrier id is fresh on every access.
+If a future JDK treats the critical downcall as foldable, change it to a
+non-critical downcall or JNI before relying on carrier-local state.
 
-`Worker.run()` calls `CarrierIdentity.bind()` once before entering the cont
-driver loop. `bind()` allocates a globally-unique id from a static counter
-(pool-local `workerId` is *not* safe - every pool numbers from 0, so two
-pools' worker 0 would alias the same row). Threads that never bind (test
-runners, ServerMain bootstrap, shutdown hooks) fall through to a per-`Thread`
-`java.lang.ThreadLocal`; they do not execute inside the cont scheduler, so
-the hoist hazard does not apply to them.
+## CarrierLocal
 
-## Why FFI rather than JNI
+`CarrierLocal.get()` uses the current carrier id to select a
+`[carrierId][key]` entry. Each bound carrier owns one row, so a resumed query
+reads the row of the worker that executes it now.
 
-Both work for the hoist defense - the optimizer treats either as opaque.
-FFI is the choice here because:
+That guarantee covers only the lookup. It defeats the hoisted `Thread`
+reference described above, but a reference cached in a local variable before
+a yield still names the old carrier's value after the fiber resumes
+elsewhere, while a second fiber on the old carrier obtains the same object.
+Two threads then mutate one buffer.
 
-- A critical downcall (`Linker.Option.critical(false)`) skips the Java/native
-  thread-state transition that JNI requires, dropping per-call overhead from
-  ~5-10 ns to ~1-3 ns.
-- The Rust crate `qdbr` is already a `cdylib` loaded into the process, so the
-  symbols `qdb_carrier_bind` / `qdb_carrier_current` resolve through the
-  existing `SymbolLookup.loaderLookup()` without a separate native lib.
-- Logging is on a hot path. The full chain `LOG.x().$()...$()` issues at
-  least two `current()` calls (open + close); shaving the per-call cost is
-  worth the FFI plumbing.
+Unbound threads use a lazy Java `ThreadLocal` fallback. Bootstrap, test, and
+shutdown threads normally take this path and do not migrate inside raw
+continuations.
 
-If a future JDK ever marks critical downcalls as foldable / pure / leaf, this
-module must move to a non-critical downcall (which forces a thread-state
-transition C2 cannot cross) or back to JNI.
+`CarrierIdentity.unbind()` clears the row before recycling its id. Values that
+own native or closeable resources need an explicit thread-local cleaner;
+clearing a row does not close arbitrary values.
 
-## Why `thread_local!` with `const` initializer in Rust
+## FiberLocal
 
-```rust
-thread_local! {
-    static CARRIER_ID: Cell<i32> = const { Cell::new(-1) };
-}
-```
+`FiberLocal` gives mutable scratch to the fiber whose code is running rather
+than to the carrier. A fiber runs on one carrier at a time, so a reference
+obtained before a yield still names the fiber's own object after it resumes
+elsewhere, and two fibers never share a buffer.
 
-The `const { ... }` form (Rust 1.59+) gives a const-initialized TLS slot
-backed by `#[thread_local]`-equivalent codegen. Access is a single
-TLS-relative `mov` from `fs:` / `gs:` - no lazy-init branch on first touch.
-Without `const`, `thread_local!` adds a runtime init check via
-`pthread_getspecific`, which is ~3-5 ns slower per call.
+Each `FiberLocal` takes a global slot index at construction. Every owner, a
+carrier or a fiber, keeps one `ObjList<Object>` of slots. `CarrierIdentity`
+selects the carrier's `Holder`, whose `current` list is the carrier's own list
+while plain job code runs. Both mount sites, `Fiber.runMounted()` and
+`Fiber.releaseRoleSwitchReadLock()`, call `FiberLocal.enter()` with the
+fiber's list next to `scope.fiber = this` and `FiberLocal.exit()` in the same
+`finally`, so `current` always names the table of the code that executes on
+that carrier. `get()` is one carrier lookup, one holder read and one slot
+read, with no hashing and no mount check; mount already answered.
 
-## Cross-cdylib placement
+Unbound threads keep a per-`Thread` holder, matching the `CarrierLocal`
+fallback.
 
-Both `qdbr` (OSS) and `qdb-ent` are independent `cdylib`s loaded into the
-same process. Under the GLOBAL_DYNAMIC TLS model, a `thread_local!` in
-`qdbr` is a *different storage slot* from a `thread_local!` in `qdb-ent`.
-The carrier symbols therefore live in `qdbr` only. Enterprise code accessing
-carrier identity goes through the same `CarrierIdentity` class, which
-FFI-binds against `libquestdbr`.
+`FiberPool.onRetired()` frees the fiber's slots after `completeRetirement()`,
+which is where a `Path` releases its native buffer. `removeAndFree()` frees
+the current owner's slot; `Path.clearThreadLocals()` calls it on worker exit
+as before. `CarrierIdentity.unbind()` drops the carrier's holder and, like a
+cleared `CarrierLocal` row, closes nothing.
 
-## Diagnostics
+`FiberLocal` has no `set()`. A holder that installs a value from outside,
+such as a cursor cached after construction, has no `FiberLocal` equivalent.
 
-The FFI primitive is observable - if a future C2 change starts hoisting the
-downcall, the failure mode reappears as `ABANDONED LOG RECORD` markers in
-the log or as the assertion `h.isLogRecordInProgress` in
-`AbstractLogRecord.$()` firing.
+Slot indexes are never recycled. Declare `FiberLocal` as `static final` only;
+an instance field would take a fresh index per instance and grow every
+owner's table.
 
-To rule out hoisting on a particular JDK, run with
-`-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining` and confirm
-`CarrierIdentity.current` shows as a real call rather than an inlined leaf.
+## Choosing between them
 
-## Testing the hoist regression
+- Mutable scratch that fiber-executed code can reach, such as sinks, paths,
+  lists, format compilers and preallocated exceptions: `FiberLocal`.
+- State that describes the carrier itself (`Worker.CURRENT`,
+  `SuspensionScope`, memory-tracker thread state, log records), per-carrier
+  pools and striping, and any instance field: `CarrierLocal`.
+- Heavy or native-backed scratch stays a `CarrierLocal` when its holding
+  scope provably contains no checkpoint: fiber ownership multiplies retained
+  scratch by live fibers per pool instead of by carriers.
+- Writer, WAL and O3 code keeps its carrier-locals safely only because it
+  contains no cooperative checkpoint. Adding one there reopens the migration
+  hazard for every carrier-local that code touches.
 
-The specific failure mode this module exists to prevent - C2 hoisting
-`Thread.currentThread()` across `Continuation.yield()` so a body reading a
-thread-local after resume on a different carrier sees the original carrier's
-slot - is difficult to exercise from a focused unit test.
+## Required invariants
 
-C2 does not compile `Worker.loopBody` until it has been interpreted /
-C1-compiled tens of thousands of times. A small JUnit case that suspends a
-cont, resumes it on a different carrier, and reads a `ThreadLocal` will run
-entirely in the interpreter (or in C1, which does not perform the loop-invariant
-hoist that motivated this work) and therefore cannot reproduce the bug, even
-though it looks like it should. Forcing C2 compilation via
-`-XX:-TieredCompilation` or `-XX:CompileThreshold` on a synthetic loop is
-also unreliable: the hoist depends on the exact shape of `loopBody` and the
-surrounding inlining context, both of which the test would have to reproduce
-faithfully.
+- Bind each carrier thread before it can run query-fiber or carrier-local code.
+- Unbind only from that carrier's exit path.
+- Never cache `CarrierIdentity.current()` or a carrier-local value across a
+  suspension. Mutable scratch that fiber code can reach is therefore a
+  `FiberLocal`, which removes the rule rather than relying on it.
+- Declare `FiberLocal` as `static final`; slot indexes are never recycled.
+- Use process-wide carrier ids, not pool worker ids.
+- Release native resources explicitly before unbinding.
 
-The original incident was reproducible by running `ParquetTest` driving
-sqllogictest scenarios with debug logging enabled - that combination warms
-`loopBody` enough for C2 to compile it, drives the cont scheduler through
-real cross-carrier suspend/resume traffic, and amplifies the corruption into
-visible `ABANDONED LOG RECORD` markers from the log subsystem (which calls
-`tl.get()` on the hot path).
+## Validation
 
-As a result, the structural pieces (rebind cycles, recycled ids, cross-carrier
-isolation in `CarrierLocalTest`; different carrier across resume in
-`WorkerContinuationTest.testSuspendResumeOnDifferentThread`) are unit-tested,
-but the end-to-end "JIT-hoisted ThreadLocal sees stale carrier" assertion is
-covered indirectly by the sqllogictest + logging stress run. Anyone changing
-this code should re-run that scenario before trusting the unit suite alone.
+Focused tests cover binding, id recycling, row isolation, and resuming a raw
+continuation on a different carrier. HTTP/PG sleep and `wait_wal_table()`
+integration tests exercise migration through production fibers.
+
+The C2 failure depends on compilation and inlining shape, so a small
+interpreter-only test cannot fully reproduce it. Logging-enabled concurrent
+suspension stress remains the useful end-to-end guard.
+
+`FiberLocalTest` covers the `FiberLocal` claims above: a nested `enter()`
+restores the outer table, `removeAndFree()` frees only the mounted owner's
+slot, `unbind()` releases the carrier's slots, an unbound thread keeps its
+own slots, and a value travels with its fiber across carriers.
+
+Performance: `FiberLocalBenchmark` measures `FiberLocal.get()` against
+`CarrierLocal.get()` on a plain carrier and inside a mounted fiber.
 
 ## Files
 
-- `core/rust/qdbr/src/carrier.rs` - native side.
-- `core/src/main/java/io/questdb/mp/CarrierIdentity.java` - FFI binding +
-  global id allocator.
-- `core/src/main/java/io/questdb/std/CarrierLocal.java` - the
-  `ThreadLocal`-shaped API used by callers.
-- `core/src/main/java/io/questdb/mp/Worker.java` - `bind()` call site.
+- `core/rust/qdbr/src/carrier.rs`
+- `core/src/main/java/io/questdb/mp/CarrierIdentity.java`
+- `core/src/main/java/io/questdb/std/CarrierLocal.java`
+- `core/src/main/java/io/questdb/std/FiberLocal.java`
+- `core/src/main/java/io/questdb/mp/Worker.java`
+- `core/src/main/java/io/questdb/mp/continuation/Fiber.java`
+- `core/src/main/java/io/questdb/mp/continuation/FiberPool.java`

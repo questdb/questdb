@@ -145,7 +145,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 adjustDstInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();

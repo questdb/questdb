@@ -548,6 +548,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public LowerCaseCharSequenceHashSet getAuditedDecls() {
+        return delegate.getAuditedDecls();
+    }
+
+    @Override
     public LowerCaseCharSequenceHashSet getOverridableDecls() {
         return delegate.getOverridableDecls();
     }
@@ -585,6 +590,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<ViewDefinition> getReferencedViews() {
         return delegate.getReferencedViews();
+    }
+
+    @Override
+    public ObjList<ViewAuditModel> getViewAudits() {
+        return delegate.getViewAudits();
     }
 
     @Override
@@ -654,6 +664,16 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public int getShowKind() {
         return delegate.getShowKind();
+    }
+
+    @Override
+    public ExpressionNode getSubsample() {
+        return delegate.getSubsample();
+    }
+
+    @Override
+    public int getSubsamplePosition() {
+        return delegate.getSubsamplePosition();
     }
 
     @Override
@@ -958,6 +978,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void moveSubsampleFrom(IQueryModel baseModel) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void moveOrderByFrom(IQueryModel model) {
         throw new UnsupportedOperationException();
     }
@@ -981,6 +1006,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<ExpressionNode> parseWhereClause() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordViewAudits(ObjList<ViewAuditModel> viewAudits) {
+        delegate.recordViewAudits(viewAudits);
     }
 
     @Override
@@ -1284,6 +1314,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setShowKind(int showKind) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setSubsample(ExpressionNode subsample, int position) {
         throw new UnsupportedOperationException();
     }
 

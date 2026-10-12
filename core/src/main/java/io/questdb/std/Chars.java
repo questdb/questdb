@@ -1403,22 +1403,20 @@ public final class Chars {
         if (str == null) {
             return;
         }
-        int startIdx = 0;
-        int endIdx = str.length() - 1;
+        int lo = 0;
+        int hi = str.length();
         if (type == TrimType.LTRIM || type == TrimType.TRIM) {
-            while (startIdx < endIdx && str.charAt(startIdx) == ' ') {
-                startIdx++;
+            while (lo < hi && str.charAt(lo) == ' ') {
+                lo++;
             }
         }
         if (type == TrimType.RTRIM || type == TrimType.TRIM) {
-            while (startIdx < endIdx && str.charAt(endIdx) == ' ') {
-                endIdx--;
+            while (lo < hi && str.charAt(hi - 1) == ' ') {
+                hi--;
             }
         }
         sink.clear();
-        if (startIdx != endIdx) {
-            sink.put(str, startIdx, endIdx + 1);
-        }
+        sink.put(str, lo, hi);
     }
 
     public static void unescape(@NotNull CharSequence cs, int start, int end, char unescape, @NotNull Utf16Sink sink) {

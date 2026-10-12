@@ -180,6 +180,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final DoubleList constantFloatFoldValues = new DoubleList();
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
+    // Scratch keys for discardBackfillNodesFrom(). LongObjHashMap offers no bulk removal, and
+    // removeAt() re-hashes the entries below the freed slot, so the walk collects every doomed
+    // offset before it removes any of them.
+    private final LongList backfillDiscardOffsets = new LongList();
+    // The bindVarFunctions slot each bind variable node already took, so that a re-traversal of the
+    // SAME node reuses it rather than appending a duplicate. serializeCharOrdering() and
+    // serializeIPv4Ordering() re-traverse each operand four and up to six times respectively, so
+    // without this one textual bind variable claimed that many 16-byte vars slots, that many link
+    // functions, and reached the backend as that many DISTINCT VAR indices - and the AVX2 backend's
+    // ValueCacheYmm (jit/common.h) keys the bind-variable half of its cache on exactly that index,
+    // so the broadcast it exists to fold could never be reused either.
+    //
+    // Compared by identity, like the mark sets below. rewindOrderingOperands() is the ONLY place
+    // that truncates bindVarFunctions, and it clears this map alongside: a memoized slot above the
+    // watermark would otherwise point past the end of the vars block the backend reads.
+    private final ObjIntHashMap<ExpressionNode> bindVarIndexes = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
     // Memoizes containsFloatExpression() for the current predicate. See arithExprTypeCache.
@@ -231,6 +247,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // int64_mul, which does not wrap where MulInt#getInt does. Compared by identity.
     private final ObjHashSet<ExpressionNode> narrowKeptConstants = new ObjHashSet<>();
     private final NarrowI64WidenDetector narrowI64WidenDetector = new NarrowI64WidenDetector();
+    // Rewind watermarks for the CHAR / IPv4 ordering expansions, kept as a stack: descend() pushes
+    // the append offset and the bind variable count it sees at an ordering node, and visit() pops
+    // them once that node is serialized. serializeCharOrdering() / serializeIPv4Ordering()
+    // re-traverse their operands several times, so they first discard the single naive emission the
+    // post-order visit already made for those operands - and that emission starts at the ORDERING
+    // NODE's own watermark, not at the predicate root's. Rewinding to the root's erased sibling IR
+    // that nothing re-emitted, and the root operator then popped an operand the backend never
+    // pushed: "(achar < 'x') = (achar > 'y')" aborted the JVM inside avx2::emit_bin_op. A stack
+    // rather than a single field keeps the two ordering nodes of that shape independent.
+    //
+    // orderingRewindNodes carries the node each watermark belongs to, and rewindOrderingOperands()
+    // declines JIT compilation unless the top of the stack is the node it was called for. That
+    // cross-check is what makes a mismatch between the push condition and serializeOperator's
+    // dispatch fail CLOSED: rewinding to a stale (or absent) watermark would hand the native
+    // compiler a truncated stream, and its value stack underflows rather than reporting an error.
+    private final IntList orderingRewindBindVarSizes = new IntList();
+    private final ObjList<ExpressionNode> orderingRewindNodes = new ObjList<>();
+    private final LongList orderingRewindOffsets = new LongList();
     private final PredicateContext predicateContext = new PredicateContext();
     // Memoizes requiresWideLaneArithmetic() for the current predicate. See arithExprTypeCache.
     private final ObjIntHashMap<ExpressionNode> requiresWideLaneArithCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
@@ -268,6 +302,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // settles at its end, so visit() accumulates the answer here and getExecHint() resolves it.
     private boolean hasPendingWidthChangingI64Constant;
     private boolean isWideLaneMode;
+    // The comparison findColumnFreeComparison found in the current predicate, or null. Recorded
+    // when the predicate is entered and judged when it is LEFT, because the verdict needs
+    // predicateContext.columnType and that is only settled once every column has been visited -
+    // PostOrderTreeTraversalAlgo descends node.rhs first, so a comparison written on the left of
+    // the predicate is descended before the column on its right has typed anything. See visit().
+    private ExpressionNode columnFreeComparisonNode;
     // The operand markIntCmpFloatOperand found on the INT side of a comparison against an F4
     // operand and could not sign-extend. descend() turns it into the SqlException that declines
     // JIT compilation for the whole filter. See markIntCmpFloatOperand.
@@ -286,9 +326,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         hasI64WidenArithConstant = false;
         hasPendingWidthChangingI64Constant = false;
         isWideLaneMode = false;
+        columnFreeComparisonNode = null;
         unwidenableIntCmpFloatNode = null;
         predicateContext.clear();
         backfillNodes.clear();
+        backfillDiscardOffsets.clear();
+        orderingRewindBindVarSizes.clear();
+        orderingRewindNodes.clear();
+        orderingRewindOffsets.clear();
+        bindVarIndexes.clear();
         collectedPredicates.clear();
         // The memo caches below are keyed by ExpressionNode identity and live for a whole filter, so
         // this is their ONLY reset point - the node pool can hand the same objects to the next
@@ -441,10 +487,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
             ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
             if (nextNode != null && nextNode.paramCount == 0 && nextNode.type == ExpressionNode.CONSTANT) {
-                // Store negation node for later backfilling
+                // Store negation node for later backfilling. The stub skips visit(), so the
+                // predicate records the operator here: a CHAR or IPv4 predicate declines it at
+                // exit, ahead of the backfill (see visit()).
+                predicateContext.markUnaryMinus(node);
                 serializeConstantStub(node);
                 return false;
             }
+        }
+
+        // Record where this ordering node's own IR begins. serializeCharOrdering() /
+        // serializeIPv4Ordering() rewind to it before they re-traverse the operands. This sits
+        // AFTER every route above that returns false, so a node that is never visited never pushes
+        // a watermark and the stack stays paired with visit(). See orderingRewindOffsets.
+        if (isOrderingComparison(node)) {
+            orderingRewindNodes.add(node);
+            orderingRewindOffsets.add(memory.getAppendOffset());
+            orderingRewindBindVarSizes.add(bindVarFunctions.size());
         }
 
         return true;
@@ -852,7 +911,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
         hasEmittedWideLaneConversion = false;
         hasPendingWidthChangingI64Constant = false;
+        columnFreeComparisonNode = null;
         unwidenableIntCmpFloatNode = null;
+        // Same reason: a throw between an ordering node's descend() and its visit() takes the whole
+        // filter to the Java fallback and leaves its watermark on the stack.
+        orderingRewindBindVarSizes.clear();
+        orderingRewindNodes.clear();
+        orderingRewindOffsets.clear();
+        // Same reason again: the slots this memo names belong to the bindVarFunctions list the
+        // CALLER owns, and that list is re-created per filter.
+        bindVarIndexes.clear();
         isWideLaneMode = !forceScalar && isWideLaneEligible(node) && requiresWideLane(node);
         // Detect if scalar mode is guaranteed by checking for mixed column sizes.
         // Short-circuit optimizations (including IN() short-circuit) only work correctly
@@ -956,14 +1024,139 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put(node.token);
             }
         } else {
-            serializeOperator(node.position, node.token, argCount, node.type);
+            serializeOperator(node, argCount, node.type);
             maybeEmitI64ArithRootWidening(node);
+            // Pairs with the push at the end of descend(). serializeCharOrdering() /
+            // serializeIPv4Ordering() only READ the top of the stack, so the pop belongs here,
+            // where it runs under the very same condition the push did.
+            if (isOrderingComparison(node)) {
+                orderingRewindNodes.setPos(orderingRewindNodes.size() - 1);
+                orderingRewindOffsets.setPos(orderingRewindOffsets.size() - 1);
+                orderingRewindBindVarSizes.setPos(orderingRewindBindVarSizes.size() - 1);
+            }
         }
 
         boolean predicateLeft = predicateContext.onNodeVisited(node);
 
         if (predicateLeft) {
             // We're out of a predicate
+
+            // Arithmetic in an IPv4 or CHAR predicate. The Java filter answers `ip - ip2` and
+            // `ip - '1.1.1.1'` with a signed LONG (IPv4MinusIPv4FunctionFactory), LONG_NULL for a
+            // NULL operand, and `ip + 1` / `ip - 1` with an IPv4 that is NULL for a NULL operand or
+            // for a carry out of 32 bits. The backends run i32 arithmetic on the raw lane instead:
+            // IPv4 NULL is zero there, the difference wraps, and every constant and comparison in
+            // the predicate keeps the COLUMN's typing - the NULL constant is the IPv4 zero
+            // sentinel, and the ordering operators take the unsigned IPv4 expansion, which reads a
+            // negative difference as a huge address. `(ip - ip2) < (ip2 - ip)` answered NO rows
+            // over a table where every row has ip = 1.1.1.1 and ip2 = 1.1.1.2, and
+            // `(ip - '1.1.1.1') = NULL` selected the row whose difference is ZERO instead of the
+            // row whose ip is NULL.
+            //
+            // CHAR takes the same route one lane narrower. The Java filter answers `c - d` with a
+            // signed INT: SubIntFunction reads each operand through CharFunction#getInt, which
+            // maps a digit CHAR to its numeric value and throws ImplicitCastException for any other
+            // CHAR, NULL included. The backends subtract the raw i16 lanes, read a NULL lane as
+            // zero rather than failing, and the ordering operators take the unsigned CHAR
+            // expansion, which reads a zero difference as CHAR NULL and a negative one as a code
+            // point above every positive one. `(c - d) < (d - c)` answered NO rows over a table
+            // where every row has c = '1' and d = '2', and so did `(c - c) <= (d - d)`.
+            //
+            // A unary minus takes the same route. isArithmeticOperation() does not report it
+            // (paramCount < 2), so the predicate tracks it apart from hasArithmeticOperations,
+            // which forceScalarMode below derives from: a numeric `-abyte > afloat` keeps its
+            // vectorised path. The Java filter answers `-c` with a SHORT (NegShortFunction over
+            // CharFunction#getShort: the digit value negated, ImplicitCastException for any other
+            // CHAR) and reads that SHORT as a CHAR again at the comparison, so -'0' is CHAR NULL;
+            // the backends negated the raw i16 code point, and `-c > d` answered EVERY row over a
+            // table where c = '0'. A negated CHAR literal never reaches visit() at all: descend()
+            // stubs `-<constant>` for the backfill, and serializeConstant() emitted the code point
+            // with the sign dropped, so `c < -'5'` compiled as `c < '5'`.
+            //
+            // Until the serializer types an arithmetic node by its own result, decline the
+            // predicate; the Java filter is always correct. This runs ahead of the constant
+            // backfill so that the decline names the operator rather than a constant the backfill
+            // would have refused for its own reasons.
+            final int predicateColumnTypeTag = ColumnType.tagOf(predicateContext.columnType);
+            final boolean hasUnaryMinus = predicateContext.unaryMinusNode != null;
+            if ((predicateContext.hasArithmeticOperations || hasUnaryMinus)
+                    && (predicateColumnTypeTag == ColumnType.IPv4 || predicateColumnTypeTag == ColumnType.CHAR)) {
+                final ExpressionNode operatorNode = predicateContext.arithmeticNode != null
+                        ? predicateContext.arithmeticNode
+                        : predicateContext.unaryMinusNode;
+                if (operatorNode != null) {
+                    throw SqlException.position(operatorNode.position)
+                            .put("operator: ").put(operatorNode.token)
+                            .put(" is not supported for ").put(ColumnType.nameOf(predicateColumnTypeTag))
+                            .put(" type");
+                }
+                throw SqlException.position(node.position)
+                        .put("arithmetic is not supported for ").put(ColumnType.nameOf(predicateColumnTypeTag))
+                        .put(" type");
+            }
+
+            // A comparison - or an IN pairing - inside this predicate that reads NO column, under a
+            // predicate whose columns are not numeric. Every constant the serializer emits takes
+            // its type from predicateContext.columnType, which the columns of the WHOLE predicate
+            // set, and a STRING bind variable takes its symbol table from
+            // predicateContext.symbolColumnIndex the same way. That is sound only while the
+            // comparison itself reads one of those columns, because the Java filter types a
+            // comparison from its OWN operands - for a column-free one those are the literals'
+            // own types, and for a non-numeric predicate the two are different TYPES rather than
+            // two widths of one:
+            //   ('60.108.156.35' >= '249.79.14.15') = (ip > '128.0.0.0')
+            // orders two STRINGs in the Java filter ('6' > '2', so true) and two IPv4 addresses
+            // here (0x3C6C9C23 >= 0xF94F0E0F, so false), and the compiled filter answered with the
+            // COMPLEMENT of the Java row set. Both backends were wrong the same way, so parity
+            // between them never flagged it. SYMBOL reaches the same mis-typing through plain
+            // equality - two constants absent from the table both resolve to VALUE_NOT_FOUND, so
+            // they compare EQUAL - and so do UUID (one uuid, two hex spellings), TIMESTAMP and
+            // DATE (one instant, two spellings, or a zone offset that reverses the string order).
+            // CHAR happens to agree, because a one-character literal orders the same either way,
+            // but on the values rather than on the typing.
+            //
+            // A NUMERIC predicate is exempt: there the constant is a number to both engines and
+            // only its WIDTH is in question, which the whole i64WidenConstants /
+            // narrowKeptConstants machinery already settles for a column-free comparison as much as
+            // for any other - `((a * b) = -727_379_968) = (nl > 0)` over a LONG column, or
+            // `:bv > 16777216.0`, which an INT bind variable types on its own.
+            //
+            // So is a predicate that types NOTHING, which an AND / OR conjunct holding only
+            // constants is: isTopLevelOperation does not admit AND or OR, so each conjunct is its
+            // own predicate. There, an un-folded constant has no width to be emitted at and
+            // serializeConstant declines with "all constants expression" already; what survives is
+            // exactly the pure-constant ARITHMETIC subtree descend() folds to one immediate ahead
+            // of the observer, mirroring the fold the Java filter performs -
+            // `NOT ((2_097_152 * 2_097_152 * 2_097_152) = (65_536 * 32_768))`.
+            //
+            // `column op literal` is untouched - the shape the IPv4 and CHAR quoted-literal support
+            // exists for carries a column and keeps compiling, nested in another comparison as well
+            // as at the predicate root.
+            //
+            // Three families of shape lose JIT here that the mis-typing never made WRONG, because
+            // their operands answer the same under either typing. The CHAR pair above is one; the
+            // other two are a comparison of the reserved BOOLEAN keywords - `(true = false) = b0` -
+            // and a comparison the bind variable service types rather than the predicate, as in
+            // `(:tv > '2020-01-01') = (t2 > '2020-06-01')` or `(:tv > :tv2) = (t2 > '2020-06-01')`.
+            // Every operand of those is a constant or a bind variable, so the comparison holds one
+            // value for the whole scan. The predicate it sits in still reaches a column through its
+            // OTHER comparison, though, and the decline takes the whole filter to the Java one, so
+            // that column's scan pays the Java-filter cost for a comparison that was never wrong.
+            // For the bind variable family the typing is sound on its own terms rather than by
+            // luck of the values: serializeBindVariable types a non-STRING bind variable from the
+            // bind variable service, which is where the Java filter types it too. The verdict
+            // declines it all the same rather than carving it out: the CHAR and BOOLEAN pairs agree
+            // on the VALUES only, every type the ordering, symbol and bind variable paths gain
+            // would have to re-establish a carve-out, and the bind variable pair has a spelling
+            // that compiles already - the AND conjunct the single-comparison exemption in
+            // onNodeDescended admits.
+            if (columnFreeComparisonNode != null
+                    && predicateContext.columnType != ColumnType.UNDEFINED
+                    && !isNumeric(ColumnType.tagOf(predicateContext.columnType))) {
+                throw SqlException.position(columnFreeComparisonNode.position)
+                        .put("comparison without a column operand: ")
+                        .put(columnFreeComparisonNode.token);
+            }
 
             // Fail closed on a widening mark that never reached maybeEmitI64ArithRootWidening.
             // markIntCmpFloatOperand marks the subtree while descending the predicate, and every
@@ -1063,6 +1256,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
+    /**
+     * The value of {@code operand} when it is a quoted CHAR literal the literal-specialised
+     * ordering forms can pick a shape from, and {@link Numbers#CHAR_NULL} otherwise: for a column,
+     * a bind variable, an arithmetic subtree, an unquoted number, and for the NULL literal itself,
+     * whose zero is neither positive nor negative and so has no shape of its own. The value only
+     * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
+     * route of {@link #serializeConstant}, so it is typed exactly as the general expansion types it.
+     */
+    private static char charOrderingLiteral(ExpressionNode operand) {
+        if (operand.type != ExpressionNode.CONSTANT) {
+            return Numbers.CHAR_NULL;
+        }
+        final CharSequence token = operand.token;
+        if (token.length() != 3 || !Chars.isQuoted(token)) {
+            return Numbers.CHAR_NULL;
+        }
+        return token.charAt(1);
+    }
+
     private static int columnTypeCode(int columnTypeTag) {
         return switch (columnTypeTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE -> I1_TYPE;
@@ -1119,6 +1331,113 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return UNDEFINED_CODE;
     }
 
+    /**
+     * Returns the first comparison - or {@code IN} pairing - in the subtree that reads no column at
+     * all, or {@code null} when every one of them reads at least one. See {@link #visit} for what
+     * that decides and why.
+     */
+    private static ExpressionNode findColumnFreeComparison(ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        if (node.paramCount > 0
+                && ((node.paramCount == 2 && isComparisonToken(node.token))
+                || SqlKeywords.isInKeyword(node.token))
+                && !hasColumnOperand(node)) {
+            return node;
+        }
+        ExpressionNode found = findColumnFreeComparison(node.lhs);
+        if (found != null) {
+            return found;
+        }
+        found = findColumnFreeComparison(node.rhs);
+        if (found != null) {
+            return found;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            found = findColumnFreeComparison(node.args.getQuick(i));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reports whether the subtree reads a COLUMN. Constants and bind variables deliberately do not
+     * count: a constant takes its type from {@link PredicateContext#columnType} and a STRING bind
+     * variable takes its symbol table from {@link PredicateContext#symbolColumnIndex}, both of
+     * which the columns of the WHOLE predicate set, so neither is evidence about the node it sits
+     * under.
+     */
+    private static boolean hasColumnOperand(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return true;
+        }
+        if (hasColumnOperand(node.lhs) || hasColumnOperand(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasColumnOperand(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reports whether the subtree holds a comparison - or an {@code IN} pairing - other than
+     * {@code except}. Identity, not equality: the traversal has to skip that one node and count
+     * every other, including a structurally identical sibling.
+     */
+    private static boolean hasOtherComparison(ExpressionNode node, ExpressionNode except) {
+        if (node == null) {
+            return false;
+        }
+        if (node != except
+                && node.paramCount > 0
+                && ((node.paramCount == 2 && isComparisonToken(node.token))
+                || SqlKeywords.isInKeyword(node.token))) {
+            return true;
+        }
+        if (hasOtherComparison(node.lhs, except) || hasOtherComparison(node.rhs, except)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasOtherComparison(node.args.getQuick(i), except)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The value of {@code operand} when it is a quoted IPv4 literal the literal-specialised
+     * ordering forms can pick a shape from, and {@link Numbers#IPv4_NULL} otherwise: for a column,
+     * a bind variable, an unquoted keyword, a quoted 'null', a malformed address, and for
+     * '0.0.0.0' itself, which is the NULL sentinel and has no sign class of its own. The value only
+     * selects the form; the literal still reaches the stream through the ordinary stub-and-backfill
+     * route of {@link #serializeConstant}, which is also where a malformed address declines.
+     */
+    private static int ipv4OrderingLiteral(ExpressionNode operand) {
+        if (operand.type != ExpressionNode.CONSTANT) {
+            return Numbers.IPv4_NULL;
+        }
+        final CharSequence token = operand.token;
+        final int len = token.length();
+        if (len < 3 || !Chars.isQuoted(token)) {
+            return Numbers.IPv4_NULL;
+        }
+        try {
+            return Numbers.parseIPv4_0(token, 1, len - 1);
+        } catch (NumericException e) {
+            return Numbers.IPv4_NULL;
+        }
+    }
+
     private static boolean isArithmeticOperation(ExpressionNode node) {
         final CharSequence token = node.token;
         if (node.paramCount < 2) {
@@ -1155,6 +1474,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                  ColumnType.DOUBLE, ColumnType.LONG128 -> true;
             default -> false;
         };
+    }
+
+    /**
+     * A binary {@code <}, {@code <=}, {@code >} or {@code >=} node, i.e. the only shape
+     * {@link #serializeOperator} can route into {@link #serializeCharOrdering} or
+     * {@link #serializeIPv4Ordering}. {@link #descend} and {@link #visit} push and pop the rewind
+     * watermark under this condition, so it has to admit exactly the nodes whose visit reaches
+     * those two branches - see {@link #orderingRewindOffsets}.
+     */
+    private static boolean isOrderingComparison(ExpressionNode node) {
+        if (node.paramCount != 2) {
+            return false;
+        }
+        final CharSequence token = node.token;
+        return Chars.equals(token, "<") || Chars.equals(token, "<=")
+                || Chars.equals(token, ">") || Chars.equals(token, ">=");
     }
 
     private static boolean isReservedConstantKeyword(CharSequence token) {
@@ -1571,7 +1906,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // frontend chose for the operands, what the operator leaves behind is a value
                     // the BACKEND computed, and convert() widens it exactly as it widens a column
                     // read. Dropping the marker can only remove a report, never invent one.
-                    pushType(isComparison ? UNDEFINED_CODE : Math.max(laneTypeCode(lhsType), laneTypeCode(rhsType)));
+                    // arithResultTypeCode() owns which type the result carries - the widths order
+                    // the codes, but an (i64, f32) pairing lands on f64 rather than on either.
+                    pushType(isComparison ? UNDEFINED_CODE : arithResultTypeCode(lhsType, rhsType));
                     break;
                 }
                 default:
@@ -1581,6 +1918,46 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
         return false;
+    }
+
+    /**
+     * Returns the type code the backend leaves on its value stack for an ADD, SUB, MUL or DIV over
+     * this pairing, mirroring {@code avx2::convert()}'s promotion table.
+     * <p>
+     * The type codes are ordered by width with one exception - {@code F4_TYPE} (3) sorts BELOW
+     * {@code I8_TYPE} (4) - so {@code Math.max} over them answers convert()'s result for every
+     * pairing but one. For {@code (i64, f32)} convert() sends BOTH sides through {@code cvt_ltod} /
+     * {@code cvt_ftod} and the operator lands on f64 ({@code jit/avx2.h}, the i64-with-f32 and
+     * f32-with-i64 arms), while {@code Math.max} answers i64 - the integer code - because 4 &gt; 3.
+     * <p>
+     * That one cell is not cosmetic: {@link #isWideLaneUnharmonisedPairing} keys its narrow-int
+     * IMMEDIATE arm on {@code laneTypeCode(wideEntry) == I8_TYPE} to mean "an i64 operand", so a
+     * float-producing subtree that reports itself as i64 makes an enclosing i32 immediate look
+     * unharmonised and trips the {@link #areWideLaneWidthsHarmonised} assert. The pairing it
+     * reports is really {@code (i32 imm, f64)}, which convert()'s {@code cvt_itod} arm harmonises
+     * at four lanes, so the filter it declined was correct all along -
+     * {@code CompiledFilterRegressionTest#testIntColumnVsNarrowConstPlusLongFloatArithMatchesJava}
+     * pins the rows against the Java filter and
+     * {@code CompiledFilterIRSerializerTest#testLongFloatArithUnderNarrowIntImmediateStaysWideLane}
+     * pins the IR and the hint.
+     * <p>
+     * The correction is width-neutral: {@code I8_TYPE} and {@code F8_TYPE} both measure eight bytes
+     * in {@code TypesObserver.typeSizeBytes}, so the single-size half of
+     * {@link #hasUnharmonisedOperandWidths} - the one {@link #getExecHint} reads to demote a filter
+     * to {@link #EXEC_HINT_SCALAR} - sees exactly the widths it saw before and no filter changes
+     * the loop it runs on.
+     * <p>
+     * An i8 or i16 operand needs no arm here. convert() carries no case for either width, so such a
+     * pairing declines and the filter falls back to the Java one whatever this returns; the width
+     * {@code Math.max} leaves behind is what the single-size half reads for it.
+     */
+    private static int arithResultTypeCode(int lhsEntry, int rhsEntry) {
+        final int lhs = laneTypeCode(lhsEntry);
+        final int rhs = laneTypeCode(rhsEntry);
+        if ((lhs == I8_TYPE && rhs == F4_TYPE) || (lhs == F4_TYPE && rhs == I8_TYPE)) {
+            return F8_TYPE;
+        }
+        return Math.max(lhs, rhs);
     }
 
     /**
@@ -1779,6 +2156,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // the range has to raise PRIORITY_COUNT with it.
             assert priority >= 0 && priority < PRIORITY_COUNT;
             predicatePriorities.add(priority);
+        }
+    }
+
+    /**
+     * Drops every {@link #backfillNodes} entry a rewind to {@code offset} invalidates, keeping the
+     * ones below it. The map is keyed by the memory offset the stub occupies, so an entry at or
+     * above the rewind point names bytes the expansion is about to overwrite with something else -
+     * {@link #backfillNode} would then write a constant over an unrelated instruction. Entries
+     * below the rewind point belong to siblings the ordering node has no business discarding, which
+     * is what a blanket {@code clear()} got wrong: for {@code (achar < 'x') = true} it threw away
+     * the deferred {@code true} stub whose backfill is what declines JIT for the shape.
+     */
+    private void discardBackfillNodesFrom(long offset) {
+        backfillDiscardOffsets.clear();
+        final long[] offsets = backfillNodes.keys();
+        for (int i = 0, n = offsets.length; i < n; i++) {
+            // An empty slot holds the map's -1 no-entry key, which is below any append offset.
+            if (offsets[i] >= offset) {
+                backfillDiscardOffsets.add(offsets[i]);
+            }
+        }
+        for (int i = 0, n = backfillDiscardOffsets.size(); i < n; i++) {
+            backfillNodes.remove(backfillDiscardOffsets.getQuick(i));
         }
     }
 
@@ -3936,17 +4336,83 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putLong(0L); // payload.hi unused
     }
 
-    private void rejectSymbol(final CharSequence token, int position) throws SqlException {
-        // >, >=, < and <= for symbols should use string and not int value comparison
-        // since string is not supported in JIT, we reject it here and allow code generator to fall back to non-JIT implementation
-        if (predicateContext.columnType == ColumnType.SYMBOL) {
-            throw SqlException.position(position)
-                    .put("operator: ").put(token).put(" is not supported for SYMBOL type");
+    /**
+     * Rejects an ordering comparison ({@code <}, {@code <=}, {@code >},
+     * {@code >=}) whose Java semantics the backends cannot reproduce on the
+     * lane the IR gives the column. Throwing here makes
+     * {@link io.questdb.griffin.SqlCodeGenerator} fall back to the Java filter,
+     * which evaluates the predicate correctly.
+     * <p>
+     * SYMBOL compares the symbol strings, while the IR only carries the int
+     * key. UUID and LONG128 compare the string representations in Java, while
+     * the backends carry no 128-bit ordering
+     * comparator at all - the i128 lane falls through the comparator's
+     * {@code default: __builtin_unreachable()} and crashes the JVM.
+     */
+    private void rejectOrderingComparison(final CharSequence token, int position) throws SqlException {
+        final short tag = ColumnType.tagOf(predicateContext.columnType);
+        switch (tag) {
+            case ColumnType.SYMBOL:
+            case ColumnType.UUID:
+            case ColumnType.LONG128:
+                throw SqlException.position(position)
+                        .put("operator: ").put(token).put(" is not supported for ")
+                        .put(ColumnType.nameOf(tag)).put(" type");
+            default:
+                break;
         }
+    }
+
+    /**
+     * Discards the IR the post-order visit already emitted for {@code node}'s own operands, so that
+     * {@link #serializeCharOrdering} and {@link #serializeIPv4Ordering} can re-traverse them into
+     * their multi-term expansions. The watermark is the one {@link #descend} recorded for THIS
+     * node - see {@link #orderingRewindOffsets} for why the predicate root's does not do.
+     * <p>
+     * Declines JIT compilation when the top of the watermark stack is not this node. That cannot
+     * happen while the push in {@link #descend} and the pop in {@link #visit} agree with
+     * {@link #serializeOperator}'s dispatch, but the alternative to noticing is a rewind to a
+     * foreign offset, which reaches the native compiler as a stream whose value stack underflows -
+     * a JVM abort rather than an error. The Java filter is always correct, so decline instead.
+     */
+    private void rewindOrderingOperands(ExpressionNode node) throws SqlException {
+        if (orderingRewindNodes.size() == 0 || orderingRewindNodes.getLast() != node) {
+            throw SqlException.position(node.position)
+                    .put("no rewind watermark for ordering operator: ").put(node.token);
+        }
+        final long offset = orderingRewindOffsets.getLast();
+        memory.jumpTo(offset);
+        bindVarFunctions.setPos(orderingRewindBindVarSizes.getLast());
+        // Truncating bindVarFunctions invalidates every slot the memo recorded at or above the
+        // watermark, and the map cannot remove a range, so drop the lot. Losing an entry below the
+        // watermark only costs a duplicate slot; keeping one above it would make serializeBindVariable
+        // emit a VAR index past the end of the vars block.
+        bindVarIndexes.clear();
+        discardBackfillNodesFrom(offset);
     }
 
     private void serializeBindVariable(final ExpressionNode node) throws SqlException {
         if (predicateContext.isActive()) {
+            final int memoizedIndex = bindVarIndexes.get(node);
+            if (memoizedIndex != NOT_CACHED) {
+                // A repeat occurrence of the same node - the ordering expansions re-traverse their
+                // operands - reuses the slot the first one took. The type code rides with the
+                // function rather than in a parallel list: it derives from the bind variable
+                // service, which serialization never mutates, so the recorded slot reproduces
+                // exactly the code the first occurrence emitted. Only serializeBindVariable writes
+                // this memo, and it does so past the STRING early return below, so the slot always
+                // holds a plain link function.
+                final int memoizedTypeCode = bindVariableTypeCode(
+                        ColumnType.tagOf(bindVarFunctions.getQuick(memoizedIndex).getType())
+                );
+                putOperand(VAR, memoizedTypeCode, memoizedIndex);
+                // Stays per-occurrence. The widening marker is keyed by node too, so it answers the
+                // same for every occurrence, but the SX_I64 belongs to the OPERAND that was just
+                // pushed rather than to the slot, and the backend's value stack expects one per push.
+                maybeEmitI64Widening(node, memoizedTypeCode);
+                return;
+            }
+
             Function varFunction = getBindVariableFunction(node.position, node.token);
 
             final int columnType = varFunction.getType();
@@ -3970,6 +4436,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             bindVarFunctions.add(varFunction);
             int index = bindVarFunctions.size() - 1;
+            bindVarIndexes.put(node, index);
             putOperand(VAR, typeCode, index);
             maybeEmitI64Widening(node, typeCode);
         } else {
@@ -4046,7 +4513,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (predicateContext.columnType == ColumnType.SYMBOL) {
-            serializeSymbolConstant(offset, position, token);
+            serializeSymbolConstant(offset, position, token, negated);
             return;
         }
 
@@ -4072,12 +4539,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     throw SqlException.invalidDate(token, position);
                 }
                 return;
+            } else if (predicateContext.columnType == ColumnType.IPv4) {
+                try {
+                    final int ipv4 = Chars.equalsIgnoreCase("null", token, 1, len - 1)
+                            ? Numbers.IPv4_NULL
+                            : Numbers.parseIPv4_0(token, 1, len - 1);
+                    putOperand(offset, IMM, I4_TYPE, ipv4);
+                } catch (NumericException e) {
+                    throw SqlException.position(position).put("invalid IPv4 constant: ").put(token);
+                }
+                return;
             } else if (len == 3) {
                 if (predicateContext.columnType != ColumnType.CHAR) {
                     throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
                 }
                 // this is 'x' - char
-                putOperand(offset, IMM, I2_TYPE, token.charAt(1));
+                putOperand(offset, IMM, I2_TYPE, (short) token.charAt(1));
                 return;
             } else if (len == 2 + Uuid.UUID_LENGTH) {
                 if (predicateContext.columnType != ColumnType.UUID) {
@@ -4494,7 +4971,282 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeOperator(int position, final CharSequence token, int argCount, int type) throws SqlException {
+    private void serializeCharOrdering(ExpressionNode node, int opcode) throws SqlException {
+        ExpressionNode left = node.lhs;
+        ExpressionNode right = node.rhs;
+        if (opcode == GT || opcode == GE) {
+            ExpressionNode swap = left;
+            left = right;
+            right = swap;
+        }
+
+        rewindOrderingOperands(node);
+
+        // Against a literal the serializer knows one operand's sign at compile time, and the
+        // unsigned-order expansion below collapses to one sign test of the other operand and one
+        // comparison against the literal. A column, bind variable or arithmetic operand has no
+        // compile-time sign and takes the general expansion, as does the NULL literal.
+        final boolean isNonStrict = opcode == LE || opcode == GE;
+        final char leftLiteral = charOrderingLiteral(left);
+        final char rightLiteral = charOrderingLiteral(right);
+        if (rightLiteral != Numbers.CHAR_NULL && leftLiteral == Numbers.CHAR_NULL) {
+            serializeCharOrderingBelowLiteral(left, right, (short) rightLiteral < 0, isNonStrict);
+            return;
+        }
+        if (leftLiteral != Numbers.CHAR_NULL && rightLiteral == Numbers.CHAR_NULL) {
+            serializeCharOrderingAboveLiteral(right, left, (short) leftLiteral < 0, isNonStrict);
+            return;
+        }
+
+        // Neither operand may be CHAR_NULL (zero).
+        serializeCharSignTest(left, NE);
+        serializeCharSignTest(right, NE);
+        putOperator(AND);
+
+        // A non-negative signed i16 precedes a negative signed i16 in the
+        // unsigned char order.
+        serializeCharSignTest(left, GE);
+        serializeCharSignTest(right, LT);
+        putOperator(AND);
+
+        // Otherwise the operands share a sign and signed ordering is valid.
+        serializeCharSignTest(left, LT);
+        serializeCharSignTest(right, LT);
+        putOperator(EQ);
+        traverseAlgo.traverse(right, this);
+        traverseAlgo.traverse(left, this);
+        putOperator(opcode == LE || opcode == GE ? LE : LT);
+        putOperator(AND);
+        putOperator(OR);
+
+        putOperator(AND);
+    }
+
+    /**
+     * {@code operand > literal} (or {@code >=}) in the unsigned CHAR order, against a non-NULL
+     * literal. The mirror of {@link #serializeCharOrderingBelowLiteral}: above a positive literal
+     * means above it OR negative, above a negative literal means negative AND above it. CHAR_NULL
+     * is neither negative nor above a non-NULL literal of either sign, so NULL rows drop out of
+     * both shapes without a term of their own.
+     */
+    private void serializeCharOrderingAboveLiteral(
+            ExpressionNode operand,
+            ExpressionNode literal,
+            boolean isLiteralNegative,
+            boolean isNonStrict
+    ) throws SqlException {
+        serializeCharSignTest(operand, LT);
+        serializeLiteralCompare(operand, literal, isNonStrict ? GE : GT);
+        putOperator(isLiteralNegative ? AND : OR);
+    }
+
+    /**
+     * {@code operand < literal} (or {@code <=}) in the unsigned CHAR order, against a non-NULL
+     * literal. A signed i16 lane reads U+0001..U+7FFF as positive and U+8000..U+FFFF as negative,
+     * and every negative lane sorts above every positive one in the unsigned order, so the
+     * literal's sign - known at compile time - picks the whole shape: below a positive literal
+     * means positive AND below it, below a negative literal means positive OR below it (which
+     * only a negative lane can be). CHAR_NULL is neither positive nor below a literal of either
+     * sign, so NULL rows drop out of both shapes without a term of their own. Native i16
+     * comparisons check no null sentinel, so the sign test reads the lane as is.
+     */
+    private void serializeCharOrderingBelowLiteral(
+            ExpressionNode operand,
+            ExpressionNode literal,
+            boolean isLiteralNegative,
+            boolean isNonStrict
+    ) throws SqlException {
+        serializeCharSignTest(operand, GT);
+        serializeLiteralCompare(operand, literal, isNonStrict ? LE : LT);
+        putOperator(isLiteralNegative ? OR : AND);
+    }
+
+    private void serializeCharSignTest(ExpressionNode operand, int opcode) throws SqlException {
+        putOperand(IMM, I2_TYPE, Numbers.CHAR_NULL);
+        traverseAlgo.traverse(operand, this);
+        putOperator(opcode);
+    }
+
+    private void serializeIPv4MinTest(ExpressionNode operand) throws SqlException {
+        // The valid IPv4 value 128.0.0.0 is INT_MIN, which the native i32 order comparisons treat
+        // as the INT null sentinel; EQ compares the raw lane.
+        putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
+        traverseAlgo.traverse(operand, this);
+        putOperator(EQ);
+    }
+
+    private void serializeIPv4NegativeTest(ExpressionNode operand) throws SqlException {
+        putOperand(IMM, I4_TYPE, Numbers.IPv4_NULL);
+        traverseAlgo.traverse(operand, this);
+        putOperator(LT);
+
+        // Native i32 order comparisons treat INT_MIN as the INT null sentinel,
+        // but it represents the valid IPv4 value 128.0.0.0.
+        putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
+        traverseAlgo.traverse(operand, this);
+        putOperator(EQ);
+        putOperator(OR);
+    }
+
+    private void serializeIPv4Ordering(ExpressionNode node, int opcode) throws SqlException {
+        ExpressionNode left = node.lhs;
+        ExpressionNode right = node.rhs;
+        if (opcode == GT || opcode == GE) {
+            ExpressionNode swap = left;
+            left = right;
+            right = swap;
+        }
+
+        rewindOrderingOperands(node);
+
+        // Against a literal the serializer knows one operand's sign class at compile time, and the
+        // unsigned-order expansion below collapses to the few terms that class calls for. A column,
+        // bind variable or arithmetic operand has no compile-time sign and takes the general
+        // expansion, as does the NULL literal.
+        final boolean isNonStrict = opcode == LE || opcode == GE;
+        final int leftLiteral = ipv4OrderingLiteral(left);
+        final int rightLiteral = ipv4OrderingLiteral(right);
+        if (rightLiteral != Numbers.IPv4_NULL && leftLiteral == Numbers.IPv4_NULL) {
+            serializeIPv4OrderingBelowLiteral(left, right, rightLiteral, isNonStrict);
+            return;
+        }
+        if (leftLiteral != Numbers.IPv4_NULL && rightLiteral == Numbers.IPv4_NULL) {
+            serializeIPv4OrderingAboveLiteral(right, left, leftLiteral, isNonStrict);
+            return;
+        }
+
+        // Strict ordering excludes either-null rows.
+        serializeIPv4ZeroTest(left, NE);
+        serializeIPv4ZeroTest(right, NE);
+        putOperator(AND);
+
+        // Signed and unsigned less-than differ exactly when operand signs
+        // differ. NE acts as XOR for the boolean comparison results.
+        serializeIPv4SignedLess(left, right);
+        serializeIPv4NegativeTest(left);
+        serializeIPv4NegativeTest(right);
+        putOperator(NE);
+        putOperator(NE);
+
+        putOperator(AND);
+
+        // Numbers.lessThanIPv4() admits equality for non-strict ordering,
+        // including the case where both operands are IPv4 NULL.
+        if (opcode == LE || opcode == GE) {
+            traverseAlgo.traverse(right, this);
+            traverseAlgo.traverse(left, this);
+            putOperator(EQ);
+            putOperator(OR);
+        }
+    }
+
+    /**
+     * {@code operand > literal} (or {@code >=}) in the unsigned IPv4 order, against a non-NULL
+     * literal. The mirror of {@link #serializeIPv4OrderingBelowLiteral}:
+     * <ul>
+     * <li>literal below 128.0.0.0: above it, OR negative (either INT_MIN or a negative lane);</li>
+     * <li>literal 128.0.0.0: a negative lane other than INT_MIN, which is what native {@code < 0}
+     * answers; non-strict adds INT_MIN itself;</li>
+     * <li>literal above 128.0.0.0: negative AND above it, where native GT / GE already read INT_MIN
+     * as false.</li>
+     * </ul>
+     */
+    private void serializeIPv4OrderingAboveLiteral(
+            ExpressionNode operand,
+            ExpressionNode literal,
+            int literalValue,
+            boolean isNonStrict
+    ) throws SqlException {
+        if (literalValue > 0) {
+            serializeLiteralCompare(operand, literal, isNonStrict ? GE : GT);
+            serializeIPv4NegativeTest(operand);
+            putOperator(OR);
+        } else if (literalValue == Integer.MIN_VALUE) {
+            serializeIPv4ZeroTest(operand, LT);
+            if (isNonStrict) {
+                serializeIPv4MinTest(operand);
+                putOperator(OR);
+            }
+        } else {
+            serializeIPv4ZeroTest(operand, LT);
+            serializeLiteralCompare(operand, literal, isNonStrict ? GE : GT);
+            putOperator(AND);
+        }
+    }
+
+    /**
+     * {@code operand < literal} (or {@code <=}) in the unsigned IPv4 order, against a non-NULL
+     * literal. A signed i32 lane reads 0.0.0.1..127.255.255.255 as positive and
+     * 128.0.0.0..255.255.255.255 as negative, with 128.0.0.0 being INT_MIN - the value the native
+     * i32 order comparisons treat as the INT null sentinel, so {@code > 0} and {@code < 0} both read
+     * it as false and an {@code = INT_MIN} term names it. The literal's class, known at compile
+     * time, picks the shape:
+     * <ul>
+     * <li>literal below 128.0.0.0: positive AND below it;</li>
+     * <li>literal 128.0.0.0: positive; non-strict adds INT_MIN itself;</li>
+     * <li>literal above 128.0.0.0: positive, OR INT_MIN, OR below it (which only a negative lane
+     * can be).</li>
+     * </ul>
+     * IPv4 NULL is zero: neither positive, nor negative, nor INT_MIN, nor below a non-NULL literal
+     * that is itself negative, so NULL rows drop out of every shape without a term of their own.
+     */
+    private void serializeIPv4OrderingBelowLiteral(
+            ExpressionNode operand,
+            ExpressionNode literal,
+            int literalValue,
+            boolean isNonStrict
+    ) throws SqlException {
+        serializeIPv4ZeroTest(operand, GT);
+        if (literalValue > 0) {
+            serializeLiteralCompare(operand, literal, isNonStrict ? LE : LT);
+            putOperator(AND);
+        } else if (literalValue == Integer.MIN_VALUE) {
+            if (isNonStrict) {
+                serializeIPv4MinTest(operand);
+                putOperator(OR);
+            }
+        } else {
+            serializeIPv4MinTest(operand);
+            putOperator(OR);
+            serializeLiteralCompare(operand, literal, isNonStrict ? LE : LT);
+            putOperator(OR);
+        }
+    }
+
+    private void serializeIPv4SignedLess(ExpressionNode left, ExpressionNode right) throws SqlException {
+        // Repair the native null-check mask for the valid INT_MIN IPv4 value.
+        putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
+        traverseAlgo.traverse(left, this);
+        putOperator(EQ);
+        putOperand(IMM, I4_TYPE, Integer.MIN_VALUE);
+        traverseAlgo.traverse(right, this);
+        putOperator(NE);
+        putOperator(AND);
+
+        traverseAlgo.traverse(right, this);
+        traverseAlgo.traverse(left, this);
+        putOperator(LT);
+        putOperator(OR);
+    }
+
+    private void serializeIPv4ZeroTest(ExpressionNode operand, int opcode) throws SqlException {
+        putOperand(IMM, I4_TYPE, Numbers.IPv4_NULL);
+        traverseAlgo.traverse(operand, this);
+        putOperator(opcode);
+    }
+
+    private void serializeLiteralCompare(ExpressionNode operand, ExpressionNode literal, int opcode) throws SqlException {
+        // Emits `operand <opcode> literal`. The backends pop the left operand first, so the
+        // last-pushed value is the left operand: the literal (right operand) goes in first and
+        // the operand goes in last, the way the general expansions order theirs.
+        traverseAlgo.traverse(literal, this);
+        traverseAlgo.traverse(operand, this);
+        putOperator(opcode);
+    }
+
+    private void serializeOperator(ExpressionNode node, int argCount, int type) throws SqlException {
+        final int position = node.position;
+        final CharSequence token = node.token;
         if (SqlKeywords.isInKeyword(token)) {
             if (type == ExpressionNode.FUNCTION) {
                 serializeIn();
@@ -4525,22 +5277,54 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (Chars.equals(token, "<")) {
-            rejectSymbol(token, position);
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.CHAR) {
+                serializeCharOrdering(node, LT);
+                return;
+            }
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
+                serializeIPv4Ordering(node, LT);
+                return;
+            }
+            rejectOrderingComparison(token, position);
             putOperator(LT);
             return;
         }
         if (Chars.equals(token, "<=")) {
-            rejectSymbol(token, position);
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.CHAR) {
+                serializeCharOrdering(node, LE);
+                return;
+            }
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
+                serializeIPv4Ordering(node, LE);
+                return;
+            }
+            rejectOrderingComparison(token, position);
             putOperator(LE);
             return;
         }
         if (Chars.equals(token, ">")) {
-            rejectSymbol(token, position);
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.CHAR) {
+                serializeCharOrdering(node, GT);
+                return;
+            }
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
+                serializeIPv4Ordering(node, GT);
+                return;
+            }
+            rejectOrderingComparison(token, position);
             putOperator(GT);
             return;
         }
         if (Chars.equals(token, ">=")) {
-            rejectSymbol(token, position);
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.CHAR) {
+                serializeCharOrdering(node, GE);
+                return;
+            }
+            if (ColumnType.tagOf(predicateContext.columnType) == ColumnType.IPv4) {
+                serializeIPv4Ordering(node, GE);
+                return;
+            }
+            rejectOrderingComparison(token, position);
             putOperator(GE);
             return;
         }
@@ -4663,16 +5447,56 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeSymbolConstant(long offset, int position, final CharSequence token) throws SqlException {
+    /**
+     * Emits the symbol key for a constant compared against a SYMBOL column.
+     * The parser splits unary minus from its numeric token, including when the
+     * token is quoted, while the Java filter evaluates the resulting LONG
+     * constant before formatting it as a symbol. Evaluate and format numeric
+     * tokens here as well, so equivalent spellings such as {@code -0} and
+     * {@code 0} resolve to the same key.
+     */
+    private void serializeSymbolConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         final int len = token.length();
-        CharSequence symbol = token;
+        final CharSequence symbol;
         if (Chars.isQuoted(token)) {
             if (len < 3) {
                 throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
             }
             sink.clear();
-            Chars.unescape(symbol, 1, len - 1, '\'', sink);
-            symbol = sink;
+            Chars.unescape(token, 1, len - 1, '\'', sink);
+            if (negated) {
+                final long value;
+                try {
+                    final long parsedValue = Numbers.parseLong(sink);
+                    value = parsedValue != Numbers.LONG_NULL ? -parsedValue : Numbers.LONG_NULL;
+                } catch (NumericException e) {
+                    throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
+                }
+                if (value == Numbers.LONG_NULL) {
+                    symbol = null;
+                } else {
+                    sink.clear();
+                    sink.put(value);
+                    symbol = sink;
+                }
+            } else {
+                symbol = sink;
+            }
+        } else {
+            final long value;
+            try {
+                final long parsedValue = Numbers.parseLong(token);
+                value = negated ? -parsedValue : parsedValue;
+            } catch (NumericException e) {
+                throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
+            }
+            if (value == Numbers.LONG_NULL) {
+                symbol = null;
+            } else {
+                sink.clear();
+                sink.put(value);
+                symbol = sink;
+            }
         }
 
         if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
@@ -5279,7 +6103,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final TypesObserver localTypesObserver = new TypesObserver();
         private final LongList inIntervals = new LongList();
         int columnType;
+        // The first arithmetic operation the predicate holds, for the IPv4 / CHAR decline's
+        // message. Null when the predicate has none, or only a pure-constant subtree descend()
+        // folded.
+        ExpressionNode arithmeticNode;
         boolean hasArithmeticOperations;
+        // The first unary minus the predicate holds, whether visited or stubbed by descend() over
+        // a constant. Consulted by the IPv4 / CHAR decline only: isArithmeticOperation() skips a
+        // unary minus, and hasArithmeticOperations must stay false for it so that a numeric
+        // `-abyte > afloat` keeps the vectorised backend (see forceScalarMode in visit()).
+        ExpressionNode unaryMinusNode;
         // True when the predicate has at least one FLOAT / DOUBLE column,
         // bind variable, or numeric constant. Captured up front by
         // NarrowI64WidenDetector so other code paths (e.g. constant
@@ -5314,6 +6147,41 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // We entered a predicate.
                     reset();
                     rootNode = node;
+                    // One walk per predicate. The verdict cannot be reached here - columnType is
+                    // still UNDEFINED until the columns are VISITED - so record the node and judge
+                    // it where the predicate is left.
+                    columnFreeComparisonNode = findColumnFreeComparison(node);
+                    // Unless this predicate holds ONE comparison and it is that one. The verdict
+                    // exists because a constant takes its type from predicateContext.columnType,
+                    // which every operand of the WHOLE predicate contributes to, while the Java
+                    // filter types each comparison from its OWN operands. Where the predicate holds
+                    // a single comparison those two are the same set: the type comes from that
+                    // comparison's operands and from nothing else, so both engines type it the same
+                    // way and there is nothing to diverge.
+                    //
+                    // What that readmits is the parameter-only guard conjunct - `:flag = true`,
+                    // `:from < :to`, `:tv > '2020-01-01'` - which carries no column and takes its
+                    // type from the bind variable, exactly where the Java filter takes it from.
+                    // AND and OR are not top-level operations, so such a conjunct is its own
+                    // predicate, and it sits beside the conjuncts that do the work: a decline in it
+                    // costs the WHOLE filter its compiled form, co-conjuncts included, because
+                    // visit() throws out of serialize(). isNumeric() already exempts the numeric
+                    // spelling of the same shape (`:i > 5`); this extends that to the types a bind
+                    // variable can carry into a predicate on its own.
+                    //
+                    // The SECOND comparison is what breaks it, which is why the count decides
+                    // rather than the presence of a column:
+                    // `(:tv > '2020-01-01') = ('2021-01-01' > '2020-06-01')` types the right-hand
+                    // pair from the left-hand bind variable, and two spellings of an instant order
+                    // differently as strings than as timestamps. A predicate that reaches a column
+                    // never gets here anyway - the column sits in a comparison of its own, beside
+                    // the column-free one - so this only ever fires for a predicate holding neither
+                    // a column nor a second comparison. NOT rides along: `NOT (:flag = true)` is
+                    // one comparison under a predicate root that is not itself one.
+                    if (columnFreeComparisonNode != null
+                            && !hasOtherComparison(node, columnFreeComparisonNode)) {
+                        columnFreeComparisonNode = null;
+                    }
                     // Pre-pass: remember whether any FLOAT / DOUBLE source is present anywhere in
                     // the predicate. See NarrowI64WidenDetector.
                     i64WidenConstants.clear();
@@ -5421,7 +6289,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         private void handleOperation(ExpressionNode node) {
-            hasArithmeticOperations |= isArithmeticOperation(node);
+            if (isArithmeticOperation(node)) {
+                hasArithmeticOperations = true;
+                if (arithmeticNode == null) {
+                    arithmeticNode = node;
+                }
+            } else if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+                markUnaryMinus(node);
+            }
+        }
+
+        private void markUnaryMinus(ExpressionNode node) {
+            if (unaryMinusNode == null) {
+                unaryMinusNode = node;
+            }
         }
 
         private void reset() {
@@ -5430,7 +6311,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             symbolTable = null;
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
+            arithmeticNode = null;
             hasArithmeticOperations = false;
+            unaryMinusNode = null;
             hasFloatInPredicate = false;
             localTypesObserver.clear();
             currentInSerialization = false;

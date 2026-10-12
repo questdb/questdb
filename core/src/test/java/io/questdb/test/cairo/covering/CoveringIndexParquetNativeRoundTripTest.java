@@ -388,6 +388,93 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetPartitionPredatingIndexedColumnServesNoFabricatedValues() throws Exception {
+        // A Parquet partition that predates the indexed column keeps its full column
+        // top (TableWriter converts it with zeroAllColumns=false), so the reader sees
+        // the column as absent there. The posting chain holds no posting for a row
+        // below a top, so the sidecar has nothing to decode for the NULL key -- the one
+        // combination the covering scan cannot answer. The factory hands that open to
+        // its backup plan, which is the ordinary reader path and already decodes
+        // Parquet, so the partition's rows come back carrying their real timestamps and
+        // prices. The regression this pins is the alternative: rows fabricated from
+        // NULL sentinels, designated timestamp included.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pq_absent (
+                        ts TIMESTAMP,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // 2024-01-01 and 2024-01-02 both predate sym. 2024-01-02 is the active
+            // partition when ADD COLUMN runs, so it gets a sym column top and index
+            // files; 2024-01-01 is already historic and gets no sym files at all.
+            execute("""
+                    INSERT INTO t_pq_absent
+                    SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), x::DOUBLE
+                    FROM long_sequence(30)
+                    """);
+            execute("""
+                    INSERT INTO t_pq_absent
+                    SELECT dateadd('m', x::INT, '2024-01-02T00:00:00Z'::TIMESTAMP), (100 + x)::DOUBLE
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_absent ADD COLUMN sym SYMBOL");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO t_pq_absent
+                    SELECT dateadd('m', x::INT, '2024-01-03T00:00:00Z'::TIMESTAMP), x::DOUBLE, 'A' || (x % 4)
+                    FROM long_sequence(8)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_absent ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_absent CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertPartitionFormat("t_pq_absent", true);
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // Both partitions that predate sym are served: 30 Parquet rows plus 10
+            // native ones. Every row carries its real timestamp and price, so
+            // count(ts) and count(price) both equal count().
+            assertQuery("SELECT count() c, count(ts) nn_ts, count(price) nn_price, min(ts) min_ts, sum(price) s FROM t_pq_absent WHERE sym = null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex backup: true on: sym with: ts, price")
+                    .returns("""
+                            c\tnn_ts\tnn_price\tmin_ts\ts
+                            40\t40\t40\t2024-01-01T00:01:00.000000Z\t1520.0
+                            """);
+            assertQuery("SELECT ts, price FROM t_pq_absent WHERE sym = null ORDER BY ts LIMIT 3")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    // The backup is a PageFrameRecordCursorFactory: it declares no random
+                    // access but its cursor implements getRecordB() anyway.
+                    .skipRandomAccessProbe()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tprice
+                            2024-01-01T00:01:00.000000Z\t1.0
+                            2024-01-01T00:02:00.000000Z\t2.0
+                            2024-01-01T00:03:00.000000Z\t3.0
+                            """);
+
+            // The oracle the covered scan must match: the same query with covering off.
+            assertQuery("SELECT /*+ no_covering */ count() c, count(ts) nn_ts, sum(price) s FROM t_pq_absent WHERE sym = null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            c\tnn_ts\ts
+                            40\t40\t1520.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPostingCoveringSurvivesRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             createAndSeed();

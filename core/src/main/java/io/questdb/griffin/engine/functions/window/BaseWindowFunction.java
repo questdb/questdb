@@ -43,6 +43,9 @@ public abstract class BaseWindowFunction implements WindowFunction {
     // instance; readArgValue caches it here to avoid re-deriving the tag from arg.getType() per row.
     protected final boolean argIsDate;
     protected int columnIndex;
+    // Set by code generation only for the desugared SUBSAMPLE __keep_subsample keep flag; gates the
+    // keep-flag filter fusion. See WindowFunction.isSubsampleKeepFlag().
+    protected boolean subsampleKeepFlag;
     private LiveViewCheckpointDependency checkpointDependency;
     private LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity;
 
@@ -74,7 +77,22 @@ public abstract class BaseWindowFunction implements WindowFunction {
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public abstract String getName();
+
+    @Override
+    public boolean isSubsampleKeepFlag() {
+        return subsampleKeepFlag;
+    }
+
+    @Override
+    public void markSubsampleKeepFlag() {
+        this.subsampleKeepFlag = true;
+    }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {

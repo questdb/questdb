@@ -63,6 +63,18 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
+     * Notifies each function in the list that the cursor has closed, so it releases the
+     * cursor-scoped state its init() built. The counterpart of
+     * {@link #init(ObjList, SymbolTableSource, SqlExecutionContext, Function)}: whoever
+     * initializes a function list owns this call too.
+     */
+    static void cursorClosed(ObjList<? extends Function> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).cursorClosed();
+        }
+    }
+
+    /**
      * Initializes each function in the list of clones. It is assumed by this method that "clones" are copies of
      * the same function.
      * <p>
@@ -442,9 +454,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
-     * Returns true if the function supports parallel execution, e.g. parallel filter
-     * or GROUP BY. If the method returns false, single-threaded execution plan
-     * must be chosen for the query.
+     * Returns true if the function supports parallel aggregation, e.g. parallel
+     * GROUP BY. If the method returns false, single-threaded execution plan
+     * must be chosen for such a query. The parallel filter does not consult this
+     * flag: a thread-unsafe filter is cloned per worker based on {@link #isThreadSafe()}.
      * <p>
      * Examples of parallelizable, but thread-unsafe function are regexp_replace() or min(str).
      * These functions need to maintain a char sink, so they can't be accessed concurrently.

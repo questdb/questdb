@@ -43,6 +43,9 @@ import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacadeImpl;
@@ -227,7 +230,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
         Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
-        Assert.assertEquals(32, configuration.getCairoConfiguration().getQueryRegistryPoolSize());
+        Assert.assertEquals(256, configuration.getCairoConfiguration().getQueryRegistryPoolSize());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getCountDistinctCapacity());
         Assert.assertEquals(0.7, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
@@ -264,6 +267,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlJoinSymbolTranslationCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortValueMaxBytes());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
@@ -427,6 +431,13 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
+        Assert.assertEquals(1_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(-1, configuration.getMetricsConfiguration().getPersistSyncIntervalMicros());
+        Assert.assertEquals(60_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistParquetEnabled());
+        TestUtils.assertEquals("1 WEEK", configuration.getMetricsConfiguration().getPersistTtl());
         Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
         Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
         Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
@@ -1752,6 +1763,51 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testNetworkPoolFiberHostFollowsSharedProtocolFlags() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.PG_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.HTTP_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
+        );
+
+        properties.setProperty(PropertyKey.PG_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
+        Assert.assertEquals(
+                WorkerPoolMode.FIBER_HOST,
+                newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
+        );
+
+        properties.setProperty(PropertyKey.PG_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.HTTP_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
+        Assert.assertEquals(
+                WorkerPoolMode.FIBER_HOST,
+                newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
+        );
+
+        properties.setProperty(PropertyKey.HTTP_ENABLED.getPropertyPath(), "false");
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
+        );
+
+        properties.clear();
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
+        );
+
+        properties.setProperty(PropertyKey.PG_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.HTTP_WORKER_FIBER_ENABLED.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
+        Assert.assertEquals(
+                WorkerPoolMode.FIBER_HOST,
+                newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode()
+        );
+    }
+
+    @Test
     public void testNewMaxBytesWinsOverDeprecatedMaxPages() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.window.tree.page.size", "512k");
@@ -1924,6 +1980,37 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testQwpBrowserAllowedOrigins() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
+                new Utf8String("https://app.example.com")));
+
+        properties.setProperty(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertTrue(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
+                new Utf8String("https://app.example.com")));
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testQwpBrowserAllowedOriginsRejectsInvalidEntry() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com/*");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
+
+        properties.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertTrue(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
+    }
+
+    @Test
     public void testQwpMaxRowsPerTable() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -1981,6 +2068,100 @@ public class PropServerConfigurationTest {
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertFalse(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
         Assert.assertEquals(5_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
+    }
+
+    @Test
+    public void testMetricsPersistenceConfiguration() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("metrics.persist.enabled", "true");
+        properties.setProperty("metrics.persist.exclude", "foo.*");
+        properties.setProperty("metrics.persist.interval", "2s");
+        properties.setProperty("metrics.persist.parquet.enabled", "false");
+        properties.setProperty("metrics.persist.sync.interval", "5m");
+        properties.setProperty("metrics.persist.ttl", "2 DAYS");
+        properties.setProperty("metrics.persist.virtual.interval", "3m");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMetrics().isEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertFalse(configuration.getMetricsConfiguration().isPersistParquetEnabled());
+        Assert.assertEquals(2_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(300_000_000, configuration.getMetricsConfiguration().getPersistSyncIntervalMicros());
+        Assert.assertEquals(180_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
+        TestUtils.assertEquals("foo.*", configuration.getMetricsConfiguration().getPersistExclude());
+        TestUtils.assertEquals("2 DAYS", configuration.getMetricsConfiguration().getPersistTtl());
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeAcceptsEmptyValue() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        TestUtils.assertEquals("", configuration.getMetricsConfiguration().getPersistExclude());
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeRejectsInvalidEnvironmentValue() throws Exception {
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.METRICS_PERSIST_EXCLUDE.getEnvVarName(), "worker_pool_fiber_(");
+        try {
+            newPropServerConfiguration(root, new Properties(), env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath());
+        }
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeRejectsInvalidValues() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "worker_pool_fiber_(");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "[");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "*foo");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+    }
+
+    @Test
+    public void testMetricsPersistenceSyncInterval() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "-5s");
+        Assert.assertEquals(-1, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "5m");
+        Assert.assertEquals(300_000_000, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+    }
+
+    @Test
+    public void testMetricsPersistenceTtlRejectsInvalidEnvironmentValue() throws Exception {
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.METRICS_PERSIST_TTL.getEnvVarName(), "7 DAYZ");
+        try {
+            newPropServerConfiguration(root, new Properties(), env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.METRICS_PERSIST_TTL.getPropertyPath());
+        }
+    }
+
+    @Test
+    public void testMetricsPersistenceTtlRejectsInvalidValues() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "7 DAYZ");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "1 HOUR");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "1 DAY extra");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
     }
 
     @Test
@@ -2238,6 +2419,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1.5, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getMetrics().isScrapeEnabled());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
@@ -2619,6 +2801,345 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(webConsolePath + "/index.html", redirectMap.get(new Utf8String(webConsolePath + "/")).toString());
     }
 
+    @Test
+    public void testLineTcpRequiresWorkersForSharedPools() throws Exception {
+        final Properties networkProperties = new Properties();
+        networkProperties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        assertInvalidConfiguration(networkProperties, PropertyKey.SHARED_NETWORK_WORKER_COUNT);
+        networkProperties.setProperty(PropertyKey.LINE_TCP_IO_WORKER_COUNT.getPropertyPath(), "1");
+        Assert.assertEquals(
+                1,
+                newPropServerConfiguration(networkProperties)
+                        .getLineTcpReceiverConfiguration()
+                        .getNetworkWorkerPoolConfiguration()
+                        .getWorkerCount()
+        );
+
+        final Properties writeProperties = new Properties();
+        writeProperties.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
+        assertInvalidConfiguration(writeProperties, PropertyKey.SHARED_WRITE_WORKER_COUNT);
+        writeProperties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_COUNT.getPropertyPath(), "1");
+        Assert.assertEquals(
+                1,
+                newPropServerConfiguration(writeProperties)
+                        .getLineTcpReceiverConfiguration()
+                        .getWriterWorkerPoolConfiguration()
+                        .getWorkerCount()
+        );
+    }
+
+    @Test
+    public void testLineTcpRequiresWorkersForSharedPoolsWithDedicatedHttpAndPg() throws Exception {
+        final Properties networkProperties = new Properties();
+        networkProperties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        networkProperties.setProperty(PropertyKey.HTTP_WORKER_COUNT.getPropertyPath(), "4");
+        networkProperties.setProperty(PropertyKey.PG_WORKER_COUNT.getPropertyPath(), "4");
+        assertInvalidConfiguration(networkProperties, PropertyKey.SHARED_NETWORK_WORKER_COUNT);
+        networkProperties.setProperty(PropertyKey.LINE_TCP_IO_WORKER_COUNT.getPropertyPath(), "2");
+        Assert.assertEquals(
+                2,
+                newPropServerConfiguration(networkProperties)
+                        .getLineTcpReceiverConfiguration()
+                        .getNetworkWorkerPoolConfiguration()
+                        .getWorkerCount()
+        );
+
+        final Properties writeProperties = new Properties();
+        writeProperties.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
+        writeProperties.setProperty(PropertyKey.HTTP_WORKER_COUNT.getPropertyPath(), "4");
+        writeProperties.setProperty(PropertyKey.PG_WORKER_COUNT.getPropertyPath(), "4");
+        assertInvalidConfiguration(writeProperties, PropertyKey.SHARED_WRITE_WORKER_COUNT);
+        writeProperties.setProperty(PropertyKey.LINE_TCP_WRITER_WORKER_COUNT.getPropertyPath(), "2");
+        Assert.assertEquals(
+                2,
+                newPropServerConfiguration(writeProperties)
+                        .getLineTcpReceiverConfiguration()
+                        .getWriterWorkerPoolConfiguration()
+                        .getWorkerCount()
+        );
+    }
+
+    @Test
+    public void testLineTcpWorkerCheckSkippedWhenLineTcpCannotRun() throws Exception {
+        final Properties disabled = new Properties();
+        disabled.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        disabled.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
+        disabled.setProperty(PropertyKey.LINE_TCP_ENABLED.getPropertyPath(), "false");
+        Assert.assertFalse(newPropServerConfiguration(disabled).getLineTcpReceiverConfiguration().isEnabled());
+
+        final Properties readOnly = new Properties();
+        readOnly.setProperty(PropertyKey.SHARED_NETWORK_WORKER_COUNT.getPropertyPath(), "0");
+        readOnly.setProperty(PropertyKey.SHARED_WRITE_WORKER_COUNT.getPropertyPath(), "0");
+        readOnly.setProperty(PropertyKey.READ_ONLY_INSTANCE.getPropertyPath(), "true");
+        Assert.assertTrue(newPropServerConfiguration(readOnly).getCairoConfiguration().isReadOnlyInstance());
+    }
+
+    @Test
+    public void testMatViewRefreshWorkerCountZeroDisablesRefresh() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath(), "0");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        Assert.assertEquals(0, configuration.getMatViewRefreshPoolConfiguration().getWorkerCount());
+        Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+    }
+
+    @Test
+    public void testWorkerPoolFiberCapacityDerivedDefaults() throws Exception {
+        assertDerivedFiberDefaults(workerPoolConfiguration(1), 64, 16);
+        assertDerivedFiberDefaults(workerPoolConfiguration(8), 64, 16);
+        assertDerivedFiberDefaults(workerPoolConfiguration(9), 72, 18);
+        assertDerivedFiberDefaults(workerPoolConfiguration(16), 128, 32);
+
+        // Zero-valued properties must select the same derive branch through the prop configuration.
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolNetworkConfiguration());
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolQueryConfiguration());
+    }
+
+    @Test
+    public void testWorkerPoolFiberCapacityProperties() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "37");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "11");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET.getPropertyPath(), "5");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolNetworkConfiguration(), 37, 11, 5);
+    }
+
+    @Test
+    public void testWorkerPoolFiberCapacityPropertiesAreIsolated() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty("http.worker.fiber.max.live", "101");
+        properties.setProperty("http.worker.fiber.max.retained", "11");
+        properties.setProperty("http.worker.fiber.mount.budget", "21");
+        properties.setProperty("pg.worker.fiber.max.live", "102");
+        properties.setProperty("pg.worker.fiber.max.retained", "12");
+        properties.setProperty("pg.worker.fiber.mount.budget", "22");
+        properties.setProperty("shared.network.worker.fiber.max.live", "103");
+        properties.setProperty("shared.network.worker.fiber.max.retained", "13");
+        properties.setProperty("shared.network.worker.fiber.mount.budget", "23");
+        properties.setProperty("shared.query.worker.fiber.max.live", "104");
+        properties.setProperty("shared.query.worker.fiber.max.retained", "14");
+        properties.setProperty("shared.query.worker.fiber.mount.budget", "24");
+        properties.setProperty("mat.view.refresh.worker.fiber.max.live", "106");
+        properties.setProperty("mat.view.refresh.worker.fiber.max.retained", "16");
+        properties.setProperty("mat.view.refresh.worker.fiber.mount.budget", "26");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        assertWorkerPoolFiberConfiguration(configuration.getHttpServerConfiguration(), 101, 11, 21);
+        assertWorkerPoolFiberConfiguration(configuration.getPGWireConfiguration(), 102, 12, 22);
+        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolNetworkConfiguration(), 103, 13, 23);
+        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolQueryConfiguration(), 104, 14, 24);
+        assertWorkerPoolFiberConfiguration(configuration.getMatViewRefreshPoolConfiguration(), 106, 16, 26);
+    }
+
+    @Test
+    public void testWorkerPoolFiberGlobalPropertiesHaveNoFallback() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty("worker.fiber.max.live", "17");
+        properties.setProperty("worker.fiber.max.retained", "7");
+        properties.setProperty("worker.fiber.mount.budget", "3");
+
+        Assert.assertTrue(PropertyKey.getByString("worker.fiber.max.live").isEmpty());
+        Assert.assertTrue(PropertyKey.getByString("worker.fiber.max.retained").isEmpty());
+        Assert.assertTrue(PropertyKey.getByString("worker.fiber.mount.budget").isEmpty());
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        assertDerivedFiberDefaults(configuration.getHttpServerConfiguration());
+        assertDerivedFiberDefaults(configuration.getPGWireConfiguration());
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolNetworkConfiguration());
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolQueryConfiguration());
+        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolWriteConfiguration());
+        assertDerivedFiberDefaults(configuration.getMatViewRefreshPoolConfiguration());
+    }
+
+    @Test
+    public void testWorkerPoolFiberHttpMinPropertyIsRemoved() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty("http.min.worker.fiber.enabled", "true");
+
+        Assert.assertTrue(PropertyKey.getByString("http.min.worker.fiber.enabled").isEmpty());
+        final WorkerPoolConfiguration configuration = newPropServerConfiguration(properties).getHttpMinServerConfiguration();
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                configuration.getWorkerPoolMode()
+        );
+        try (WorkerPool workerPool = new WorkerPool(configuration)) {
+            Assert.assertFalse(workerPool.isFiberHost());
+            Assert.assertThrows(IllegalStateException.class, workerPool::getFiberRuntime);
+        }
+    }
+
+    @Test
+    public void testWorkerPoolFiberCapacityValidation() throws Exception {
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE, "-1");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE, "1_073_741_825");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED, "-1");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED, "1_073_741_825");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET, "0");
+        assertFiberPropertyRejected(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MOUNT_BUDGET, "1_073_741_825");
+
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "4");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "5");
+        assertWorkerPoolFiberConfiguration(
+                newPropServerConfiguration(properties).getSharedWorkerPoolNetworkConfiguration(),
+                4,
+                4,
+                64
+        );
+    }
+
+    @Test
+    public void testWorkerPoolFiberModeDefaults() throws Exception {
+        final PropServerConfiguration configuration = newPropServerConfiguration(new Properties());
+
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getExportPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getHttpMinServerConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getHttpServerConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                configuration.getLineTcpReceiverConfiguration().getNetworkWorkerPoolConfiguration().getWorkerPoolMode()
+        );
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerPoolMode()
+        );
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getMatViewRefreshPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getPGWireConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.FIBER_HOST, configuration.getSharedWorkerPoolQueryConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getViewCompilerPoolConfiguration().getWorkerPoolMode());
+        Assert.assertEquals(WorkerPoolMode.LEGACY, configuration.getWalApplyPoolConfiguration().getWorkerPoolMode());
+    }
+
+    @Test
+    public void testWorkerPoolFiberModeProperties() throws Exception {
+        assertWorkerPoolModeProperty(
+                PropertyKey.HTTP_WORKER_FIBER_ENABLED,
+                PropServerConfiguration::getHttpServerConfiguration
+        );
+        assertWorkerPoolModeProperty(
+                PropertyKey.SHARED_NETWORK_WORKER_FIBER_ENABLED,
+                PropServerConfiguration::getSharedWorkerPoolNetworkConfiguration
+        );
+        assertWorkerPoolModeProperty(
+                PropertyKey.SHARED_QUERY_WORKER_FIBER_ENABLED,
+                PropServerConfiguration::getSharedWorkerPoolQueryConfiguration
+        );
+        assertWorkerPoolModeProperty(
+                PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_ENABLED,
+                PropServerConfiguration::getMatViewRefreshPoolConfiguration
+        );
+        assertWorkerPoolModeProperty(
+                PropertyKey.PG_WORKER_FIBER_ENABLED,
+                PropServerConfiguration::getPGWireConfiguration
+        );
+    }
+
+    @Test
+    public void testWorkerPoolFiberDerivedLiveClampsExplicitRetained() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "1_000_000");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        assertFiberRetainedClampedToLive(configuration.getSharedWorkerPoolNetworkConfiguration());
+    }
+
+    @Test
+    public void testWorkerPoolFiberNoArgConfigurationsUseDefaultMountBudget() throws Exception {
+        final PropServerConfiguration configuration = newPropServerConfiguration(new Properties());
+
+        Assert.assertEquals(
+                64,
+                configuration.new PropHttpMinServerConfiguration().getFiberMountBudget()
+        );
+        Assert.assertEquals(
+                64,
+                configuration.new PropHttpServerConfiguration().getFiberMountBudget()
+        );
+    }
+
+    @Test
+    public void testWorkerPoolFiberRetainedCountClampedToDerivedLiveCount() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.SHARED_WORKER_COUNT.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "300");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+
+        // derived live limit is max(64, 8 * 32) = 256, so the explicit 300 is clamped
+        Assert.assertEquals(256, configuration.getSharedWorkerPoolNetworkConfiguration().getFiberRetainedCount());
+    }
+
+    @Test
+    public void testWritePoolStaysLegacy() throws Exception {
+        final Properties properties = new Properties();
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
+        );
+
+        properties.setProperty("shared.write.worker.fiber.enabled", "true");
+        Assert.assertTrue(PropertyKey.getByString("shared.write.worker.fiber.enabled").isEmpty());
+        Assert.assertEquals(
+                WorkerPoolMode.LEGACY,
+                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
+        );
+    }
+
+    private static void assertDerivedFiberDefaults(WorkerPoolConfiguration configuration) {
+        final int workerCount = configuration.getWorkerCount();
+        assertDerivedFiberDefaults(
+                configuration,
+                Math.max(64, 8 * workerCount),
+                Math.max(16, 2 * workerCount)
+        );
+    }
+
+    private static void assertDerivedFiberDefaults(
+            WorkerPoolConfiguration configuration,
+            int expectedMaxLiveCount,
+            int expectedRetainedCount
+    ) {
+        Assert.assertEquals(configuration.getPoolName(), expectedMaxLiveCount, configuration.getFiberMaxLiveCount());
+        Assert.assertEquals(configuration.getPoolName(), expectedRetainedCount, configuration.getFiberRetainedCount());
+        Assert.assertEquals(configuration.getPoolName(), 64, configuration.getFiberMountBudget());
+    }
+
+    private static WorkerPoolConfiguration workerPoolConfiguration(int workerCount) {
+        return new WorkerPoolConfiguration() {
+            @Override
+            public String getPoolName() {
+                return "testing";
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+        };
+    }
+
+    private static void assertWorkerPoolFiberConfiguration(
+            WorkerPoolConfiguration configuration,
+            int maxLiveCount,
+            int retainedCount,
+            int mountBudget
+    ) {
+        Assert.assertEquals(configuration.getPoolName(), maxLiveCount, configuration.getFiberMaxLiveCount());
+        Assert.assertEquals(configuration.getPoolName(), retainedCount, configuration.getFiberRetainedCount());
+        Assert.assertEquals(configuration.getPoolName(), mountBudget, configuration.getFiberMountBudget());
+    }
+
     private static @NotNull ObjList<FuzzItem> getFuzzItemObjList() {
         final ObjList<FuzzItem> pathsThatCanBePinned = new ObjList<>();
         pathsThatCanBePinned.add(
@@ -2702,6 +3223,21 @@ public class PropServerConfigurationTest {
         }
     }
 
+    private void assertFiberPropertyRejected(PropertyKey key, String value) throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(key.getPropertyPath(), value);
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("expected ServerConfigurationException for " + key.getPropertyPath() + '=' + value);
+        } catch (ServerConfigurationException expected) {
+            TestUtils.assertContains(expected.getMessage(), key.getPropertyPath());
+        }
+    }
+
+    private void assertFiberRetainedClampedToLive(WorkerPoolConfiguration configuration) {
+        Assert.assertEquals(configuration.getFiberMaxLiveCount(), configuration.getFiberRetainedCount());
+    }
+
     private void assertTimestampTimezone(
             String expected,
             String timezone,
@@ -2722,6 +3258,26 @@ public class PropServerConfigurationTest {
         String timestampTimezone = configuration.getCairoConfiguration().getLogTimestampTimezone();
         timestampFormat.format(epoch + timestampTimezoneRules.getOffset(epoch), timestampLocale, timestampTimezone, sink);
         TestUtils.assertEquals(expected, sink);
+    }
+
+    private void assertWorkerPoolModeProperty(
+            PropertyKey propertyKey,
+            Function<PropServerConfiguration, WorkerPoolConfiguration> configurationGetter
+    ) throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(propertyKey.getPropertyPath(), "false");
+        Assert.assertEquals(
+                propertyKey.getPropertyPath(),
+                WorkerPoolMode.LEGACY,
+                configurationGetter.apply(newPropServerConfiguration(properties)).getWorkerPoolMode()
+        );
+
+        properties.setProperty(propertyKey.getPropertyPath(), "true");
+        Assert.assertEquals(
+                propertyKey.getPropertyPath(),
+                WorkerPoolMode.FIBER_HOST,
+                configurationGetter.apply(newPropServerConfiguration(properties)).getWorkerPoolMode()
+        );
     }
 
     private String getRelativePath(String path) {
@@ -2816,6 +3372,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(42, configuration.getSqlAsOfJoinLookAhead());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinMapEvacuationThreshold());
+        Assert.assertEquals(2000, configuration.getSqlJoinSymbolTranslationCacheCapacity());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getSqlSortValuePageSize());
         Assert.assertEquals(678L * 1024 * 1024, configuration.getSqlSortValueMaxBytes());
         Assert.assertEquals(1000000, configuration.getWorkStealTimeoutNanos());
@@ -2949,6 +3506,51 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(10 * Numbers.SIZE_1MB, configuration.getWalMaxLagSize());
         Assert.assertEquals(50, configuration.getWalMaxSegmentFileDescriptorsCache());
+    }
+
+    @Test
+    public void testSubsampleMaxRowsDefaultAndOverride() throws Exception {
+        Properties properties = new Properties();
+        Assert.assertEquals(100_000_000L, newPropServerConfiguration(properties).getCairoConfiguration().getSubsampleMaxRows());
+
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "42");
+        Assert.assertEquals(42L, newPropServerConfiguration(properties).getCairoConfiguration().getSubsampleMaxRows());
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsAboveIntMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "2147483648");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
     }
 
     private PropServerConfiguration.ValidationResult validate(Properties properties) {

@@ -139,6 +139,18 @@ namespace questdb::avx2 {
         return c.new_const(ConstPoolScope::kLocal, &nulls, 32);
     }
 
+    // Thirty-two copies of the byte a BOOLEAN column holds for true. questdb::avx2::to_mask compares
+    // a raw boolean lane against this to spell it as a mask, which reads the byte exactly the way
+    // MemoryPARWImpl#getBool does - "byte == 1" - so the vectorized filter and the Java one call the
+    // same rows true.
+    inline Mem vec_bool_true(Compiler &c) {
+        int8_t trues[32];
+        for (int8_t &t: trues) {
+            t = 1;
+        }
+        return c.new_const(ConstPoolScope::kLocal, &trues, 32);
+    }
+
     inline Mem vec_sign_mask(Compiler &c, data_type_t type) {
         switch (type) {
             case data_type_t::i8: {
@@ -333,9 +345,16 @@ namespace questdb::avx2 {
             }
                 break;
             case data_type_t::i128: {
-                c.vpcmpeqq(lhs, lhs, rhs);
-                c.vpermq(dst, lhs, (1 << 0) | (0 << 2) | (3 << 4) | (2 << 6));
-                c.vpand(dst, dst, lhs);
+                // Must not fold the per-qword result into lhs. The VEX encoding is
+                // three-operand, so every other arm here writes to a fresh register, and the
+                // AVX2 value cache hands one register to every read of a column in the same
+                // loop body - overwriting an operand rewrites a value the rest of the
+                // predicate still has to read. "u = '...' AND u <> '...'" over a UUID column
+                // compared the second predicate against the first one's mask.
+                Vec qword_eq = c.new_ymm("i128_qword_eq");
+                c.vpcmpeqq(qword_eq, lhs, rhs);
+                c.vpermq(dst, qword_eq, (1 << 0) | (0 << 2) | (3 << 4) | (2 << 6));
+                c.vpand(dst, dst, qword_eq);
             }
                 break;
             case data_type_t::f32:
@@ -548,7 +567,12 @@ namespace questdb::avx2 {
                 c.vpsrlw(aodd, lhs, 8);
                 Vec bodd = c.new_ymm();
                 c.vpsrlw(bodd, rhs, 8);
-                c.vpmullw(lhs, lhs, rhs); // muleven
+                // muleven, in a fresh register rather than folded into lhs - see the note in
+                // the i128 arm of cmp_eq above. Unreachable today, because visit() forces the
+                // scalar backend for any predicate holding BYTE or SHORT arithmetic, so this
+                // arm never runs inside an AVX2 loop; it is the same hazard all the same.
+                Vec muleven = c.new_ymm("muleven");
+                c.vpmullw(muleven, lhs, rhs);
                 c.vpmullw(aodd, aodd, bodd); // mulodd
                 c.vpsllw(aodd, aodd, 8); // mulodd
                 uint8_t array[] = {255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
@@ -557,7 +581,7 @@ namespace questdb::avx2 {
                 Mem c0 = c.new_const(asmjit::ConstPoolScope::kLocal, &array, 32);
                 Vec mask = c.new_ymm();
                 c.vmovdqa(mask, c0);
-                c.vpblendvb(dst, aodd, lhs, mask);
+                c.vpblendvb(dst, aodd, muleven, mask);
             }
                 break;
             case data_type_t::i16:

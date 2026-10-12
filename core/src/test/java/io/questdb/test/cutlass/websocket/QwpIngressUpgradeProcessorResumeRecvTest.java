@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
@@ -53,6 +54,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -645,6 +647,66 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 }
                 // Close response skipped because buffer busy
                 Assert.assertEquals(0, mockRawSocket.sendCallCount);
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * A durable-ack poll refused for want of negotiation, on a connection whose
+     * pending ACK cannot be flushed. The refusal arm mirrors the tail error arm
+     * of {@code handleBinaryMessage}: mark the sequence unresolved, flush the
+     * pending ACK first so a sender that treats the error as terminal still
+     * reads the ACK covering its committed frames, and record the error for
+     * replay when the peer drains.
+     * <p>
+     * Without the {@code catch} around that flush the exception unwinds with no
+     * deferred error recorded, so the resumed connection sends the ACK and
+     * nothing else and the client waits on a sequence the server will never
+     * name. {@code testErrorSendBlockedWithPendingAck} covers the structurally
+     * identical arm at the tail of the same method; this covers the poll arm.
+     */
+    @Test
+    public void testDurableAckPollRejectSendBlockedWithPendingAck() throws Exception {
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            byte[] poll = createMaskedFrame(WebSocketOpcode.BINARY, QwpWireTestFixtures.durableAckPollMessage());
+            MockNetworkFacade mockNf = new MockNetworkFacade(poll);
+
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            mockRawSocket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(
+                    httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
+            )) {
+                QwpIngressProcessorState state = setupState(httpConfig, context);
+                // Durable ACK stays off, so the poll is refused rather than
+                // acknowledged, and the watermark makes hasPendingAck() true.
+                Assert.assertFalse(state.isDurableAckEnabled());
+                state.setHighestProcessedSequence(5);
+
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected PeerIsSlowToReadException");
+                } catch (PeerIsSlowToReadException e) {
+                    // expected: the pending-ACK flush blocked
+                }
+                Assert.assertTrue(state.isSending());
+                Assert.assertEquals(
+                        "the refused poll's error must be deferred as STATUS_PARSE_ERROR",
+                        QwpConstants.STATUS_PARSE_ERROR,
+                        state.getDeferredErrorStatus()
+                );
+                Assert.assertEquals(
+                        "the deferred error must name the poll's own sequence",
+                        0L,
+                        state.getDeferredErrorSequence()
+                );
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);

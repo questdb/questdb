@@ -92,7 +92,7 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
                     return true;
                 }
             }
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         }
         return false;
     }
@@ -128,7 +128,7 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
             MapKey keyB = mapB.withKey();
             keyB.put(recordB, recordSink);
             keyB.createValue();
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         }
         // this is an optimisation to release TableReader in case "this"
         // cursor lingers around. If there is exception or circuit breaker fault

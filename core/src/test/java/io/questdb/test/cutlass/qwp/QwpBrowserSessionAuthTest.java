@@ -1,0 +1,352 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cutlass.qwp;
+
+import io.questdb.Bootstrap;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpCookieHandler;
+import io.questdb.cutlass.http.HttpCookieHandlerImpl;
+import io.questdb.cutlass.http.HttpSessionStore;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.io.OutputStream;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cutlass.http.HttpConstants.SESSION_COOKIE_NAME;
+import static io.questdb.test.cutlass.http.HttpUtils.assertChunkedBody;
+import static io.questdb.test.cutlass.http.HttpUtils.assertSessionCookie;
+import static io.questdb.test.cutlass.http.HttpUtils.awaitStatusCode;
+import static io.questdb.test.cutlass.http.HttpUtils.newHttpRequest;
+
+public class QwpBrowserSessionAuthTest extends AbstractBootstrapTest {
+    private static final String PASSWORD = "quest";
+    private static final String USER = "admin";
+
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                PropertyKey.HTTP_USER.getPropertyPath() + "=" + USER,
+                PropertyKey.HTTP_PASSWORD.getPropertyPath() + "=" + PASSWORD
+        ));
+        dbPath.parent().$();
+    }
+
+    @Test
+    public void testMissingSessionIsRejectedBeforeUpgrade() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain questdb = new ServerMain(getServerMainArgs())) {
+                questdb.start();
+                Assert.assertTrue(webSocketUpgrade("/write/v4", null).startsWith("HTTP/1.1 401"));
+                Assert.assertTrue(webSocketUpgrade("/read/v1", null).startsWith("HTTP/1.1 401"));
+            }
+        });
+    }
+
+    @Test
+    public void testRoleRejectReturnsRotatedSessionCookie() throws Exception {
+        AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
+        MicrosecondClock testClock = currentMicros::get;
+        QwpServerInfoProvider replica = new QwpServerInfoProvider() {
+            @Override
+            public int getCapabilities() {
+                return 0;
+            }
+
+            @Override
+            public CharSequence getClusterId() {
+                return "";
+            }
+
+            @Override
+            public long getEpoch() {
+                return 0;
+            }
+
+            @Override
+            public CharSequence getNodeId() {
+                return "";
+            }
+
+            @Override
+            public byte role() {
+                return QwpEgressMsgKind.ROLE_REPLICA;
+            }
+        };
+        Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return testClock;
+                    }
+
+                    @Override
+                    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                        return new PropServerConfiguration(
+                                bootstrap.getRootDirectory(),
+                                bootstrap.loadProperties(),
+                                getEnv(),
+                                bootstrap.getLog(),
+                                bootstrap.getBuildInformation(),
+                                FilesFacadeImpl.INSTANCE,
+                                bootstrap.getMicrosecondClock(),
+                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration)
+                        ) {
+                            private final CairoConfiguration qwpCairoConfiguration =
+                                    new CairoConfigurationWrapper(super.getCairoConfiguration()) {
+                                        @Override
+                                        public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+                                            return replica;
+                                        }
+                                    };
+
+                            @Override
+                            public CairoConfiguration getCairoConfiguration() {
+                                return qwpCairoConfiguration;
+                            }
+                        };
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        assertMemoryLeak(() -> {
+            try (ServerMain questdb = new ServerMain(bootstrap)) {
+                questdb.start();
+                String oldSessionId = createSession();
+                HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+                HttpSessionStore.SessionInfo session = sessionStore.getSession(oldSessionId);
+                Assert.assertNotNull(session);
+
+                currentMicros.set(session.getRotateAt() + 1);
+                String response = webSocketUpgrade("/write/v4", oldSessionId);
+                String newSessionId = session.getSessionId().toString();
+
+                Assert.assertNotEquals(oldSessionId, newSessionId);
+                Assert.assertTrue(response.startsWith("HTTP/1.1 421 Misdirected Request\r\n"));
+                Assert.assertTrue(response.contains(
+                        "Set-Cookie: " + SESSION_COOKIE_NAME + "=" + newSessionId
+                                + "; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
+                ));
+            }
+        });
+    }
+
+    @Test
+    public void testServiceAccountCookieHookRunsForIngressAndEgress() throws Exception {
+        AtomicInteger serviceAccountCookieCalls = new AtomicInteger();
+        Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                        return new PropServerConfiguration(
+                                bootstrap.getRootDirectory(),
+                                bootstrap.loadProperties(),
+                                getEnv(),
+                                bootstrap.getLog(),
+                                bootstrap.getBuildInformation(),
+                                FilesFacadeImpl.INSTANCE,
+                                bootstrap.getMicrosecondClock(),
+                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
+                                    private final HttpCookieHandler cookieHandler = new HttpCookieHandlerImpl() {
+                                        @Override
+                                        public boolean processServiceAccountCookie(
+                                                HttpConnectionContext context,
+                                                SecurityContext securityContext
+                                        ) {
+                                            serviceAccountCookieCalls.incrementAndGet();
+                                            return true;
+                                        }
+                                    };
+
+                                    @Override
+                                    public @NotNull HttpCookieHandler getHttpCookieHandler() {
+                                        return cookieHandler;
+                                    }
+                                }
+                        );
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        assertMemoryLeak(() -> {
+            try (ServerMain questdb = new ServerMain(bootstrap)) {
+                questdb.start();
+                String sessionId = createSession();
+                serviceAccountCookieCalls.set(0);
+
+                Assert.assertTrue(webSocketUpgrade("/write/v4", sessionId)
+                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertEquals(1, serviceAccountCookieCalls.get());
+
+                Assert.assertTrue(webSocketUpgrade("/read/v1", sessionId)
+                        .startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertEquals(2, serviceAccountCookieCalls.get());
+            }
+        });
+    }
+
+    @Test
+    public void testSessionCookieAuthenticatesIngressAndEgress() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain questdb = new ServerMain(getServerMainArgs())) {
+                questdb.start();
+                String sessionId = createSession();
+
+                String ingress = webSocketUpgrade("/write/v4", sessionId);
+                Assert.assertTrue(ingress.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                // The session is nowhere near its rotation window, so the
+                // handshake did not change the id and must not re-issue the
+                // cookie. Without this the empty-sink guard in
+                // QwpIngressHttpProcessor.getSessionCookieValueBytes could be
+                // dropped and every upgrade would answer with
+                // "Set-Cookie: qdb_session=" plus a 30-day Max-Age, which
+                // overwrites the browser's live session with an empty value.
+                Assert.assertFalse(ingress, ingress.contains("Set-Cookie"));
+
+                String egress = webSocketUpgrade("/read/v1", sessionId);
+                Assert.assertTrue(egress.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertFalse(egress, egress.contains("Set-Cookie"));
+            }
+        });
+    }
+
+    @Test
+    public void testUpgradeReturnsRotatedSessionCookie() throws Exception {
+        assertUpgradeReturnsRotatedSessionCookie("/write/v4");
+    }
+
+    @Test
+    public void testUpgradeReturnsRotatedSessionCookieOnEgress() throws Exception {
+        // The egress processor threads sessionCookieValueBytes through its own
+        // responseSize/writeResponse pair. Only the null branch is covered by
+        // testSessionCookieAuthenticatesIngressAndEgress, which stays green if
+        // the argument is dropped from both calls -- and if it is dropped from
+        // only one, the SERVER_INFO frame that follows the 101 lands at the
+        // wrong offset in the send buffer.
+        assertUpgradeReturnsRotatedSessionCookie("/read/v1");
+    }
+
+    private static void assertUpgradeReturnsRotatedSessionCookie(String path) throws Exception {
+        AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
+        MicrosecondClock testClock = currentMicros::get;
+        Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return testClock;
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        assertMemoryLeak(() -> {
+            try (ServerMain questdb = new ServerMain(bootstrap)) {
+                questdb.start();
+                String oldSessionId = createSession();
+                HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+                HttpSessionStore.SessionInfo session = sessionStore.getSession(oldSessionId);
+                Assert.assertNotNull(session);
+
+                currentMicros.set(session.getRotateAt() + 1);
+                String response = webSocketUpgrade(path, oldSessionId);
+                String newSessionId = session.getSessionId().toString();
+
+                Assert.assertNotEquals(oldSessionId, newSessionId);
+                Assert.assertTrue(response.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertTrue(response.contains(
+                        "Set-Cookie: " + SESSION_COOKIE_NAME + "=" + newSessionId
+                                + "; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000\r\n"
+                ));
+            }
+        });
+    }
+
+    private static String createSession() {
+        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+            HttpClient.ResponseHeaders response = newHttpRequest(
+                    httpClient,
+                    HTTP_PORT,
+                    "SELECT x FROM long_sequence(1)",
+                    USER,
+                    PASSWORD,
+                    "true"
+            );
+            awaitStatusCode(response, "200");
+            String sessionId = assertSessionCookie(response, false);
+            assertChunkedBody(response, "{"
+                    + "\"query\":\"SELECT x FROM long_sequence(1)\","
+                    + "\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"}],"
+                    + "\"timestamp\":-1,"
+                    + "\"dataset\":[[1]],"
+                    + "\"count\":1"
+                    + "}");
+            return sessionId;
+        }
+    }
+
+    private static String webSocketUpgrade(String path, String sessionId) throws Exception {
+        try (Socket socket = new Socket("127.0.0.1", HTTP_PORT)) {
+            socket.setSoTimeout(5_000);
+            String request = QwpWireTestFixtures.browserUpgradeRequest(
+                    path,
+                    "127.0.0.1:" + HTTP_PORT,
+                    "http",
+                    sessionId == null ? "" : "Cookie: " + SESSION_COOKIE_NAME + '=' + sessionId + "\r\n"
+            );
+
+            OutputStream out = socket.getOutputStream();
+            out.write(request.getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+
+            return QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
+        }
+    }
+}

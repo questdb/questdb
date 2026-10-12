@@ -28,8 +28,12 @@ import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.client.cutlass.qwp.client.QwpServerInfo;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -265,6 +269,44 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testHeaderNegotiatedCompressionLeavesCapCompressionClear() throws Exception {
+        // CAP_COMPRESSION means "SERVER_INFO ends with a codec/level trailer",
+        // which only the browser URL carrier produces. A header-negotiated
+        // client must never see the bit set: it would then read two bytes that
+        // the server did not write. Pinned against the real client's decoder.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain ignored = startQuestDB()) {
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
+                    client.connect();
+                    QwpServerInfo info = client.getServerInfo();
+                    Assert.assertNotNull("client must have received SERVER_INFO", info);
+                    Assert.assertEquals(
+                            "header-negotiated compression must not advertise CAP_COMPRESSION",
+                            0,
+                            info.getCapabilities() & QwpEgressMsgKind.CAP_COMPRESSION
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNegotiateAcceptEncodingPrefersTheBrowserUrlCarrier() {
+        Utf8String header = new Utf8String("zstd");
+        Utf8String urlParam = new Utf8String("raw");
+
+        Assert.assertNull(QwpEgressUpgradeProcessor.negotiateAcceptEncoding(null, null));
+        Assert.assertSame(header, QwpEgressUpgradeProcessor.negotiateAcceptEncoding(header, null));
+        Assert.assertSame(urlParam, QwpEgressUpgradeProcessor.negotiateAcceptEncoding(null, urlParam));
+        // The browser cannot set the header, so a header present alongside the
+        // URL parameter came from an intermediary. It must not override the
+        // client's own choice -- the same threat negotiateMaxBatchRows guards
+        // against by taking the stricter of its two carriers.
+        Assert.assertSame(urlParam, QwpEgressUpgradeProcessor.negotiateAcceptEncoding(header, urlParam));
     }
 
     @Test

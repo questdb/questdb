@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -36,16 +37,24 @@ public class FreeOnExit implements QuietCloseable {
 
     @Override
     public void close() {
-        // free instances in reverse order to which we allocated them
+        Throwable cleanupFailure = null;
         for (int i = list.size() - 1; i >= 0; i--) {
-            Misc.free(list.getQuick(i));
+            final Closeable closeable = list.getQuick(i);
+            list.setQuick(i, null);
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, closeable);
         }
         list.clear();
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public <T extends Closeable> T register(T closeable) {
         if (closeable != null) {
-            list.add(closeable);
+            try {
+                list.add(closeable);
+            } catch (Throwable th) {
+                Misc.free(closeable, th);
+                throw th;
+            }
         }
         return closeable;
     }

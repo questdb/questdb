@@ -62,6 +62,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        checkTimestampArg(FirstValueWindowFunctionFactoryHelper.NAME, args.getQuick(0), argPositions.getQuick(0));
         return FirstValueWindowFunctionFactoryHelper.newInstance(
                 position,
                 args,

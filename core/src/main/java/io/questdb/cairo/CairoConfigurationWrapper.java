@@ -1220,6 +1220,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJoinSymbolTranslationCacheCapacity() {
+        return getDelegate().getSqlJoinSymbolTranslationCacheCapacity();
+    }
+
+    @Override
     public long getSqlLatestByRowCount() {
         return getDelegate().getSqlLatestByRowCount();
     }
@@ -1412,6 +1417,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getStrFunctionMaxBufferLength() {
         return getDelegate().getStrFunctionMaxBufferLength();
+    }
+
+    @Override
+    public long getSubsampleMaxRows() {
+        return getDelegate().getSubsampleMaxRows();
+    }
+
+    @Override
+    public int getSymbolPatternIndexThreshold() {
+        return getDelegate().getSymbolPatternIndexThreshold();
     }
 
     @Override
@@ -1660,6 +1675,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isAllPartitionOperationsAllowed() {
+        return getDelegate().isAllPartitionOperationsAllowed();
+    }
+
+    @Override
     public boolean isCairoMetadataCacheSnapshotOrdered() {
         return getDelegate().isCairoMetadataCacheSnapshotOrdered();
     }
@@ -1842,6 +1862,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlWindowMapFusionEnabled() {
         return getDelegate().isSqlWindowMapFusionEnabled();
+    }
+
+    @Override
+    public boolean isSymbolPatternIndexEnabled() {
+        return getDelegate().isSymbolPatternIndexEnabled();
     }
 
     @Override

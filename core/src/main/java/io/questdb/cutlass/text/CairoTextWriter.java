@@ -227,6 +227,16 @@ public class CairoTextWriter implements Closeable, Mutable {
             checkUncommittedRowCount();
         } catch (Exception e) {
             logError(line, timestampIndex, dus);
+            if (atomicity == Atomicity.SKIP_ALL) {
+                // No row to cancel here: newRow() rejects the designated timestamp before the
+                // row exists, and onField() cancels the row and rolls back before it throws, so
+                // this rollback is a no-op for it. The rollback also covers an append() failure.
+                writer.rollback();
+                if (e instanceof CairoException ce) {
+                    throw ce;
+                }
+                throw CairoException.nonCritical().put("bad syntax [line=").put(line).put(", col=").put(timestampIndex).put(']');
+            }
         }
     }
 
@@ -409,6 +419,9 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
+                    // Overwriting drops the table, so a table that cannot be dropped cannot be
+                    // overwritten either, or this would be the route around the veto.
+                    engine.checkTableDroppable(tableToken);
                     engine.dropTableOrViewOrMatView(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     tableReCreated = true;

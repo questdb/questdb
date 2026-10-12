@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -60,16 +61,15 @@ import org.junit.Test;
  * per-query limit is therefore read fresh by every test and can be set in
  * {@link #setUp()}.
  * <p>
- * Breaches are asserted only for the reduce phase (per-worker map growth, shard
- * fill, and per-worker allocator growth) and the owner-side merge, where the
- * offending {@code CairoException} surfaces verbatim through
- * {@code UnorderedPageFrameSequence.dispatchAndAwait} with {@code isOutOfMemory()}
- * set. A breach inside the parallel shard-merge job is caught there and converted
- * to a cancellation, so it is intentionally not used as a breach probe. The
- * sharded path's allocation accounting is exercised instead by a success + leak
- * loop, and more broadly by {@code ParallelGroupByFuzzTest}, whose
- * {@code recordPerQueryMemAlloc} assertion is live on the default (unlimited)
- * tracker.
+ * A breach surfaces with {@code isOutOfMemory()} set from every phase. The reduce phase
+ * and the owner-side merge rethrow the offending {@code CairoException} through
+ * {@code UnorderedPageFrameSequence.dispatchAndAwait}; the detached shard-merge and long
+ * top K workers record it on the {@code PostAggregationCircuitBreaker} instead, and the
+ * owner rebuilds it there. Which phase trips first depends on how the page frames fan out
+ * across the pool - see {@link #testParallelKeyedGroupByBreachSurfacesFromEitherPhase()}.
+ * The sharded path's allocation accounting is exercised by a success + leak loop, and more
+ * broadly by {@code ParallelGroupByFuzzTest}, whose {@code recordPerQueryMemAlloc}
+ * assertion is live on the default (unlimited) tracker.
  */
 public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
 
@@ -95,14 +95,58 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelKeyedGroupByBreachSurfacesFromEitherPhase() throws Exception {
+        // The parallel shard merge peaks roughly twice as high as the reduce, since the
+        // destination shards grow while the source fragments are still alive. Sweeping the limit
+        // across that band breaches in the reduce at the low end, in the merge in the middle, and
+        // completes at the high end; every breach must name the limit and carry isOutOfMemory().
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k VARCHAR, v LONG) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 1_000_000)::timestamp, x::varchar, x FROM long_sequence(200_000)",
+                                sqlExecutionContext
+                        );
+                        for (long limit = 4 * 1024 * 1024L; limit <= 32 * 1024 * 1024L; limit += 2 * 1024 * 1024L) {
+                            // The provider reads the limit when it acquires the tracker.
+                            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                            try (RecordCursorFactory factory = compiler.compile("SELECT k, count(*) FROM tab GROUP BY k", sqlExecutionContext).getRecordCursorFactory()) {
+                                assertInTree(factory, AsyncGroupByRecordCursorFactory.class);
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    long rows = 0;
+                                    while (cursor.hasNext()) {
+                                        rows++;
+                                    }
+                                    Assert.assertEquals("wrong row count at limit " + limit, 200_000, rows);
+                                } catch (CairoException e) {
+                                    Assert.assertTrue("expected isOutOfMemory() at limit " + limit + ", got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelKeyedGroupByFailsOnLargeKeySet() throws Exception {
         // High-cardinality VARCHAR-keyed GROUP BY routes through the parallel
         // AsyncGroupByRecordCursorFactory (VARCHAR keys are not vectorized). The
         // per-worker fragment maps grow with the key set, shard once they cross the
-        // threshold, and the combined growth trips the per-query limit during the
-        // reduce - the breach surfaces with isOutOfMemory() set.
+        // threshold, and the combined growth trips the per-query limit - in the reduce,
+        // or in the shard merge when the reduce finishes just under it.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -141,7 +185,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
         // per-query tracker, so nothing per-query-tracked allocates at open); the loop verifies reuse.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -183,7 +227,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
         // handful of per-worker maps fit the per-query limit, accounting stays
         // balanced, and the query returns one row per distinct key.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -223,7 +267,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
         // GROUP BY allocator caps only the chunk size, not the total), so the query
         // would complete and Assert.fail below would fire.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -261,7 +305,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
         // Non-keyed variant of testParallelKeyedGroupByOpenFailureReleasesAllocations.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -306,7 +350,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
         // between the bound allocators and the retained allocator index, or a tracker
         // imbalance from the close()-time unbinding.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -340,7 +384,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testParallelNotKeyedSharedCursorIsUnsupportedWithoutFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -375,7 +419,7 @@ public class ParallelGroupByMemoryTrackerTest extends AbstractCairoTest {
         // the lazy shard maps and the retained allocator index would show up as a
         // residual native allocation count.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {

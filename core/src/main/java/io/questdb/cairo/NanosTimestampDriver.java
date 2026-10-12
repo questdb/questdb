@@ -488,7 +488,10 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long getMaxDesignatedTimestamp() {
-        // nanos are not capped below the long range, so a designated timestamp can reach Long.MAX_VALUE
+        // validateBounds() caps a nano designated timestamp at CommonUtils.MAX_TIMESTAMP, but that
+        // check was ineffective for positive values until it was fixed, so an existing table can
+        // still hold rows above the ceiling. Stay conservative and report the long ceiling: it only
+        // declines interval pruning, while a tighter value would prune those legacy rows away.
         return Long.MAX_VALUE;
     }
 
@@ -1644,7 +1647,9 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public void validateBounds(long timestamp) {
-        if (timestamp < 0) {
+        // A negative timestamp is a huge unsigned value, so this single comparison routes both
+        // negatives and out-of-range positives into the slow path.
+        if (Long.compareUnsigned(timestamp, CommonUtils.MAX_TIMESTAMP) > 0) {
             validateBounds0(timestamp);
         }
     }
@@ -1765,7 +1770,7 @@ public class NanosTimestampDriver implements TimestampDriver {
         if (timestamp == Long.MIN_VALUE) {
             throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
         }
-        if (timestamp < TableWriter.TIMESTAMP_EPOCH || timestamp > CommonUtils.TIMESTAMP_UNIT_NANOS) {
+        if (timestamp < TableWriter.TIMESTAMP_EPOCH || timestamp > CommonUtils.MAX_TIMESTAMP) {
             throw CairoException.nonCritical().put("designated timestamp_ns before 1970-01-01 and beyond ").put(MAX_NANO_TIMESTAMP_STR).put(" is not allowed");
         }
     }

@@ -74,6 +74,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -160,6 +161,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static long fdReuseCount;
     private static long memoryUsage = -1;
     private static long mmapReuseCount;
+    private SuspensionScope.Mode previousSuspensionMode;
     @Rule
     public final TestWatcher flushLogsOnFailure = new TestWatcher() {
         @Override
@@ -431,6 +433,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @Before
     public void setUp() {
         super.setUp();
+        previousSuspensionMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         SharedRandom.RANDOM.set(new Rnd());
         engine.getViewStateStore().clear();
         forEachNode(QuestDBTestNode::setUpCairo);
@@ -484,9 +487,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     @After
     public void tearDown() throws Exception {
-        tearDown(true);
-        super.tearDown();
-        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
+        try {
+            tearDown(true);
+            super.tearDown();
+            spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
+        } finally {
+            SuspensionScope.restore(previousSuspensionMode);
+            previousSuspensionMode = null;
+        }
     }
 
     private static TestCairoConfigurationFactory getConfigurationFactory() {
@@ -757,6 +765,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     LOG
             );
         }
+    }
+
+    // Asserts that the parse budget refuses the statement at the position.
+    protected static void assertTooComplexToParse(CharSequence sql, int position, String spentPart, long max) throws Exception {
+        try {
+            assertExceptionNoLeakCheck(sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            assertTooComplexToParseMessage(e.getFlyweightMessage(), spentPart, max);
+        }
+    }
+
+    // The error reports how much of the spent part the parse had taken, a count that moves with any
+    // change to how the parser allocates, so the assertion pins the spent part and its maximum,
+    // which follows from the length of the text, but not the count.
+    protected static void assertTooComplexToParseMessage(CharSequence message, String spentPart, long max) {
+        TestUtils.assertContains(message, "statement is too complex to parse [" + spentPart + '=');
+        TestUtils.assertContains(message, ", max=" + max + ']');
     }
 
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {

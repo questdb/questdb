@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.SqlJitMode;
@@ -1044,6 +1045,47 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testWalCursorSymbolTableContainsNullValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (a SYMBOL, b SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('seed', NULL, '2026-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT a, b, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final WalSegmentPageFrameCursor cursor = job.walFrameCursorForTest();
+
+                execute("INSERT INTO base VALUES ('x', NULL, '2026-01-01T00:01:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                assertNoRefreshFaults("lv");
+                Assert.assertFalse("a has no NULL in its dictionary or transaction", cursor.getSymbolTable(0).containsNullValue());
+
+                execute("INSERT INTO base VALUES (NULL, NULL, '2026-01-01T00:02:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                assertNoRefreshFaults("lv");
+                // The cursor retains the transaction's NULL flags after releasing its WAL reader.
+                Assert.assertTrue("the transaction introducing NULL must update a's metadata", cursor.getSymbolTable(0).containsNullValue());
+                Assert.assertTrue("the NULL-only column must report NULL with no non-NULL symbols", cursor.getSymbolTable(1).containsNullValue());
+                try (TableReader reader = getReader("base")) {
+                    Assert.assertEquals(0, reader.getSymbolMapReader(1).getSymbolCount());
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, b, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("""
+                    a\tb\trn
+                    seed\t\t1
+                    x\t\t2
+                    \t\t3
+                    """);
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testMultiWorkerPoolConvergesAllViews() throws Exception {
         // End-to-end multi-worker smoke test: a 3-worker pool (each job built with the
         // workerCount=3 constructor) must converge EVERY view. This exercises the
@@ -1645,10 +1687,11 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
     @Test
     public void testRefreshWithSymbolColumnComparisonHandlesNullOnlyColumn() throws Exception {
-        // Edge of the containsNullValue fix: the right column b carries a committed null but zero
-        // distinct non-null symbols (count 0, null flag set) before the view exists, and the
-        // incremental txn then writes only nulls into b. The per-txn SymbolMapDiff must still report
-        // hasNullValue so the (NULL, NULL) row matches under '=' on the raw-WAL path.
+        // Edge-case coverage for raw-WAL SYMBOL equality: the right column b carries a
+        // committed NULL but zero distinct non-NULL symbols before the view exists, and the
+        // incremental transaction then writes only NULLs into b. The frame must still expose
+        // VALUE_IS_NULL so the (NULL, NULL) row matches under '='. EqSymFunctionFactory compares
+        // the keys directly; this test does not exercise containsNullValue().
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (a SYMBOL, b SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             // Applied before the view exists: b's committed dictionary carries a null with no
@@ -1680,14 +1723,11 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
     @Test
     public void testRefreshWithSymbolColumnComparisonHandlesNulls() throws Exception {
-        // Regression for the raw-WAL live view symbol table's NULL handling. A residual filter that
-        // compares two SYMBOL columns (a = b / a != b) runs through EqSymFunctionFactory.Func during
-        // incremental refresh. When the left value is NULL, that function asks the right column's
-        // symbol table containsNullValue() to decide whether a NULL left can match a NULL right.
-        // WalSegmentPageFrameCursor.WalSymbolTable used to hard-code containsNullValue() = false, so
-        // (NULL, NULL) rows were dropped by '=' and admitted by '!=', diverging from the base SELECT.
-        // Only (NULL, NULL) rows are affected: for a non-null-vs-NULL row the right key is never
-        // VALUE_IS_NULL, so the containsNullValue() answer never changes the outcome.
+        // Regression coverage for raw-WAL SYMBOL-column equality during incremental refresh.
+        // EqSymFunctionFactory translates non-NULL values between the two symbol domains and
+        // compares NULL through the VALUE_IS_NULL key directly. It does not consult
+        // containsNullValue(). These equality assertions therefore pin NULL key semantics, not
+        // consumption of WalSegmentPageFrameCursor.WalSymbolTable's NULL-domain metadata.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (a SYMBOL, b SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             // Applied before the views exist, seeding the clean dictionaries for a and b.
@@ -1710,8 +1750,8 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
                 // These commits arrive after the seed, so incremental refresh reads them straight
                 // from the WAL segment through WalSymbolTable rather than a recompute of the applied
-                // base. The right column b carries NULLs (val=3, val=4), so its symbol table must
-                // report containsNullValue() = true for the (NULL, NULL) row to match under '='.
+                // base. The right column b carries NULLs (val=3, val=4), so the raw frame must
+                // expose VALUE_IS_NULL for the (NULL, NULL) row to match under '='.
                 execute("INSERT INTO base (a, b, val, ts) VALUES " +
                         "(NULL, NULL, 3, '2026-01-01T00:02:00.000000Z'), " +
                         "('x', NULL, 4, '2026-01-01T00:03:00.000000Z')");
@@ -1725,8 +1765,8 @@ public class LiveViewTest extends AbstractLiveViewTest {
             }
             drainWalQueue();
 
-            // Ground truth: the base SELECT itself. QuestDB treats NULL = NULL as true for symbols
-            // when the column contains a null, so a = b keeps (NULL, NULL) and a != b drops it.
+            // Ground truth: the base SELECT itself. QuestDB SYMBOL equality treats NULL = NULL as
+            // true, so a = b keeps (NULL, NULL) and a != b drops it.
             assertQuery("SELECT a, b, val FROM base WHERE a = b ORDER BY ts").noLeakCheck().returns("a\tb\tval\n" +
                     "x\tx\t1\n" +
                     "\t\t3\n" +
@@ -1886,6 +1926,133 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     "a\t3\t2026-01-01T00:02:00.000000Z\t2\n");
             // Explicit: not a single excluded row slipped through.
             assertQuery("SELECT count() FROM lv WHERE sym <> 'a'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRefreshWithPatternFilterOnIndexedSymbol() throws Exception {
+        // C2 regression, and the sharpest of the two shapes: here CREATE ACCEPTS the view and
+        // every refresh then throws.
+        //
+        // A LIKE/ILIKE/~ conjunct on an INDEXED symbol routes code generation into
+        // AdaptiveSymbolPatternRecordCursorFactory, which the live view refresh cannot drive:
+        // its scan leaf reads through a NonOwningPartitionFrameCursorFactory rather than a full
+        // partition scan, so the O3 replay's getCursorInTimestampRange() rejects it, and the
+        // forward WAL-segment path evaluates the factory's PreparedSymbolPatternFilter, whose
+        // matched-key provider only prepare() initializes - the refresh calls init(), so getBool
+        // trips its hasPreparedKeySet assert. Either fault burns the flush retry budget and
+        // leaves the view invalid.
+        //
+        // LiveViewCompiledPlan.of() used to reject the shape at CREATE, because the adaptive
+        // factory answered getFilter() == null and the decomposition bottomed out on a
+        // non-page-frame node. Once the factory started answering getFilter()/getBaseFactory()
+        // - the contract a parallel parent reads to steal its filter - the decomposition
+        // descended straight past it onto the scan delegate's page-frame leaf and CREATE passed.
+        //
+        // The trailing ORDER BY ts is what keeps the window streaming rather than cached: the
+        // order-by advice makes the index route use its heap row cursor, so the adaptive factory
+        // reports SCAN_DIRECTION_FORWARD and no sort is planned. Without it the planner emits a
+        // CachedWindowLight the live view rejects for an unrelated reason, which is the shape
+        // testRefreshWithPatternFilterOnIndexedSymbolCachedWindowShape covers.
+        //
+        // The gate now skips the symbol-pattern index for a live view compile, exactly as
+        // WhereClauseParser suppresses indexed-symbol key extraction there, so the planner emits
+        // the plain filter-over-full-scan shape the refresh path handles - the same shape the
+        // unindexed twin testRefreshWithPatternFilterOnSymbol already gets.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL INDEX, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            final String viewSql = "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn " +
+                    "FROM base WHERE sym LIKE 'a%' ORDER BY ts";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + viewSql);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // In-order rows: the forward incremental path, which reads the raw WAL segment
+                // and applies the compiled plan's residual filter row by row.
+                execute("INSERT INTO base (sym, val, ts) VALUES " +
+                        "('aaa', 1, '2026-01-01T00:00:00.000000Z'), " +
+                        "('bbb', 2, '2026-01-01T00:01:00.000000Z'), " +
+                        "('abc', 3, '2026-01-01T00:03:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(2_000_000L);
+                // An out-of-order row routes the next cycle through the O3 replay, which scans
+                // the base with pageFrameFactory.getCursorInTimestampRange() - the call that
+                // rejects a non-full-scan leaf.
+                execute("INSERT INTO base (sym, val, ts) VALUES ('axx', 4, '2026-01-01T00:02:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // rn advances only for survivors, so a leaked or dropped row perturbs it too.
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    sym\tval\tts\trn
+                    aaa\t1\t2026-01-01T00:00:00.000000Z\t1
+                    axx\t4\t2026-01-01T00:02:00.000000Z\t2
+                    abc\t3\t2026-01-01T00:03:00.000000Z\t3
+                    """);
+            // Explicit: not a single excluded row slipped through.
+            assertQuery("SELECT count() FROM lv WHERE sym NOT LIKE 'a%'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            // A refresh that threw would self-heal into a full recompute from the applied base,
+            // which a row-level oracle cannot tell apart from a clean run.
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+
+            // The mechanism behind all of the above: the live view compile must not plan the
+            // adaptive factory at all. EXPLAIN of a CREATE arms the same live-view compile flag
+            // the CREATE itself does, and creates nothing.
+            assertQuery("CREATE LIVE VIEW lv_plan FLUSH EVERY 1s START FROM NOW AS " + viewSql)
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("AdaptiveSymbolPattern", "SymbolPatternIndex");
+            // ... and the suppression reaches no further than that compile: an ordinary query
+            // over the same predicate on the same column still takes the index route.
+            assertQuery("SELECT sym, val FROM base WHERE sym LIKE 'a%' ORDER BY ts")
+                    .noLeakCheck()
+                    .assertsPlanContaining("AdaptiveSymbolPattern");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRefreshWithPatternFilterOnIndexedSymbolCachedWindowShape() throws Exception {
+        // C2 regression, second shape. Same fixture as
+        // testRefreshWithPatternFilterOnIndexedSymbol without the trailing ORDER BY ts: the
+        // index route then drains key by key, the adaptive factory reports SCAN_DIRECTION_OTHER,
+        // and the planner sorts for the window - so CREATE failed at the cached-window reject
+        // ("live view select may only use window functions that support incremental refresh")
+        // rather than at the filter decomposition. A loud reject rather than an invalidated
+        // view, but still a shape that works without the index and must work with it.
+        //
+        // Suppressing the symbol-pattern index under a live view compile removes both rejects at
+        // once: the plan is the plain filter-over-full-scan the unindexed twin already gets, so
+        // the window streams and the refresh drives it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL INDEX, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym LIKE 'a%'");
+            execute("INSERT INTO base (sym, val, ts) VALUES " +
+                    "('aaa', 1, '2026-01-01T00:00:00.000000Z'), " +
+                    "('bbb', 2, '2026-01-01T00:01:00.000000Z'), " +
+                    "('abc', 3, '2026-01-01T00:02:00.000000Z')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    sym\tval\tts\trn
+                    aaa\t1\t2026-01-01T00:00:00.000000Z\t1
+                    abc\t3\t2026-01-01T00:02:00.000000Z\t2
+                    """);
+            // A refresh that threw would self-heal into a full recompute from the applied base,
+            // which a row-level oracle cannot tell apart from a clean run.
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+
             execute("DROP LIVE VIEW lv");
         });
     }

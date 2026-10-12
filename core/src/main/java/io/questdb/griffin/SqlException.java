@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -40,10 +40,11 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private static final int EXCEPTION_VIEW_DOES_NOT_EXIST = EXCEPTION_TABLE_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_VIEW_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
-    private static final CarrierLocal<SqlException> tlException = new CarrierLocal<>(SqlException::new);
+    private static final FiberLocal<SqlException> tlException = new FiberLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private final StringSink tableName = new StringSink();
     private int error;
+    private boolean isTableBusy;
     private int position;
 
     public static SqlException $(int position, CharSequence message) {
@@ -143,6 +144,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         ex.message.clear();
         ex.position = position;
         ex.error = 0;
+        ex.isTableBusy = false;
         return ex;
     }
 
@@ -223,6 +225,13 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return isTableDoesNotExist() ? tableName : "";
     }
 
+    /**
+     * Identifies a wrapped pool acquisition failure without changing the SQL error code.
+     */
+    public boolean isTableBusy() {
+        return isTableBusy;
+    }
+
     public boolean isTableDoesNotExist() {
         return error == EXCEPTION_TABLE_DOES_NOT_EXIST;
     }
@@ -284,6 +293,11 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public void setPosition(int position) {
         this.position = position;
+    }
+
+    public SqlException setTableBusy(boolean isTableBusy) {
+        this.isTableBusy = isTableBusy;
+        return this;
     }
 
     @Override

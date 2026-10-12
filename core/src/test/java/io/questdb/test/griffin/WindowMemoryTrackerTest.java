@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -808,6 +809,89 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubsampleBucketBufferFailsUnderQueryMemoryLimit() throws Exception {
+        // The designated timestamp order dismisses the explicit window sort, leaving the cached-light
+        // row-id/narrow stores and m4's 24-byte-per-row algorithm buffer. The input is sized so the
+        // stores fit individually but their tracker-bound aggregate crosses the limit while the raw
+        // bucket buffer grows. Reopening the same factory after failure also verifies stale charges are
+        // released before the tracker is reused.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 1) AS ts " +
+                    "FROM long_sequence(16_000)) TIMESTAMP(ts)");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT ts, m4(ts, v, 100) OVER (ORDER BY ts) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, CachedWindowLightRecordCursorFactory.class);
+                for (int i = 0; i < 3; i++) {
+                    assertQueryMemoryLimitExceeded(factory);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSubsampleFunctionStateReleasesAllocations() throws Exception {
+        // Successful repeated opens cover lazy allocation, reset, tracker rebinding, and close for
+        // both the shared bucket buffer and gap-LTTB's segment/target scratch lists.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 7200000000) AS ts " +
+                    "FROM long_sequence(1_000)) TIMESTAMP(ts)");
+            drainWalQueue();
+            final ObjList<String> queries = new ObjList<>(
+                    "SELECT ts, m4(ts, v, 100) OVER (ORDER BY ts) FROM tab",
+                    "SELECT ts, lttb(ts, v, 100, '1h') OVER (ORDER BY ts) FROM tab"
+            );
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (int queryIndex = 0; queryIndex < queries.size(); queryIndex++) {
+                    final String query = queries.getQuick(queryIndex);
+                    try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                        assertInTree(factory, CachedWindowLightRecordCursorFactory.class);
+                        for (int i = 0; i < 5; i++) {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                long rows = 0;
+                                while (cursor.hasNext()) {
+                                    rows++;
+                                }
+                                Assert.assertEquals("iteration " + i + ", query " + query, 1_000, rows);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSubsampleGapLttbScratchFailsUnderQueryMemoryLimit() throws Exception {
+        // Every timestamp is separated by two hours, so gap-LTTB creates one segment and one target
+        // entry per row. A 768 KiB limit lets the shared row-id and algorithm buffers fill, then the
+        // tracker-bound segment/target scratch growth breaches cleanly.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 768 * 1024L);
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, "true");
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT x::double AS v, timestamp_sequence(0, 7200000000) AS ts " +
+                    "FROM long_sequence(16_000)) TIMESTAMP(ts)");
+            drainWalQueue();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT ts, lttb(ts, v, 100, '1h') OVER (ORDER BY ts) FROM tab",
+                         sqlExecutionContext).getRecordCursorFactory()) {
+                assertInTree(factory, CachedWindowLightRecordCursorFactory.class);
+                for (int i = 0; i < 3; i++) {
+                    assertQueryMemoryLimitExceeded(factory);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStreamingRankPartitionMapFailsOnHighCardinality() throws Exception {
         // rank() over (partition by k order by ts) dismisses the sort (ts is the designated
         // timestamp), so it routes through the streaming window cursor, which has no record
@@ -1017,6 +1101,19 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertQueryMemoryLimitExceeded(RecordCursorFactory factory) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            while (cursor.hasNext()) {
+                // drain until breach
+            }
+            Assert.fail("expected per-query memory breach");
+        } catch (CairoException e) {
+            Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+            TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+        }
     }
 
     private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {

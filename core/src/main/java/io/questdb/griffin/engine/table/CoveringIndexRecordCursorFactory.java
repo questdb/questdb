@@ -26,10 +26,13 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ScannedColumnTopProbe;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -58,16 +61,19 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlHints;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongSortedList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -90,14 +96,44 @@ import java.util.Arrays;
  * <p>
  * Supports single-key (WHERE sym = 'A'), bind variable (WHERE sym = $1),
  * and multi-key (WHERE sym IN ('A', 'B')) queries.
+ * It also serves a positive symbol pattern ({@code LIKE}/{@code ILIKE}/{@code ~}) over a covered
+ * projection: {@link AdaptiveSymbolPatternRecordCursorFactory} refreshes the matched symbol keys
+ * into the {@code patternKeys} list it owns before opening this delegate, and {@code multiKeys}
+ * then reads that list.
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
+    // Above this many resolved keys the multi-key covering cursors merge the
+    // per-key heads with an O(log N) heap poll (like HeapRowCursorFactory on the
+    // non-covering path) instead of the linear O(N) min-scan; at or below it the
+    // linear scan wins for the small IN-lists it usually serves. See
+    // MultiKeyCoveringCursor and effectiveHeapMergeMinKeys().
+    static final int HEAP_MERGE_MIN_KEYS = 16;
+    // Test-only crossover override; -1 means "use HEAP_MERGE_MIN_KEYS".
+    @TestOnly
+    static int heapMergeMinKeysOverride = -1;
+    private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
+    // The plan this query would have got with /*+ no_covering *//*, held so a NULL key over a
+    // partition that carries a column top can be served by it instead. Non-null only when the
+    // key can be NULL, which the compiler knows: see SqlCodeGenerator's covering sites. A
+    // factory that carries one advertises no page-frame cursor, because no index-scan backup
+    // exposes frames.
+    private final RecordCursorFactory backup;
     private final IntList columnIndexes;
 
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
+    // Set when /*+ force_use_covering *//* suppressed a backup this factory would otherwise
+    // carry. The hint promises no column top on any partition the scan reads; checkHintPromise()
+    // checks that per open rather than trusting it.
+    private final boolean isBackupSuppressedByHint;
+    // Whether this factory frees symbolFunction / keyValueFuncs itself. False when the backup
+    // was built from them and so already owns them; see the constructor parameter.
+    private final boolean isKeyFunctionOwner;
     private final int keyQueryPosition;
     private final ObjList<Function> keyValueFuncs;
+    // Runtime-owned key list for adaptive symbol-pattern routing. The adaptive factory refreshes this
+    // list before opening this delegate and retains ownership; this factory only reads it.
+    private final IntList patternKeys;
     private final boolean latestBy;
     private final Function latestByFilter;
     private final RecordMetadata metadata;
@@ -121,9 +157,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @Nullable ObjList<Function> keyValueFuncs,
             @Nullable TableReader reader,
             boolean latestBy,
-            @Nullable Function latestByFilter
+            @Nullable Function latestByFilter,
+            @Nullable IntList patternKeys,
+            @Nullable RecordCursorFactory backup,
+            boolean backupOwnsKeyFunctions,
+            boolean isBackupSuppressedByHint
     ) {
+        // keyValueFuncs (IN/= key list) and patternKeys (positive pattern's matched key set) are two
+        // mutually exclusive ways to drive the multi-key merge; never both.
+        assert keyValueFuncs == null || patternKeys == null;
         this.metadata = metadata;
+        this.backup = backup;
+        this.isKeyFunctionOwner = backup == null || !backupOwnsKeyFunctions;
+        this.isBackupSuppressedByHint = isBackupSuppressedByHint;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
         this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
@@ -132,6 +178,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.symbolFunctionRuntimeConstant = symbolKey == SymbolTable.VALUE_NOT_FOUND;
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
+        this.patternKeys = patternKeys;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
         // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
         // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
@@ -151,21 +198,32 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // the copy is the reference this factory owns and frees in close(); using it consistently avoids
         // a refactor hazard if the defensive copy above is ever changed or removed.
         final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
-        if (keyValueFuncsCopy != null) {
-            this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
-            int multiKeyCapacity = keyValueFuncsCopy.size();
-            if (reader != null) {
-                SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
-                    Function f = keyValueFuncsCopy.getQuick(i);
-                    int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
-                    resolvedKeys.add(key);
+        if (keyValueFuncsCopy != null || patternKeys != null) {
+            final int multiKeyCapacity;
+            if (patternKeys != null) {
+                // Pattern path: the matched-key set is not known until getCursor (the adaptive owner
+                // resolves it from the static symbol table at execution time, so it also reflects symbols
+                // added after compile). Leave resolvedKeys null and size the merge with a small growable
+                // default.
+                this.resolvedKeys = null;
+                multiKeyCapacity = 16;
+            } else {
+                this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
+                multiKeyCapacity = keyValueFuncsCopy.size();
+                if (reader != null) {
+                    SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
+                    for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
+                        Function f = keyValueFuncsCopy.getQuick(i);
+                        int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
+                        resolvedKeys.add(key);
+                    }
                 }
             }
-            this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
+            final MergeObserver mergeObserver = TEST_MERGE_OBSERVER.get();
+            this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
             this.singleKeyCursor = null;
             this.multiKeyPageFrameCursor = !latestBy
-                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
+                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver)
                     : null;
             this.singleKeyPageFrameCursor = null;
         } else {
@@ -191,6 +249,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
+     * The effective multi-key merge crossover: the test override when set,
+     * otherwise {@link #HEAP_MERGE_MIN_KEYS}. When the number of resolved keys
+     * exceeds this, the multi-key cursors merge the per-key heads with a heap
+     * ({@code O(log N)} per row) instead of the linear min-scan ({@code O(N)}).
+     */
+    static int effectiveHeapMergeMinKeys() {
+        return heapMergeMinKeysOverride >= 0 ? heapMergeMinKeysOverride : HEAP_MERGE_MIN_KEYS;
+    }
+
+    /**
      * Test-only count of covered rows EAGERLY materialized at frame production
      * (via the cursor's {@code writeCoveredRow}). The single-key path is
      * metadata-only (decode runs on the workers), so this stays 0 for a
@@ -207,16 +275,139 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         CoveringPageFrameCursor.coveredRowsWrittenForTesting = 0;
     }
 
+    /**
+     * Test-only view of {@link #hasAnyColumnTop} over the WHOLE table, so a test can compare the
+     * answer against an independent oracle without going through a query.
+     */
+    @TestOnly
+    public static boolean hasAnyColumnTopForTesting(TableReader reader, int writerIndex) {
+        return hasAnyColumnTop(reader, writerIndex, null);
+    }
+
+    @TestOnly
+    public static void clearMergeObserverForTesting() {
+        TEST_MERGE_OBSERVER.remove();
+    }
+
+    /**
+     * Test-only hook that lowers the multi-key merge crossover so the O(log N)
+     * heap k-way merge (see {@link MultiKeyCoveringCursor}) can be exercised with
+     * small IN-lists that would otherwise stay on the linear min-scan. Pass
+     * {@code -1} to clear the override and revert to {@link #HEAP_MERGE_MIN_KEYS}.
+     */
+    @TestOnly
+    public static void setHeapMergeMinKeysForTesting(int n) {
+        heapMergeMinKeysOverride = n;
+    }
+
+    @TestOnly
+    public static void setMergeObserverForTesting(MergeObserver observer) {
+        TEST_MERGE_OBSERVER.set(observer);
+    }
+
     @Override
     public void close() {
-        Misc.free(dfcFactory);
-        Misc.free(latestByFilter);
-        Misc.free(symbolFunction);
-        Misc.freeObjList(keyValueFuncs);
+        // The backup runs the same scan over the same table with the same key, so the two
+        // share the partition-frame factory, the LATEST ON filter and the key functions rather
+        // than duplicating them. The BACKUP owns that shared set -- there is no non-owning
+        // wrapper for any of them -- so freeing it here frees them, and we must not free them
+        // again below. With no backup this factory is the sole owner and frees them itself.
+        if (backup != null) {
+            Misc.free(backup);
+        } else {
+            Misc.free(dfcFactory);
+            Misc.free(latestByFilter);
+        }
+        // The key functions are the one part the backup does not always adopt: the LATEST ON
+        // single-key backup takes a resolved key as an int and never sees the function.
+        if (isKeyFunctionOwner) {
+            Misc.free(symbolFunction);
+            Misc.freeObjList(keyValueFuncs);
+        }
         Misc.free(singleKeyCursor);
         Misc.free(multiKeyCursor);
         Misc.free(singleKeyPageFrameCursor);
         Misc.free(multiKeyPageFrameCursor);
+    }
+
+    /**
+     * Whether this open must run the {@link #backup} plan instead of the covering one.
+     * <p>
+     * The sidecar holds one entry per posting and the chain holds no posting for a row below
+     * the indexed column's top, so a NULL key over a partition that carries a top has nothing
+     * to decode. Every other combination the sidecar answers correctly: a non-NULL key matches
+     * only rows at or above the top, which do have postings, and an explicit NULL above the top
+     * has one too.
+     * <p>
+     * The column-top half cannot be answered at compile time -- a top lives in {@code _cv},
+     * which changes without a metadata-version bump that would invalidate this cached factory
+     * -- so it is answered here, from the reader this open resolved.
+     */
+    private boolean mustUseBackup(PartitionFrameCursor frameCursor, boolean anyKeyIsNull) {
+        if (backup == null) {
+            // No backup to defer to. Either none was ever needed, or the hint suppressed one --
+            // and a suppressed one is a promise that has to hold.
+            checkHintPromise(frameCursor, anyKeyIsNull);
+            return false;
+        }
+        if (!anyKeyIsNull) {
+            return false;
+        }
+        final TableReader reader = frameCursor.getTableReader();
+        return hasAnyColumnTop(reader, reader.getMetadata().getWriterIndex(indexColumnIndex), scannedIntervals(frameCursor));
+    }
+
+    /**
+     * The designated-timestamp intervals the scan confines itself to, or null when it reads the
+     * whole table -- or applies a filter it cannot describe, which the probe must treat the same
+     * way. A partition outside them contributes no row, so its column top cannot make the scan
+     * wrong.
+     */
+    private static @Nullable LongList scannedIntervals(PartitionFrameCursor frameCursor) {
+        return frameCursor.hasIntervalFilter() ? frameCursor.getIntervals() : null;
+    }
+
+    /**
+     * Enforces the {@code force_use_covering} promise: the resolved key is not NULL, or no
+     * partition the scan READS carries a column top. Over a scanned top there is no posting to
+     * decode, so the scan would drop rows or fabricate NULLs -- throw instead. An interval filter
+     * admitting only top-free partitions keeps the promise; see {@link #scannedIntervals}.
+     * <p>
+     * A real exception, not an {@code assert}: it has to fire with {@code -ea} off, because the
+     * alternative is the silent wrong answer the backup exists to remove.
+     */
+    private void checkHintPromise(PartitionFrameCursor frameCursor, boolean anyKeyIsNull) {
+        if (!isBackupSuppressedByHint || !anyKeyIsNull) {
+            return;
+        }
+        final TableReader reader = frameCursor.getTableReader();
+        final TableReaderMetadata readerMetadata = reader.getMetadata();
+        if (hasAnyColumnTop(reader, readerMetadata.getWriterIndex(indexColumnIndex), scannedIntervals(frameCursor))) {
+            throw CairoException.nonCritical()
+                    .put("key resolved to NULL over a column top, which the covering index cannot serve [hint=")
+                    .put(SqlHints.FORCE_USE_COVERING_HINT)
+                    .put(", column=").put(readerMetadata.getColumnName(indexColumnIndex))
+                    .put("]; drop the hint, or keep the key non-NULL");
+        }
+    }
+
+    /**
+     * Whether any partition the scan reads lacks values for {@code writerIndex}. Delegates to
+     * {@link ScannedColumnTopProbe}, which reads {@code _cv} and {@code _txn} only, so no
+     * partition is opened.
+     * <p>
+     * {@code intervals} is the scan's designated-timestamp filter, or null for a whole-table
+     * scan; see {@link #scannedIntervals}. A partition outside it holds no row this scan returns,
+     * which is what lets {@code WHERE sym = null AND ts IN '<top-free day>'} keep the covering
+     * plan on a table whose older partitions do lack values.
+     */
+    private static boolean hasAnyColumnTop(TableReader reader, int writerIndex, @Nullable LongList intervals) {
+        return ScannedColumnTopProbe.hasAnyColumnTop(
+                reader.getColumnVersionReader(),
+                reader.getTxFile(),
+                writerIndex,
+                intervals
+        );
     }
 
     @Override
@@ -228,33 +419,44 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         );
         try {
             if (multiKeyCursor != null) {
-                if (keyValueFuncs != null) {
-                    Function.init(keyValueFuncs, frameCursor, executionContext, null);
-                }
-                SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-                multiKeyCursor.multiKeys.clear();
-                for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
-                    int key = resolvedKeys.getQuick(i);
-                    if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                        CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
-                        key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                if (patternKeys != null) {
+                    multiKeyCursor.multiKeys = patternKeys;
+                    multiKeyCursor.of(frameCursor);
+                } else {
+                    if (keyValueFuncs != null) {
+                        Function.init(keyValueFuncs, frameCursor, executionContext, null);
                     }
-                    // Bind-variable / runtime-constant list elements may resolve
-                    // to the same symbol key; dedup so the multi-key merge does
-                    // not open a duplicate posting cursor per key and merge the
-                    // same row-id stream twice (duplicate rows / inflated
-                    // aggregates).
-                    if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyCursor.multiKeys.contains(key)) {
-                        multiKeyCursor.multiKeys.add(key);
+                    SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+                    multiKeyCursor.multiKeys.clear();
+                    for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
+                        int key = resolvedKeys.getQuick(i);
+                        if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
+                            // keyOf() maps a null value to VALUE_IS_NULL, the NULL key, which
+                            // the chain does carry postings for. Short-circuiting to
+                            // VALUE_NOT_FOUND instead would drop every NULL row of the scan.
+                            key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null));
+                        }
+                        // Bind-variable / runtime-constant list elements may resolve
+                        // to the same symbol key; dedup so the multi-key merge does
+                        // not open a duplicate posting cursor per key and merge the
+                        // same row-id stream twice (duplicate rows / inflated
+                        // aggregates).
+                        if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyCursor.multiKeys.contains(key)) {
+                            multiKeyCursor.multiKeys.add(key);
+                        }
                     }
+                    if (mustUseBackup(frameCursor, multiKeyCursor.multiKeys.contains(SymbolTable.VALUE_IS_NULL))) {
+                        frameCursor = Misc.free(frameCursor);
+                        return backup.getCursor(executionContext);
+                    }
+                    // Always wire up the frame cursor and table reader, even when no
+                    // keys resolve. Callers wrap us in operators (e.g. ORDER BY on a
+                    // SYMBOL column) that probe baseCursor.getSymbolTable() during
+                    // init, before any iteration. With an empty multiKeys list,
+                    // hasNext()'s merge finds no per-key heads and
+                    // openNextPartitionCursors() opens nothing, so it reports no rows.
+                    multiKeyCursor.of(frameCursor);
                 }
-                // Always wire up the frame cursor and table reader, even when no
-                // keys resolve. Callers wrap us in operators (e.g. ORDER BY on a
-                // SYMBOL column) that probe baseCursor.getSymbolTable() during
-                // init, before any iteration. With an empty multiKeys list,
-                // hasNext()'s merge finds no per-key heads and
-                // openNextPartitionCursors() opens nothing, so it reports no rows.
-                multiKeyCursor.of(frameCursor);
                 multiKeyCursor.circuitBreaker = executionContext.getCircuitBreaker();
                 multiKeyCursor.latestByFilter = latestByFilter;
                 if (latestByFilter != null) {
@@ -269,8 +471,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             } else {
                 symbolFunction.init(frameCursor, executionContext);
                 SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-                CharSequence symValue = symbolFunction.getStrA(null);
-                resolvedKey = symValue != null ? symbolMapReader.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                // See the multi-key branch above: keyOf() answers VALUE_IS_NULL for a null
+                // value, so let it, rather than reporting the key as unknown.
+                resolvedKey = symbolMapReader.keyOf(symbolFunction.getStrA(null));
+            }
+            if (mustUseBackup(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL)) {
+                frameCursor = Misc.free(frameCursor);
+                return backup.getCursor(executionContext);
             }
             singleKeyCursor.resolveKey(resolvedKey);
             singleKeyCursor.of(frameCursor);
@@ -293,6 +500,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        // supportsPageFrameCursor() answers false whenever a backup exists, so nobody should
+        // reach here in that state; the backup has no page-frame cursor to hand over to.
+        assert backup == null : "page frames requested from a covering factory that carries a backup";
         if (multiKeyPageFrameCursor == null && singleKeyPageFrameCursor == null) {
             return null;
         }
@@ -317,6 +527,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         try {
             TableReader reader = frameCursor.getTableReader();
             if (multiKeyPageFrameCursor != null) {
+                if (patternKeys != null) {
+                    multiKeyPageFrameCursor.multiKeys = patternKeys;
+                    multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
+                    return multiKeyPageFrameCursor;
+                }
                 if (keyValueFuncs != null) {
                     Function.init(keyValueFuncs, frameCursor, executionContext, null);
                 }
@@ -325,8 +540,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
                     int key = resolvedKeys.getQuick(i);
                     if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                        CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
-                        key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                        // See getCursor(): keyOf() resolves a null value to the NULL key.
+                        key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null));
                     }
                     // See getCursor(): dedup duplicate resolved keys so the
                     // parallel GROUP BY page-frame path does not over-count.
@@ -334,9 +549,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         multiKeyPageFrameCursor.multiKeys.add(key);
                     }
                 }
+                // A suppressed backup is exactly what leaves this page-frame cursor reachable
+                // for a null-capable key, so the promise is checked here too.
+                checkHintPromise(frameCursor, multiKeyPageFrameCursor.multiKeys.contains(SymbolTable.VALUE_IS_NULL));
                 // Always wire the frame cursor; callers may probe getSymbolTable()
                 // before iteration. Empty multiKeys list yields no frames.
-                multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false);
+                multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
                 return multiKeyPageFrameCursor;
             }
             // Single-key path: see the matching block in getCursor().
@@ -346,11 +564,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             } else {
                 symbolFunction.init(frameCursor, executionContext);
                 SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                CharSequence symValue = symbolFunction.getStrA(null);
-                resolvedKey = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                // See getCursor(): keyOf() resolves a null value to the NULL key.
+                resolvedKey = smr.keyOf(symbolFunction.getStrA(null));
             }
+            // See the multi-key branch above.
+            checkHintPromise(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL);
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
-            singleKeyPageFrameCursor.of(frameCursor, configMaxRows, descending);
+            singleKeyPageFrameCursor.of(frameCursor, configMaxRows, descending, executionContext.getMemoryTracker());
             return singleKeyPageFrameCursor;
         } catch (Throwable th) {
             Misc.free(frameCursor);
@@ -370,7 +590,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // resolved key), so it is trivially ts-ordered. Only multi-key
         // latestBy breaks the order: it emits one row per key in key order,
         // not ts order, so it alone advertises no ordering.
-        return latestBy && multiKeyCursor != null ? SCAN_DIRECTION_OTHER : SCAN_DIRECTION_FORWARD;
+        final int own = latestBy && multiKeyCursor != null ? SCAN_DIRECTION_OTHER : SCAN_DIRECTION_FORWARD;
+        if (backup == null || backup.getScanDirection() == own) {
+            return own;
+        }
+        // The backup may order rows differently -- FilterOnValues drains its per-key cursors
+        // one after another under ORDER_BY_INVARIANT, which is not row-id order -- and the
+        // generator elides an ORDER BY ts on whatever we answer here, before either delegate
+        // runs. Advertise no ordering rather than the one only half of the pair keeps.
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -386,14 +614,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * timestamp-ordered ascending, but has no backward scan -- so codegen routes
      * its negative limits to the serial path, where LimitRecordCursorFactory
      * computes last-N via size + skip over the ascending merge.
+     * <p>
+     * Delegates the backup test to {@link #supportsPageFrameCursor()} rather than repeating
+     * it. The one caller consults this only after that method has already answered true, so a
+     * separate {@code backup == null} term here could never decide anything on its own.
      */
     public boolean supportsNegativeLimitPageFrame() {
-        return singleKeyPageFrameCursor != null;
+        return supportsPageFrameCursor() && singleKeyPageFrameCursor != null;
     }
 
     @Override
     public boolean supportsPageFrameCursor() {
-        return singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null;
+        // A backup means this factory may serve the query from a plan that exposes no page
+        // frames -- none of the index-scan factories do -- and the answer is baked at compile
+        // time, before we know which one will run. Say no for both.
+        return backup == null && (singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null);
     }
 
     /**
@@ -407,12 +642,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      */
     @Override
     public boolean producesMaterializedPageFrames() {
-        return multiKeyPageFrameCursor != null;
+        return backup == null && multiKeyPageFrameCursor != null;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("CoveringIndex");
+        if (backup != null) {
+            // Name the alternative in the plan: which of the two runs is decided per open,
+            // and a reader looking at a slow or surprising query needs to see both.
+            sink.meta("backup").val(true);
+        }
         if (latestBy) {
             sink.meta("op").val("latest");
         }
@@ -434,7 +674,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // equality ("sym = 'x'") is produced metadata-only at frame production and decoded in
         // parallel on the reduce workers, whereas an IN-list ("sym IN (...)") is decoded eagerly via
         // the multi-key merge. The parallelism itself surfaces on the parent async operator's plan.
-        if (keyValueFuncs != null) {
+        if (patternKeys != null) {
+            sink.attr("filter").putColumnName(keyQueryPosition).val(" matches pattern");
+        } else if (keyValueFuncs != null) {
             sink.attr("filter").putColumnName(keyQueryPosition).val(" IN ").val(keyValueFuncs);
         } else {
             sink.attr("filter").putColumnName(keyQueryPosition).val('=').val(symbolFunction);
@@ -590,7 +832,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public boolean hasNext() {
             // Consult the breaker at the top, so empty/no-match scans (frameCursor null, or no rows for
             // the key) still observe cancellation, and long index scans stay cancellable.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (frameCursor == null) {
                 return false;
             }
@@ -971,6 +1213,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final int queryColCount;
         protected final int[] queryColToIncludeIdx;
         protected final int[] requiredIncludeIndices;
+        private MemoryTracker memoryTracker;
         // When true, emit frames in descending timestamp order (DESC partition
         // iteration, high row-range sub-frames first) to serve a negative LIMIT.
         protected boolean descending;
@@ -1077,6 +1320,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             closePendingCursor();
             frameCursor = Misc.free(frameCursor);
             freeBuffers();
+            memoryTracker = null;
         }
 
         @Override
@@ -1118,7 +1362,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return nextImpl();
         }
 
-        // Initialized via the package-private of(PartitionFrameCursor, int, boolean) below.
+        // Initialized via the package-private of(PartitionFrameCursor, int, boolean, MemoryTracker) below.
         @Override
         public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
             throw new UnsupportedOperationException();
@@ -1146,9 +1390,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         protected long allocBuffer(long bytes) {
-            long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_INDEX_READER);
-            allocatedBuffers.add(addr, bytes);
-            return addr;
+            long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+            try {
+                allocatedBuffers.add(addr, bytes);
+                return addr;
+            } catch (Throwable th) {
+                Unsafe.free(addr, bytes, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+                throw th;
+            }
         }
 
         private void ensureVarDataCapacity(long[] varDataAddrs, int[] varDataPos, int[] varDataCap, int q, int needed) {
@@ -1174,7 +1423,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             for (int i = 0, n = allocatedBuffers.size(); i < n; i += 2) {
                 long addr = allocatedBuffers.getQuick(i);
                 if (addr != 0) {
-                    Unsafe.free(addr, allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_INDEX_READER);
+                    Unsafe.free(addr, allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_INDEX_READER, memoryTracker);
                 }
             }
             allocatedBuffers.clear();
@@ -1195,24 +1444,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * just (new size) once the old buffer is released.
          */
         private long growBuffer(long oldAddr, long oldSize, long newSize, long usedBytes) {
-            long newAddr = Unsafe.malloc(newSize, MemoryTag.NATIVE_INDEX_READER);
-            if (usedBytes > 0) {
-                Unsafe.copyMemory(oldAddr, newAddr, usedBytes);
+            long newAddr = Unsafe.malloc(newSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+            try {
+                if (usedBytes > 0) {
+                    Unsafe.copyMemory(oldAddr, newAddr, usedBytes);
+                }
+            } catch (Throwable th) {
+                Unsafe.free(newAddr, newSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+                throw th;
             }
             int n = allocatedBuffers.size();
             for (int i = 0; i < n; i += 2) {
                 if (allocatedBuffers.getQuick(i) == oldAddr) {
                     allocatedBuffers.setQuick(i, newAddr);
                     allocatedBuffers.setQuick(i + 1, newSize);
-                    Unsafe.free(oldAddr, oldSize, MemoryTag.NATIVE_INDEX_READER);
+                    Unsafe.free(oldAddr, oldSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
                     return newAddr;
                 }
             }
             // Untracked old address. Should not happen for buffers
             // allocated via allocBuffer; defensive path keeps the new
             // buffer reachable so freeBuffers cleans it up at close.
-            allocatedBuffers.add(newAddr, newSize);
-            Unsafe.free(oldAddr, oldSize, MemoryTag.NATIVE_INDEX_READER);
+            try {
+                allocatedBuffers.add(newAddr, newSize);
+            } catch (Throwable th) {
+                Unsafe.free(newAddr, newSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+                throw th;
+            }
+            Unsafe.free(oldAddr, oldSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
             return newAddr;
         }
 
@@ -1769,19 +2028,28 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             pendingPartitionIndex = -1;
         }
 
-        void of(PartitionFrameCursor frameCursor, int configMaxRows, boolean descending) {
+        void of(
+                PartitionFrameCursor frameCursor,
+                int configMaxRows,
+                boolean descending,
+                MemoryTracker memoryTracker
+        ) {
             closePendingCursor();
+            resetIterationState();
+            // A factory can reuse this cursor for another execution. Release any prior
+            // execution's frames against the tracker that paid for them before binding
+            // the new execution's tracker.
+            freeBuffers();
+            this.memoryTracker = memoryTracker;
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
             this.maxRowsPerFrame = maxRowsPerFrameOverride >= 0 ? maxRowsPerFrameOverride : configMaxRows;
             this.descending = descending;
             this.isExhausted = false;
-            resetIterationState();
             columnMapping.clear();
             for (int i = 0, n = columnIndexes.size(); i < n; i++) {
                 columnMapping.addColumn(columnIndexes.getQuick(i), columnIndexes.getQuick(i), columnIndexes.getQuick(i));
             }
-            freeBuffers();
         }
 
         abstract void resetIterationState();
@@ -2220,11 +2488,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
+    @TestOnly
+    public interface MergeObserver {
+        void onHeapOperations(long operationCount, boolean isPageFrame);
+
+        void onLinearComparisons(long comparisonCount, boolean isPageFrame);
+
+        void onMergeStrategy(boolean isHeapMerge, boolean isPageFrame);
+
+        void onPageFrame(long lo, long hi);
+    }
+
     private static class MultiKeyCoveringCursor extends CoveringCursor {
         // Row-id sentinel: the per-key cursor is exhausted, or the key is absent
         // from the current partition. Real row ids are non-negative.
         private static final long NO_ROW = -1;
-        final IntList multiKeys;
+        IntList multiKeys;
         // latestBy iteration cursor over multiKeys (used only by hasNextLatestBy).
         private int currentKeyIdx;
         // Per-key open cursors for the current partition and their peeked head
@@ -2232,19 +2511,35 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // rows in global (ascending designated-timestamp) order within each
         // partition -- the same result order HeapRowCursorFactory produces on the
         // non-covering path -- instead of draining one key's posting list before
-        // the next. The merge is a linear min-scan over the open heads (O(R*N) for
-        // R rows and N keys), not HeapRowCursorFactory's O(log N) heap poll; fine
-        // for the small IN-lists this serves.
+        // the next.
+        // Two merge strategies pick the smallest open head, chosen per partition
+        // by key count (effectiveHeapMergeMinKeys()): a linear min-scan over the
+        // heads (O(R*N) for R rows and N keys), fine for the small IN-lists this
+        // usually serves; or, above the crossover, an O(log N) heap poll (the
+        // same IntLongSortedList HeapRowCursorFactory uses) for broad symbol
+        // patterns that match thousands of keys. Both merges emit byte-identical
+        // rows -- keys share no row id, so the smallest head is unambiguous.
         private CoveringRowCursor[] keyCursors;
         private long[] keyHeads;
+        // Min-heap of (keyIndex -> head row id) over the open per-key heads, used
+        // when isHeapMerge. Kept in lockstep with keyHeads: the winning entry stays at
+        // position 0 (peeked, not polled) while its covered values are read, then
+        // is polled/replaced on the next hasNext() -- see the heap body there.
+        private final IntLongSortedList heap = new IntLongSortedList();
         // The key whose head was emitted last; advanced on the next hasNext().
         private int selectedKeyIdx = -1;
+        // Whether the current merge uses the heap (multiKeys.size() > crossover).
+        // Recomputed per reset; stable across a partition switch (key set fixed).
+        private boolean isHeapMerge;
+        private boolean isMergeObserved;
+        private final MergeObserver mergeObserver;
 
         MultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
                                int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
-                               boolean latestBy, RecordMetadata metadata) {
+                               boolean latestBy, RecordMetadata metadata, MergeObserver mergeObserver) {
             super(indexColumnIndex, SymbolTable.VALUE_NOT_FOUND, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
             this.multiKeys = new IntList(multiKeyCapacity);
+            this.mergeObserver = mergeObserver;
         }
 
         @Override
@@ -2257,7 +2552,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public boolean hasNext() {
             // Consult the breaker at the top, so empty/no-match scans (frameCursor null, or no resolved
             // keys) still observe cancellation, and long multi-key merges stay cancellable.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (frameCursor == null) {
                 return false;
             }
@@ -2266,31 +2561,71 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             final int n = multiKeys.size();
             while (true) {
-                // Advance the cursor we emitted last; we deferred this so its
-                // covered values stayed readable until the caller consumed them.
-                if (selectedKeyIdx >= 0) {
-                    CoveringRowCursor c = keyCursors[selectedKeyIdx];
-                    keyHeads[selectedKeyIdx] = c.hasNext() ? c.next() : NO_ROW;
-                    selectedKeyIdx = -1;
-                }
-                // Pick the smallest head row id across the open per-key cursors.
-                // Two keys never share a row id (a row has one symbol value), so
-                // no tie-breaking is needed.
-                int best = -1;
-                long bestRow = NO_ROW;
-                for (int i = 0; i < n; i++) {
-                    long h = keyHeads[i];
-                    if (h != NO_ROW && (best < 0 || h < bestRow)) {
-                        best = i;
-                        bestRow = h;
+                if (!isHeapMerge) {
+                    // Linear min-scan (small key sets).
+                    // Advance the cursor we emitted last; we deferred this so its
+                    // covered values stayed readable until the caller consumed them.
+                    if (selectedKeyIdx >= 0) {
+                        CoveringRowCursor c = keyCursors[selectedKeyIdx];
+                        keyHeads[selectedKeyIdx] = c.hasNext() ? c.next() : NO_ROW;
+                        selectedKeyIdx = -1;
                     }
-                }
-                if (best >= 0) {
-                    selectedKeyIdx = best;
-                    coveringRecord.of(keyCursors[best]);
-                    coveringRecord.setSymbolKey(multiKeys.getQuick(best));
-                    coveringRecord.setRowId(bestRow);
-                    return true;
+                    // Pick the smallest head row id across the open per-key cursors.
+                    // Two keys never share a row id (a row has one symbol value), so
+                    // no tie-breaking is needed.
+                    int best = -1;
+                    long bestRow = NO_ROW;
+                    for (int i = 0; i < n; i++) {
+                        long h = keyHeads[i];
+                        if (h != NO_ROW && (best < 0 || h < bestRow)) {
+                            best = i;
+                            bestRow = h;
+                        }
+                    }
+                    if (mergeObserver != null) {
+                        mergeObserver.onLinearComparisons(n, false);
+                    }
+                    if (best >= 0) {
+                        selectedKeyIdx = best;
+                        coveringRecord.of(keyCursors[best]);
+                        coveringRecord.setSymbolKey(multiKeys.getQuick(best));
+                        coveringRecord.setRowId(bestRow);
+                        return true;
+                    }
+                } else {
+                    // Heap k-way merge (broad key sets), deferred-advance preserved.
+                    // Advance the cursor we emitted last, syncing the heap with it.
+                    // The emitted entry is still the heap's min (position 0): we
+                    // peeked it last time without polling, and nothing else touched
+                    // the heap since, so pollAndReplace/pollValue act on that entry.
+                    if (selectedKeyIdx >= 0) {
+                        CoveringRowCursor c = keyCursors[selectedKeyIdx];
+                        if (c.hasNext()) {
+                            long nh = c.next();
+                            keyHeads[selectedKeyIdx] = nh;
+                            heap.pollAndReplace(selectedKeyIdx, nh); // pop the emitted min, reinsert its next head
+                        } else {
+                            keyHeads[selectedKeyIdx] = NO_ROW;
+                            heap.pollValue(); // key exhausted this partition: pop the min
+                        }
+                        if (mergeObserver != null) {
+                            mergeObserver.onHeapOperations(1, false);
+                        }
+                        selectedKeyIdx = -1;
+                    }
+                    if (heap.hasNext()) {
+                        // Emit the min WITHOUT polling, so keyCursors[best]'s covered
+                        // values stay readable; defer the poll to the next hasNext().
+                        int best = heap.peekIndex();
+                        if (mergeObserver != null) {
+                            mergeObserver.onHeapOperations(1, false);
+                        }
+                        selectedKeyIdx = best;
+                        coveringRecord.of(keyCursors[best]);
+                        coveringRecord.setSymbolKey(multiKeys.getQuick(best));
+                        coveringRecord.setRowId(keyHeads[best]);
+                        return true;
+                    }
                 }
                 if (!openNextPartitionCursors()) {
                     return false;
@@ -2337,6 +2672,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 keyCursors[i] = null;
                 keyHeads[i] = NO_ROW;
             }
+            // Fix the merge strategy for this scan by key count, and start with an
+            // empty heap; openNextPartitionCursors() rebuilds it from primed heads.
+            isHeapMerge = n > effectiveHeapMergeMinKeys();
+            isMergeObserved = false;
+            heap.clear();
         }
 
         private void closeKeyCursors() {
@@ -2346,6 +2686,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     keyHeads[i] = NO_ROW;
                 }
             }
+            // Drop any stale entries so they cannot survive a toTop()/partition
+            // switch; the heap is rebuilt from freshly primed heads.
+            heap.clear();
             selectedKeyIdx = -1;
         }
 
@@ -2386,6 +2729,23 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                 }
                 if (any) {
+                    if (!isMergeObserved && mergeObserver != null) {
+                        mergeObserver.onMergeStrategy(isHeapMerge, false);
+                        isMergeObserved = true;
+                    }
+                    if (isHeapMerge) {
+                        // (Re)build the heap from this partition's primed heads;
+                        // NO_ROW keys are simply absent from the heap.
+                        heap.clear();
+                        for (int i = 0; i < n; i++) {
+                            if (keyHeads[i] != NO_ROW) {
+                                heap.add(i, keyHeads[i]);
+                            }
+                        }
+                        if (mergeObserver != null) {
+                            mergeObserver.onHeapOperations(heap.size(), false);
+                        }
+                    }
                     return true;
                 }
                 closeKeyCursors();
@@ -2397,7 +2757,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // Row-id sentinel: per-key cursor exhausted, or key absent from the
         // partition being merged. Real row ids are non-negative.
         private static final long NO_ROW = -1;
-        final IntList multiKeys = new IntList();
+        IntList multiKeys = new IntList();
         // Per-key open cursors for the partition currently being merged and their
         // peeked head row ids. Merging the per-key cursors by row id makes each
         // emitted frame hold rows in ascending designated-timestamp order (with
@@ -2410,15 +2770,26 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // maxRowsPerFrame resumes in the next frame.
         private int mergePartitionIndex = -1;
         private long mergeRowLo;
+        // Dual-mode merge: linear O(N) min-scan for small N, heap O(log N) for
+        // large N (above effectiveHeapMergeMinKeys()). Mirrors the same mechanism
+        // in MultiKeyCoveringCursor. The page-frame path advances immediately
+        // (covered values are copied via writeCoveredRow), so there is no deferred
+        // advance: peek -> writeCoveredRow -> pollAndReplace / pollValue.
+        private final IntLongSortedList heap = new IntLongSortedList();
+        private boolean isHeapMerge;
+        private boolean isMergeObserved;
+        private final MergeObserver mergeObserver;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
                 int[] queryColToIncludeIdx,
                 int[] requiredIncludeIndices,
                 RecordMetadata metadata,
-                IntList columnIndexes
+                IntList columnIndexes,
+                MergeObserver mergeObserver
         ) {
             super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes);
+            this.mergeObserver = mergeObserver;
         }
 
         @Override
@@ -2466,6 +2837,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     mergeHeads[i] = NO_ROW;
                 }
             }
+            heap.clear();
+            isMergeObserved = false;
             mergePartitionIndex = -1;
         }
 
@@ -2502,17 +2875,32 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             long lastRowId = -1;
             while (count < rowCap) {
                 // Two keys never share a row id, so the smallest head is unique.
-                int best = -1;
+                int best;
                 long bestRow = NO_ROW;
-                for (int i = 0; i < n; i++) {
-                    long h = mergeHeads[i];
-                    if (h != NO_ROW && (best < 0 || h < bestRow)) {
-                        best = i;
-                        bestRow = h;
+                if (!isHeapMerge) {
+                    // Linear O(N) min-scan for small N.
+                    best = -1;
+                    for (int i = 0; i < n; i++) {
+                        long h = mergeHeads[i];
+                        if (h != NO_ROW && (best < 0 || h < bestRow)) {
+                            best = i;
+                            bestRow = h;
+                        }
                     }
-                }
-                if (best < 0) {
-                    break; // partition drained
+                    if (mergeObserver != null) {
+                        mergeObserver.onLinearComparisons(n, true);
+                    }
+                    if (best < 0) {
+                        break; // partition drained
+                    }
+                } else {
+                    // Heap O(log N) merge for large N. The heap holds only keys
+                    // with non-exhausted heads; an empty heap means partition drained.
+                    if (!heap.hasNext()) {
+                        break;
+                    }
+                    best = heap.peekIndex();
+                    bestRow = mergeHeads[best];
                 }
                 if (count >= capacity) {
                     capacity = growFrameBuffers(frameAddrs, count, capacity);
@@ -2528,10 +2916,25 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 count++;
                 // Covered values are copied into the frame buffer, so the winning
                 // cursor can be advanced to its next row immediately.
-                mergeHeads[best] = c.hasNext() ? c.next() : NO_ROW;
+                if (c.hasNext()) {
+                    long nh = c.next();
+                    mergeHeads[best] = nh;
+                    if (isHeapMerge) {
+                        heap.pollAndReplace(best, nh);
+                    }
+                } else {
+                    mergeHeads[best] = NO_ROW;
+                    if (isHeapMerge) {
+                        heap.pollValue();
+                    }
+                }
             }
             if (count == 0) {
                 return null;
+            }
+            if (mergeObserver != null && isHeapMerge) {
+                // Each emitted row performs one peek and one poll or replacement.
+                mergeObserver.onHeapOperations(2L * count, true);
             }
             // Multi-key frames interleave keys per row, so there is no single
             // resolved symbol key for the frame; report VALUE_NOT_FOUND. The
@@ -2541,6 +2944,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // worker arm skips multi-key frames; this keeps the metadata coherent.)
             final long firstAbs = firstRowId + mergeRowLo;
             final long lastAbs = lastRowId + mergeRowLo;
+            if (mergeObserver != null) {
+                mergeObserver.onPageFrame(firstAbs, lastAbs + 1);
+            }
             // materialized == true: the worker arm SKIPS multi-key (VALUE_NOT_FOUND)
             // frames, so these eagerly filled buffers are the only decode. Their
             // real page addresses MUST be published.
@@ -2559,6 +2965,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 mergeCursors = new CoveringRowCursor[n];
                 mergeHeads = new long[n];
             }
+            isHeapMerge = n > effectiveHeapMergeMinKeys();
             final int partitionIndex = partFrame.getPartitionIndex();
             final long rowLo = partFrame.getRowLo();
             final long rowHi = partFrame.getRowHi();
@@ -2588,6 +2995,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 } else {
                     mergeCursors[i] = Misc.free(c);
                     mergeHeads[i] = NO_ROW;
+                }
+            }
+            if (any && !isMergeObserved && mergeObserver != null) {
+                mergeObserver.onMergeStrategy(isHeapMerge, true);
+                isMergeObserved = true;
+            }
+            if (any && isHeapMerge) {
+                heap.clear();
+                for (int i = 0; i < n; i++) {
+                    if (mergeHeads[i] != NO_ROW) {
+                        heap.add(i, mergeHeads[i]);
+                    }
+                }
+                if (mergeObserver != null) {
+                    mergeObserver.onHeapOperations(heap.size(), true);
                 }
             }
             return any;
@@ -2844,4 +3266,3 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 }
-

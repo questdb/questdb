@@ -78,7 +78,7 @@ public class DirectCharSequenceIntHashMapTest {
                 // Force OOM so the rehash malloc fails.
                 Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
                 try {
-                    // 16th insert decrements free to 0 and triggers rehash.
+                    // The 16th insert triggers the pre-insert rehash.
                     map.put("key15", 15);
                     Assert.fail("Expected CairoException");
                 } catch (CairoException e) {
@@ -87,16 +87,20 @@ public class DirectCharSequenceIntHashMapTest {
                     Unsafe.setRssMemLimit(0);
                 }
 
-                // All 16 entries (including the one that triggered rehash) must be accessible.
-                Assert.assertEquals(16, map.size());
-                for (int i = 0; i < 16; i++) {
+                // The failed insert must leave the map unchanged.
+                Assert.assertEquals(15, map.size());
+                Assert.assertEquals(DirectCharSequenceIntHashMap.NO_ENTRY_VALUE, map.get("key15"));
+                for (int i = 0; i < 15; i++) {
                     Assert.assertEquals(i, map.get("key" + i));
                 }
 
                 // After lifting OOM, the next insert retries rehash successfully.
+                map.put("key15", 15);
                 map.put("key16", 16);
                 Assert.assertEquals(17, map.size());
-                Assert.assertEquals(16, map.get("key16"));
+                for (int i = 0; i < 17; i++) {
+                    Assert.assertEquals(i, map.get("key" + i));
+                }
             } finally {
                 Unsafe.setRssMemLimit(0);
             }

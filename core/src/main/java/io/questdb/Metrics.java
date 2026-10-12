@@ -31,8 +31,11 @@ import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGMetrics;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
+import io.questdb.metrics.CpuMetrics;
+import io.questdb.metrics.FiberMetrics;
 import io.questdb.metrics.GCMetrics;
 import io.questdb.metrics.HealthMetricsImpl;
+import io.questdb.metrics.MetricSnapshotVisitor;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.metrics.NullMetricsRegistry;
@@ -49,6 +52,8 @@ import org.jetbrains.annotations.NotNull;
 public class Metrics implements Target, Mutable {
     public static final Metrics DISABLED = new Metrics(false, new NullMetricsRegistry());
     public static final Metrics ENABLED = new Metrics(true, new MetricsRegistryImpl());
+    private final CpuMetrics cpuMetrics;
+    private final FiberMetrics fiberMetrics;
     private final GCMetrics gcMetrics;
     private final HealthMetricsImpl healthCheck;
     private final HttpMetrics httpMetrics;
@@ -65,13 +70,23 @@ public class Metrics implements Target, Mutable {
     private final WalMetrics walMetrics;
     private final WorkerMetrics workerMetrics;
     private boolean enabled;
+    private boolean scrapeEnabled;
+    private volatile Runnable snapshotUpdater;
 
     public Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
+        this(enabled, enabled, metricsRegistry);
+    }
+
+    public Metrics(boolean enabled, boolean scrapeEnabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
+        this.scrapeEnabled = scrapeEnabled;
+        this.cpuMetrics = new CpuMetrics();
         this.gcMetrics = new GCMetrics();
         this.jsonQueryMetrics = new JsonQueryMetrics(metricsRegistry);
         this.httpMetrics = new HttpMetrics(metricsRegistry);
         this.pgMetrics = new PGMetrics(metricsRegistry);
+        this.fiberMetrics = new FiberMetrics();
+        metricsRegistry.addTarget(fiberMetrics);
         this.qwpEgressMetrics = new QwpEgressMetrics(metricsRegistry);
         this.lineMetrics = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
@@ -84,9 +99,11 @@ public class Metrics implements Target, Mutable {
 
     @Override
     public void clear() {
+        snapshotUpdater = null;
         gcMetrics.clear();
         jsonQueryMetrics.clear();
         pgMetrics.clear();
+        fiberMetrics.clear();
         qwpEgressMetrics.clear();
         lineMetrics.clear();
         healthCheck.clear();
@@ -95,10 +112,17 @@ public class Metrics implements Target, Mutable {
         workerMetrics.clear();
         httpMetrics.clear();
         enabled = true;
+        scrapeEnabled = true;
     }
 
     public void disable() {
+        snapshotUpdater = null;
         enabled = false;
+        scrapeEnabled = false;
+    }
+
+    public FiberMetrics fiberMetrics() {
+        return fiberMetrics;
     }
 
     public MetricsRegistry getRegistry() {
@@ -115,6 +139,10 @@ public class Metrics implements Target, Mutable {
 
     public boolean isEnabled() {
         return enabled;
+    }
+
+    public boolean isScrapeEnabled() {
+        return scrapeEnabled;
     }
 
     public JsonQueryMetrics jsonQueryMetrics() {
@@ -137,7 +165,21 @@ public class Metrics implements Target, Mutable {
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         metricsRegistry.scrapeIntoPrometheus(sink);
         if (enabled) {
+            cpuMetrics.scrapeIntoPrometheus(sink);
             gcMetrics.scrapeIntoPrometheus(sink);
+        }
+    }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        final Runnable updater = snapshotUpdater;
+        if (updater != null) {
+            updater.run();
+        }
+        metricsRegistry.snapshot(visitor);
+        if (enabled) {
+            cpuMetrics.snapshot(visitor);
+            gcMetrics.snapshot(visitor);
         }
     }
 
@@ -168,7 +210,8 @@ public class Metrics implements Target, Mutable {
         metricsRegistry.newVirtualGauge("memory_jvm_max", jvmMaxMemRef);
     }
 
-    void addScrapable(Target target) {
+    void addScrapable(Target target, Runnable snapshotUpdater) {
         metricsRegistry.addTarget(target);
+        this.snapshotUpdater = snapshotUpdater;
     }
 }
