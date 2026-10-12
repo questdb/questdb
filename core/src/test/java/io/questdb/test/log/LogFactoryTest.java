@@ -248,6 +248,99 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testCloseDrainsWritersAfterDrainFails() throws Exception {
+        // resolve the global factory first, so its lazy initialization does not count as a leak
+        LogFactory.getInstance();
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicBoolean isFailingWriterClosed = new AtomicBoolean();
+            final AtomicReference<CountingLogWriter> otherWriter = new AtomicReference<>();
+
+            class DrainFailingLogWriter implements Closeable, LogWriter {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public void close() {
+                    isFailingWriterClosed.set(true);
+                }
+
+                @Override
+                public boolean run(@NotNull WorkerContext workerContext) {
+                    throw new LogError("simulated drain failure");
+                }
+            }
+
+            final LogFactory factory = new LogFactory();
+            try {
+                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> new DrainFailingLogWriter()));
+                factory.add(new LogWriterConfig("other", LogLevel.INFO, (ring, seq, level) -> {
+                    otherWriter.set(new CountingLogWriter(seq));
+                    return otherWriter.get();
+                }));
+                factory.bind();
+                factory.create("other", false).info().$("drained").$();
+
+                final LogError e = Assert.assertThrows(LogError.class, () -> factory.close(true));
+                Assert.assertEquals("simulated drain failure", e.getMessage());
+                Assert.assertTrue(isFailingWriterClosed.get());
+                Assert.assertEquals(1, otherWriter.get().consumedCount);
+                Assert.assertTrue(otherWriter.get().isClosed);
+            } finally {
+                factory.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCloseDrainsWritersAfterFinalFlushFails() throws Exception {
+        // On a full disk, the final flush of the rolling file writer fails when the factory closes it
+        final long ticks = MicrosFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z");
+        final String location = temp.getRoot().getAbsolutePath() + Files.SEPARATOR + "mylog-${date:yyyy-MM-dd}.log";
+        final RollFailureFilesFacade ff = new RollFailureFilesFacade();
+        // resolve the global factory first, so its lazy initialization does not count as a leak
+        LogFactory.getInstance();
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicReference<CountingLogWriter> otherWriter = new AtomicReference<>();
+            final LogFactory factory = new LogFactory();
+            try {
+                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
+                    final LogRollingFileWriter writer = new LogRollingFileWriter(ff, () -> ticks, ring, seq, level);
+                    writer.setLocation(location);
+                    return writer;
+                }));
+                factory.add(new LogWriterConfig("other", LogLevel.INFO, (ring, seq, level) -> {
+                    otherWriter.set(new CountingLogWriter(seq));
+                    return otherWriter.get();
+                }));
+                factory.bind();
+                factory.create("x", false).info().$("lost").$();
+                factory.create("other", false).info().$("drained").$();
+
+                ff.isAppendFailing = true;
+                final LogError e = Assert.assertThrows(LogError.class, () -> factory.close(true));
+                TestUtils.assertContains(e.getMessage(), "Could not append log");
+                Assert.assertEquals(1, otherWriter.get().consumedCount);
+                Assert.assertTrue(otherWriter.get().isClosed);
+            } finally {
+                factory.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCloseInstanceReleasesFactoryAfterWriterFailure() throws Exception {
+        // A writer that fails to close leaves the factory closed for good, with its queues freed.
+        // As the instance, it would hand every later getLog() a logger that cannot log.
+        runFirstLogFactoryUse("failing-close");
+    }
+
+    @Test
+    public void testCloseInstanceWithinKeepsInstanceAfterHaltTimeout() throws Exception {
+        runFirstLogFactoryUse("halt-timeout");
+    }
+
+    @Test
     public void testCloseRetriesAfterWorkerHaltTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final AtomicInteger closeCount = new AtomicInteger();
@@ -495,6 +588,53 @@ public class LogFactoryTest {
             factory.close(true);
         }
         Assert.assertEquals(messageCount, counter.get());
+    }
+
+    @Test
+    public void testFlushJobsResumesLoggingWorkerAfterWriterFails() throws Exception {
+        // AbstractCairoTest flushes the global factory when a test fails. A paused logging worker
+        // would drop every record of the tests after it and block every logger that waits for a slot.
+        // resolve the global factory first, so its lazy initialization does not count as a leak
+        LogFactory.getInstance();
+        TestUtils.assertMemoryLeak(() -> {
+            final Thread testThread = Thread.currentThread();
+            final AtomicReference<CountingLogWriter> otherWriter = new AtomicReference<>();
+            try (LogFactory factory = new LogFactory()) {
+                factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> new LogWriter() {
+                    @Override
+                    public void bindProperties(LogFactory factory) {
+                    }
+
+                    // fails the drain of flushJobs(), never the logging worker
+                    @Override
+                    public boolean run(@NotNull WorkerContext workerContext) {
+                        if (Thread.currentThread() == testThread) {
+                            throw new LogError("simulated drain failure");
+                        }
+                        return false;
+                    }
+                }));
+                factory.add(new LogWriterConfig("other", LogLevel.INFO, (ring, seq, level) -> {
+                    otherWriter.set(new CountingLogWriter(seq));
+                    return otherWriter.get();
+                }));
+                factory.bind();
+                // the logging worker has not started yet, so the record waits for flushJobs()
+                final Log logger = factory.create("other", false);
+                logger.info().$("drained by flushJobs").$();
+
+                final LogError e = Assert.assertThrows(LogError.class, factory::flushJobs);
+                Assert.assertEquals("simulated drain failure", e.getMessage());
+                Assert.assertEquals(1, otherWriter.get().consumedCount);
+
+                logger.info().$("consumed by the logging worker").$();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while (otherWriter.get().consumedCount < 2) {
+                    Assert.assertTrue("logging worker did not run after flushJobs()", System.nanoTime() - deadline < 0);
+                    Os.pause();
+                }
+            }
+        });
     }
 
     @Test
@@ -2715,6 +2855,38 @@ public class LogFactoryTest {
     @FunctionalInterface
     private interface RollingWriterCode {
         void run(LogRollingFileWriter writer, RingQueue<LogRecordUtf8Sink> queue, SPSequence pubSeq) throws Exception;
+    }
+
+    // Counts the records it consumes and whether LogFactory closed it
+    private static class CountingLogWriter implements Closeable, LogWriter {
+        private final SCSequence subSeq;
+        // the logging worker increments it, the test thread reads it
+        private volatile int consumedCount;
+        private boolean isClosed;
+
+        private CountingLogWriter(SCSequence subSeq) {
+            this.subSeq = subSeq;
+        }
+
+        @Override
+        public void bindProperties(LogFactory factory) {
+        }
+
+        @Override
+        public void close() {
+            isClosed = true;
+        }
+
+        @Override
+        public boolean run(@NotNull WorkerContext workerContext) {
+            final long cursor = subSeq.next();
+            if (cursor > -1) {
+                consumedCount++;
+                subSeq.done(cursor);
+                return true;
+            }
+            return false;
+        }
     }
 
     // Fails rename, openAppend, removeQuiet or append on demand, and rejects appends to any
