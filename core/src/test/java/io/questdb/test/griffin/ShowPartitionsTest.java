@@ -842,16 +842,45 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowPartitionsSubQueryReadTwiceByLateralJoinFails() throws Exception {
-        // A non-equality correlation makes the LATERAL join read its outer source twice: as its left
-        // side and as the outer references of its right side. The SHOW statement has one cursor, which
-        // the first read takes over, so the plan rejects the second read instead of sharing the cursor.
+    public void testShowPartitionsSubQueryInParallelFilter() throws Exception {
+        // A filter that is not thread-safe compiles again for each worker of the shared query pool, and
+        // so does the SHOW statement in its sub-query. Every compile needs a cursor of its own, and the
+        // plan frees each of them, along with the native path it holds.
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName);
-            final String sql = "SELECT o.name, l.c FROM (SHOW PARTITIONS FROM '" + tableName + "') o" +
-                    " JOIN LATERAL (SELECT count() c FROM '" + tableName + "' t WHERE t.symbol <= o.name) l ON true";
-            assertQuery(sql).fails(sql.indexOf("SHOW"), "SHOW statement cannot be read more than once in a query");
+            execute("CREATE TABLE picks (name SYMBOL)");
+            execute("INSERT INTO picks VALUES ('2023-01'), ('2022-12'), ('2023-03')");
+            assertQuery("SELECT name FROM picks WHERE name IN (SELECT name FROM (SHOW PARTITIONS FROM '" + tableName + "'))")
+                    .returns("""
+                            name
+                            2023-01
+                            2023-03
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowPartitionsSubQueryReadTwiceByLateralJoin() throws Exception {
+        // A non-equality correlation makes the LATERAL join read its outer source twice: as its left
+        // side and as the outer references of its right side. Each read gets a cursor of its own.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            execute("CREATE TABLE picks (name SYMBOL)");
+            execute("INSERT INTO picks VALUES ('2023-01'), ('2023-03'), ('2023-01')");
+            assertQuery("SELECT o.name, l.c FROM (SHOW PARTITIONS FROM '" + tableName + "') o" +
+                    " JOIN LATERAL (SELECT count() c FROM picks p WHERE p.name <= o.name) l ON true")
+                    .noRandomAccess()
+                    .returns("""
+                            name\tc
+                            2023-01\t2
+                            2023-02\t2
+                            2023-03\t3
+                            2023-04\t3
+                            2023-05\t3
+                            2023-06\t3
+                            """);
         });
     }
 

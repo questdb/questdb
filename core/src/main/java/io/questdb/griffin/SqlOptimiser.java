@@ -569,6 +569,95 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // A SHOW that names an object reads it through the view the context reads table-name functions
+    // through, if any, see createShowFactory().
+    private static RecordCursorFactory generateShowFactory(
+            @NotNull IQueryModel model,
+            @NotNull SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            Path path
+    ) throws SqlException {
+        final SqlExecutionContext.TableFunctionView view = executionContext.getTableFunctionView();
+        final RecordCursorFactory tableFactory;
+        TableToken tableToken;
+        switch (model.getShowKind()) {
+            case IQueryModel.SHOW_TABLES:
+                tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory(executionContext.getCairoEngine().getConfiguration());
+                break;
+            case IQueryModel.SHOW_COLUMNS:
+                tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+                if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                        || !executionContext.isTableFunctionVisibleAtCompile(tableToken, view)) {
+                    throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+                }
+                tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position, view);
+                break;
+            case IQueryModel.SHOW_PARTITIONS:
+                tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+                if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                        || !executionContext.isTableFunctionVisibleAtCompile(tableToken, view)) {
+                    throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+                }
+
+                int timestampType;
+                try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+                    timestampType = metadata.getTimestampType();
+                }
+                tableFactory = new ShowPartitionsRecordCursorFactory(tableToken, timestampType, model.getTableNameExpr().position, view);
+                break;
+            case IQueryModel.SHOW_TRANSACTION:
+            case IQueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
+                tableFactory = new ShowTransactionIsolationLevelCursorFactory();
+                break;
+            case IQueryModel.SHOW_DEFAULT_TRANSACTION_READ_ONLY:
+                tableFactory = new ShowDefaultTransactionReadOnlyCursorFactory();
+                break;
+            case IQueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
+                tableFactory = new ShowMaxIdentifierLengthCursorFactory();
+                break;
+            case IQueryModel.SHOW_STANDARD_CONFORMING_STRINGS:
+                tableFactory = new ShowStandardConformingStringsCursorFactory();
+                break;
+            case IQueryModel.SHOW_SEARCH_PATH:
+                tableFactory = new ShowSearchPathCursorFactory();
+                break;
+            case IQueryModel.SHOW_DATE_STYLE:
+                tableFactory = new ShowDateStyleCursorFactory();
+                break;
+            case IQueryModel.SHOW_TIME_ZONE:
+                tableFactory = new ShowTimeZoneFactory();
+                break;
+            case IQueryModel.SHOW_PARAMETERS:
+                tableFactory = new ShowParametersCursorFactory();
+                break;
+            case IQueryModel.SHOW_SERVER_VERSION:
+                tableFactory = new ShowServerVersionCursorFactory();
+                break;
+            case IQueryModel.SHOW_SERVER_VERSION_NUM:
+                tableFactory = new ShowServerVersionNumCursorFactory();
+                break;
+            case IQueryModel.SHOW_CREATE_DATABASE:
+                tableFactory = sqlParserCallback.generateShowCreateDatabaseFactory(model, executionContext, path);
+                break;
+            case IQueryModel.SHOW_CREATE_TABLE:
+                tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
+                break;
+            case IQueryModel.SHOW_CREATE_LIVE_VIEW:
+                tableFactory = sqlParserCallback.generateShowCreateLiveViewFactory(model, executionContext, path);
+                break;
+            case IQueryModel.SHOW_CREATE_MAT_VIEW:
+                tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
+                break;
+            case IQueryModel.SHOW_CREATE_VIEW:
+                tableFactory = sqlParserCallback.generateShowCreateViewFactory(model, executionContext, path);
+                break;
+            default:
+                tableFactory = sqlParserCallback.generateShowSqlFactory(model);
+                break;
+        }
+        return tableFactory;
+    }
+
     // The SHOW statements that list objects or read their metadata, like the functions that declare
     // SqlExecutionRequirements.DISCLOSES_OBJECTS do. Returns null for one that lists no objects.
     private static @Nullable String getObjectDisclosingStatement(int showKind) {
@@ -5304,94 +5393,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // A SHOW that names an object reads it through the view the context reads table-name functions
-    // through, if any, see parseFunctionAndEnumerateColumns().
-    private RecordCursorFactory generateShowFactory(
-            @NotNull IQueryModel model,
-            @NotNull SqlExecutionContext executionContext,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
-        final SqlExecutionContext.TableFunctionView view = executionContext.getTableFunctionView();
-        final RecordCursorFactory tableFactory;
-        TableToken tableToken;
-        switch (model.getShowKind()) {
-            case IQueryModel.SHOW_TABLES:
-                tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory(executionContext.getCairoEngine().getConfiguration());
-                break;
-            case IQueryModel.SHOW_COLUMNS:
-                tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-                if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
-                        || !executionContext.isTableFunctionVisibleAtCompile(tableToken, view)) {
-                    throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
-                }
-                tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position, view);
-                break;
-            case IQueryModel.SHOW_PARTITIONS:
-                tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-                if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
-                        || !executionContext.isTableFunctionVisibleAtCompile(tableToken, view)) {
-                    throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
-                }
-
-                int timestampType;
-                try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
-                    timestampType = metadata.getTimestampType();
-                }
-                tableFactory = new ShowPartitionsRecordCursorFactory(tableToken, timestampType, model.getTableNameExpr().position, view);
-                break;
-            case IQueryModel.SHOW_TRANSACTION:
-            case IQueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
-                tableFactory = new ShowTransactionIsolationLevelCursorFactory();
-                break;
-            case IQueryModel.SHOW_DEFAULT_TRANSACTION_READ_ONLY:
-                tableFactory = new ShowDefaultTransactionReadOnlyCursorFactory();
-                break;
-            case IQueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
-                tableFactory = new ShowMaxIdentifierLengthCursorFactory();
-                break;
-            case IQueryModel.SHOW_STANDARD_CONFORMING_STRINGS:
-                tableFactory = new ShowStandardConformingStringsCursorFactory();
-                break;
-            case IQueryModel.SHOW_SEARCH_PATH:
-                tableFactory = new ShowSearchPathCursorFactory();
-                break;
-            case IQueryModel.SHOW_DATE_STYLE:
-                tableFactory = new ShowDateStyleCursorFactory();
-                break;
-            case IQueryModel.SHOW_TIME_ZONE:
-                tableFactory = new ShowTimeZoneFactory();
-                break;
-            case IQueryModel.SHOW_PARAMETERS:
-                tableFactory = new ShowParametersCursorFactory();
-                break;
-            case IQueryModel.SHOW_SERVER_VERSION:
-                tableFactory = new ShowServerVersionCursorFactory();
-                break;
-            case IQueryModel.SHOW_SERVER_VERSION_NUM:
-                tableFactory = new ShowServerVersionNumCursorFactory();
-                break;
-            case IQueryModel.SHOW_CREATE_DATABASE:
-                tableFactory = sqlParserCallback.generateShowCreateDatabaseFactory(model, executionContext, path);
-                break;
-            case IQueryModel.SHOW_CREATE_TABLE:
-                tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
-                break;
-            case IQueryModel.SHOW_CREATE_LIVE_VIEW:
-                tableFactory = sqlParserCallback.generateShowCreateLiveViewFactory(model, executionContext, path);
-                break;
-            case IQueryModel.SHOW_CREATE_MAT_VIEW:
-                tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
-                break;
-            case IQueryModel.SHOW_CREATE_VIEW:
-                tableFactory = sqlParserCallback.generateShowCreateViewFactory(model, executionContext, path);
-                break;
-            default:
-                tableFactory = sqlParserCallback.generateShowSqlFactory(model);
-                break;
-        }
-        return tableFactory;
-    }
-
     private Function getLoFunction(ExpressionNode limit, SqlExecutionContext executionContext) throws SqlException {
         final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
         final int type = func.getType();
@@ -7781,39 +7782,11 @@ public class SqlOptimiser implements Mutable {
                 : -1;
         try {
             if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_SHOW) {
-                // A SHOW written in a view reads the object it names through that view, like a table-name
-                // function in the view does, see TableUtils.createCursorFunction(). A SHOW in a sub-query of
-                // a view's expression keeps the view that optimise() set for the sub-query.
-                final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
-                if (viewNameExpr != null) {
-                    executionContext.setTableFunctionView(TableUtils.getTableFunctionView(viewNameExpr, executionContext));
-                }
-                final RecordCursorFactory showFactory;
-                try {
-                    final CharSequence objectDisclosingStatement = getObjectDisclosingStatement(model.getShowKind());
-                    if (objectDisclosingStatement != null) {
-                        // a materialized or live view may store what the statement lists only on the terms
-                        // of a function that does so, see SqlExecutionRequirements.DISCLOSES_OBJECTS
-                        functionParser.addObjectDisclosingStatement(model.getModelPosition(), objectDisclosingStatement, executionContext);
-                    }
-                    showFactory = generateShowFactory(model, executionContext, sqlParserCallback);
-                } finally {
-                    if (viewNameExpr != null) {
-                        executionContext.setTableFunctionView(previousView);
-                    }
-                }
+                final RecordCursorFactory showFactory = createShowFactory(functionParser, model, executionContext, sqlParserCallback, path);
                 model.setTableNameFunction(showFactory);
                 // like a table function's, owned by nothing until code generation takes it over
                 tableFactoriesInFlight.add(showFactory);
                 tableFactoryModelsInFlight.add(model);
-                // generateShowFactory() builds every SHOW cursor directly rather than through the function
-                // parser, so nothing else records that this statement reads one. A WAL UPDATE may not read a cursor
-                // at all - it is replicated as SQL and re-executed per node, and a SHOW returns
-                // node-local state (the tables this process knows, this node's partition sizes on disk,
-                // this node's configuration, this node's ACL) that nothing keeps aligned across nodes.
-                // Several SHOW kinds set no table name expression at all, so the model's table-name walk
-                // cannot see them either.
-                functionParser.markCursorFunctionInstantiated();
             } else {
                 // if we haven't initialised the model, initialise it
                 if (model.getTableNameFunction() == null) {
@@ -15099,6 +15072,52 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * Creates the cursor of a SHOW statement. The optimiser creates the first, to read the columns
+     * of the statement, and code generation creates one for each further read of the statement, see
+     * {@code SqlCodeGenerator#generateShowQuery}. Like {@link TableUtils#createCursorFunction} for a
+     * table function, this creates every cursor of the statement alike: a SHOW written in a view
+     * reads the object it names through that view, like a table-name function in the view does, and
+     * a SHOW in a sub-query of a view's expression reads it through the view the context reads the
+     * sub-query through, see {@link ExpressionNode#tableFunctionView}.
+     */
+    static RecordCursorFactory createShowFactory(
+            @NotNull FunctionParser functionParser,
+            @NotNull IQueryModel model,
+            @NotNull SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            Path path
+    ) throws SqlException {
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
+        if (viewNameExpr != null) {
+            executionContext.setTableFunctionView(TableUtils.getTableFunctionView(viewNameExpr, executionContext));
+        }
+        final RecordCursorFactory showFactory;
+        try {
+            final CharSequence objectDisclosingStatement = getObjectDisclosingStatement(model.getShowKind());
+            if (objectDisclosingStatement != null) {
+                // a materialized or live view may store what the statement lists only on the terms
+                // of a function that does so, see SqlExecutionRequirements.DISCLOSES_OBJECTS
+                functionParser.addObjectDisclosingStatement(model.getModelPosition(), objectDisclosingStatement, executionContext);
+            }
+            showFactory = generateShowFactory(model, executionContext, sqlParserCallback, path);
+        } finally {
+            if (viewNameExpr != null) {
+                executionContext.setTableFunctionView(previousView);
+            }
+        }
+        // generateShowFactory() builds every SHOW cursor directly rather than through the function
+        // parser, so nothing else records that this statement reads one. A WAL UPDATE may not read a cursor
+        // at all - it is replicated as SQL and re-executed per node, and a SHOW returns
+        // node-local state (the tables this process knows, this node's partition sizes on disk,
+        // this node's configuration, this node's ACL) that nothing keeps aligned across nodes.
+        // Several SHOW kinds set no table name expression at all, so the model's table-name walk
+        // cannot see them either.
+        functionParser.markCursorFunctionInstantiated();
+        return showFactory;
+    }
+
     static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
             // Unlike tryEvalNonNegativeLongConstant, we don't catch SqlException here.
@@ -15391,8 +15410,8 @@ public class SqlOptimiser implements Mutable {
      * ({@code SqlCodeGenerator#generateFunctionQuery}, {@code SqlCodeGenerator#generateShowQuery}),
      * and so does the generator's cleanup of a failed attempt
      * ({@code SqlCodeGenerator#freeTableNameFunctions}), so only a factory that is still its
-     * model's table name function has no owner. A later generation of such a model instantiates a
-     * table function's factory again; it cannot do so for a SHOW statement.
+     * model's table name function has no owner. A later generation of such a model instantiates
+     * its factory again, as generation does for every read of a model after the first.
      *
      * @param failure the failure in flight, which takes every close failure as suppressed, or
      *                null on a path that has not failed
