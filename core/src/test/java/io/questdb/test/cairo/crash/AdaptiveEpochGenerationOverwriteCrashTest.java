@@ -134,6 +134,58 @@ public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest
         }
     }
 
+    @Test
+    public void testSavePointAfterFallbackSparesTheRecoveredGeneration() throws Exception {
+        // Two generations of one cut, generation 0 listed first; generation 0 is damaged, so a start falls back
+        // to generation 1, the only intact one. The next save point must write into generation 0: a crash inside
+        // a write into generation 1 would leave no trustworthy generation, from a state the design calls
+        // supported. Reads from the recovered table are not under test here, only which file the write hits.
+        final FailCopyFacade ff = new FailCopyFacade();
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        try {
+            assertMemoryLeak(ff, () -> {
+                execute("create table t (ts timestamp, sym symbol, v long) timestamp(ts) partition by day wal");
+                for (int i = 0; i < K; i++) {
+                    execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', 's" + i + "', " + i + ")");
+                }
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("t");
+                try (TableWriter w = getWriter(tt)) {
+                    // Generation 1, then generation 0 at the same cut, as the idle save point does.
+                    w.advanceDurableEpoch(1L);
+                    w.advanceDurableEpoch(2L);
+                }
+                Assert.assertEquals("on a tie generation 0 is listed first", 0, activeGeneration(tt));
+                corruptGeneration(tt, 0);
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                new RecoveryCoordinator(engine).recover();
+
+                // The next save point dies at its header write: the generation it targets is left unpublished.
+                ff.failHeaderWrite();
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(3L);
+                } catch (Throwable expected) {
+                    // best-effort cut, dies at the injected failure
+                } finally {
+                    ff.disarm();
+                }
+                Assert.assertTrue("the injected header failure never fired, so this test proves nothing", ff.failures > 0);
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                // The write went into the damaged generation, so the recovered one is still there: the start succeeds.
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("the start must stand on the generation the fallback selected", 1, activeGeneration(tt));
+                assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n" + K + "\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
     private int activeGeneration(TableToken tt) {
         try (Path p = new Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt);

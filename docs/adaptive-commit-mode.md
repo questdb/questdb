@@ -379,7 +379,9 @@ More detail:
   workers) takes 2.52 s in `sync` (2.36 s before; the two `syncfs` take 31 ms, the directory `fsync` the rest) and
   1.83 s in `adaptive` (the two `syncfs` take 30 ms); `nosync` is unchanged (1.3 s). Elsewhere it is every file of
   the imported partitions, the table's root files and directories, before and after the attach (45-50 flushes for
-  three partitions of four columns). COPY into an existing WAL table in `adaptive` pays for one save point instead.
+  three partitions of four columns). COPY into an existing WAL table in `adaptive` pays for two save points instead,
+  one per generation, so that a start which falls back to the older save point keeps the import; a skipped or failed
+  save point fails the COPY (section 11.6).
   `nosync`, `async` and a non-WAL table in `adaptive`: no flush.
 - **The first `sync` or `adaptive` start after `nosync` or `async`** reads each WAL table's version 1 sequencer log
   from its first transaction and flushes it, once per table (section 8): one `fdatasync` and a read of 28 bytes per
@@ -654,7 +656,7 @@ stays a WAL table with the rows of its save point. The rows after the save point
 |---|---|
 | `UDP line protocol cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart [table=...]` | Send those rows over ILP on HTTP or TCP, or over QWP, or write them into a non-WAL table (section 7.2). |
 | A QWP client fails its connection with a durable-ack mismatch | The client asked for the `local` tier and the server is not in `adaptive` mode (or a flush failed earlier). Switch the server to `adaptive`, or stop asking for `local`. |
-| `partition source next to the attached partition may share its files, do not attach it again [table=..., partition=...]` (at a writer open) or `could not remove attached partition source, it shares files with the attached partition and is unsafe to attach again [path=..., errno=...]` | On an enrolled table ATTACH PARTITION links the files of the `.attachable` directory instead of moving them, and deletes the directory once a save point covers the attach. A crash in between, or a failed deletion, leaves it behind. The partition is attached. Delete the `.attachable` directory of that partition; do not attach it again, its files are the attached partition's files. Delete it only after a restart, or after the table has taken a save point since the ATTACH (an `adaptive durable epoch [table=...]` line for the table in the log): until then a crash can still make the start replay the ATTACH from it. |
+| `partition source next to the attached partition may share its files, do not attach it again [table=..., partition=...]` (at a writer open) or `could not remove attached partition source, it shares files with the attached partition and is unsafe to attach again [path=..., errno=...]` | On an enrolled table ATTACH PARTITION links the files of the `.attachable` directory instead of moving them, and deletes the directory once both save point generations cover the attach. A crash in between, or a failed deletion, leaves it behind. The partition is attached. Delete the `.attachable` directory of that partition; do not attach it again, its files are the attached partition's files. Delete it only after a restart, or after the table has taken two save points since the ATTACH (two `adaptive durable epoch [table=...]` lines for the table in the log): until then a start that falls back to the older save point can still replay the ATTACH from it, and the writer deletes it itself once both save points cover the attach. |
 | `adaptive save point failed its checksums, trying the other generation [table=..., generation=..., epochSeqTxn=...]` or `removing adaptive save point that failed its content checks [table=..., generation=..., ...]` | The newer save point of the table is damaged. When the start goes on, it used the older one, whose WAL is still kept, so the replay brings back every row: nothing to do for the data. It means damage on the disk or a defect: keep the log for a report. If neither save point passes, the start refuses instead (section 11.1). |
 | `adaptive epoch roll-forward restored durable cut [table=..., epochSeqTxn=...]` | Information: the start restored the table after a crash. No action. |
 | `adaptive epoch belongs to a superseded WAL lineage, discarding anchor [table=..., epochSeqTxn=..., seqLastTxn=...]` | Information: the save point named transactions the sequencer no longer has (the table's WAL was replaced). The start removes it, and in `adaptive` the table takes a new one at its first writer. No action. |
@@ -689,6 +691,14 @@ before the COPY could clean up, so the table is as the COPY left it:
   hides the table from then on and keeps its name taken. Stop the server, delete the table's directory
   (`<table>~<id>` under the database root), start, create the table with `CREATE TABLE ... WAL`, and run COPY into
   it.
+
+**COPY failed with `import is not durable against a save point fallback: a save point after the attach was skipped
+or failed [...]`** (into an existing WAL table in `adaptive`). The import was attached, but the save point that makes
+it survive a start which falls back to the older save point was skipped or failed, and the log says why (a
+`durable epoch skipped after attach partition [...]` or `could not advance durable epoch after attach partition
+[...]` line, both critical). Nothing in the WAL redoes an import, so COPY did not report it done: its clean-up
+truncated the target table, which was empty before the COPY. Fix the cause the log names (the skip is transient: a
+structural change in flight, a busy pin slot; a failure is an I/O error on the save point file) and run COPY again.
 
 **A WAL table the COPY created, after any restart** (no crash needed, section 7.6). The table can be read, but
 INSERT and ALTER TABLE fail with `could not open read-write [file=.../txn_seq/_wal_index.d]`, and `DROP TABLE` fails

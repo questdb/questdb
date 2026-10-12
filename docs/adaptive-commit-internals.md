@@ -150,12 +150,16 @@ A generation's header is read as one of four states:
 - **damaged**: the magic is there but a field or the header checksum is wrong;
 - **valid**: everything matches, including the table id from the table registry.
 
-The **current save point** is the valid generation with the higher (seqTxn, txn). A table is **enrolled** when it has
-one. A new save point is always written into the other generation, so the current one is never
-touched while the next is written: a torn rewrite loses to the untouched file, and a complete one wins with its
-higher cut. The other valid generation is the fallback: recovery restores it when the current one fails its
-checksums or its content checks, so its WAL and its partition versions are kept until the next save point
-overwrites it (section 9).
+The **current save point** is the generation the table stands on: the one recovery selected at the last start, or
+the one the table's writer last published. The writer learns it from the save point's pin, which `SeqTxnTracker`
+records with the generation (`pinnedEpochGeneration`); a writer without a pin (enrolment, a baseline published
+outside a writer) takes the valid generation with the higher (seqTxn, txn), the one recovery would select. A txn
+cannot name the current generation: the idle save point (section 9) leaves both generations at one txn, and after a
+fallback the table stands on the older one. A table is **enrolled** when it has a valid generation. A new save
+point is always written into the other generation, so the current one is never touched while the next is written:
+a torn rewrite loses to the untouched file, and a complete one wins with its higher cut. The other valid generation
+is the fallback: recovery restores it when the current one fails its checksums or its content checks, so its WAL
+and its partition versions are kept until the next save point overwrites it (section 9).
 
 ### Writing a generation
 
@@ -196,7 +200,7 @@ the save point's partition pin keeps until then.
 
 1. Skip, with an info line, when local durability is off (a replica), while a structural change is in flight, or
    when the durable frontier is fenced after a failed flush.
-2. Take the target generation: the one that is not current.
+2. Take the target generation: the one that is not current (the pinned generation, section 4).
 3. Flush what the save point will name (`fsyncMaterializedState`): commit and sync every indexer; then
    - Linux with `cairo.adaptive.epoch.column.sync.batched`: start the write-back of
      every dirty column file, wait for it, then one `syncfs`, which also makes the sequencer log, the symbol maps
@@ -214,8 +218,12 @@ the save point's partition pin keeps until then.
 6. The previous save point becomes the fallback and keeps its pin; a previous pin that no generation on disk names
    any more (a restore removed it) is released. Set the save point seqTxn in the tracker, record the time, clear the
    owed mark and the row count. Log `adaptive durable epoch [table=..., epochSeqTxn=..., epochTxn=...]`.
-7. Finish the partition moves the save point now covers (`finishPartitionMovesAfterSavePoint`): delete the
-   `.attachable` directories of this writer's ATTACHes and give its DETACHes their final name (section 10).
+7. Finish the partition moves the save point now covers (`finishPartitionMovesAfterSavePoint`): give this writer's
+   DETACHes their final name, and delete the `.attachable` directory of each of its ATTACHes once the older
+   generation also stands at or past the attach's commit (section 10). The rule for every side effect of a publish:
+   a change the WAL can redo keeps its undo material until the older generation stands at or past its commit; a
+   change the WAL cannot redo takes save points until both generations stand at or past it, and reports success
+   only then.
 
 A failed flush stops the engine (section 9). Any other failure releases the new pin and keeps the previous save
 point, which stays valid and protected. A failure after step 4 released the older pin leaves the older generation
@@ -273,7 +281,9 @@ read by nothing and not deleted.
    is damaged.
 6. Check the chosen generation's sections: lengths and checksums. A generation that fails them never touches the
    live files: it is logged as critical (`adaptive save point failed its checksums, trying the other generation
-   [...]`) and the other generation is tried.
+   [...]`) and the other generation is tried. A read error (a failed stat, open or map of the file) is never a
+   verdict: it fails the start, which can be retried, instead of sending the table down the fallback; the same
+   holds for the reads of steps 7 and 9.
 7. **Lineage guard.** If the save point's seqTxn is past the sequencer's last transaction, it belongs to a WAL that
    was replaced: remove it and treat the table as not enrolled (`adaptive epoch belongs to a superseded WAL lineage,
    ...`, logged as critical). If it is ahead of the live `_txn` but within the sequencer, and the live `_txn` equals
@@ -490,16 +500,18 @@ write nothing, and the purge could remove the version the `_txn` on the device s
 - **ATTACH PARTITION** on an enrolled table of a primary. The partition is attached by hard link, not by rename
   (`TableWriter.linkAttachable`): the files of `.attachable` are linked into the new partition directory (copied
   when a link is not possible, for example across devices; a soft-linked `.attachable` gets a second soft link to
-  the same target), `_txn` is committed, and the inline save point follows. `.attachable` is deleted once a save
-  point covers the attach (section 6, step 7). A crash before that point rewinds, the writer removes the linked
-  directory as an orphan, and the replay links again from the untouched `.attachable`. A crash after the save point
-  and before the deletion leaves `.attachable` next to the attached partition, sharing its inodes: the writer open
-  keeps it and logs `partition source next to the attached partition may share its files, do not attach it again
-  [...]` (advisory), and a failed deletion logs `could not remove attached partition source, it shares files with
-  the attached partition and is unsafe to attach again [...]` (critical). The operator deletes it, after a restart
-  or once a save point followed the ATTACH: the writer open cannot tell a covered leftover from one a save point
-  has not covered yet, which a writer reopened in the same process while save points are skipped can still need.
-  After a restart the advisory is always true, because recovery made the selected save point durable. On a replica
+  the same target), `_txn` is committed, and the inline save point follows. `.attachable` is deleted once both
+  generations cover the attach: the save point after it, and the next one, which puts the older generation at or
+  past the attach's commit (section 6, step 7). A crash before that point rewinds, to the newer generation or, when
+  it is damaged, to the older one; the writer removes the linked directory as an orphan, and the replay links again
+  from the untouched `.attachable`. A close or a crash after the first save point and before the deletion leaves
+  `.attachable` next to the attached partition, sharing its inodes. The writer open queues it for the deletion
+  again when the older pin does not yet cover the attach (the partition's name txn plus one), unless
+  `cairo.attach.partition.copy` is set, since the open cannot tell a copy the attach leaves in place from a linked
+  source; otherwise it keeps it and logs `partition source next to the attached partition may share its files, do
+  not attach it again [...]` (advisory), and a failed deletion logs `could not remove attached partition source, it
+  shares files with the attached partition and is unsafe to attach again [...]` (critical). The operator deletes
+  such a leftover after a restart or once two save points followed the ATTACH. On a replica
   (`TableWriter.defersPartitionMoves` is false without local durability), in other modes, and with
   `cairo.attach.partition.copy`, ATTACH works as before.
 - **DETACH PARTITION**, in every mode. The partition is linked (copied across devices) into a temporary directory
@@ -515,7 +527,11 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   and the commit, or between the commit and its save point, would leave the partition both attached and detached,
   and a replayed or repeated DETACH would be refused.
 - **Parallel COPY.** Into an existing enrolled table, the attach phase that moves the imported partitions into place
-  takes one save point for all of them (`ParallelCsvFileImporter.attachPartitions`). COPY into a new table holds a
+  takes one save point for all of them, and then a second one so that the older generation also stands at or past
+  the attaches (`ParallelCsvFileImporter.attachPartitions`): nothing in the WAL redoes an import, so a start that
+  fell back to the older generation would lose it. When a save point is skipped or fails (both are logged as
+  critical and leave it owed), COPY fails with `import is not durable against a save point fallback [...]` instead
+  of reporting the import done, and its clean-up truncates the target, which was empty. COPY into a new table holds a
   non-WAL token for it, so its writer does not enrol and takes no save point. The import writes its partitions and
   merged symbol files outside a commit, so in `sync` (any target) and in `adaptive` for a WAL table the import
   created (`isImportFlushed`), the importer flushes twice. Before the first attach, `flushPartitionsToAttach`

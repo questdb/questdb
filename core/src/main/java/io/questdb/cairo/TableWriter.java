@@ -213,7 +213,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
     private final IntObjHashMap<AsyncWriterCommand> asyncCommandCache = new IntObjHashMap<>();
-    // Partitions whose ATTACH left .attachable in place; the next published save point covers them and deletes it.
+    // Pairs of (partition timestamp, commit txn) of ATTACHes whose .attachable stays in place until both save point
+    // generations stand at or past the attach: a fallback to the older generation replays the ATTACH from it.
     private final LongList attachablesAfterSavePoint = new LongList();
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
@@ -1358,7 +1359,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             commitTxWriter();
             if (keepsAttachable) {
-                attachablesAfterSavePoint.add(timestamp);
+                attachablesAfterSavePoint.add(timestamp, getTxn());
             }
 
             if (parquetFileSize > -1) {
@@ -8232,17 +8233,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    // A published save point covers every committed attach and detach of this writer.
-    private void finishPartitionMovesAfterSavePoint() {
-        for (int i = 0, n = attachablesAfterSavePoint.size(); i < n; i++) {
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, attachablesAfterSavePoint.getQuick(i), -1L);
+    // A published save point covers every committed attach and detach of this writer. An ATTACH's source goes only
+    // once the older generation stands at or past the attach as well (priorEpochTxn, while its generation is on
+    // disk): a fallback to that generation replays the ATTACH from the source, which nothing else can redo. A DETACH
+    // takes its final name after one save point: a fallback replays it from the original, which the older pin keeps.
+    private void finishPartitionMovesAfterSavePoint(boolean priorOnDisk, long priorEpochTxn) {
+        int kept = 0;
+        for (int i = 0, n = attachablesAfterSavePoint.size(); i < n; i += 2) {
+            final long timestamp = attachablesAfterSavePoint.getQuick(i);
+            final long attachTxn = attachablesAfterSavePoint.getQuick(i + 1);
+            if (priorOnDisk && priorEpochTxn < attachTxn) {
+                attachablesAfterSavePoint.setQuick(kept++, timestamp);
+                attachablesAfterSavePoint.setQuick(kept++, attachTxn);
+                continue;
+            }
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, timestamp, -1L);
             other.put(configuration.getAttachPartitionSuffix());
             if (!ff.unlinkOrRemove(other, LOG)) {
                 LOG.critical().$("could not remove attached partition source, it shares files with the attached partition and is unsafe to attach again [path=")
                         .$(other).$(", errno=").$(ff.errno()).I$();
             }
         }
-        attachablesAfterSavePoint.clear();
+        attachablesAfterSavePoint.setPos(kept);
         other.trimTo(pathSize);
         for (int i = 0, n = detachesAfterSavePoint.size(); i < n; i += 2) {
             finishDetach(detachesAfterSavePoint.getQuick(i), detachesAfterSavePoint.getQuick(i + 1));
@@ -13427,11 +13439,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long timestamp = partitionMovesFound.getQuick(i);
                     final long detachTxn = partitionMovesFound.getQuick(i + 1);
                     if (detachTxn < 0) {
-                        // An adaptive ATTACH links .attachable and deletes it after its save point; a crash in between
-                        // leaves it sharing files with the attached partition.
+                        // An adaptive ATTACH links .attachable and deletes it once both save point generations cover
+                        // the attach; a close or a crash in between leaves it sharing files with the attached partition.
                         if (adaptive && txWriter.attachedPartitionsContains(timestamp)) {
-                            LOG.advisory().$("partition source next to the attached partition may share its files, do not attach it again [table=")
-                                    .$(tableToken).$(", partition=").$ts(timestampDriver, timestamp).I$();
+                            // The attach's commit txn: the partition is named with the txn before that commit. Until
+                            // the older generation (its pin, or the only pin) stands at or past it, the source is a
+                            // fallback's replay material and goes with the save point that covers it. With
+                            // cairo.attach.partition.copy the attach leaves a copy in place, which the open cannot tell
+                            // from a linked source, so it is never queued.
+                            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                            final long attachTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp) + 1;
+                            final long otherPinnedTxn = tracker.getOtherPinnedEpochTxn();
+                            final long olderPinnedTxn = otherPinnedTxn >= 0 ? otherPinnedTxn : tracker.getPinnedEpochTxn();
+                            if (!configuration.attachPartitionCopy()
+                                    && engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()
+                                    && olderPinnedTxn < attachTxn) {
+                                attachablesAfterSavePoint.add(timestamp, attachTxn);
+                            } else {
+                                LOG.advisory().$("partition source next to the attached partition may share its files, do not attach it again [table=")
+                                        .$(tableToken).$(", partition=").$ts(timestampDriver, timestamp).I$();
+                            }
                         }
                     } else if (txWriter.getTxn() < detachTxn) {
                         // The DETACH's commit did not survive: the partition is still attached, or the replay creates it.
@@ -16362,17 +16389,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // Write the generation that is not current, chosen before anything is written: a failed write can damage
-        // only that one. Current is the generation the table stands on, the one its pin names (recovery pins the
-        // generation it selected, each publish its own), else the valid one with the higher (seqTxn, txn). After a
-        // fallback from a newer generation that kept a valid header, the pin keeps this from overwriting the only
-        // good one. Build from this writer's own root, not configuration.getDbRoot(): a writer can be opened
-        // against a different root (CopyImportTask builds one under the COPY work directory). `path` is already
-        // root + tableToken.
+        // only that one. Current is the generation the table stands on, which the tracker records with the pin: the
+        // generation recovery selected, or the one this writer last published. A txn cannot name it: the idle save
+        // point leaves both generations at one txn, and after a fallback from a newer generation that kept a valid
+        // header the pin is what keeps this from overwriting the only good one. A writer without a pin (enrolment,
+        // a baseline published outside a writer), or whose pinned generation a restore removed from the disk,
+        // stands on the valid generation with the higher (seqTxn, txn), the one recovery would select. Build from
+        // this writer's own root, not configuration.getDbRoot(): a writer can be opened against a different root
+        // (CopyImportTask builds one under the COPY work directory). `path` is already root + tableToken.
         final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId());
         int currentGeneration = saved.length > 0 ? saved[0].generation : -1;
+        final int pinnedGeneration = tracker.getPinnedEpochTxn() >= 0 ? tracker.getPinnedEpochGeneration() : -1;
         for (int i = 0; i < saved.length; i++) {
-            if (saved[i].epochTxn == tracker.getPinnedEpochTxn()) {
-                currentGeneration = saved[i].generation;
+            if (saved[i].generation == pinnedGeneration) {
+                currentGeneration = pinnedGeneration;
                 break;
             }
         }
@@ -16410,7 +16440,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long otherEpochTxn = tracker.getOtherPinnedEpochTxn();
         if (otherEpochTxn >= 0) {
             txnScoreboard.releaseTxn(newSlotId, otherEpochTxn);
-            tracker.setPinnedEpoch(priorEpochTxn, priorSlotA, -1);
+            tracker.setPinnedEpoch(priorEpochTxn, priorSlotA, -1, tracker.getPinnedEpochGeneration());
         }
         if (!txnScoreboard.incrementTxn(newSlotId, epochTxn)) {
             // Keep the prior pin, the current save point and the frontier; the next batch retries.
@@ -16445,12 +16475,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // names any more (a restore removed the save point) protects nothing and goes.
         boolean priorOnDisk = false;
         for (int i = 0; i < saved.length; i++) {
-            priorOnDisk |= saved[i].generation != epochGeneration && saved[i].epochTxn == priorEpochTxn;
+            priorOnDisk |= saved[i].generation == currentGeneration && saved[i].epochTxn == priorEpochTxn;
         }
         if (priorEpochTxn >= 0 && !priorOnDisk) {
             txnScoreboard.releaseTxn(priorSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B, priorEpochTxn);
         }
-        tracker.setPinnedEpoch(epochTxn, newSlotA, priorOnDisk ? priorEpochTxn : -1);
+        tracker.setPinnedEpoch(epochTxn, newSlotA, priorOnDisk ? priorEpochTxn : -1, epochGeneration);
         // A version left to the purge while a pin covered it goes once no save point names it, and nothing else
         // queues that purge: queue it after each save point until the older pin reaches the txn it was left at.
         if (partitionPurgeOwedTxn > -1) {
@@ -16475,7 +16505,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.clearDirtyPartitions();
         columnVersionWriter.clearDirtyPartitions();
         epochWriteSetIncomplete = false;
-        finishPartitionMovesAfterSavePoint();
+        finishPartitionMovesAfterSavePoint(priorOnDisk, priorEpochTxn);
 
         LOG.info().$("adaptive durable epoch [table=").$(tableToken)
                 .$(", epochSeqTxn=").$(epochSeqTxn).$(", epochTxn=").$(epochTxn).I$();

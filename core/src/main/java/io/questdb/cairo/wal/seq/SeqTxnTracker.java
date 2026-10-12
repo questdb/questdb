@@ -81,6 +81,11 @@ public class SeqTxnTracker {
     // Recovery falls back to that generation when the current one is damaged, so its partition versions stay
     // until the next save point overwrites it.
     private volatile long otherPinnedEpochTxn = -1;
+    // The generation (0 or 1) that holds the current save point, the one the table stands on: the generation
+    // recovery selected, or the one this table's writer last published; -1 while no save point is pinned. The
+    // next save point is written into the other generation. A txn cannot name it: the idle save point leaves
+    // both generations at one txn, and recovery may select either of them.
+    private volatile int pinnedEpochGeneration = -1;
     // The partition-version txn of the current save point, pinned in the scoreboard, or -1 if none. advance()
     // pins a new save point in the free ping-pong slot, and this one becomes the other pin. Like the scoreboard,
     // both live in memory only; recovery re-establishes the pins after a restart.
@@ -291,6 +296,14 @@ public class SeqTxnTracker {
      */
     public long getOtherPinnedEpochTxn() {
         return otherPinnedEpochTxn;
+    }
+
+    /**
+     * The generation that holds the current save point, the one the table stands on, or -1 while no save point
+     * is pinned.
+     */
+    public int getPinnedEpochGeneration() {
+        return pinnedEpochGeneration;
     }
 
     public long getPinnedEpochTxn() {
@@ -758,19 +771,21 @@ public class SeqTxnTracker {
 
     /**
      * Records the save point txn pinned in the scoreboard (or -1 when none), the ping-pong slot that holds it
-     * (true => EPOCH_ID_A), and the other generation's pin in the other slot (or -1). Called after advance()
-     * completes the pin handover.
+     * (true => EPOCH_ID_A), the other generation's pin in the other slot (or -1), and the generation that holds
+     * the current save point. Called after advance() completes the pin handover.
      */
-    public synchronized void setPinnedEpoch(long pinnedEpochTxn, boolean slotIsA, long otherPinnedEpochTxn) {
+    public synchronized void setPinnedEpoch(long pinnedEpochTxn, boolean slotIsA, long otherPinnedEpochTxn, int pinnedEpochGeneration) {
         this.pinnedEpochTxn = pinnedEpochTxn;
         this.pinnedEpochSlotIsA = slotIsA;
         this.otherPinnedEpochTxn = otherPinnedEpochTxn;
+        this.pinnedEpochGeneration = pinnedEpochGeneration;
     }
 
     public synchronized void clearPinnedEpoch() {
         pinnedEpochTxn = -1;
         pinnedEpochSlotIsA = false;
         otherPinnedEpochTxn = -1;
+        pinnedEpochGeneration = -1;
         durableEpochSeqTxn = 0;
     }
 
