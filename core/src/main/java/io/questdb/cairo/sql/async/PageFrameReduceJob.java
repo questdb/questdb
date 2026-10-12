@@ -276,8 +276,8 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                                 subSeq.done(cursor);
                             } finally {
                                 // Reduced counter has to be incremented only when we make
-                                // sure that the task is available for consumers.
-                                frameSequence.getReduceFinishedCounter().incrementAndGet();
+                                // sure that the task is available for consumers. It counts frames.
+                                frameSequence.getReduceFinishedCounter().addAndGet(task.getGroupSize());
                                 if (dispatcher != null) {
                                     dispatcher.signalProgress(frameSequence);
                                 }
@@ -337,6 +337,43 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             assert !frameSequence.done;
             frameSequence.getReduceStartedCounter().incrementAndGet();
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
+            // the frame group's later frames, each into its own task, see PageFrameReduceTask.getGroupTask(),
+            // with the circuit breaker checked before each, as it is before every frame of its own
+            for (int k = 1, n = task.getGroupSize(); k < n && frameSequence.isActive(); k++) {
+                final int frameCbState = frameSequence.isUninterruptible()
+                        ? SqlExecutionCircuitBreaker.STATE_OK
+                        : circuitBreaker.getStateOrYield(
+                        frameSequence.getStartTime(),
+                        frameSequence.getCircuitBreaker().getFd()
+                );
+                if (frameCbState != SqlExecutionCircuitBreaker.STATE_OK) {
+                    frameSequence.cancel(frameCbState);
+                    break;
+                }
+                final PageFrameReduceTask groupTask = task.getGroupTask(k);
+                try {
+                    frameSequence.getReduceStartedCounter().incrementAndGet();
+                    frameSequence.getReducer().reduce(workerId, record, groupTask, circuitBreaker, stealingFrameSequence);
+                } catch (Throwable th) {
+                    // The error belongs to this frame: the collector returns the frames before it
+                    // and raises it at this one, as it would have without the group.
+                    if (frameSequence.isReducerFailureReportable(th)) {
+                        LOG.error()
+                                .$("reduce error [error=").$(th)
+                                .$(", id=").$(frameSequence.getId())
+                                .$(", taskType=").$(groupTask.getTaskType())
+                                .$(", frameIndex=").$(groupTask.getFrameIndex())
+                                .$(", frameCount=").$(frameSequence.getFrameCount())
+                                .I$();
+                        groupTask.setErrorMsg(th);
+                        frameSequence.cancelOnReducerError(th);
+                    }
+                    if (th instanceof Error error) {
+                        throw error;
+                    }
+                    break;
+                }
+            }
         } else {
             frameSequence.cancel(cbState);
         }

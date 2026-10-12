@@ -654,7 +654,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             suppressCleanupFailure(failure, cleanupFailure);
         }
         try {
-            frameSequence.getReduceFinishedCounter().incrementAndGet();
+            frameSequence.getReduceFinishedCounter().addAndGet(reduceTask.getGroupSize());
         } catch (Throwable cleanupFailure) {
             suppressCleanupFailure(failure, cleanupFailure);
         }
@@ -702,7 +702,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 try {
                     subSeq.done(cursor);
                 } finally {
-                    frameSequence.getReduceFinishedCounter().incrementAndGet();
+                    frameSequence.getReduceFinishedCounter().addAndGet(task.getGroupSize());
                     signalProgress(frameSequence);
                 }
             } else {

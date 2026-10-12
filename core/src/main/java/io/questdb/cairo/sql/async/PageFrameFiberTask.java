@@ -309,7 +309,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             try {
                 orderedSubSeq.done(orderedCursor);
             } finally {
-                orderedFrameSequence.getReduceFinishedCounter().incrementAndGet();
+                orderedFrameSequence.getReduceFinishedCounter().addAndGet(orderedReduceTask != null ? orderedReduceTask.getGroupSize() : 1);
                 dispatcher.signalProgress(orderedFrameSequence);
             }
         } else if (unorderedFrameSequence != null) {
@@ -332,7 +332,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         this.orderedCursor = cursor;
         this.orderedReduceTask = reduceTask;
         this.orderedFrameSequence = frameSequence;
-        batch.addRows(reduceTask.getFrameRowCount());
+        batch.addRows(reduceTask.getTaskRowCount());
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
@@ -363,7 +363,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 try {
                     subSeq.done(cursor);
                 } finally {
-                    frameSequence.getReduceFinishedCounter().incrementAndGet();
+                    frameSequence.getReduceFinishedCounter().addAndGet(reduceTask.getGroupSize());
                     dispatcher.signalProgress(frameSequence);
                 }
             }

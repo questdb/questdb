@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
@@ -52,9 +53,12 @@ import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -62,13 +66,25 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
+    // tests: frame groups of more than one frame dispatched, counted under -ea only
+    private static final AtomicLong GROUPS_DISPATCHED = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
+    // A frame group (see PageFrameReduceTask.getGroupTask()) takes consecutive native frames while
+    // their rows stay within GROUP_ROWS, at most MAX_GROUP_FRAMES of them: tiny frames, as a table of
+    // many small partitions has, then cost the queue and the ordered collect once per group.
+    private static final long GROUP_ROWS = 65_536;
+    private static final int MAX_GROUP_FRAMES = 16;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
     // native frames come without column addresses, which the threads processing them compute, see
     // PageFrameCursor.deferFrameAddresses()
     private final boolean deferFrameAddresses;
+    // tiny frames go out in groups, see groupSize(); filters only, whose reducers keep no state across frames
+    private final boolean groupFrames;
     private final LongList frameRowCounts = new LongList();
+    // the tasks this sequence lends its frame groups for their later frames, see takeGroupTask()
+    private final ObjList<PageFrameReduceTask> freeGroupTasks = new ObjList<>();
+    private final ObjList<PageFrameReduceTask> groupTasks = new ObjList<>();
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
     private final AtomicInteger reduceFinishedCounter = new AtomicInteger(0);
@@ -84,6 +100,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private PageFrameAddressCache frameAddressCache;
     private int frameCount;
     private PageFrameCursor frameCursor;
+    // the collect cursor of a frame group whose frames are being returned, -1 when none, and the
+    // group frame the collector stands at
+    private long groupCursor = -1;
+    private int groupCursorFrame;
     private long id;
     private boolean isClosing;
     private PageFrameMemoryRecord localRecord;
@@ -123,6 +143,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
             this.deferFrameAddresses = configuration.isSqlParallelFrameDispatchEnabled();
+            this.groupFrames = deferFrameAddresses && taskType == PageFrameReduceTask.TYPE_FILTER;
             this.localTaskFactory = localTaskFactory;
             this.workStealingStrategy = configuration.getFactoryProvider()
                     .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
@@ -148,6 +169,18 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         final boolean canPark = dispatcher != null && isFiberSuspendable();
+        if (groupCursor > -1) {
+            // the collector stopped inside a frame group: the group's slot goes with its last frame
+            final PageFrameReduceTask task = reduceQueue.get(groupCursor);
+            collectedFrameIndex = task.getFrameIndex() + task.getGroupSize() - 1;
+            task.collected(true);
+            collectSubSeq.done(groupCursor);
+            groupCursor = -1;
+            groupCursorFrame = 0;
+            if (dispatcher != null) {
+                dispatcher.signalProgress(this);
+            }
+        }
         while (!done) {
             // Sampled before the work checks below: a producer that signals progress after the
             // checks but before the sample would otherwise be missed and this fiber would park.
@@ -195,7 +228,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     final PageFrameSequence<?> taskFrameSequence = task.getFrameSequence();
                     if (taskFrameSequence == this) {
                         assert id == task.getFrameSequenceId() : "ids mismatch: " + id + ", " + task.getFrameSequenceId();
-                        collectedFrameIndex = task.getFrameIndex();
+                        collectedFrameIndex = task.getFrameIndex() + task.getGroupSize() - 1;
                         task.collected(true);
                     }
                     collectSubSeq.done(cursor);
@@ -262,7 +295,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             return;
         }
         PageFrameReduceTask task = reduceQueue.get(cursor);
-        collectedFrameIndex = task.getFrameIndex();
+        if (cursor == groupCursor) {
+            collectedFrameIndex = task.getFrameIndex() + groupCursorFrame;
+            if (++groupCursorFrame < task.getGroupSize()) {
+                // the group's next frame: the same cursor comes back from next()
+                return;
+            }
+            groupCursor = -1;
+            groupCursorFrame = 0;
+        } else {
+            collectedFrameIndex = task.getFrameIndex();
+        }
         task.collected(forceCollect);
         collectSubSeq.done(cursor);
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
@@ -301,6 +344,14 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return frameAddressCache;
     }
 
+    /**
+     * Frame groups of more than one frame dispatched since the JVM started, counted under -ea only.
+     */
+    @TestOnly
+    public static long getGroupsDispatched() {
+        return GROUPS_DISPATCHED.get();
+    }
+
     public AtomicInteger getReduceFinishedCounter() {
         return reduceFinishedCounter;
     }
@@ -329,13 +380,36 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return frameCursor;
     }
 
+    /**
+     * Lends a task for a later frame of a frame group, see {@link PageFrameReduceTask#getGroupTask(int)}.
+     * The query's thread lends them as it dispatches groups and takes them back as it collects them,
+     * so the sequence holds as many as it has group frames in flight.
+     */
+    PageFrameReduceTask takeGroupTask() {
+        final int n = freeGroupTasks.size();
+        if (n > 0) {
+            final PageFrameReduceTask task = freeGroupTasks.getQuick(n - 1);
+            freeGroupTasks.setPos(n - 1);
+            return task;
+        }
+        final PageFrameReduceTask task = localTaskFactory.getInstance();
+        task.setTaskType(taskType);
+        groupTasks.add(task);
+        return task;
+    }
+
+    void releaseGroupTask(PageFrameReduceTask task) {
+        freeGroupTasks.add(task);
+    }
+
     public PageFrameReduceTask getTask(long cursor) {
         assert cursor > -1;
         if (cursor == LOCAL_TASK_CURSOR) {
             assert localTask != null && localTask.getFrameSequence() != null;
             return localTask;
         }
-        return reduceQueue.get(cursor);
+        final PageFrameReduceTask task = reduceQueue.get(cursor);
+        return cursor == groupCursor ? task.getGroupTask(groupCursorFrame) : task;
     }
 
     public byte getTaskType() {
@@ -376,6 +450,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
 
         assert collectedFrameIndex < frameCount - 1;
+        if (groupCursor > -1) {
+            // a frame group's frames come back one by one, see collect()
+            return groupCursor;
+        }
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         final boolean canPark = dispatcher != null && isFiberSuspendable();
         while (true) {
@@ -389,6 +467,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 PageFrameSequence<?> thatFrameSequence = task.getFrameSequence();
                 if (thatFrameSequence == this) {
                     assert id == task.getFrameSequenceId() : "ids mismatch: " + id + ", " + task.getFrameSequenceId();
+                    if (task.getGroupSize() > 1) {
+                        groupCursor = cursor;
+                        groupCursorFrame = 0;
+                    }
                     return cursor;
                 } else {
                     // Not our task, nothing to collect. Go for another spin.
@@ -518,6 +600,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         frameCount = 0;
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
+        groupCursor = -1;
+        groupCursorFrame = 0;
         readyToDispatch = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
@@ -588,6 +672,14 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 }
             }
         }
+        // Every group has been collected by now, which gave its tasks back: free them, so that a
+        // closed cursor keeps none of their memory. The next execution lends new ones.
+        assert freeGroupTasks.size() == groupTasks.size();
+        freeGroupTasks.clear();
+        for (int i = 0, n = groupTasks.size(); i < n; i++) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, groupTasks.getQuick(i));
+        }
+        groupTasks.clear();
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -680,6 +772,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         boolean idle = true;
         boolean dispatched = false;
         final int collectedFrameCount = collectedFrameIndex + 1;
+        int groupSize = 1;
 
         try {
             if (!hasPublication) {
@@ -704,7 +797,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     } else {
                         cursor = reducePubSeq.next();
                         if (cursor > -1) {
-                            reduceQueue.get(cursor).of(this, i, countOnly);
+                            groupSize = groupSize(i, dispatchLimit - totalDispatched);
+                            assert groupSize == 1 || GROUPS_DISPATCHED.incrementAndGet() > 0;
+                            reduceQueue.get(cursor).of(this, i, groupSize, countOnly);
                             reducePubSeq.done(cursor);
                         }
                     }
@@ -713,9 +808,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                                 .$("dispatched [shard=").$(shard)
                                 .$(", id=").$(getId())
                                 .$(", frameIndex=").$(i)
+                                .$(", groupSize=").$(groupSize)
                                 .$(", frameCount=").$(frameCount)
                                 .$(", cursor=").$(cursor)
                                 .I$();
+                        i += groupSize - 1;
                         dispatchStartFrameIndex = i + 1;
                         dispatched = true;
                         break;
@@ -788,6 +885,29 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 dispatcher.releasePublication();
             }
         }
+    }
+
+    // The frames the next task takes from frameIndex on: a group of small native frames, see
+    // GROUP_ROWS, or the frame alone.
+    private int groupSize(int frameIndex, int frameLimit) {
+        if (!groupFrames) {
+            return 1;
+        }
+        final int maxFrames = Math.min(Math.min(MAX_GROUP_FRAMES, frameLimit), frameCount - frameIndex);
+        long rows = 0;
+        int n = 0;
+        while (n < maxFrames) {
+            final int f = frameIndex + n;
+            if (frameAddressCache.getFrameFormat(f) != PartitionFormat.NATIVE || frameAddressCache.isFrameCovered(f)) {
+                break;
+            }
+            rows += frameRowCounts.getQuick(f);
+            if (n > 0 && rows > GROUP_ROWS) {
+                break;
+            }
+            n++;
+        }
+        return Math.max(1, n);
     }
 
     private void reduceLocally(boolean countOnly) {
