@@ -5899,6 +5899,9 @@ public class SqlOptimiser implements Mutable {
         if (node == null) {
             return false;
         }
+        if (node.type == OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isIntegerAggregateConstant(node.rhs, sqlExecutionContext);
+        }
 
         final int type;
         if (node.type == FUNCTION && isCastKeyword(node.token) && node.paramCount == 2

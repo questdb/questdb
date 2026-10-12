@@ -528,6 +528,76 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumNegativeIntegerOperandMatchesLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (2_147_483_647), (null), (1)");
+            String expected = """
+                    a\tb\tc\td\te\tf
+                    -4294967296\t-4294967296\t2147483644\t2147483644\t2147483652\t-2147483652
+                    """;
+            assertSumArithmetic("-2", expected);
+            assertSumArithmetic("(-2)", expected);
+            assertSumArithmetic("-(-(-2))", expected);
+            assertSumArithmetic("-2::INT", expected);
+            assertSumArithmetic("(-2)::INT", expected);
+
+            bindVariableService.setInt("k", -2);
+            assertSumArithmetic(":k", expected);
+            bindVariableService.setInt("p", 2);
+            assertSumArithmetic("-:p", expected);
+            bindVariableService.setInt(0, -2);
+            assertSumArithmetic("$1", expected);
+            bindVariableService.setStr("s", "-2");
+            assertSumArithmetic(":s::INT", expected);
+            bindVariableService.setStr("t", "2");
+            assertSumArithmetic("-:t::INT", expected);
+        });
+    }
+
+    @Test
+    public void testSumNegativeLongOperandMatchesLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG)");
+            execute("INSERT INTO t VALUES (-4_611_686_018_427_387_904), (1), (null)");
+            String expected = """
+                    a\tb\tc\td\te\tf
+                    9223372036854775806\t9223372036854775806\t-4611686018427387907\t-4611686018427387907\t-4611686018427387899\t4611686018427387899
+                    """;
+            assertSumArithmetic("-2", expected);
+            assertSumArithmetic("-2L", expected);
+            bindVariableService.setLong("k", -2);
+            assertSumArithmetic(":k", expected);
+            bindVariableService.setLong("p", 2);
+            assertSumArithmetic("-:p", expected);
+            bindVariableService.setStr("s", "-2");
+            assertSumArithmetic(":s::LONG", expected);
+        });
+    }
+
+    @Test
+    public void testSumNegativeNonIntegerAndRowDependentOperands() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (i LONG, x SHORT, y INT)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10_000_000_000_000_000, 30_000, 927_094),
+                    (-10_000_000_000_000_000, 0, 0)
+                    """);
+            bindVariableService.setDouble("v", 1);
+            assertQuery("""
+                    SELECT SUM(i + -1.0) AS a, SUM(i + -:v) AS b, SUM(i + -1::DOUBLE) AS c,
+                           SUM(x * -y) AS d, SUM(x * -(y::INT)) AS e
+                    FROM t
+                    """)
+                    .noLeakCheck().noRandomAccess().expectSize().returns("""
+                            a\tb\tc\td\te
+                            0.0\t0.0\t0.0\t-2043016224\t-2043016224
+                            """);
+        });
+    }
+
+    @Test
     public void testSumNonIntegerAndRowDependentOperands() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x SHORT, y INT)");
@@ -919,6 +989,23 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumRebindNegatedMultiplier() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x SHORT)");
+            execute("INSERT INTO t VALUES (30_000)");
+            ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok("small", "s\n-60000\n", b -> b.setInt("p", 2)));
+            cases.add(BindVarTuple.ok("overflow", "s\n-27812820000\n", b -> b.setInt("p", 927_094)));
+            cases.add(BindVarTuple.ok("negative", "s\n27812820000\n", b -> b.setInt("p", -927_094)));
+            cases.add(BindVarTuple.ok("null", "s\nnull\n", b -> b.setInt("p", Numbers.INT_NULL)));
+            cases.add(BindVarTuple.ok("zero", "s\n0\n", b -> b.setInt("p", 0)));
+            cases.add(BindVarTuple.ok("small again", "s\n-60000\n", b -> b.setInt("p", 2)));
+            assertQuery("SELECT SUM(x * -:p) AS s FROM t")
+                    .noLeakCheck().noRandomAccess().expectSize().assertBinds(cases);
+        });
+    }
+
+    @Test
     public void testSumRebindStringCastMultiplier() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x SHORT)");
@@ -969,6 +1056,25 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             bindVariableService.setStr("k", "927094");
             assertQuery("SELECT SUM(:k::INT * x) s, ts FROM t SAMPLE BY 1d FILL(7)")
                     .noLeakCheck().timestamp("ts").noRandomAccess().returns(expected);
+        });
+    }
+
+    @Test
+    public void testSumSampleByNegativeBindMatchesLiteralOnOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c1 SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (30_000, '2024-01-01'), (-30_000, '2024-01-02')");
+            String expected = """
+                    k_a\tagg_a\tts_a
+                    HQDB\t-27812820000\t2024-01-01T00:00:00.000000Z
+                    HQDB\t27812820000\t2024-01-02T00:00:00.000000Z
+                    """;
+            assertQuery("SELECT 'HQDB' AS k_a, SUM(-927_094 * c1) AS agg_a, ts AS ts_a FROM t SAMPLE BY 1d ORDER BY 2 ASC, 3")
+                    .noLeakCheck().expectSize().withPlanContaining("values: [sum(c1)]").returns(expected);
+            bindVariableService.setStr("b0", "HQDB");
+            bindVariableService.setStr("b1", "-927094");
+            assertQuery("SELECT :b0::STRING AS k_a, SUM(:b1::INT * c1) AS agg_a, ts AS ts_a FROM t SAMPLE BY 1d ORDER BY 2 ASC, 3")
+                    .noLeakCheck().expectSize().withPlanContaining("values: [sum(c1)]").returns(expected);
         });
     }
 
