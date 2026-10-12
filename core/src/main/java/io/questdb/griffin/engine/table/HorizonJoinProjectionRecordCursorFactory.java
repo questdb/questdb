@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -142,7 +143,11 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         sink.type("Horizon Join Projection").meta("offsets").val(offsetCount);
         sink.child(masterFactory);
         for (int s = 0, n = slaveStates.size(); s < n; s++) {
-            sink.child(slaveStates.getQuick(s).getFactory());
+            final HorizonJoinSlaveState state = slaveStates.getQuick(s);
+            if (state.getFilter() != null) {
+                sink.attr("slave filter").val(state.getFilter(), state.getFactory());
+            }
+            sink.child(state.getFactory());
         }
     }
 
@@ -195,6 +200,8 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         private final DirectLongList rowIds;
         private final ObjList<TimeFrameCursor> slaveCursors;
         private final int slaveCount;
+        // Owned by the factory. The cursor initializes, rewinds and closes the slave filters.
+        private final ObjList<HorizonJoinSlaveState> slaveStates;
         private final ObjList<SymbolTableSource> slaveSymbolTableSources;
         // Slave row ids of the current batch: row i and offset k start at (i * offsetCount + k) * slaveCount.
         private final DirectLongList slots;
@@ -202,6 +209,8 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         private final DirectLongList timestamps;
         private long batchRowCount;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        // Slaves whose filter of() has initialized, and close() has yet to close
+        private int initializedSlaveFilterCount;
         private boolean isMasterExhausted;
         private RecordCursor masterCursor;
         private Record masterRecord;
@@ -220,6 +229,7 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
                 int[] columnSources,
                 int[] columnIndexes
         ) {
+            this.slaveStates = slaveStates;
             this.slaveCount = slaveStates.size();
             this.offsets = offsets;
             this.offsetCount = offsets.length;
@@ -245,7 +255,7 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
                 // SYMBOL column reads VALUE_IS_NULL as its key, not INT_NULL.
                 nullSlaveRecords.add(NullRecordFactory.getInstance(slaveStates.getQuick(s).getFactory().getMetadata()));
             }
-            this.matcher = new HorizonJoinMatcher(configuration, slaveStates, masterAsOfJoinMapSinkClasses, slaveAsOfJoinMapSinkClasses);
+            this.matcher = new HorizonJoinMatcher(configuration, slaveStates, masterAsOfJoinMapSinkClasses, slaveAsOfJoinMapSinkClasses, -1);
         }
 
         @Override
@@ -277,6 +287,11 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
             failure = Misc.freeBestEffort(failure, timestamps);
             failure = Misc.freeBestEffort(failure, slots);
             failure = Misc.freeBestEffort(failure, horizonIterator);
+            final int count = initializedSlaveFilterCount;
+            initializedSlaveFilterCount = 0;
+            for (int s = 0; s < count; s++) {
+                failure = slaveStates.getQuick(s).cursorClosed(failure);
+            }
             CairoException.rethrowCleanupFailure(failure);
         }
 
@@ -341,6 +356,12 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
         @Override
         public void toTop() {
             masterCursor.toTop();
+            for (int s = 0; s < initializedSlaveFilterCount; s++) {
+                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
+                if (slaveFilter != null) {
+                    slaveFilter.toTop();
+                }
+            }
             batchRowCount = 0;
             rowPosition = 0;
             offsetPosition = 0;
@@ -384,12 +405,12 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
                     masterCursor.recordAt(masterRecord, rowIds.get(rowIndex));
                 }
                 final long slot = (rowIndex * offsetCount + horizonIterator.getOffsetIndex()) * slaveCount;
-                matcher.match(horizonIterator.getHorizonTimestamp(), masterRecord, slotsAddress + (slot << 3));
+                matcher.match(horizonIterator.getHorizonTimestamp(), masterRecord, slotsAddress + (slot << 3), circuitBreaker);
             }
             return true;
         }
 
-        private void of(SqlExecutionContext executionContext) {
+        private void of(SqlExecutionContext executionContext) throws SqlException {
             circuitBreaker = executionContext.getCircuitBreaker();
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             masterRecord = masterCursor.getRecordB();
@@ -406,6 +427,12 @@ public class HorizonJoinProjectionRecordCursorFactory extends AbstractRecordCurs
             for (int s = 0; s < slaveCount; s++) {
                 final TimeFrameCursor slaveCursor = slaveCursors.getQuick(s);
                 slaveSymbolTableSources.setQuick(s, slaveCursor);
+                // Count the slave first, so that close() also closes a filter whose init() throws.
+                initializedSlaveFilterCount = s + 1;
+                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
+                if (slaveFilter != null) {
+                    slaveFilter.init(slaveCursor, executionContext);
+                }
                 matcher.of(s, slaveCursor, masterCursor, slaveCursor, executionContext.getMemoryTracker());
             }
             symbolTableSource.of(masterCursor, slaveSymbolTableSources);

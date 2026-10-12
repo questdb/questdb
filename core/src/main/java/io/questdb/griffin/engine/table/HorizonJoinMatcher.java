@@ -32,7 +32,9 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.MemoryTracker;
@@ -62,6 +64,9 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * together, and without it a keyed lookup would scan backward at every one of them. The toTop()
  * before each batch does not bound the forward scans that the switch starts, since one batch
  * already spans all offsets: the helpers bound them themselves, see the helper's constructor.
+ * <p>
+ * The helpers borrow the slave filters of the slave states: the owner's filter, or a worker
+ * slot's clone of it. The caller initializes a filter before it binds the slave with {@link #of}.
  */
 public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     private final ObjList<Map> asOfJoinMaps;
@@ -73,11 +78,16 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     private final ObjList<RecordSink> slaveSinks;
     private final ObjList<SymbolTranslatingRecord> translatingRecords;
 
+    /**
+     * @param workerIndex the worker slot whose clones of the slave filters the helpers use, or -1
+     *                    for the owner thread, whose helpers use the filters of the slave states
+     */
     public HorizonJoinMatcher(
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
-            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses
+            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
+            int workerIndex
     ) {
         this.slaveCount = slaveStates.size();
         this.asOfJoinMaps = new ObjList<>(slaveCount);
@@ -92,12 +102,16 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
             for (int s = 0; s < slaveCount; s++) {
                 final HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 masterTsScales[s] = state.getMasterTsScale();
+                final ObjList<Function> perWorkerFilters = state.getPerWorkerFilters();
                 helpers.add(new HorizonJoinTimeFrameHelper(
+                        configuration,
                         configuration.getSqlAsOfJoinLookAhead(),
                         state.getSlaveTsScale(),
                         configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold(),
                         configuration.getSqlHorizonJoinBwdScanMinGap(),
                         configuration.getSqlHorizonJoinBwdScanSwitchFactor(),
+                        workerIndex == -1 || perWorkerFilters == null ? state.getFilter() : perWorkerFilters.getQuick(workerIndex),
+                        state.getAsOfJoinKeyTypes(),
                         true
                 ));
                 if (state.isKeyed()) {
@@ -125,11 +139,13 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     }
 
     /**
-     * Releases the key caches and the symbol tables of the current query. {@link #of} reopens them.
+     * Releases the key caches, the key miss caches of the helpers and the symbol tables of the
+     * current query. {@link #of} reopens them.
      */
     @Override
     public void clear() {
         Throwable failure = Misc.freeObjListAndKeepObjectsBestEffort(null, asOfJoinMaps);
+        failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, helpers);
         failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, translatingRecords);
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -137,6 +153,7 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
     @Override
     public void close() {
         Throwable failure = Misc.freeObjListBestEffort(null, asOfJoinMaps);
+        failure = Misc.freeObjListBestEffort(failure, helpers);
         failure = Misc.freeObjListBestEffort(failure, translatingRecords);
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -163,12 +180,14 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
      * consecutive longs at {@code outAddress}. The master record must be positioned on the master
      * row the horizon timestamp belongs to whenever {@link #isKeyed()} is true.
      */
-    public void match(long horizonTimestamp, Record masterRecord, long outAddress) {
+    public void match(long horizonTimestamp, Record masterRecord, long outAddress, SqlExecutionCircuitBreaker circuitBreaker) {
         for (int s = 0; s < slaveCount; s++) {
             final HorizonJoinTimeFrameHelper helper = helpers.getQuick(s);
-            long matchRowId = helper.findAsOfRow(scaleTimestamp(horizonTimestamp, masterTsScales[s]));
+            long matchRowId = helper.findAsOfRow(scaleTimestamp(horizonTimestamp, masterTsScales[s]), circuitBreaker);
             final Map asOfJoinMap = asOfJoinMaps.getQuick(s);
-            if (asOfJoinMap != null) {
+            if (asOfJoinMap == null) {
+                matchRowId = helper.findNotKeyedAsOfMatch(matchRowId, circuitBreaker);
+            } else {
                 Record keyRecord = masterRecord;
                 final SymbolTranslatingRecord translatingRecord = translatingRecords.getQuick(s);
                 if (translatingRecord != null) {
@@ -181,7 +200,8 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
                         masterSinks.getQuick(s),
                         slaveSinks.getQuick(s),
                         asOfJoinMap,
-                        translatingRecord
+                        translatingRecord,
+                        circuitBreaker
                 );
             }
             Unsafe.putLong(outAddress + ((long) s << 3), matchRowId);
@@ -190,14 +210,14 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
 
     /**
      * Binds one slave's time frame cursor for the current query and opens its key cache and its
-     * symbol translation caches.
+     * symbol translation caches. The slave's filter, if any, must be initialized already.
      *
      * @param slaveIndex              slave position in the join
      * @param slaveCursor             time frame cursor owned by the caller
      * @param masterSymbolTableSource symbol tables of the master rows passed to {@link #match}
      * @param slaveSymbolTableSource  symbol tables of the slave
-     * @param memoryTracker           per-query tracker charged for the key cache and the symbol
-     *                                translation caches, or null
+     * @param memoryTracker           per-query tracker charged for the key cache, the key miss cache
+     *                                and the symbol translation caches, or null
      */
     public void of(
             int slaveIndex,
@@ -206,7 +226,7 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
             SymbolTableSource slaveSymbolTableSource,
             @Nullable MemoryTracker memoryTracker
     ) {
-        helpers.getQuick(slaveIndex).of(slaveCursor);
+        helpers.getQuick(slaveIndex).of(slaveCursor, memoryTracker);
         final SymbolTranslatingRecord translatingRecord = translatingRecords.getQuick(slaveIndex);
         if (translatingRecord != null) {
             // initSources() reopens the translation caches, so the tracker must be bound first.

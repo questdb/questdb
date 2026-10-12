@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -59,6 +60,9 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * and when it matches the tail of an oversized frame (see {@link #getMaxTaskRows()}). The atom also
  * holds one more time frame cursor per slave: the owner thread positions the output records on
  * it, so reading a matched slave row never disturbs the scan state of a matcher.
+ * <p>
+ * The slave states own the slave filters and their worker clones. The atom initializes, rewinds
+ * and closes them for each query, and the matchers borrow them.
  */
 public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLockOwner {
     private final ObjList<Function> bindVarFunctions;
@@ -83,8 +87,11 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
     // Worker-major: the cursor of worker w and slave s sits at w * slaveCount + s.
     private final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     private final int slaveCount;
+    private final ObjList<HorizonJoinSlaveState> slaveStates;
     private final long slotsPerRow;
     private final int workerCount;
+    // Slaves whose filters initTimeFrameCursors() has initialized, and clear() has yet to close
+    private int initializedSlaveFilterCount;
     private MemoryTracker memoryTracker;
 
     public AsyncHorizonJoinProjectionAtom(
@@ -108,6 +115,7 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
         this.filterUsedColumnIndexes = resources.getFilterUsedColumnIndexes();
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
 
+        this.slaveStates = slaveStates;
         this.slaveCount = slaveStates.size();
         this.offsetCount = offsets.length;
         this.slotsPerRow = (long) offsetCount * slaveCount;
@@ -123,14 +131,14 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
         try {
             this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             this.ownerHorizonIterator = new AsyncHorizonTimestampIterator(offsets);
-            this.ownerMatcher = new HorizonJoinMatcher(configuration, slaveStates, masterAsOfJoinMapSinkClasses, slaveAsOfJoinMapSinkClasses);
+            this.ownerMatcher = new HorizonJoinMatcher(configuration, slaveStates, masterAsOfJoinMapSinkClasses, slaveAsOfJoinMapSinkClasses, -1);
             for (int s = 0; s < slaveCount; s++) {
                 ownerSlaveTimeFrameCursors.add(slaveStates.getQuick(s).getFactory().newTimeFrameCursor());
                 outputSlaveTimeFrameCursors.add(slaveStates.getQuick(s).getFactory().newTimeFrameCursor());
             }
             for (int w = 0; w < workerCount; w++) {
                 perWorkerHorizonIterators.add(new AsyncHorizonTimestampIterator(offsets));
-                perWorkerMatchers.add(new HorizonJoinMatcher(configuration, slaveStates, masterAsOfJoinMapSinkClasses, slaveAsOfJoinMapSinkClasses));
+                perWorkerMatchers.add(new HorizonJoinMatcher(configuration, slaveStates, masterAsOfJoinMapSinkClasses, slaveAsOfJoinMapSinkClasses, w));
                 perWorkerSelectivityStats.add(new SelectivityStats());
                 for (int s = 0; s < slaveCount; s++) {
                     perWorkerSlaveTimeFrameCursors.add(slaveStates.getQuick(s).getFactory().newTimeFrameCursor());
@@ -153,6 +161,11 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
         failure = Misc.clearObjListBestEffort(failure, perWorkerMatchers);
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
+        final int count = initializedSlaveFilterCount;
+        initializedSlaveFilterCount = 0;
+        for (int s = 0; s < count; s++) {
+            failure = slaveStates.getQuick(s).cursorClosed(failure);
+        }
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -258,15 +271,33 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
-     * Binds every time frame cursor of one slave to the shared frame state of the current query.
-     * Must run after {@link ConcurrentTimeFrameState#of} and before any task matches rows.
+     * Initializes the filter of one slave and binds every time frame cursor of the slave to the
+     * shared frame state of the current query. Must run after {@link ConcurrentTimeFrameState#of}
+     * and before any task matches rows.
      */
     public void initTimeFrameCursors(
+            SqlExecutionContext executionContext,
             int slaveIndex,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
             ConcurrentTimeFrameState sharedState
-    ) {
+    ) throws SqlException {
+        // Count the slave first, so that clear() also closes a filter whose init() throws.
+        initializedSlaveFilterCount = slaveIndex + 1;
+        final HorizonJoinSlaveState state = slaveStates.getQuick(slaveIndex);
+        final Function slaveFilter = state.getFilter();
+        if (slaveFilter != null) {
+            slaveFilter.init(slavePageFrameCursor, executionContext);
+        }
+        if (state.getPerWorkerFilters() != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(state.getPerWorkerFilters(), slavePageFrameCursor, executionContext, slaveFilter);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
         // The matchers walk horizon timestamps in order, so MONOTONIC caps the decode buffers of a
         // Parquet slave to a quarter of the budget per pool. The output cursor revisits frames in
         // master row order, which jumps back and forth between the offsets of a row.
@@ -319,7 +350,7 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
                 masterRecord.setRowIndex(rowIndex);
             }
             final long slot = ((position - lo) * offsetCount + iterator.getOffsetIndex()) * slaveCount;
-            matcher.match(iterator.getHorizonTimestamp(), masterRecord, outAddress + (slot << 3));
+            matcher.match(iterator.getHorizonTimestamp(), masterRecord, outAddress + (slot << 3), circuitBreaker);
         }
     }
 
@@ -357,6 +388,15 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
         if (perWorkerFilters != null) {
             for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {
                 perWorkerFilters.getQuick(i).toTop();
+            }
+        }
+        for (int s = 0; s < initializedSlaveFilterCount; s++) {
+            final HorizonJoinSlaveState state = slaveStates.getQuick(s);
+            if (state.getFilter() != null) {
+                state.getFilter().toTop();
+            }
+            if (state.getPerWorkerFilters() != null) {
+                GroupByUtils.toTop(state.getPerWorkerFilters());
             }
         }
     }

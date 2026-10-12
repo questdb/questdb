@@ -537,6 +537,11 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private static String asOfSlave(String table, String alias, boolean keyed, String slaveFilter) {
+        return " ASOF JOIN " + slaveTable(table, slaveFilter) + " " + alias
+                + (keyed ? " ON (t.sym = " + alias + ".sym)" : "");
+    }
+
     private static void assertProjectionFactory(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String query) throws SqlException {
         try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
             TestUtils.assertFactoryInTree(
@@ -614,12 +619,22 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         );
     }
 
+    private static String horizonSlave(String table, String alias, boolean keyed, String slaveFilter, boolean isOnFilter) {
+        final String onFilter = isOnFilter && slaveFilter != null ? slaveFilter.replace("$", alias + ".") : null;
+        final String keyCondition = keyed ? "t.sym = " + alias + ".sym" : null;
+        final String on = keyCondition != null && onFilter != null ? keyCondition + " AND " + onFilter
+                : keyCondition != null ? keyCondition : onFilter;
+        return " HORIZON JOIN " + slaveTable(table, isOnFilter ? null : slaveFilter) + " AS " + alias
+                + (on != null ? " ON (" + on + ")" : "");
+    }
+
     private static String projectionReference(
             long[] offsetsMicros,
             int slaveCount,
             boolean isKeyed,
             String innerFilter,
-            String projectedSlaveColumns
+            String projectedSlaveColumns,
+            String[] slaveFilters
     ) {
         // Per offset, an ASOF JOIN of the trades shifted by the offset; one row per trade and
         // offset, ordered like the HORIZON JOIN output: by trade, then by offset.
@@ -645,10 +660,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             for (int s = 0; s < slaveCount; s++) {
                 final String alias = slaveCount == 1 ? "p" : "p" + s;
                 final String table = slaveCount == 1 ? "prices" : "prices" + s;
-                ref.append(" ASOF JOIN ").append(table).append(' ').append(alias);
-                if (isKeyed) {
-                    ref.append(" ON (t.sym = ").append(alias).append(".sym)");
-                }
+                ref.append(asOfSlave(table, alias, isKeyed, slaveFilters[s]));
             }
         }
         ref.append(") ORDER BY trade_ts, h_offset");
@@ -662,6 +674,19 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             offsets[i] = (fromSec + (long) i) * 1_000_000L;
         }
         return offsets;
+    }
+
+    private static String slaveTable(String table, String slaveFilter) {
+        return slaveFilter != null ? "(" + table + " WHERE " + slaveFilter.replace("$", "") + ")" : table;
+    }
+
+    private String generateSlaveFilter() {
+        return switch (rnd.nextInt(5)) {
+            case 0, 1 -> null;
+            case 2 -> "$bid > " + (5 + rnd.nextInt(1_000) / 100.0);
+            case 3 -> "$ask < " + (5 + rnd.nextInt(1_000) / 100.0);
+            default -> "$bid > $ask";
+        };
     }
 
     private void testParallelHorizonJoin(
@@ -680,13 +705,15 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             boolean keyed,
             String filter
     ) throws Exception {
+        final String slaveFilter = generateSlaveFilter();
+        final boolean isOnFilter = keyed && rnd.nextBoolean();
+
         // Build HORIZON JOIN query.
         String horizonQuery = "SELECT h.offset AS h_offset"
                 + (keyed ? ", t.sym" : "")
                 + ", count(p.bid) AS cnt_bid, max(p.ask) AS max_ask"
                 + " FROM trades t"
-                + " HORIZON JOIN prices p"
-                + (keyed ? " ON (t.sym = p.sym)" : "")
+                + horizonSlave("prices", "p", keyed, slaveFilter, isOnFilter)
                 + " " + horizonClause
                 + (filter != null ? " WHERE " + filter : "")
                 + " ORDER BY h_offset"
@@ -718,10 +745,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             if (innerFilter != null) {
                 ref.append(" WHERE ").append(innerFilter);
             }
-            ref.append(") TIMESTAMP(ts)) t ASOF JOIN prices p");
-            if (keyed) {
-                ref.append(" ON (t.sym = p.sym)");
-            }
+            ref.append(") TIMESTAMP(ts)) t").append(asOfSlave("prices", "p", keyed, slaveFilter));
         }
 
         ref.append(") GROUP BY h_offset");
@@ -931,15 +955,17 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             boolean isKeyed,
             String filter
     ) throws Exception {
+        // The slave filter goes into a subquery or, on a keyed join, into the ON clause.
+        final String[] slaveFilters = {generateSlaveFilter()};
+        final boolean isOnFilter = isKeyed && rnd.nextBoolean();
         // One row per trade and offset, in trade order and then offset order.
         final String rowsQuery = "SELECT t.ts AS trade_ts, h.offset AS h_offset, t.sym, p.bid, p.ask"
                 + " FROM trades t"
-                + " HORIZON JOIN prices p"
-                + (isKeyed ? " ON (t.sym = p.sym)" : "")
+                + horizonSlave("prices", "p", isKeyed, slaveFilters[0], isOnFilter)
                 + " " + horizonClause
                 + (filter != null ? " WHERE " + filter : "");
         final String innerFilter = filter != null ? filter.replace("t.", "") : null;
-        final String rowsReference = projectionReference(offsetsMicros, 1, isKeyed, innerFilter, ", bid, ask");
+        final String rowsReference = projectionReference(offsetsMicros, 1, isKeyed, innerFilter, ", bid, ask", slaveFilters);
 
         // The aggregation of the report: an outer GROUP BY over the projection.
         final String aggregateQuery = "SELECT h_offset" + (isKeyed ? ", sym" : "")
@@ -988,6 +1014,12 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     ) throws Exception {
         // Randomize 2-4 slave tables
         int slaveCount = 2 + rnd.nextInt(3);
+        final String[] slaveFilters = new String[slaveCount];
+        final boolean[] isOnFilters = new boolean[slaveCount];
+        for (int s = 0; s < slaveCount; s++) {
+            slaveFilters[s] = generateSlaveFilter();
+            isOnFilters[s] = keyed && rnd.nextBoolean();
+        }
 
         // Build multi-slave HORIZON JOIN query
         StringBuilder hq = new StringBuilder();
@@ -1001,10 +1033,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         }
         hq.append(" FROM trades t");
         for (int s = 0; s < slaveCount; s++) {
-            hq.append(" HORIZON JOIN prices").append(s).append(" AS p").append(s);
-            if (keyed) {
-                hq.append(" ON (t.sym = p").append(s).append(".sym)");
-            }
+            hq.append(horizonSlave("prices" + s, "p" + s, keyed, slaveFilters[s], isOnFilters[s]));
         }
         hq.append(' ').append(horizonClause);
         if (filter != null) {
@@ -1049,10 +1078,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             }
             ref.append(") TIMESTAMP(ts)) t");
             for (int s = 0; s < slaveCount; s++) {
-                ref.append(" ASOF JOIN prices").append(s).append(" p").append(s);
-                if (keyed) {
-                    ref.append(" ON (t.sym = p").append(s).append(".sym)");
-                }
+                ref.append(asOfSlave("prices" + s, "p" + s, keyed, slaveFilters[s]));
             }
         }
 
@@ -1163,11 +1189,11 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             slaveColumns.append(", bid").append(s).append(", ask").append(s);
         }
         rows.append(" FROM trades t");
+        // Each slave gets its own filter, in a subquery or, on a keyed join, in the ON clause.
+        final String[] slaveFilters = new String[slaveCount];
         for (int s = 0; s < slaveCount; s++) {
-            rows.append(" HORIZON JOIN prices").append(s).append(" AS p").append(s);
-            if (isKeyed) {
-                rows.append(" ON (t.sym = p").append(s).append(".sym)");
-            }
+            slaveFilters[s] = generateSlaveFilter();
+            rows.append(horizonSlave("prices" + s, "p" + s, isKeyed, slaveFilters[s], isKeyed && rnd.nextBoolean()));
         }
         rows.append(' ').append(horizonClause);
         if (filter != null) {
@@ -1175,7 +1201,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         }
         final String rowsQuery = rows.toString();
         final String innerFilter = filter != null ? filter.replace("t.", "") : null;
-        final String rowsReference = projectionReference(offsetsMicros, slaveCount, isKeyed, innerFilter, slaveColumns.toString());
+        final String rowsReference = projectionReference(offsetsMicros, slaveCount, isKeyed, innerFilter, slaveColumns.toString(), slaveFilters);
 
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));

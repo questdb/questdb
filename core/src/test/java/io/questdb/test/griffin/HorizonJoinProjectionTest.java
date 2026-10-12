@@ -1832,6 +1832,150 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionSlaveFilters() throws Exception {
+        // A filter on the right-hand table skips the slave rows it rejects: a horizon timestamp
+        // matches the latest row at or before it that passes the filter, as an ASOF JOIN against
+        // the filtered table does. The A quote at 00:00 has bid 10, so bid > 10 rejects it.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            final String keyedRows = """
+                    ts\tsym\toffset\tbid
+                    2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t0\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t1000000\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t0\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tA\t-1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tA\t0\tnull
+                    2026-01-01T00:00:02.000000Z\tA\t1000000\t14.0
+                    2026-01-01T00:00:02.000000Z\tB\t-1000000\t20.0
+                    2026-01-01T00:00:02.000000Z\tB\t0\t20.0
+                    2026-01-01T00:00:02.000000Z\tB\t1000000\t22.0
+                    2026-01-01T00:00:02.000000Z\tC\t-1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t-1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                    """;
+            final String allNullRows = """
+                    ts\tsym\toffset\tbid
+                    2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t0\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t1000000\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t0\tnull
+                    2026-01-01T00:00:00.000000Z\tA\t1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tA\t-1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tA\t0\tnull
+                    2026-01-01T00:00:02.000000Z\tA\t1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tB\t-1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tB\t0\tnull
+                    2026-01-01T00:00:02.000000Z\tB\t1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t-1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t-1000000\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                    2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                    """;
+            final String select = "SELECT t.ts, t.sym, h.offset, q.bid FROM TaqTrade t ";
+            final String offsets = " LIST (-1s, 0s, 1s) AS h";
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                // The filter in a subquery and in the ON clause.
+                assertQuery(select + "HORIZON JOIN (TaqQuote WHERE bid > 10) q ON (sym)" + offsets)
+                        .noRandomAccess().expectSize().timestamp("ts")
+                        .withPlanContaining(projectionPlan(isParallel, 3), "slave filter").returns(keyedRows);
+                assertQuery(select + "HORIZON JOIN TaqQuote q ON (t.sym = q.sym AND q.bid > 10)" + offsets)
+                        .noRandomAccess().expectSize().timestamp("ts")
+                        .withPlanContaining(projectionPlan(isParallel, 3), "slave filter").returns(keyedRows);
+                // Without a key, every horizon timestamp takes the latest row that passes. Both
+                // 00:03 quotes pass, and the B quote comes last.
+                assertQuery(select + "HORIZON JOIN (TaqQuote WHERE bid > 10) q" + offsets)
+                        .noRandomAccess().expectSize().timestamp("ts")
+                        .withPlanContaining(projectionPlan(isParallel, 3), "slave filter").returns("""
+                                ts\tsym\toffset\tbid
+                                2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                                2026-01-01T00:00:00.000000Z\tA\t0\t20.0
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\t20.0
+                                2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                                2026-01-01T00:00:00.000000Z\tA\t0\t20.0
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\t20.0
+                                2026-01-01T00:00:02.000000Z\tA\t-1000000\t20.0
+                                2026-01-01T00:00:02.000000Z\tA\t0\t20.0
+                                2026-01-01T00:00:02.000000Z\tA\t1000000\t22.0
+                                2026-01-01T00:00:02.000000Z\tB\t-1000000\t20.0
+                                2026-01-01T00:00:02.000000Z\tB\t0\t20.0
+                                2026-01-01T00:00:02.000000Z\tB\t1000000\t22.0
+                                2026-01-01T00:00:02.000000Z\tC\t-1000000\t20.0
+                                2026-01-01T00:00:02.000000Z\tC\t0\t20.0
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\t22.0
+                                2026-01-01T00:00:02.000000Z\tC\t-1000000\t20.0
+                                2026-01-01T00:00:02.000000Z\tC\t0\t20.0
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\t22.0
+                                """);
+                // A Java filter that is not thread-safe, so each worker gets a clone. Only the A
+                // quotes pass.
+                assertQuery(select + "HORIZON JOIN (TaqQuote WHERE concat(sym, '_') = 'A_') q" + offsets)
+                        .noRandomAccess().expectSize().timestamp("ts")
+                        .withPlanContaining(projectionPlan(isParallel, 3), "slave filter").returns("""
+                                ts\tsym\toffset\tbid
+                                2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                                2026-01-01T00:00:00.000000Z\tA\t0\t10.0
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\t10.0
+                                2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                                2026-01-01T00:00:00.000000Z\tA\t0\t10.0
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\t10.0
+                                2026-01-01T00:00:02.000000Z\tA\t-1000000\t10.0
+                                2026-01-01T00:00:02.000000Z\tA\t0\t10.0
+                                2026-01-01T00:00:02.000000Z\tA\t1000000\t14.0
+                                2026-01-01T00:00:02.000000Z\tB\t-1000000\t10.0
+                                2026-01-01T00:00:02.000000Z\tB\t0\t10.0
+                                2026-01-01T00:00:02.000000Z\tB\t1000000\t14.0
+                                2026-01-01T00:00:02.000000Z\tC\t-1000000\t10.0
+                                2026-01-01T00:00:02.000000Z\tC\t0\t10.0
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\t14.0
+                                2026-01-01T00:00:02.000000Z\tC\t-1000000\t10.0
+                                2026-01-01T00:00:02.000000Z\tC\t0\t10.0
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\t14.0
+                                """);
+                // A filter that rejects every row leaves every slave column NULL, keyed or not.
+                assertQuery(select + "HORIZON JOIN (TaqQuote WHERE false) q ON (sym)" + offsets)
+                        .noRandomAccess().expectSize().timestamp("ts")
+                        .withPlanContaining(projectionPlan(isParallel, 3), "slave filter: false").returns(allNullRows);
+                assertQuery(select + "HORIZON JOIN (TaqQuote WHERE bid > 100) q" + offsets)
+                        .noRandomAccess().expectSize().timestamp("ts").returns(allNullRows);
+                // Every slave of a multi-slave join applies its own filter.
+                assertQuery("""
+                        SELECT t.ts, t.sym, h.offset, q.bid, r.ask FROM TaqTrade t
+                        HORIZON JOIN (TaqQuote WHERE bid > 10) q ON (sym)
+                        HORIZON JOIN (TaqQuote WHERE ask < 16) r LIST (0s, 1s) AS h
+                        """).noRandomAccess().expectSize().timestamp("ts")
+                        .withPlanContaining(projectionPlan(isParallel, 2), "slave filter").returns("""
+                                ts\tsym\toffset\tbid\task
+                                2026-01-01T00:00:00.000000Z\tA\t0\tnull\t12.0
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\tnull\t12.0
+                                2026-01-01T00:00:00.000000Z\tA\t0\tnull\t12.0
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\tnull\t12.0
+                                2026-01-01T00:00:02.000000Z\tA\t0\tnull\t12.0
+                                2026-01-01T00:00:02.000000Z\tA\t1000000\t14.0\t12.0
+                                2026-01-01T00:00:02.000000Z\tB\t0\t20.0\t12.0
+                                2026-01-01T00:00:02.000000Z\tB\t1000000\t22.0\t12.0
+                                2026-01-01T00:00:02.000000Z\tC\t0\tnull\t12.0
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\tnull\t12.0
+                                2026-01-01T00:00:02.000000Z\tC\t0\tnull\t12.0
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\tnull\t12.0
+                                """);
+                // The rows match those of an ASOF JOIN against the filtered table.
+                assertMatchesAsOfJoin("TaqTrade", "(TaqQuote WHERE bid > 10)", "ON (sym)", "t.sym, t.price, q.bid, q.ask");
+                assertMatchesAsOfJoin("TaqTrade", "(TaqQuote WHERE bid > 10)", "", "t.sym, t.price, q.sym, q.bid");
+            }
+        });
+    }
+
+    @Test
     public void testProjectionSlotCapMatchesSerial() throws Exception {
         // On both sides of the 100-slot cap, the rows equal those the projection returns with
         // parallel HORIZON JOIN disabled, under a LIMIT and after a rewind. 100 slots leave master

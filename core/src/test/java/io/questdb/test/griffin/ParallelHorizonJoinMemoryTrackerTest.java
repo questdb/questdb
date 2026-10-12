@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
@@ -117,6 +119,34 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 sqlExecutionContext).getRecordCursorFactory()) {
                             TestUtils.assertFactoryInTree(f, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
                             // intentionally never call getCursor()
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinFilterKeyMissesFailOnLargeKeySet() throws Exception {
+        // A master frame reset drops the exhausted prefix, so a one-row frame records a miss per key.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createKeyMissTables(engine, sqlExecutionContext);
+                        final String query = "SELECT count(p.price) " +
+                                "FROM trades t HORIZON JOIN prices p ON (t.k = p.k AND p.price < 0) " +
+                                "LIST (0s) AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+                            assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
                     configuration,
@@ -388,6 +418,36 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                                 sqlExecutionContext).getRecordCursorFactory()) {
                             TestUtils.assertFactoryInTree(f, AsyncMultiHorizonJoinRecordCursorFactory.class);
                             // intentionally never call getCursor()
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinFilterKeyMissesFailOnLargeKeySet() throws Exception {
+        // A master frame reset drops the exhausted prefix, so a one-row frame records a miss per key.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createKeyMissTables(engine, sqlExecutionContext);
+                        final String query = "SELECT count(p.price), count(r.price) " +
+                                "FROM trades t " +
+                                "HORIZON JOIN prices p ON (t.k = p.k AND p.price < 0) " +
+                                "HORIZON JOIN prices r ON (t.k = r.k AND r.price < 0) " +
+                                "LIST (0s) AS h";
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                            assertQueryBreaches(factory, sqlExecutionContext);
                         }
                     },
                     configuration,
@@ -832,6 +892,20 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertQueryBreaches(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            //noinspection StatementWithEmptyBody
+            while (cursor.hasNext()) {
+                // drain until breach
+            }
+            Assert.fail("expected per-query memory breach");
+        } catch (CairoException e) {
+            Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+            TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+        }
+    }
+
     private static void createHighCardinalityTables(io.questdb.cairo.CairoEngine engine, io.questdb.griffin.SqlExecutionContext ctx) throws Exception {
         engine.execute(
                 "CREATE TABLE trades (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY",
@@ -850,6 +924,17 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // Prices 1ms apart over 200s, one distinct key per row.
         engine.execute(
                 "INSERT INTO prices SELECT (x * 1_000)::timestamp, x, x::double FROM long_sequence(200_000)",
+                ctx
+        );
+    }
+
+    private static void createKeyMissTables(io.questdb.cairo.CairoEngine engine, SqlExecutionContext ctx) throws Exception {
+        engine.execute(
+                "CREATE TABLE trades AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x k FROM long_sequence(500_000)) TIMESTAMP(ts) PARTITION BY DAY",
+                ctx
+        );
+        engine.execute(
+                "CREATE TABLE prices AS (SELECT x::TIMESTAMP ts, x k, x::DOUBLE price FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY",
                 ctx
         );
     }

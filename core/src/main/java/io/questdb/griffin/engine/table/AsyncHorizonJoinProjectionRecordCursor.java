@@ -354,7 +354,11 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
                         executionContext.getSharedQueryWorkerCount(),
                         executionContext.getMemoryTracker()
                 );
-                atom.initTimeFrameCursors(s, masterSymbolTableSource, slaveFrameCursor, state);
+                try {
+                    atom.initTimeFrameCursors(executionContext, s, masterSymbolTableSource, slaveFrameCursor, state);
+                } catch (SqlException e) {
+                    throw CairoException.nonCritical().put(e.getFlyweightMessage());
+                }
             }
             isSlaveTimeFrameCacheBuilt = true;
         }
