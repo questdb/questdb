@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -1798,30 +1799,35 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinOnKeysSharingSlaveColumnMatchesFullFatJoin() throws Exception {
         // The full-fat join looks the keys up in a map and has no master key check, so both joins
-        // must return the same rows for random keys with NULLs, empty strings and signed zeros.
+        // must return the same rows for random keys with NULLs, empty strings and signed zeros. The
+        // full-fat join reads the right-side key columns back from its map, which can store them in
+        // another type, so the queries return them too.
         assertMemoryLeak(() -> {
             // t.k1 and t.k3 have the first type, t.k2 the second, and q.k and q.j the third
-            final String[][] keyTypes = {
-                    {"SYMBOL", "SYMBOL", "SYMBOL"},
-                    {"INT", "INT", "INT"},
-                    {"LONG", "LONG", "LONG"},
-                    {"DOUBLE", "DOUBLE", "DOUBLE"},
-                    {"STRING", "STRING", "STRING"},
-                    {"VARCHAR", "VARCHAR", "VARCHAR"},
-                    {"SYMBOL", "STRING", "STRING"},
-                    {"STRING", "VARCHAR", "VARCHAR"},
-                    {"SYMBOL", "VARCHAR", "VARCHAR"},
-            };
+            final ObjList<String[]> keyTypes = new ObjList<>();
+            keyTypes.add(new String[]{"INT", "INT", "INT"});
+            keyTypes.add(new String[]{"LONG", "LONG", "LONG"});
+            keyTypes.add(new String[]{"DOUBLE", "DOUBLE", "DOUBLE"});
+            // every combination of the string types, so a mixed pair comes in either order
+            final String[] stringTypes = {"SYMBOL", "STRING", "VARCHAR"};
+            for (String masterType : stringTypes) {
+                for (String otherMasterType : stringTypes) {
+                    for (String slaveType : stringTypes) {
+                        keyTypes.add(new String[]{masterType, otherMasterType, slaveType});
+                    }
+                }
+            }
             final String[] queries = {
-                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k",
-                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
-                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.j",
-                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.j AND t.k3 = q.j",
-                    "SELECT t.id, q.id FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k TOLERANCE 20s",
-                    "SELECT t.id, q.id FROM t ASOF JOIN (SELECT * FROM q WHERE id % 3 <> 0) q ON t.k1 = q.k AND t.k2 = q.k",
-                    "SELECT t.id, q.id FROM t ASOF JOIN (SELECT ts, k, id FROM q WHERE id % 3 <> 0) q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
+                    "SELECT t.id, q.id, q.k FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k",
+                    "SELECT t.id, q.id, q.k FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
+                    "SELECT t.id, q.id, q.k, q.j FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.j",
+                    "SELECT t.id, q.id, q.k, q.j FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.j AND t.k3 = q.j",
+                    "SELECT t.id, q.id, q.k FROM t ASOF JOIN q ON t.k1 = q.k AND t.k2 = q.k TOLERANCE 20s",
+                    "SELECT t.id, q.id, q.k FROM t ASOF JOIN (SELECT * FROM q WHERE id % 3 <> 0) q ON t.k1 = q.k AND t.k2 = q.k",
+                    "SELECT t.id, q.id, q.k FROM t ASOF JOIN (SELECT ts, k, id FROM q WHERE id % 3 <> 0) q ON t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
             };
-            for (String[] types : keyTypes) {
+            for (int i = 0, n = keyTypes.size(); i < n; i++) {
+                final String[] types = keyTypes.getQuick(i);
                 for (int round = 0; round < 2; round++) {
                     execute("DROP TABLE IF EXISTS t");
                     execute("DROP TABLE IF EXISTS q");

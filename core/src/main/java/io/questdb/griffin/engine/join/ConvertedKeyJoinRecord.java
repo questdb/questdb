@@ -48,16 +48,25 @@ import io.questdb.std.str.Utf8s;
  *     <li>it writes a TIMESTAMP column compared with a TIMESTAMP_NS column in nanoseconds;</li>
  *     <li>it writes a SYMBOL column compared with the same column of the same table as its symbol
  *     key, while {@link SymbolWrapOverJoinRecord} reads a SYMBOL key column as the symbol string.</li>
+ *     <li>it writes a SYMBOL column compared with a SYMBOL column as VARCHAR when the pair shares a
+ *     column, directly or through other pairs, with a pair that compares VARCHAR: the copier writes
+ *     a column once, in the widest key type of its group.</li>
  * </ul>
  * The join metadata keeps the column's own type, so this record reads such a column in the stored
  * type and returns it in the column's own type. It reads every other column as
  * {@link SymbolWrapOverJoinRecord} does, and the join creates it only when the map needs it.
+ * <p>
+ * The join exposes a right-side SYMBOL key column as SYMBOL only when its exposed pair compares it
+ * with a left-side SYMBOL column. {@link SymbolWrapOverJoinRecord#getInt(int)} and the cursor's
+ * symbol tables read that left-side column, which holds the same value on a matched row, so only
+ * the symbol string comes from the map.
  */
 final class ConvertedKeyJoinRecord extends SymbolWrapOverJoinRecord {
     static final byte NO_CONVERSION = 0;
     static final byte STRING_AS_VARCHAR = 1;
     static final byte SYMBOL_AS_KEY = 2;
-    static final byte TIMESTAMP_AS_OTHER_UNIT = 3;
+    static final byte SYMBOL_AS_VARCHAR = 3;
+    static final byte TIMESTAMP_AS_OTHER_UNIT = 4;
     private final byte[] conversions;
     // index of the first exposed key column in this record
     private final int keySplit;
@@ -85,9 +94,9 @@ final class ConvertedKeyJoinRecord extends SymbolWrapOverJoinRecord {
         this.utf16SinksB = new ObjList<>(keyCount);
         for (int k = 0; k < keyCount; k++) {
             storedTypes[k] = mapKeyTypes.getColumnType(k);
-            final boolean isStringAsVarchar = conversions[k] == STRING_AS_VARCHAR;
-            utf16SinksA.add(isStringAsVarchar ? new StringSink() : null);
-            utf16SinksB.add(isStringAsVarchar ? new StringSink() : null);
+            final boolean isDecodedFromVarchar = conversions[k] == STRING_AS_VARCHAR || conversions[k] == SYMBOL_AS_VARCHAR;
+            utf16SinksA.add(isDecodedFromVarchar ? new StringSink() : null);
+            utf16SinksB.add(isDecodedFromVarchar ? new StringSink() : null);
             timestampDrivers.add(
                     conversions[k] == TIMESTAMP_AS_OTHER_UNIT
                             ? ColumnType.getTimestampDriver(slaveColumnTypes.getColumnType(slaveValuesKeysSplit + k))
@@ -135,9 +144,15 @@ final class ConvertedKeyJoinRecord extends SymbolWrapOverJoinRecord {
     @Override
     public CharSequence getSymA(int col) {
         final int key = col - keySplit;
-        if (key >= 0 && conversions[key] == SYMBOL_AS_KEY) {
-            // the map record resolves the symbol key through the right-side symbol table
-            return slave.getSymA(col - split);
+        if (key >= 0) {
+            final byte conversion = conversions[key];
+            if (conversion == SYMBOL_AS_KEY) {
+                // the map record resolves the symbol key through the right-side symbol table
+                return slave.getSymA(col - split);
+            }
+            if (conversion == SYMBOL_AS_VARCHAR && slave != nullRecord) {
+                return toUtf16(slave.getVarcharA(col - split), utf16SinksA.getQuick(key));
+            }
         }
         return super.getSymA(col);
     }
@@ -145,8 +160,14 @@ final class ConvertedKeyJoinRecord extends SymbolWrapOverJoinRecord {
     @Override
     public CharSequence getSymB(int col) {
         final int key = col - keySplit;
-        if (key >= 0 && conversions[key] == SYMBOL_AS_KEY) {
-            return slave.getSymB(col - split);
+        if (key >= 0) {
+            final byte conversion = conversions[key];
+            if (conversion == SYMBOL_AS_KEY) {
+                return slave.getSymB(col - split);
+            }
+            if (conversion == SYMBOL_AS_VARCHAR && slave != nullRecord) {
+                return toUtf16(slave.getVarcharB(col - split), utf16SinksB.getQuick(key));
+            }
         }
         return super.getSymB(col);
     }
@@ -161,7 +182,7 @@ final class ConvertedKeyJoinRecord extends SymbolWrapOverJoinRecord {
     }
 
     private static CharSequence toUtf16(Utf8Sequence utf8, StringSink sink) {
-        // the map encodes a STRING value as UTF-8, so the bytes always decode
+        // the map encodes a STRING or SYMBOL value as UTF-8, so the bytes always decode
         return utf8 != null ? Utf8s.utf8ToUtf16OrView(utf8, sink) : null;
     }
 
@@ -172,6 +193,9 @@ final class ConvertedKeyJoinRecord extends SymbolWrapOverJoinRecord {
         }
         if (columnType == ColumnType.STRING && storedType == ColumnType.VARCHAR) {
             return STRING_AS_VARCHAR;
+        }
+        if (columnType == ColumnType.SYMBOL && storedType == ColumnType.VARCHAR) {
+            return SYMBOL_AS_VARCHAR;
         }
         if (ColumnType.isTimestamp(columnType) && ColumnType.isTimestamp(storedType)) {
             return TIMESTAMP_AS_OTHER_UNIT;

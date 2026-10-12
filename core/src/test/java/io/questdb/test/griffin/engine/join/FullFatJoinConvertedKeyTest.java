@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -43,6 +44,18 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
             1970-01-01T00:00:07.000000Z\t\uD834\uDD1E clef\t\uD834\uDD1E clef\t7\tfalse\t1970-01-01T00:00:06.000000Z
             1970-01-01T00:00:09.000000Z\ty\t\t-1\tfalse\t
             """;
+    // the rows at 7s and 9s disagree on sy and v, so the join keeps them with a NULL right side;
+    // sy_is_k reads k through getSymB(), as an equality reads its right operand
+    private static final String SYMBOL_OVER_SYMBOL_AND_VARCHAR_ROWS = """
+            ts\tsy\tv\tk\tlen\tis_e\tsy_is_k\tj\tts1
+            1970-01-01T00:00:01.000000Z\tx\tx\tx\t1\tfalse\ttrue\t1\t1970-01-01T00:00:00.000000Z
+            1970-01-01T00:00:03.000000Z\té\té\té\t1\ttrue\ttrue\t2\t1970-01-01T00:00:02.000000Z
+            1970-01-01T00:00:05.000000Z\t\t\t\t-1\tfalse\ttrue\t3\t1970-01-01T00:00:04.000000Z
+            1970-01-01T00:00:07.000000Z\tx\ty\t\t-1\tfalse\tfalse\tnull\t
+            1970-01-01T00:00:09.000000Z\tx\t\t\t-1\tfalse\tfalse\tnull\t
+            1970-01-01T00:00:11.000000Z\tx\tx\tx\t1\tfalse\ttrue\t4\t1970-01-01T00:00:06.000000Z
+            1970-01-01T00:00:13.000000Z\ty\ty\t\t-1\tfalse\tfalse\tnull\t
+            """;
     private static final String TIMESTAMP_OVER_NANOS_ROWS = """
             ts\tk\tk1\tk_micros\tts1
             1970-01-01T00:00:01.000000Z\t2024-01-01T00:00:00.000001000Z\t2024-01-01T00:00:00.000001Z\t1704067200000001\t1970-01-01T00:00:00.000000Z
@@ -53,6 +66,11 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinReadsStringKeyComparedWithVarchar() throws Exception {
         assertStringKeyComparedWithVarchar("ASOF");
+    }
+
+    @Test
+    public void testAsOfJoinReadsSymbolKeyComparedWithSymbolAndVarchar() throws Exception {
+        assertSymbolKeyComparedWithSymbolAndVarchar("ASOF");
     }
 
     @Test
@@ -122,6 +140,11 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
     @Test
     public void testLtJoinReadsStringKeyComparedWithVarchar() throws Exception {
         assertStringKeyComparedWithVarchar("LT");
+    }
+
+    @Test
+    public void testLtJoinReadsSymbolKeyComparedWithSymbolAndVarchar() throws Exception {
+        assertSymbolKeyComparedWithSymbolAndVarchar("LT");
     }
 
     @Test
@@ -198,6 +221,50 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
             for (String on : new String[]{" a1 ON a1.k = a0.k", " a1 ON a1.k = a0.k AND a1.j = a0.j"}) {
                 final String select = "SELECT a0.ts, a0.k, a1.k, length(a1.k) len, a1.k = 'é' is_e, a1.ts FROM m a0 " + join + " JOIN ";
                 assertConvertedKeyJoin(STRING_OVER_VARCHAR_ROWS, select + "s" + on, select + unionOf("s") + on);
+            }
+        });
+    }
+
+    private void assertSymbolKeyComparedWithSymbolAndVarchar(String join) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sy SYMBOL, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (k SYMBOL, j INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('x', 'x', '1970-01-01T00:00:01Z'),
+                        ('é', 'é', '1970-01-01T00:00:03Z'),
+                        (NULL, NULL, '1970-01-01T00:00:05Z'),
+                        ('x', 'y', '1970-01-01T00:00:07Z'),
+                        ('x', NULL, '1970-01-01T00:00:09Z'),
+                        ('x', 'x', '1970-01-01T00:00:11Z'),
+                        ('y', 'y', '1970-01-01T00:00:13Z')
+                    """);
+            execute("""
+                    INSERT INTO s VALUES
+                        ('x', 1, '1970-01-01T00:00:00Z'),
+                        ('é', 2, '1970-01-01T00:00:02Z'),
+                        (NULL, 3, '1970-01-01T00:00:04Z'),
+                        ('x', 4, '1970-01-01T00:00:06Z'),
+                        ('z', 5, '1970-01-01T00:00:08Z')
+                    """);
+            // a1.k is compared with SYMBOL a0.sy and VARCHAR a0.v, so the join map stores both of its
+            // key pairs as VARCHAR. The full-fat join exposes a1.k from one of the pairs, and the order
+            // of the equalities picks it. With the first ON clause the pair compares a1.k with a0.v, and
+            // the join returns a1.k as VARCHAR, as for a single VARCHAR key. With the second it compares
+            // a1.k with a0.sy, and the join returns a1.k as SYMBOL. Master returns the same types.
+            final String[] ons = {" a1 ON a0.sy = a1.k AND a0.v = a1.k", " a1 ON a0.v = a1.k AND a0.sy = a1.k"};
+            final int[] fullFatKeyTypes = {ColumnType.VARCHAR, ColumnType.SYMBOL};
+            final String select = "SELECT a0.ts, a0.sy, a0.v, a1.k, length(a1.k) len, a1.k = 'é' is_e, a0.sy = a1.k sy_is_k, a1.j, a1.ts FROM m a0 " + join + " JOIN ";
+            for (int i = 0; i < ons.length; i++) {
+                final String tableJoin = select + "s" + ons[i];
+                // the join over the table reads a1.k from the table
+                assertQuery(tableJoin).noLeakCheck().noRandomAccess().timestamp("ts").expectSize()
+                        .columnType(3, ColumnType.SYMBOL).returns(SYMBOL_OVER_SYMBOL_AND_VARCHAR_ROWS);
+                // the forced full-fat join and the join over a UNION ALL read it from the join map
+                assertQuery(tableJoin).noLeakCheck().noRandomAccess().timestamp("ts").expectSize().fullFatJoins()
+                        .columnType(3, fullFatKeyTypes[i]).returns(SYMBOL_OVER_SYMBOL_AND_VARCHAR_ROWS);
+                assertQuery(select + unionOf("s") + ons[i]).noLeakCheck().noRandomAccess().timestamp("ts").expectSize()
+                        .columnType(3, fullFatKeyTypes[i]).returns(SYMBOL_OVER_SYMBOL_AND_VARCHAR_ROWS);
             }
         });
     }
