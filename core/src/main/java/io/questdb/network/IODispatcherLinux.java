@@ -32,8 +32,15 @@ import io.questdb.std.Misc;
  * sleeping, see {@link IdleParkJob} and {@link IODispatcherConfiguration#getPollBlockTimeout()}.
  */
 public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> implements IdleParkJob {
+    // How long the dispatcher must have found nothing to do before a worker may wait in its poll.
+    // Under back-to-back requests a worker that just served one spins and picks the next up at
+    // once; a worker waiting in the poll would hold the run lock and keep it from doing so, and
+    // the request would wait for that worker's wake-up instead.
+    private static final long IDLE_PARK_MIN_IDLE_NANOS = 1_000_000L;
     private final Epoll epoll;
     private final int pollBlockTimeoutMillis;
+    // when a pass last found something to do, read and written under the run lock
+    private long lastUsefulNanos;
     private boolean pendingAccept;
 
     public IODispatcherLinux(
@@ -72,8 +79,8 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
     /**
      * A worker may park in the poll when blocking is configured, no accept is pending, the
-     * dispatcher is not closing, every connection is armed in the poll (connection count =
-     * pending rows), and one of them is a connection that asks for it, see
+     * dispatcher is not closing, it has found nothing to do for a millisecond, every connection is
+     * armed in the poll (connection count = pending rows), and one of them asks for it, see
      * {@link IOContext#isIdlePollTarget()} (on HTTP: a QWP connection). A connection that is not
      * armed is out with a worker or waits on a heartbeat, and comes back through the interest
      * queue, which cannot wake the poll: its next request would wait out the park. With every
@@ -88,7 +95,11 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             return false;
         }
         final int pendingCount = pending.size();
-        if (closed || pendingAccept || getConnectionCount() != pendingCount || !hasIdlePollTarget(pendingCount)) {
+        if (closed
+                || pendingAccept
+                || getConnectionCount() != pendingCount
+                || System.nanoTime() - lastUsefulNanos < IDLE_PARK_MIN_IDLE_NANOS
+                || !hasIdlePollTarget(pendingCount)) {
             releaseRunLock();
             return false;
         }
@@ -362,7 +373,13 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             useful = true;
         }
 
-        return processRegistrations(timestamp) || useful;
+        if (processRegistrations(timestamp) || useful) {
+            if (pollBlockTimeoutMillis > 0) {
+                lastUsefulNanos = System.nanoTime();
+            }
+            return true;
+        }
+        return false;
     }
 
     @Override
