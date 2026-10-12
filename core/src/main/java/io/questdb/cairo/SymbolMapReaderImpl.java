@@ -372,7 +372,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 // initCursor() hands back the cursor it receives whenever it reuses it. Re-storing that
                 // reference would still dirty a card under ParallelGC, and the views that parallel workers
                 // use to translate SYMBOL join keys share card-table cache lines, so store only a different cursor.
-                if (cursor != rowCursor) {
+                // Never store the shared empty cursor that a hash past the index's key count gets: it would
+                // replace the real cursor, and the next in-range lookup would have to allocate a new one.
+                if (cursor != rowCursor && cursor != EmptyRowCursor.INSTANCE) {
                     rowCursor = cursor;
                 }
                 while (cursor.hasNext()) {
