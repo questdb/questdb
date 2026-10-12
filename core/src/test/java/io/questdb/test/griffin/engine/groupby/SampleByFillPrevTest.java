@@ -210,6 +210,31 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevOuterFilteredGroupByDoesNotRefill() throws Exception {
+        // FILL(PREV) takes the keyword path in generateFill (a placeholder instead of a
+        // parsed function). The inner fill yields 1.0, 2.0, 2.0 (prev), 3.5; the filter
+        // keeps 00:00 and 03:00 only. A leaked outer PREV fill would re-insert 01:00
+        // and 02:00 with the previous count.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT ts, count() AS c
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(PREV))
+                    WHERE v < 1.5 OR v > 3
+                    GROUP BY ts
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevByte() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
