@@ -564,6 +564,25 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Returns null when the bind variable has no type yet.
+    private static @Nullable Function getDefinedBindVariable(
+            CharSequence token,
+            @Nullable BindVariableService bindVariableService
+    ) {
+        if (bindVariableService == null) {
+            return null;
+        }
+        if (Chars.startsWith(token, ':')) {
+            return bindVariableService.getFunction(token);
+        }
+        try {
+            final int index = Numbers.parseInt(token, 1, token.length());
+            return index < 1 ? null : bindVariableService.getFunction(index - 1);
+        } catch (NumericException e) {
+            return null;
+        }
+    }
+
     private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
         for (int i = 0, n = fill.size(); i < n; i++) {
             if (isLinearKeyword(fill.getQuick(i).token)) {
@@ -621,6 +640,25 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean hasUndefinedBindVariable(
+            @Nullable ExpressionNode node,
+            @Nullable BindVariableService bindVariableService
+    ) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == BIND_VARIABLE) {
+            return getDefinedBindVariable(node.token, bindVariableService) == null;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasUndefinedBindVariable(node.args.getQuick(i), bindVariableService)) {
+                return true;
+            }
+        }
+        return hasUndefinedBindVariable(node.lhs, bindVariableService)
+                || hasUndefinedBindVariable(node.rhs, bindVariableService);
     }
 
     // Returns true when every leaf in the expression tree is a literal constant
@@ -5905,28 +5943,12 @@ public class SqlOptimiser implements Mutable {
 
         final int type;
         if (node.type == FUNCTION && isCastKeyword(node.token) && node.paramCount == 2
-                && node.rhs.type == CONSTANT && isEffectivelyConstantExpression(node.lhs)) {
+                && node.rhs.type == CONSTANT && isEffectivelyConstantExpression(node.lhs)
+                && !hasUndefinedBindVariable(node.lhs, sqlExecutionContext.getBindVariableService())) {
             // Keep the cast in the expression; its target type is already available on the AST.
             type = ColumnType.typeOf(node.rhs.token);
         } else if (node.type == BIND_VARIABLE) {
-            final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
-            if (bindVariableService == null) {
-                return false;
-            }
-            final Function bind;
-            if (Chars.startsWith(node.token, ':')) {
-                bind = bindVariableService.getFunction(node.token);
-            } else {
-                try {
-                    final int index = Numbers.parseInt(node.token, 1, node.token.length());
-                    if (index < 1) {
-                        return false;
-                    }
-                    bind = bindVariableService.getFunction(index - 1);
-                } catch (NumericException e) {
-                    return false;
-                }
-            }
+            final Function bind = getDefinedBindVariable(node.token, sqlExecutionContext.getBindVariableService());
             // Do not infer a missing bind's type or inspect its current value.
             if (bind == null) {
                 return false;
