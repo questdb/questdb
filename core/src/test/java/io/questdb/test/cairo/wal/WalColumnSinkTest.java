@@ -36,13 +36,16 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.WalColumnSink;
 import io.questdb.cairo.wal.WalColumnarRowAppender;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -188,6 +191,46 @@ public class WalColumnSinkTest extends AbstractCairoTest {
                             100\tnull\t2026-01-01T00:00:00.000000Z
                             1000\t2000\t2026-01-01T00:00:01.000000Z
                             1001\t2001\t2026-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCancelKeepsEarlierBlocksOfTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken token = createTable(new TableModel(configuration, "sink_cancel_txn", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                WalColumnSink sink = walWriter;
+                appendBlock(sink, 1L, TS0);
+                walWriter.commit();
+                // the second block stays uncommitted, so the transaction starts below the cancelled block
+                appendBlock(sink, 3L, TS0 + 2_000_000L);
+
+                sink.beginColumnarWrite();
+                writeRows(sink, 100L, TS0 + 4_000_000L);
+                sink.cancelColumnarWrite();
+                Assert.assertEquals(4, sink.getSegmentRowCount());
+
+                appendBlock(sink, 5L, TS0 + 4_000_000L);
+                walWriter.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, ts FROM sink_cancel_txn")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            1\t2026-01-01T00:00:00.000000Z
+                            2\t2026-01-01T00:00:01.000000Z
+                            3\t2026-01-01T00:00:02.000000Z
+                            4\t2026-01-01T00:00:03.000000Z
+                            5\t2026-01-01T00:00:04.000000Z
+                            6\t2026-01-01T00:00:05.000000Z
                             """);
         });
     }
@@ -350,6 +393,67 @@ public class WalColumnSinkTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLifecycleOperationsDuringSinkWriteAreRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken token = createTable(new TableModel(configuration, "sink_lifecycle", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                WalColumnSink sink = walWriter;
+                sink.beginColumnarWrite();
+                long start = sink.getSegmentRowCount();
+                sink.getDataColumn(0).putLong(7L);
+                sink.setRowValueNotNullColumnar(0, start);
+
+                assertRefused(walWriter::rollSegment, "cannot roll segment during columnar write");
+                assertRefused(
+                        () -> walWriter.addColumn("b", ColumnType.LONG, AllowAllSecurityContext.INSTANCE),
+                        "cannot alter table during columnar write"
+                );
+                UpdateOperation update = new UpdateOperation(
+                        token,
+                        walWriter.getMetadata().getTableId(),
+                        walWriter.getMetadataVersion(),
+                        0,
+                        new ObjList<>("a")
+                );
+                update.withContext(sqlExecutionContext);
+                assertRefused(() -> walWriter.apply(update), "cannot update table during columnar write");
+                assertRefused(walWriter::goActive, "cannot apply structure changes during columnar write");
+                assertRefused(walWriter::truncateSoft, "cannot truncate table during columnar write");
+                assertRefused(walWriter::commitRebaseSeed, "cannot commit rebase seed during columnar write");
+                assertRefused(
+                        () -> walWriter.resetMatViewState(0, 0, false, null, 0, null, 0),
+                        "cannot reset mat view state during columnar write"
+                );
+                assertRefused(
+                        () -> walWriter.appendCustomEvent((byte) 64, mem -> mem.putLong(1L)),
+                        "cannot append custom event during columnar write"
+                );
+
+                // the refusals leave the writer and the open block intact
+                Assert.assertFalse(walWriter.isDistressed());
+                Assert.assertEquals(0, walWriter.getSegmentId());
+                sink.getDataColumn(1).putLong128(TS0, start);
+                sink.setRowValueNotNullColumnar(1, start);
+                sink.finishColumnarWrite(1, TS0, TS0, false);
+                walWriter.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT * FROM sink_lifecycle")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            7\t2026-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testNullSymbolSetsTableNullFlag() throws Exception {
         assertMemoryLeak(() -> {
             TableToken token = createTable(new TableModel(configuration, "sink_null_sym", PartitionBy.HOUR)
@@ -383,6 +487,40 @@ public class WalColumnSinkTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader(token)) {
                 Assert.assertTrue(reader.getSymbolMapReader(0).containsNullValue());
             }
+        });
+    }
+
+    @Test
+    public void testPoolReturnDuringAppenderWriteDiscardsBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken token = createTable(new TableModel(configuration, "sink_pool_appender", PartitionBy.HOUR)
+                    .col("a", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                appender.beginColumnarWrite(3);
+                walWriter.putServerAssignedTimestampColumnar(3, TS0);
+                // close() returns the writer to the pool with the appender's block still open
+            }
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                Assert.assertEquals(1, walWriter.getWalId());
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                appender.beginColumnarWrite(1);
+                walWriter.putServerAssignedTimestampColumnar(1, TS0 + 1_000_000L);
+                appender.endColumnarWrite(TS0 + 1_000_000L, TS0 + 1_000_000L, false);
+                walWriter.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT a, ts FROM sink_pool_appender")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            null\t2026-01-01T00:00:01.000000Z
+                            """);
         });
     }
 
@@ -463,6 +601,12 @@ public class WalColumnSinkTest extends AbstractCairoTest {
         });
     }
 
+    private static void appendBlock(WalColumnSink sink, long firstValue, long firstTs) {
+        sink.beginColumnarWrite();
+        writeRows(sink, firstValue, firstTs);
+        sink.finishColumnarWrite(2, firstTs, firstTs + 1_000_000L, false);
+    }
+
     private static void assertRefused(Runnable operation, String expectedMessage) {
         try {
             operation.run();
@@ -470,6 +614,17 @@ public class WalColumnSinkTest extends AbstractCairoTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
         }
+    }
+
+    // writes two rows, one second apart, into the open block of an (a LONG, ts) table
+    private static void writeRows(WalColumnSink sink, long firstValue, long firstTs) {
+        long start = sink.getSegmentRowCount();
+        for (int i = 0; i < 2; i++) {
+            sink.getDataColumn(0).putLong(firstValue + i);
+            sink.getDataColumn(1).putLong128(firstTs + i * 1_000_000L, start + i);
+        }
+        sink.setRowValueNotNullColumnar(0, start + 1);
+        sink.setRowValueNotNullColumnar(1, start + 1);
     }
 
     /**
