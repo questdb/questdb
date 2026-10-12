@@ -497,7 +497,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public void fsyncDurable(long fd) {
             count("fsyncDurable");
-            logSync("fsyncDurable", fd);
+            // The superclass delegates to fsync, which logs the actual flush once.
             super.fsyncDurable(fd);
         }
 
