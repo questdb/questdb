@@ -691,6 +691,31 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedSourceUnrecorded() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5))");
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("""
+                            SELECT o.x, r.y
+                            FROM (SELECT x, string_agg(x::STRING, ',') s FROM t WHERE x <= 2 GROUP BY x) o
+                            JOIN LATERAL (SELECT x y FROM t WHERE x <= o.x) r
+                            """, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                verifier.verifySharedSources(plan, true);
+                try {
+                    verifier.verifySharedSources(plan, false);
+                    Assert.fail("expected " + PlanVerifier.SHARED_SOURCE_UNRECORDED);
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), PlanVerifier.SHARED_SOURCE_UNRECORDED);
+                    TestUtils.assertContains(e.getMessage(), " at AggregatePlan position ");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSortKeys() {
         final FunctionSourcePlan source = source();
         final SortPlan sort = SortPlan.FACTORY.newInstance().of(source, 2);

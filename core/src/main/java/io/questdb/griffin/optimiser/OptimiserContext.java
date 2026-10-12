@@ -134,6 +134,13 @@ final class OptimiserContext implements Mutable {
     }
 
     /**
+     * Whether a decorrelation domain of the statement re-reads a join input it shares with its master.
+     */
+    boolean hasSharedSources() {
+        return planNodes.hasSharedSources();
+    }
+
+    /**
      * Allocates a column id no other column of the statement has.
      */
     int newColumnId() {

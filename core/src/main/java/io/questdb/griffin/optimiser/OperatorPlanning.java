@@ -1196,10 +1196,13 @@ final class OperatorPlanning {
     /**
      * Records on every aggregate of the query level how many decorrelation domains of the level re-read it through
      * their shared source; the generator builds the consumers of each one and the aggregate shares its rows with them.
+     * A statement without such a domain leaves every count at zero.
      */
     void countSharedConsumers(LogicalPlan root) {
-        root.walkTopDown(SHARED_CONSUMER_COUNTS);
-        root.walkTopDown(SHARED_CONSUMERS);
+        if (context.hasSharedSources()) {
+            root.walkTopDown(SHARED_CONSUMER_COUNTS);
+            root.walkTopDown(SHARED_CONSUMERS);
+        }
     }
 
     /**

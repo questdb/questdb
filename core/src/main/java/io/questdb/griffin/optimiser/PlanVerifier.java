@@ -52,6 +52,7 @@ import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
+import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -133,6 +134,7 @@ public final class PlanVerifier {
     public static final String SET_OPERATION_SHAPE = "set operation branches and output differ in column count";
     public static final String SET_OPERATION_SYMBOLS = "set operation symbol columns are not ascending output indexes";
     public static final String SHARED_SOURCE_IDS = "shared source input and source id lists differ in length";
+    public static final String SHARED_SOURCE_UNRECORDED = "decorrelation domain shares a join input the statement does not record";
     public static final String SORT_ALGORITHM = "sort algorithm contradicts the sort or its input";
     public static final String SORT_KEYS = "sort has no keys or keys and directions differ in length";
     public static final String SORT_TIMESTAMP = "sort designates a timestamp other than its first key";
@@ -155,6 +157,7 @@ public final class PlanVerifier {
     private final OccurrenceCounter occurrences = new OccurrenceCounter();
     private final ObjList<JoinInput> outerInputs;
     private final ReadEnumerator readEnumerator = new ReadEnumerator();
+    private final PlanVisitor sharedSources = this::sharedSource;
     private final ObjList<LogicalPlan> visited;
     private int aliasCount;
     private OutputSchema aliasScope;
@@ -235,6 +238,26 @@ public final class PlanVerifier {
      */
     public void verifyDecorrelation(LogicalPlan root, String pass) {
         decorrelation.verify(root, pass);
+    }
+
+    /**
+     * Verifies that the plan has no decorrelation domain that re-reads a join input when its statement records none,
+     * {@code hasSharedSources}: operator planning counts the consumers of shared sources only for a statement that
+     * records one, see {@link OperatorPlanning#countSharedConsumers}.
+     */
+    public void verifySharedSources(LogicalPlan root, boolean hasSharedSources) {
+        if (hasSharedSources) {
+            return;
+        }
+        this.root = root;
+        pass = "access path planning";
+        try {
+            root.walkTopDown(sharedSources);
+        } finally {
+            this.root = null;
+            pass = null;
+            node = null;
+        }
     }
 
     /**
@@ -919,6 +942,14 @@ public final class PlanVerifier {
         }
         requestedColumn(operation.getRequestedOrderColumnId(), operation.getOutput());
         failIfViolated(PhysicalChoiceVerifier.setOperation(operation));
+    }
+
+    private int sharedSource(LogicalPlan plan) {
+        if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null) {
+            node = plan;
+            fail(SHARED_SOURCE_UNRECORDED);
+        }
+        return TreeWalk.CONTINUE;
     }
 
     private void sort(SortPlan sort) {

@@ -194,10 +194,14 @@ public final class SqlOptimiser implements Mutable {
         context.of(executionContext);
         accessPathPlanning.plan(root, depth, isTimestampRequired);
         if (verifier != null) {
+            final boolean hasSharedSources = context.hasSharedSources();
             verifier.verifyAccessPaths(root);
+            verifier.verifySharedSources(root, hasSharedSources);
             final ObjList<Subquery> subqueries = accessPathPlanning.getSubqueries();
             for (int i = 0, n = subqueries.size(); i < n; i++) {
-                verifier.verifyAccessPaths(subqueries.getQuick(i).getRoot());
+                final LogicalPlan subqueryRoot = subqueries.getQuick(i).getRoot();
+                verifier.verifyAccessPaths(subqueryRoot);
+                verifier.verifySharedSources(subqueryRoot, hasSharedSources);
             }
         }
     }

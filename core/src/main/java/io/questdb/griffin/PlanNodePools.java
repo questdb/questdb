@@ -111,6 +111,7 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<WindowPlan> windowPlans;
     public final ObjectPool<WindowSpec> windowSpecs;
     public final ObjectPool<WindowExpression> windowSyntax;
+    private boolean hasSharedSources;
     private int nextColumnId;
 
     public PlanNodePools(CairoConfiguration configuration) {
@@ -185,6 +186,7 @@ public final class PlanNodePools implements Mutable {
         windowPlans.clear();
         windowSpecs.clear();
         windowSyntax.clear();
+        hasSharedSources = false;
         nextColumnId = 0;
     }
 
@@ -204,10 +206,26 @@ public final class PlanNodePools implements Mutable {
     }
 
     /**
+     * Whether a decorrelation domain of the statement re-reads a join input it shares with its master, see
+     * {@link #recordSharedSource()}.
+     */
+    public boolean hasSharedSources() {
+        return hasSharedSources;
+    }
+
+    /**
      * Allocates a column id no other column of the statement has.
      */
     public int nextColumnId() {
         return nextColumnId++;
+    }
+
+    /**
+     * Records that a decorrelation domain of the statement re-reads a join input it shares with its master, see
+     * {@link AggregatePlan#getSharedSource()}.
+     */
+    public void recordSharedSource() {
+        hasSharedSources = true;
     }
 
     public void rewindSyntheticNodes(int mark) {

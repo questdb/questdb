@@ -69,25 +69,6 @@ final class DecorrelationDomains implements Mutable {
         domainStep = null;
     }
 
-    private static void shareMasterSource(AggregatePlan domain, JoinInput source) {
-        final OutputSchema sourceOutput = source.getSourceOutput();
-        final OutputSchema output = domain.getInput().getOutput();
-        if (source.getUnnest() != null || sourceOutput.getColumnCount() != output.getColumnCount()) {
-            return;
-        }
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
-            if (sourceOutput.getColumnType(i) != output.getColumnType(i)
-                    || !Chars.equalsIgnoreCase(sourceOutput.getColumnName(i), output.getColumnName(i))) {
-                domain.getSharedInputIds().clear();
-                domain.getSharedSourceIds().clear();
-                return;
-            }
-            domain.getSharedInputIds().add(output.getColumnId(i));
-            domain.getSharedSourceIds().add(sourceOutput.getColumnId(i));
-        }
-        domain.setSharedSource(source);
-    }
-
     private boolean keepsNonDomainConjunct(BoundExpression conjunct) throws SqlException {
         if (!ctx.readsAnyOuter(conjunct, domainOuterIds)) {
             return true;
@@ -122,6 +103,26 @@ final class DecorrelationDomains implements Mutable {
         }
         output.setTimestampIndex(output.getColumnIndexById(ctx.master.getOutput().getTimestampColumnId()));
         return prefix;
+    }
+
+    private void shareMasterSource(AggregatePlan domain, JoinInput source) {
+        final OutputSchema sourceOutput = source.getSourceOutput();
+        final OutputSchema output = domain.getInput().getOutput();
+        if (source.getUnnest() != null || sourceOutput.getColumnCount() != output.getColumnCount()) {
+            return;
+        }
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            if (sourceOutput.getColumnType(i) != output.getColumnType(i)
+                    || !Chars.equalsIgnoreCase(sourceOutput.getColumnName(i), output.getColumnName(i))) {
+                domain.getSharedInputIds().clear();
+                domain.getSharedSourceIds().clear();
+                return;
+            }
+            domain.getSharedInputIds().add(output.getColumnId(i));
+            domain.getSharedSourceIds().add(sourceOutput.getColumnId(i));
+        }
+        domain.setSharedSource(source);
+        ctx.planNodes.recordSharedSource();
     }
 
     /**
