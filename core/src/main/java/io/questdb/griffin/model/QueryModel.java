@@ -131,7 +131,9 @@ public class QueryModel implements IQueryModel {
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
     private boolean cacheable = true;
-    // where clause expressions that do not reference any tables, not necessarily constants
+    // where clause expressions that do not reference any tables, not necessarily constants. On a join model
+    // other than the first, the conjuncts of its INNER join ON clause that read no table and have one value
+    // per execution, which gate the rows of that model, see SqlOptimiser.processJoinConditions()
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;

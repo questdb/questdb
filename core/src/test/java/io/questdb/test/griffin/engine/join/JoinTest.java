@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Numbers;
@@ -42,6 +43,7 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -7183,6 +7185,323 @@ public class JoinTest extends AbstractCairoTest {
                                 .returns(expected);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnRuntimeConstantGateBetweenKeyedOuterJoins() throws Exception {
+        // The gate of testJoinInnerOnRuntimeConstantGateKeepsJitFilter sits on the table of the INNER join, so the
+        // joins below it open whatever the bind variable is. The nested loop LEFT join to cn runs after the RIGHT
+        // join to l, which the query writes after it, and checks that join for each of its rows, see
+        // OuterJoinNullCheck. A gate above the INNER join would leave the RIGHT join to l unopened while the bind
+        // variable is false, and the LEFT join would fail with "outer join cursor is not open".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x INT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 5)");
+            execute("CREATE TABLE cn (id INT, y INT)");
+            execute("INSERT INTO cn VALUES (1, 0), (2, 3)");
+            execute("CREATE TABLE l (k INT)");
+            execute("INSERT INTO l VALUES (1), (2), (3)");
+            execute("CREATE TABLE b (k INT, w INT)");
+            execute("INSERT INTO b VALUES (1, 1), (2, 1), (3, 0)");
+            execute("CREATE TABLE f (k INT)");
+            execute("INSERT INTO f VALUES (1), (3), (4)");
+            final String query = """
+                    SELECT a.k, cn.id, l.k lk, b.k bk, f.k fk
+                    FROM a
+                    LEFT JOIN cn ON a.x >= cn.y
+                    RIGHT JOIN l ON a.k = l.k
+                    JOIN b ON l.k = b.k AND b.w > 0 AND :flag
+                    RIGHT JOIN f ON b.k = f.k
+                    ORDER BY fk
+                    """;
+            final String expectedFalse = """
+                    k\tid\tlk\tbk\tfk
+                    null\tnull\tnull\tnull\t1
+                    null\tnull\tnull\tnull\t3
+                    null\tnull\tnull\tnull\t4
+                    """;
+            final String expectedTrue = """
+                    k\tid\tlk\tbk\tfk
+                    1\t1\t1\t1\t1
+                    null\tnull\tnull\tnull\t3
+                    null\tnull\tnull\tnull\t4
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setBoolean("flag", false);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [fk]
+                                SelectedRecord
+                                    Nested Loop Left Join
+                                      filter: a.x>=cn.y
+                                      outerJoinCheck: true
+                                        Hash Right Outer Join Light
+                                          condition: f.k=b.k
+                                            Hash Join Light
+                                              condition: b.k=l.k
+                                                Hash Right Outer Join Light
+                                                  condition: l.k=a.k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: l
+                                                Hash
+                                                    Filter filter: :flag::boolean
+                                                        Async JIT Filter workers: 1
+                                                          filter: 0<w
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: f
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cn
+                            """)
+                    .returns(expectedFalse);
+            assertQuery(query).noLeakCheck().fullFatJoins().returns(expectedFalse);
+            bindVariableService.setBoolean("flag", true);
+            assertQuery(query).noLeakCheck().returns(expectedTrue);
+            assertQuery(query).noLeakCheck().fullFatJoins().returns(expectedTrue);
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnRuntimeConstantGateKeepsJitFilter() throws Exception {
+        // A bind variable or now() in an INNER join ON clause has one value per execution. Before a RIGHT or FULL
+        // join, the table of the INNER join takes it, see testJoinInnerOnBindVariableBeforeNullingJoin. The filter
+        // of the table tested it on every row and could not compile to JIT. A gate now tests it once per execution,
+        // and the filter keeps the conjunct of the table in JIT form.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x INT, v INT)");
+            execute("INSERT INTO a VALUES (1, 1, 1), (2, 2, 2)");
+            execute("CREATE TABLE b (v INT, w INT)");
+            execute("INSERT INTO b VALUES (1, 10), (2, 20), (2, 0)");
+            execute("CREATE TABLE c (k INT, x INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 1, 0), (2, 3, 5), (3, 2, 1)");
+            final String plan = """
+                    Encode sort
+                      keys: [ck]
+                        SelectedRecord
+                            Hash %s Outer Join Light
+                              condition: c.k=a.k
+                                Hash Join Light
+                                  condition: b2.v=a.v
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        Filter filter: %s
+                                            Async JIT Filter workers: 1
+                                              filter: 0<w
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                    """;
+            // while the gate is false, the INNER join returns no rows, and the RIGHT or FULL join every row of c
+            final String expectedFalse = """
+                    k\tbv2\tck
+                    null\tnull\t1
+                    null\tnull\t2
+                    null\tnull\t3
+                    """;
+            final String expectedTrue = """
+                    k\tbv2\tck
+                    1\t1\t1
+                    2\t2\t2
+                    null\tnull\t3
+                    """;
+            final String[][] gates = {
+                    {":flag", ":flag::boolean"},
+                    {":s = 'x'", ":s::string='x'"},
+                    {"now() > '1960-01-01' AND :flag", "(1960-01-01T00:00:00.000000Z<now() and :flag::boolean)"}
+            };
+            for (String joinType : new String[]{"Right", "Full"}) {
+                for (String[] gate : gates) {
+                    final String query = """
+                            SELECT a.k, b2.v bv2, c.k ck
+                            FROM a
+                            JOIN b b2 ON a.v = b2.v AND b2.w > 0 AND %s
+                            %s JOIN c ON a.k = c.k
+                            ORDER BY ck
+                            """.formatted(gate[0], joinType);
+                    bindVariableService.clear();
+                    bindVariableService.setBoolean("flag", false);
+                    bindVariableService.setStr("s", "y");
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .withPlan(plan.formatted(joinType, gate[1]))
+                            .returns(expectedFalse);
+                    assertQuery(query).noLeakCheck().fullFatJoins().returns(expectedFalse);
+                    bindVariableService.setBoolean("flag", true);
+                    bindVariableService.setStr("s", "x");
+                    assertQuery(query).noLeakCheck().returns(expectedTrue);
+                    assertQuery(query).noLeakCheck().fullFatJoins().returns(expectedTrue);
+                }
+            }
+
+            // the filter of the table also failed to compile to JIT when a function folded a conjunct to a
+            // constant; the gate drops a constant true
+            assertQuery("""
+                    SELECT a.k, b2.v bv2, c.k ck
+                    FROM a
+                    JOIN b b2 ON a.v = b2.v AND b2.w > 0 AND '1'::INT = 1
+                    RIGHT JOIN c ON a.k = c.k
+                    ORDER BY ck
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [ck]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: c.k=a.k
+                                        Hash Join Light
+                                          condition: b2.v=a.v
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                Async JIT Filter workers: 1
+                                                  filter: 0<w
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                            """)
+                    .returns(expectedTrue);
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnRuntimeConstantGateNotBoolean() throws Exception {
+        // the gate of the table of the INNER join fails to compile, and the join frees the table
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, v INT)");
+            execute("CREATE TABLE b (v INT, w INT)");
+            execute("CREATE TABLE c (k INT)");
+            bindVariableService.clear();
+            bindVariableService.setInt("i", 7);
+            bindVariableService.setBoolean("flag", true);
+            // the gate compiles, but is not BOOLEAN
+            String query = "SELECT a.k, c.k ck FROM a JOIN b ON a.v = b.v AND b.w > 0 AND :i RIGHT JOIN c ON a.k = c.k";
+            assertExceptionNoLeakCheck(query, query.indexOf(":i"), "boolean expression expected");
+            // the gate fails to compile
+            query = "SELECT a.k, c.k ck FROM a JOIN b ON a.v = b.v AND b.w > 0 AND :flag AND :i RIGHT JOIN c ON a.k = c.k";
+            assertExceptionNoLeakCheck(query, query.indexOf(":i"), "expression type mismatch, expected: BOOLEAN, actual: INT");
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnRuntimeConstantGateParallel() throws Exception {
+        // the gate tests the bind variable at every execution of one factory, while workers run the JIT filter
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+                TestUtils.execute(pool, (engine, _, context) -> {
+                    engine.execute("CREATE TABLE a AS (SELECT (x % 1_000)::INT k, timestamp_sequence(0, 6_000_000) ts FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY HOUR", context);
+                    engine.execute("CREATE TABLE b AS (SELECT (x % 1_000)::INT k, (x % 89)::INT v, x::INT w, timestamp_sequence(0, 600_000) ts FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY HOUR", context);
+                    engine.execute("CREATE TABLE c AS (SELECT (x - 1)::INT k, (x % 7)::INT v FROM long_sequence(1_000))", context);
+                    final String query = """
+                            SELECT count() n, count(b.w) bn, sum(b.w) bw, sum(c.v) cv
+                            FROM a
+                            JOIN b ON a.k = b.k AND b.v > 80 AND :flag
+                            RIGHT JOIN c ON c.k = b.v
+                            """;
+                    context.getBindVariableService().clear();
+                    context.getBindVariableService().setBoolean("flag", true);
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .assertsPlanContaining(
+                                    "Filter filter: :flag::boolean\n",
+                                    "Async JIT Filter workers: 4\n"
+                            );
+                    try (RecordCursorFactory factory = engine.select(query, context)) {
+                        for (int i = 0; i < 30; i++) {
+                            final boolean flag = i % 3 != 1;
+                            context.getBindVariableService().setBoolean("flag", flag);
+                            new QueryAssertion(engine, factory)
+                                    .withContext(context)
+                                    .inferRandomAccess()
+                                    .expectSize()
+                                    .returns(flag
+                                            ? "n\tbn\tbw\tcv\n180672\t179680\t8986425680\t586937\n"
+                                            : "n\tbn\tbw\tcv\n1000\t0\tnull\t3003\n"
+                                    );
+                        }
+                    }
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnRuntimeConstantGateTypesUndefinedBindVariable() throws Exception {
+        // A PG Wire client may leave the type of $1 to the compiler. In the filter of the table of the INNER join,
+        // the AND with the conjunct of the table typed $1 BOOLEAN. The gate types a bare $1 BOOLEAN on its own,
+        // also when the table has no other conjunct, which master and the filter of the table rejected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x INT, v INT)");
+            execute("INSERT INTO a VALUES (1, 1, 1), (2, 2, 2)");
+            execute("CREATE TABLE b (v INT, w INT)");
+            execute("INSERT INTO b VALUES (1, 10), (2, 20), (2, 0)");
+            execute("CREATE TABLE c (k INT, x INT, v INT)");
+            execute("INSERT INTO c VALUES (1, 1, 0), (2, 3, 5), (3, 2, 1)");
+            for (String conjunct : new String[]{" AND b2.w > 0", ""}) {
+                final String query = """
+                        SELECT a.k, b2.v bv2, c.k ck
+                        FROM a
+                        JOIN b b2 ON a.v = b2.v%s AND $1
+                        RIGHT JOIN c ON a.k = c.k
+                        ORDER BY ck
+                        """.formatted(conjunct);
+                bindVariableService.clear();
+                try (RecordCursorFactory ignore = select(query)) {
+                    Assert.assertEquals(ColumnType.BOOLEAN, bindVariableService.getFunction(0).getType());
+                }
+                bindVariableService.setBoolean(0, false);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .returns("""
+                                k\tbv2\tck
+                                null\tnull\t1
+                                null\tnull\t2
+                                null\tnull\t3
+                                """);
+                bindVariableService.setBoolean(0, true);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .returns(conjunct.isEmpty()
+                                ? """
+                                k\tbv2\tck
+                                1\t1\t1
+                                2\t2\t2
+                                2\t2\t2
+                                null\tnull\t3
+                                """
+                                : """
+                                k\tbv2\tck
+                                1\t1\t1
+                                2\t2\t2
+                                null\tnull\t3
+                                """);
             }
         });
     }

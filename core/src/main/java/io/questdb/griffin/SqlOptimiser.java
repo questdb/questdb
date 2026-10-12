@@ -9787,7 +9787,16 @@ public class SqlOptimiser implements Mutable {
                 // constant filter, which also drops the rows that a RIGHT, FULL or SPLICE join written after the
                 // INNER join keeps. Without such a join, the constant filter empties the level without reading it.
                 if (isMovableInnerPredicate && masterNullingJoinIndex(joinIndex) > -1 && !hasJoinModelReference(parent, n)) {
-                    addWhereNode(parent, joinIndex, n);
+                    if (!isCompileTimeConstant(n) && isEffectivelyConstantExpression(n)) {
+                        // A bind variable or a function such as now() has one value per execution. The filter of
+                        // the joined table would test it on every row and could not compile to JIT, so
+                        // SqlCodeGenerator gates the joined table with it instead, see generateJoinedTableGate().
+                        joinModel.setConstWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, joinModel.getConstWhereClause(), n));
+                    } else {
+                        // the filter folds a constant when it compiles, and tests a function such as
+                        // rnd_double() on every row
+                        addWhereNode(parent, joinIndex, n);
+                    }
                     n = null;
                     continue;
                 }

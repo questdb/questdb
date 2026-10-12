@@ -6866,6 +6866,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // Gates the table of an INNER join with the conjuncts of its ON clause that read no table and have one value per
+    // execution, such as a bind variable or now(), see SqlOptimiser.processJoinConditions(). The gate tests them once
+    // per execution, so the filter of the table keeps its JIT form, and while they are false the gate returns no
+    // rows without opening the table.
+    private RecordCursorFactory generateJoinedTableGate(
+            RecordCursorFactory factory,
+            ExpressionNode gateExpr,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final Function gate = functionParser.parseFunction(gateExpr, factory.getMetadata(), executionContext);
+        try {
+            if (isUndefined(gate.getType())) {
+                // A bare bind variable whose type the client left to the compiler. In the filter of the table, the
+                // AND with the other conjuncts gave it BOOLEAN.
+                gate.assignType(BOOLEAN, executionContext.getBindVariableService());
+            }
+            if (!isBoolean(gate.getType())) {
+                throw SqlException.$(gateExpr.position, "boolean expression expected");
+            }
+            if (gate.isConstant()) {
+                if (gate.getBool(null)) {
+                    Misc.free(gate);
+                    return factory;
+                }
+            } else if (!gate.isRuntimeConstant()) {
+                // SqlOptimiser gives the gate only constants, bind variables and runtime constant functions. Should
+                // a function of them still vary, the filter tests it on every row.
+                return new FilteredRecordCursorFactory(factory, gate);
+            }
+            return new RuntimeConstGateRecordCursorFactory(factory, gate, deepClone(expressionNodePool, gateExpr));
+        } catch (Throwable th) {
+            Misc.free(gate, th);
+            throw th;
+        }
+    }
+
     private RecordCursorFactory generateJoins(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
@@ -7030,6 +7066,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     } finally {
                         horizonJoinSlaveModel = previousHorizonSlaveModel;
+                    }
+
+                    // The const where clause of the first model filters the whole level, see below. That of a later
+                    // model gates the model, see SqlOptimiser.processJoinConditions().
+                    if (index > 0 && slaveModel.getConstWhereClause() != null) {
+                        slaveToFree = generateJoinedTableGate(slaveToFree, slaveModel.getConstWhereClause(), executionContext);
                     }
 
                     // check if this is the root of joins
