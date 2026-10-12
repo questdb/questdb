@@ -25,13 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -5836,6 +5841,75 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSetOperationColumnTypeMatchesCodeGenerator() throws Exception {
+        // The optimiser keys joins and checks NULL rejection on the type that getSetOperationColumnType() gives a
+        // set-operation column, so the type must be the one that the code generator outputs, or -1 when the
+        // optimiser cannot tell. A different type fails code generation with "join column type mismatch" or
+        // drops rows. The one allowed difference is SYMBOL in every operand of an EXCEPT or INTERSECT, which the
+        // generator outputs as STRING when another column needs a cast: the two types compare with constants
+        // and encode join keys alike.
+        final String[] types = {
+                "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "DATE", "TIMESTAMP", "TIMESTAMP_NS", "FLOAT",
+                "DOUBLE", "STRING", "SYMBOL", "VARCHAR", "UUID", "IPv4", "LONG256", "GEOHASH(4c)", "GEOHASH(8c)",
+                "DECIMAL(10,2)", "DECIMAL(18,4)", "DOUBLE[]"
+        };
+        final int symbol = 12;
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < types.length; i++) {
+                execute("CREATE TABLE t" + i + " (k " + types[i] + ", c INT, cl LONG)");
+            }
+            final StringSink mismatches = new StringSink();
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                // Two operands, with and without a cast in the second column: the optimiser knows the type of
+                // every query that compiles.
+                for (String operation : new String[]{"UNION ALL", "UNION", "EXCEPT", "EXCEPT ALL", "INTERSECT", "INTERSECT ALL"}) {
+                    for (int a = 0; a < types.length; a++) {
+                        for (int b = 0; b < types.length; b++) {
+                            if (isDecimalWithArray(types, a, b)) {
+                                continue;
+                            }
+                            final String head = "SELECT k, c FROM t" + a + ' ' + operation + " SELECT k, ";
+                            final boolean isSymbol = a == symbol && b == symbol;
+                            assertSetOperationColumnType(compiler, head + "c FROM t" + b, true, isSymbol, mismatches);
+                            assertSetOperationColumnType(compiler, head + "cl FROM t" + b, true, isSymbol, mismatches);
+                        }
+                    }
+                }
+                // Three operands, which the generator folds from the left, flat and with a parenthesised right
+                // operand: SHORT, CHAR, INT, TIMESTAMP, STRING, SYMBOL, VARCHAR, GEOHASH(4c), DECIMAL(10,2), DOUBLE[]
+                final int[] chainTypes = {2, 3, 4, 7, 11, 12, 13, 17, 19, 21};
+                final String[][] chains = {
+                        {"UNION ALL", "UNION ALL"}, {"UNION", "UNION ALL"}, {"UNION ALL", "EXCEPT"},
+                        {"EXCEPT", "UNION ALL"}, {"INTERSECT", "UNION"}
+                };
+                for (int a : chainTypes) {
+                    for (int b : chainTypes) {
+                        for (int c : chainTypes) {
+                            if (isDecimalWithArray(types, a, b, c)) {
+                                continue;
+                            }
+                            final boolean isSymbol = a == symbol && b == symbol && c == symbol;
+                            for (String[] chain : chains) {
+                                final String head = "SELECT k, c FROM t" + a + ' ' + chain[0] + " SELECT k, c FROM t" + b + ' ' + chain[1] + " SELECT k, ";
+                                assertSetOperationColumnType(compiler, head + "c FROM t" + c, false, isSymbol, mismatches);
+                                assertSetOperationColumnType(compiler, head + "cl FROM t" + c, false, isSymbol, mismatches);
+                            }
+                            assertSetOperationColumnType(
+                                    compiler,
+                                    "SELECT k, c FROM t" + a + " UNION ALL (SELECT k, c FROM t" + b + " UNION ALL SELECT k, c FROM t" + c + ')',
+                                    false,
+                                    isSymbol,
+                                    mismatches
+                            );
+                        }
+                    }
+                }
+            }
+            assertEquals("", mismatches.toString());
+        });
+    }
+
+    @Test
     public void testSingleCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y (x int, ts timestamp) timestamp(ts) partition by day;");
@@ -6832,6 +6906,48 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         """);
     }
 
+    // Compares the type that the optimiser gives the first column of the set operation with the type that the code
+    // generator outputs, and appends the query to mismatches when they differ. isTypeKnown requires a type.
+    private static void assertSetOperationColumnType(
+            SetOperationTypeCompiler compiler,
+            String query,
+            boolean isTypeKnown,
+            boolean isSymbolInEveryOperand,
+            StringSink mismatches
+    ) throws SqlException {
+        IQueryModel model = (IQueryModel) compiler.generateExecutionModel(query, sqlExecutionContext);
+        while (model.getUnionModel() == null) {
+            model = model.getNestedModel();
+        }
+        final int computedType = compiler.getSetOperationColumnType(model);
+        final int actualType;
+        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            actualType = factory.getMetadata().getColumnType(0);
+        } catch (SqlException e) {
+            // the code generator rejects the operand types
+            return;
+        }
+        if (computedType == actualType
+                || (computedType < 0 && !isTypeKnown)
+                || (computedType == ColumnType.SYMBOL && actualType == ColumnType.STRING && isSymbolInEveryOperand)) {
+            return;
+        }
+        mismatches.put(query).put(": generator ").put(ColumnType.nameOf(actualType))
+                .put(", optimiser ").put(computedType < 0 ? "unknown" : ColumnType.nameOf(computedType)).put('\n');
+    }
+
+    // The code generator widens DECIMAL with an array to VARCHAR, but has no cast from DECIMAL to VARCHAR: the query
+    // fails an assertion, or a NullPointerException without assertions. That is not the type the optimiser reads.
+    private static boolean isDecimalWithArray(String[] types, int... operands) {
+        boolean hasDecimal = false;
+        boolean hasArray = false;
+        for (int operand : operands) {
+            hasDecimal |= types[operand].startsWith("DECIMAL");
+            hasArray |= types[operand].endsWith("[]");
+        }
+        return hasDecimal && hasArray;
+    }
+
     private void testRewriteTrivialExpressions(boolean aliasExpressionsEnabled) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(aliasExpressionsEnabled));
         assertMemoryLeak(() -> {
@@ -6884,6 +7000,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             ExecutionModel model = compiler.generateExecutionModel(query, sqlExecutionContext);
             assertEquals(ExecutionModel.QUERY, model.getModelType());
             return (IQueryModel) model;
+        }
+    }
+
+    private static class SetOperationTypeCompiler extends SqlCompilerImpl {
+        SetOperationTypeCompiler(CairoEngine engine) {
+            super(engine);
+        }
+
+        int getSetOperationColumnType(IQueryModel model) {
+            return optimiser.getSetOperationColumnTypeForTesting(model, 0);
         }
     }
 }

@@ -599,6 +599,11 @@ public class SqlOptimiser implements Mutable {
         return functionParser.getFunctionFactoryCache();
     }
 
+    @TestOnly
+    public int getSetOperationColumnTypeForTesting(IQueryModel model, int columnIndex) {
+        return getSetOperationColumnType(model, model.getColumns().getQuick(columnIndex));
+    }
+
     public boolean hasOrderedGroupByFunc(ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -773,6 +778,16 @@ public class SqlOptimiser implements Mutable {
         return dot > -1
                 ? model.getAliasToColumnMap().get(columnName, dot + 1, columnName.length())
                 : model.getAliasToColumnMap().get(columnName);
+    }
+
+    // SqlCodeGenerator.getUnionCastType(), or -1 for arrays of unknown dimensionality, which code generation
+    // rejects as well.
+    private static int getUnionCastTypeOrUnknown(int typeA, int typeB) {
+        try {
+            return SqlCodeGenerator.getUnionCastType(typeA, typeB);
+        } catch (SqlException e) {
+            return -1;
+        }
     }
 
     // Returns true when a join model links the given model as a dependency.
@@ -6686,39 +6701,66 @@ public class SqlOptimiser implements Mutable {
         return jc;
     }
 
-    // A set operation outputs each column in the type that it widens over the branches, which match columns by
-    // position. Returns that type, widened in branch order with SqlCodeGenerator.getUnionCastType() as
-    // generateSetFactory() widens it, or -1 when the type of a branch is unknown, so no caller reads the type of
-    // one branch as the type of the output. A type that the next branch shares stays as it is: getUnionCastType()
-    // widens SYMBOL and SYMBOL to STRING, but a UNION outputs a column that is SYMBOL on every branch as SYMBOL.
+    // Returns the type that SqlCodeGenerator.generateSetFactory() gives the column of the set operation, or -1
+    // when the type of an operand is unknown or the generator decides it by other columns. The generator folds
+    // the operands from the left, matching columns by position, and each step widens the running type with
+    // getUnionCastType() when the operand type differs. A UNION or UNION ALL step also widens SYMBOL with SYMBOL,
+    // to STRING, and a column that is SYMBOL in every operand of a run of such steps becomes SYMBOL again when the
+    // run ends. An EXCEPT or INTERSECT step widens SYMBOL with SYMBOL only when another column of its operands
+    // differs, which leaves the type unknown, unless every operand is SYMBOL: the column is then SYMBOL or
+    // STRING, which compare with constants and encode join keys alike.
+    // SqlOptimiserTest.testSetOperationColumnTypeMatchesCodeGenerator() checks the result against the generator.
     private int getSetOperationColumnType(IQueryModel model, QueryColumn column) {
         final int index = model.getColumns().indexOf(column);
-        int type = getQueryColumnType(model, column);
-        if (index < 0 || type < 0) {
+        final int firstType = getQueryColumnType(model, column);
+        if (index < 0 || firstType < 0) {
             return -1;
         }
-        for (IQueryModel branch = model.getUnionModel(); branch != null; branch = branch.getUnionModel()) {
-            final ObjList<QueryColumn> branchColumns = branch.getColumns();
-            if (index >= branchColumns.size()) {
+        int type = firstType;
+        boolean isSameType = true;
+        boolean isUnionRun = false;
+        boolean isSymbolRun = false;
+        for (IQueryModel left = model, right = model.getUnionModel(); right != null; left = right, right = right.getUnionModel()) {
+            final ObjList<QueryColumn> rightColumns = right.getColumns();
+            if (index >= rightColumns.size()) {
                 return -1;
             }
-            final int branchType = getQueryColumnType(branch, branchColumns.getQuick(index));
-            if (branchType < 0) {
+            final int rightType = getQueryColumnType(right, rightColumns.getQuick(index));
+            if (rightType < 0) {
                 return -1;
             }
-            if (branchType != type) {
-                try {
-                    type = SqlCodeGenerator.getUnionCastType(type, branchType);
-                } catch (SqlException e) {
-                    // arrays of unknown dimensionality, which code generation rejects as well
-                    return -1;
+            isSameType &= rightType == firstType;
+            if (type >= 0) {
+                final int operation = left.getSetOperationType();
+                if (operation == IQueryModel.SET_OPERATION_UNION || operation == IQueryModel.SET_OPERATION_UNION_ALL) {
+                    if (!isUnionRun) {
+                        isUnionRun = true;
+                        isSymbolRun = ColumnType.isSymbol(type);
+                    }
+                    isSymbolRun &= ColumnType.isSymbol(rightType);
+                    if (type != rightType || ColumnType.isSymbol(type)) {
+                        type = getUnionCastTypeOrUnknown(type, rightType);
+                    }
+                } else {
+                    if (isUnionRun && isSymbolRun) {
+                        type = ColumnType.SYMBOL;
+                    }
+                    isUnionRun = false;
+                    if (type != rightType) {
+                        type = getUnionCastTypeOrUnknown(type, rightType);
+                    } else if (ColumnType.isSymbol(type)) {
+                        type = -1;
+                    }
                 }
-                if (type < 0) {
-                    return -1;
-                }
+            }
+            if (type < 0 && !isSameType) {
+                return -1;
             }
         }
-        return type;
+        if (isSameType) {
+            return firstType;
+        }
+        return isUnionRun && isSymbolRun ? ColumnType.SYMBOL : type;
     }
 
     /**

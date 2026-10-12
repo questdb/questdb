@@ -4673,6 +4673,38 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImpliedKeyOverUnionOfSymbolsAndGeohash() throws Exception {
+        // The union outputs a.f as GEOHASH: the code generator widens the two SYMBOL branches to STRING, and STRING
+        // with GEOHASH to GEOHASH. getSetOperationColumnType() widened the SYMBOL type of the first branch with
+        // GEOHASH instead, which gives STRING, so isFilterEqualToKeyMatch() accepted the implied a.f = bq.g as a
+        // STRING join key, and code generation failed with "join column type mismatch".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE as1 (w INT, f SYMBOL)");
+            execute("INSERT INTO as1 VALUES (1, 'u33d')");
+            execute("CREATE TABLE as2 (w INT, f SYMBOL)");
+            execute("INSERT INTO as2 VALUES (2, 'u33e')");
+            execute("CREATE TABLE ag (w INT, f GEOHASH(4c))");
+            execute("INSERT INTO ag VALUES (3, #u33f)");
+            execute("CREATE TABLE bq (g STRING, x INT)");
+            execute("INSERT INTO bq VALUES ('u33d', 2)");
+            execute("CREATE TABLE dq (y INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3)");
+            execute("CREATE TABLE cq (k STRING)");
+            execute("INSERT INTO cq VALUES ('u33d')");
+            assertQuery("""
+                    SELECT a.w, a.f, bq.g, dq.y, cq.k ck
+                    FROM (SELECT w, f FROM as1 UNION ALL SELECT w, f FROM as2 UNION ALL SELECT w, f FROM ag) a
+                    JOIN bq ON bq.x > 1 RIGHT JOIN dq ON dq.y = a.w JOIN cq ON a.f = cq.k AND bq.g = cq.k
+                    WHERE a.w > 0 ORDER BY 1, 2, 3, 4, 5""")
+                    .noLeakCheck()
+                    .returns("""
+                            w\tf\tg\ty\tck
+                            1\tu33d\tu33d\t1\tu33d
+                            """);
+        });
+    }
+
+    @Test
     public void testInSubQueryWithJoinOnClause() throws Exception {
         // A JOIN nested in a lambda IN sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)",
         // HORIZON JOIN as first reported) used to drain the shared parser arg stack and consume
@@ -15116,6 +15148,20 @@ public class JoinTest extends AbstractCairoTest {
                         .withPlanContaining("filter: bk='a'")
                         .returns(expected);
             }
+            // two SYMBOL branches widen to STRING before the VARCHAR one, so the union outputs STRING
+            assertQuery("""
+                    SELECT u.k, u.v, bv.bk, bv.w, dq.x dx
+                    FROM (SELECT k, v FROM us UNION ALL SELECT k, v FROM us UNION ALL SELECT k, v FROM uvc) u
+                    JOIN bv ON bv.bk = u.k RIGHT JOIN dq ON dq.x = bv.x
+                    WHERE u.k = 'a' ORDER BY u.v""")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: bk='a'")
+                    .returns("""
+                            k\tv\tbk\tw\tdx
+                            a\t1\ta\t100\t1
+                            a\t1\ta\t100\t1
+                            a\t10\ta\t100\t1
+                            """);
         });
     }
 
