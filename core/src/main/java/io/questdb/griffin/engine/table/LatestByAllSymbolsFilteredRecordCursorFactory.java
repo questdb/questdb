@@ -77,6 +77,11 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     }
 
     @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

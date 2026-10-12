@@ -6739,13 +6739,10 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testExplicitTimestampUnionHeadBranch() throws Exception {
-        // F6 fix-phase test (obligation h): a union head as the join branch. Without the clause
-        // the union output has no designated timestamp and the ASOF join is rejected (asserted
-        // first - unchanged behavior). Pre-fix the clause query failed the same way (the hoisted
-        // clause never designated the branch). Post-fix the wrapper sits above the whole union,
-        // the clause scopes to union OUTPUT, and the join works. Oracle rows derived by hand:
-        // UNION ALL preserves arm order (ta rows then tb rows - ascending here), ASOF matches
-        // each ts against tsr.
+        // F6 fix-phase test (obligation h): a union head as the join branch. The TIMESTAMP clause
+        // designates the union output but does not establish ordering: UNION ALL is contractually
+        // unordered even when this fixture's arms happen to concatenate in ascending order. ASOF must
+        // therefore refuse the bare union and accept the explicitly sorted counterpart.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE tb (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -6758,7 +6755,12 @@ public class SubsampleTest extends AbstractCairoTest {
                     87,
                     "left side of time series join has no timestamp"
             );
-            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb) s TIMESTAMP(ts) ASOF JOIN tsr r")
+            assertException(
+                    "SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb) s TIMESTAMP(ts) ASOF JOIN tsr r",
+                    32,
+                    "ASC order over TIMESTAMP column is required but not provided"
+            );
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb ORDER BY ts) s TIMESTAMP(ts) ASOF JOIN tsr r")
                     .timestamp("ts")
                     .noRandomAccess()
                     .expectSize()

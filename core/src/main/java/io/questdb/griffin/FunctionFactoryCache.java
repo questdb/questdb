@@ -43,6 +43,7 @@ public class FunctionFactoryCache {
     static final IntHashSet invalidFunctionNameChars = new IntHashSet();
     static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
     private static final Log LOG = LogFactory.getLog(FunctionFactoryCache.class);
+    private final LowerCaseCharSequenceHashSet ascendingTimestampFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceHashSet cursorFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();
@@ -58,6 +59,11 @@ public class FunctionFactoryCache {
                     final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);
                     final String name = descriptor.getName();
                     addFactoryToList(factories, descriptor);
+
+                    // Outside the if/else chain below: this is orthogonal to what kind of function it is.
+                    if (factory.requiresAscendingDesignatedTimestamp()) {
+                        ascendingTimestampFunctionNames.add(name);
+                    }
 
                     // Add != counterparts to equality function factories
                     if (factory.isBoolean()) {
@@ -126,6 +132,19 @@ public class FunctionFactoryCache {
 
     public ObjList<FunctionFactoryDescriptor> getOverloadList(CharSequence token) {
         return factories.get(token);
+    }
+
+    /**
+     * Returns true if a function of this name needs its base query to deliver rows in ascending
+     * designated-timestamp order. See {@link FunctionFactory#requiresAscendingDesignatedTimestamp()}.
+     * <p>
+     * Answered by NAME, so it is true when ANY overload requires the order. Both sparkline() overloads do,
+     * and no name here has an overload that does not, so the distinction has no instance today; a
+     * conservative true would in any case only cost an ordering the query did not need, never a wrong
+     * answer.
+     */
+    public boolean isAscendingTimestampOrdered(CharSequence name) {
+        return name != null && ascendingTimestampFunctionNames.contains(name);
     }
 
     public boolean isCursor(CharSequence name) {

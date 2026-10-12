@@ -231,12 +231,15 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Note: tables with designated timestamp keep rows in timestamp order, so:
      * - forward scan produces rows in ascending ts order
      * - backward scan produces rows in descending ts order
+     * <p>
+     * This method is deliberately abstract. {@link #SCAN_DIRECTION_FORWARD} is a positive claim that
+     * consumers act on - ORDER BY elision, window-order dismissal, ASOF/LT join eligibility, CTAS
+     * designated-timestamp inheritance and COPY export partitioning all read it. A default would let a
+     * factory make that claim by omission, so every implementation must state its answer explicitly.
      *
      * @return the scan direction
      */
-    default int getScanDirection() {
-        return SCAN_DIRECTION_FORWARD;
-    }
+    int getScanDirection();
 
     /**
      * Returns an independent cursor for the given consumer ID. Idempotent —

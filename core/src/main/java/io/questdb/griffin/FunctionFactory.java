@@ -123,6 +123,32 @@ public interface FunctionFactory {
     }
 
     /**
+     * Returns true if the {@link Function} produced by this factory computes a wrong answer unless the base
+     * query delivers rows in ascending designated-timestamp order - as twap() and sparkline() do, both
+     * integrating across adjacent rows and trusting each page frame to arrive already sorted by the
+     * designated timestamp.
+     * <p>
+     * The function itself still refuses a base that does not provide that order. This flag is what lets the
+     * code generator find out, before any function is built, that it has to obtain the order instead of
+     * handing an unordered base over - by restating the ordering requirement on the base so an ordered plan
+     * is chosen, or failing that by sorting. Sorting the base of a query that contains no such function
+     * would be a full-cardinality materialisation nobody asked for, which is why the answer has to stay
+     * false by default.
+     * <p>
+     * This is the stronger of the engine's two order-sensitivity registries. The weaker one,
+     * {@code SqlOptimiser.orderedGroupByFunctions}, holds first(), first_not_null(), last() and
+     * last_not_null(); it only preserves an ORDER BY the query already carries and does not obtain one,
+     * because those four return a different answer over an unordered base rather than refusing. The two
+     * sets are disjoint on purpose, and the reasoning - including what declaring this flag on those four
+     * was measured to cost - is recorded next to that set.
+     *
+     * @return true if the produced function requires ascending designated-timestamp order from its base
+     */
+    default boolean requiresAscendingDesignatedTimestamp() {
+        return false;
+    }
+
+    /**
      * Creates a new instance of the function.
      *
      * @param position            the position in the SQL statement

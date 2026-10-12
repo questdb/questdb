@@ -1121,6 +1121,11 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         protected RecordCursorFactory matViewFactory(TableToken token) {
             final RecordCursorFactory replacement = hook.replace(token);
             return replacement != null ? replacement : super.matViewFactory(token);
@@ -1156,6 +1161,11 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
                 throw sqlError;
             }
             throw runtimeError;
+        }
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
         }
 
         @Override
