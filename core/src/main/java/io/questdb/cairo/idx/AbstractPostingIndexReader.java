@@ -57,6 +57,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
@@ -2179,6 +2180,14 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return operatingThreadId == Thread.currentThread().threadId();
     }
 
+    /**
+     * The cover count a new cursor tracks: the index's, when the caller reads covered columns
+     * through it, and 0 when it reads row ids only ({@code null} or no columns requested).
+     */
+    protected int cursorCoverCount(@Nullable int[] requiredCoverColumns) {
+        return requiredCoverColumns != null && requiredCoverColumns.length > 0 ? coverCount : 0;
+    }
+
     protected void openRequiredSidecars(int[] requiredCoverColumns) {
         if (coverCount == 0) {
             return;
@@ -2246,6 +2255,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected final DirectUtf8String varcharViewB = new DirectUtf8String();
         protected int cachedKeyBlockStride = -1;
         protected int cachedSidecarIdx;
+        // The reader's coverCount when the opener asked for covered columns, else 0. The
+        // sidecar bookkeeping (ordinals, stride key starts, per-gen sidecar offsets, the
+        // seek's skipped-value sums) serves only the covered accessors, so a cursor that
+        // reads row ids alone -- a key-major walk, a plain index scan -- skips all of it
+        // and drains its blocks in bulk, as on an index without INCLUDE columns.
+        protected int cursorCoverCount;
         protected int cursorGenCount;
         protected long decodeWorkspaceAddr;
         protected int decodeWorkspaceCapacity;
@@ -3263,7 +3278,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         protected void cacheSidecarKeyAddrs(int stride, int localKey) {
-            if (coverCount == 0 || sealedGenKeyCount <= 0) {
+            if (cursorCoverCount == 0 || sealedGenKeyCount <= 0) {
                 return;
             }
             if (stride == cachedKeyBlockStride) {
@@ -3360,7 +3375,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         protected void computePerColumnSidecarOffsets(int gen) {
-            if (coverCount == 0) {
+            if (cursorCoverCount == 0) {
                 return;
             }
             currentGenSidecarOffsets.setPos(coverCount);

@@ -116,6 +116,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // the reader's close() only drains freeNullCursors and would never
             // reclaim a cursor stranded mid-of().
             try {
+                nc.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 nc.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 nc.releaseResources();
@@ -139,6 +140,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // See the NullCursor branch above: release the cursor's native buffers
             // if of() throws so a mid-of() failure cannot strand them.
             try {
+                c.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 c.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 c.releaseResources();
@@ -183,6 +185,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // never in the reader's free list, so nothing else would reclaim it; release
             // its native scratch on a mid-of() failure (mirrors getCursor).
             try {
+                nc.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 nc.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 nc.releaseResources();
@@ -199,6 +202,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             Cursor c = new Cursor();
             c.isDetached = true;
             try {
+                c.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 c.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 c.releaseResources();
@@ -309,7 +313,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                         return false;
                     }
                     next = value;
-                    if (coverCount > 0) {
+                    if (cursorCoverCount > 0) {
                         sidecarOrdinal--;
                         cachedSidecarIdx = isCurrentGenDense
                                 ? sidecarStrideKeyStart + sidecarOrdinal
@@ -323,7 +327,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     if (blockBufferPos >= 0) {
                         this.next = Unsafe.getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                         blockBufferPos--;
-                        if (coverCount > 0) {
+                        if (cursorCoverCount > 0) {
                             sidecarOrdinal--;
                             cachedSidecarIdx = isCurrentGenDense
                                     ? sidecarStrideKeyStart + sidecarOrdinal
@@ -341,7 +345,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                         blockBufferPos--;
                         if (value <= maxValue) {
                             this.next = value;
-                            if (coverCount > 0) {
+                            if (cursorCoverCount > 0) {
                                 sidecarOrdinal--;
                                 cachedSidecarIdx = isCurrentGenDense
                                         ? sidecarStrideKeyStart + sidecarOrdinal
@@ -349,7 +353,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                             }
                             return true;
                         }
-                        if (coverCount > 0) sidecarOrdinal--;
+                        if (cursorCoverCount > 0) sidecarOrdinal--;
                     }
                 }
 
@@ -477,15 +481,15 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     if (minD > 0) {
                         long over = (startValue - maxValue + minD - 1) / minD;
                         if (over >= remaining) {
-                            if (coverCount > 0) sidecarOrdinal -= remaining;
+                            if (cursorCoverCount > 0) sidecarOrdinal -= remaining;
                             remaining = 0;
                         } else {
                             startValue -= over * minD;
-                            if (coverCount > 0) sidecarOrdinal -= (int) over;
+                            if (cursorCoverCount > 0) sidecarOrdinal -= (int) over;
                             remaining -= (int) over;
                         }
                     } else {
-                        if (coverCount > 0) sidecarOrdinal -= remaining;
+                        if (cursorCoverCount > 0) sidecarOrdinal -= remaining;
                         remaining = 0;
                     }
                 }
@@ -738,7 +742,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
             int totalValueCount = Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
             this.sidecarStrideKeyStart = 0;
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 int deltaKeyStartCount = 0;
                 for (int k = 0; k < localKey; k++) {
                     deltaKeyStartCount += Unsafe.getInt(countsAddr + (long) k * Integer.BYTES);
@@ -846,7 +850,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // descending order, so it starts one past the key's last covered
             // value and decrements — hence "+ totalValueCount".
             // See SparseGenSidecarPrefixSum.
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 int sidecarBase = sidecarPrefixSum.baseOrdinal(
                         genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount, isFrozen());
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
@@ -907,7 +911,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // O(1) via the reader-scoped memo instead of an O(idx) scan of counts[]
             // on every cursor open; version-guarded on the gen snapshot. See the
             // sibling loadSparseGenByPrefixSum and SparseGenSidecarPrefixSum.
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 int sidecarBase = sidecarPrefixSum.baseOrdinal(
                         genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount, isFrozen());
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
@@ -1030,7 +1034,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
             // Adjust sidecar ordinal for trimmed trailing blocks — those values
             // are never iterated, so the ordinal must not count them.
-            if (endBlock < firstWord && coverCount > 0) {
+            if (endBlock < firstWord && cursorCoverCount > 0) {
                 int trailingTrimmedCount = 0;
                 for (int b = endBlock; b < firstWord; b++) {
                     trailingTrimmedCount += Unsafe.getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
@@ -1110,7 +1114,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             efHighWordIdx = word;
             // hasNext() decrements sidecarOrdinal once per value it discards above maxValue; the
             // seek discards these values without visiting them, so account for them here.
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 sidecarOrdinal -= skipped;
             }
         }
