@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Represents a contiguous fragment of a table partition.
@@ -73,6 +74,16 @@ public interface PageFrame {
     byte getFormat();
 
     IndexReader getIndexReader(int columnIndex, int direction);
+
+    /**
+     * The filler that computes this native frame's column addresses later, or {@code null} when
+     * the frame carries them. A non-null filler means the address getters of this frame return
+     * nothing meaningful: the frame's consumer records its boundaries and calls the filler once a
+     * thread needs the frame, see {@link PageFrameAddressCache#ensureFrameReady(int)}.
+     */
+    default @Nullable PageFrameAddressFiller getDeferredAddressFiller() {
+        return null;
+    }
 
     /**
      * Per-column runtime source tag.

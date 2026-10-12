@@ -296,6 +296,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     public void navigateTo(int frameIndex, PageFrameMemoryRecord record) {
         final byte format = addressCache.getFrameFormat(frameIndex);
         if (format == PartitionFormat.NATIVE) {
+            // a deferred frame's columns are computed by the first thread that comes here
+            addressCache.ensureFrameReady(frameIndex);
             // A covered frame reports NATIVE but is served by this pool's per-frame
             // CoveringBuffers, NOT the query-stable address-cache arrays, so it must
             // take the parquet-style guarded bind below -- never the frame-index-only
@@ -472,6 +474,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         final byte format = addressCache.getFrameFormat(frameIndex);
         if (format == PartitionFormat.NATIVE) {
+            addressCache.ensureFrameReady(frameIndex);
             unbind(FRAME_MEMORY_MASK);
             frameMemory.pageAddresses = addressCache.getPageAddresses();
             frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
@@ -589,6 +592,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         final byte format = addressCache.getFrameFormat(frameIndex);
         if (format == PartitionFormat.NATIVE) {
+            addressCache.ensureFrameReady(frameIndex);
             unbind(FRAME_MEMORY_MASK);
             frameMemory.pageAddresses = addressCache.getPageAddresses();
             frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();

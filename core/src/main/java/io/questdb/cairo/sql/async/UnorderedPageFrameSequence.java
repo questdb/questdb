@@ -71,6 +71,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private static final long MAX_TAIL_SPIN_NANOS = 16_000L;
     private static final int TAIL_SPIN_OUTSTANDING_FRAMES = 2;
     private final MillisecondClock clock;
+    // native frames come without column addresses, which the threads processing them compute, see
+    // PageFrameCursor.deferFrameAddresses()
+    private final boolean deferFrameAddresses;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AsyncQueryErrorState errorState = new AsyncQueryErrorState("unexpected reduce error");
     private final LongList frameRowCounts = new LongList();
@@ -121,6 +124,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             this.messageBus = messageBus;
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
+            this.deferFrameAddresses = configuration.isSqlParallelFrameDispatchEnabled();
             this.tailSpinTimeoutNanos = Math.max(
                     0,
                     Math.min(configuration.getSqlParallelWorkStealingSpinTimeout(), MAX_TAIL_SPIN_NANOS)
@@ -580,6 +584,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
+            if (deferFrameAddresses) {
+                // every frame is read through the address cache and memory pools, which fill it in
+                frameCursor.deferFrameAddresses();
+            }
             symbolTableSource = frameCursor;
             frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 

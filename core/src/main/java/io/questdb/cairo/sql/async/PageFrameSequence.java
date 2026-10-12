@@ -65,6 +65,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
+    // native frames come without column addresses, which the threads processing them compute, see
+    // PageFrameCursor.deferFrameAddresses()
+    private final boolean deferFrameAddresses;
     private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
@@ -119,6 +122,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             this.messageBus = messageBus;
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
+            this.deferFrameAddresses = configuration.isSqlParallelFrameDispatchEnabled();
             this.localTaskFactory = localTaskFactory;
             this.workStealingStrategy = configuration.getFactoryProvider()
                     .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
@@ -460,6 +464,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
+            if (deferFrameAddresses) {
+                // every frame is read through the address cache and memory pools, which fill it in
+                frameCursor.deferFrameAddresses();
+            }
 
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
