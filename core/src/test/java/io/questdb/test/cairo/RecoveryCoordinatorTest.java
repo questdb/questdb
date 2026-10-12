@@ -2291,6 +2291,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     setCommitMode(modes[1]);
                     armed.set(true);
                     try {
+                        engine.getTxnScoreboardPool().remove(tt);
                         engine.getTableSequencerAPI().resetForReboot(tt);
                         new RecoveryCoordinator(engine).recover();
                         engine.load();
