@@ -34,61 +34,21 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * A tripwire for the whole class of defect, not one instance of it: drive a broad slice of the storage
- * surface and fail if ANY durability barrier is issued through a handle opened without write access.
- * <p>
- * Such a barrier is fine on POSIX and {@code ERROR_ACCESS_DENIED}s on Windows, and the DEFAULT OSS PR CI
- * pipeline is Linux-only, so nothing there notices on its own -- see
- * {@link WindowsBarrierContractFilesFacade}. (Do not read that as "this repository never runs on Windows":
- * {@code ci/test-hosted-pipeline.yml} runs Windows and macOS legs on demand via {@code /azp run macwin} and
- * automatically in the GitHub merge queue, and its {@code windows-cairo-1} shard claims this class. An
- * earlier revision of this javadoc asserted the Linux-only premise flatly and that is precisely why this
- * test arrived red on a Windows leg -- see {@code setUp}.) Four
- * sites shipped written that way. The first was found only because an Enterprise cold-storage test happened
- * to exercise it on the Windows leg of a different pipeline, two months later; the other three
- * ({@code _meta.swp}, {@code _todo_}, and the O3 rewrite) were found by this sweep, in about a second,
- * having been missed by a careful reading of the same code.
- * <p>
- * <b>Linux is the platform that has to be right</b>, and Linux cannot see this bug by construction, so the
- * guard has to live here rather than in a Windows CI leg that does not run on every PR. That makes this test the only
- * thing standing between the next barrier and a platform outage, which is why it sweeps rather than pins.
- * <p>
- * Coverage is honestly bounded by the workloads below: a barrier on a path none of them reach is still
- * invisible. Adding a workload is cheap -- please do, rather than assuming the sweep already covers what you
- * are about to write.
- *
- * <h2>Why both commit modes</h2>
- * They take DIFFERENT barrier sites, so neither subsumes the other:
- * <ul>
- *   <li>{@code sync} takes the eager grade at every apply-path site, including the ones {@code adaptive}
- *       defers to the durable epoch.</li>
- *   <li>{@code adaptive} reaches sites {@code sync} never executes at all -- the epoch itself:
- *       {@code DurableEpochManifest}, the {@code _txn.epoch}/{@code _cv.epoch} payload copies, and
- *       {@code fsyncMaterializedState}. Running only {@code sync} would leave the entire epoch machinery,
- *       which is the whole point of this branch, unswept.</li>
- * </ul>
+ * Drives a broad slice of the storage surface and fails if any durability barrier goes through a handle
+ * opened without write access, which fails with {@code ERROR_ACCESS_DENIED} on Windows.
+ * {@link WindowsBarrierContractFilesFacade} models that contract on POSIX. The sweep sees only the paths its
+ * workloads reach, so a new barrier site needs its own workload. Both commit modes run: {@code sync} takes
+ * the eager barrier at every apply-path site, and {@code adaptive} reaches the durable epoch
+ * ({@code DurableEpochManifest} and {@code fsyncMaterializedState}), which {@code sync} never executes.
  */
 public class WriteAccessBarrierSweepTest extends AbstractCairoTest {
 
     /**
-     * POSIX only, and the skip costs no coverage. Three separate reasons, in order of force:
-     * <ol>
-     *   <li>{@link WindowsBarrierContractFilesFacade} MODELS Windows on POSIX -- it says so itself
-     *       ({@code Os.isWindows()} "is a runtime constant a test cannot fake, so this does not pretend to
-     *       be Windows"). On a real Windows agent the model is redundant: {@code FlushFileBuffers} already
-     *       returns {@code ERROR_ACCESS_DENIED} through a handle opened without {@code GENERIC_WRITE}.</li>
-     *   <li>The sites this sweep would lose by not running on Windows are exactly the DIRECTORY fsyncs --
-     *       and the facade already exempts those ({@code isDirOrSoftLinkDir}), so they contribute zero
-     *       findings on Linux too. Lost coverage is the empty set, not a judgement call.</li>
-     *   <li>{@code runStorageWorkloads()} issues {@code CHECKPOINT CREATE}, which the engine refuses on
-     *       Windows by design ({@code DatabaseCheckpointAgent}: "Checkpoint is not supported on Windows").
-     *       That is the failure this skip resolves.</li>
-     * </ol>
-     * An {@code Assume}, never an early {@code return}: a return would leave the test green and lying.
-     * <p>
-     * If you want a REAL Windows assertion, it is a different test from this one: run the workloads on a
-     * Windows agent and assert that every barrier SUCCEEDS (i.e. no handle was opened read-only), rather
-     * than simulating the contract on POSIX. That is genuinely more coverage and is not what this class does.
+     * Runs on POSIX only, and the skip loses no coverage: on real Windows {@code FlushFileBuffers} itself
+     * returns {@code ERROR_ACCESS_DENIED} through a handle opened without {@code GENERIC_WRITE}; the sites a
+     * Windows run adds are directory fsyncs, which the facade exempts ({@code isDirOrSoftLinkDir}) on every
+     * platform; and {@code runStorageWorkloads()} issues {@code CHECKPOINT CREATE}, which the engine refuses
+     * on Windows. The skip is an {@code Assume}, so a skipped run does not report a pass.
      */
     @Before
     public void setUp() {
@@ -105,25 +65,23 @@ public class WriteAccessBarrierSweepTest extends AbstractCairoTest {
         final WindowsBarrierContractFilesFacade ff = new WindowsBarrierContractFilesFacade();
         assertMemoryLeak(ff, () -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-            // Every applied batch cuts an epoch, so the epoch barriers are reached by the ordinary inserts
-            // below instead of depending on a 60s cadence this test will never wait for.
+            // Every applied batch cuts an epoch, so the ordinary inserts below reach the epoch barriers
+            // without waiting for the 60s cadence.
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "0");
 
             runStorageWorkloads();
 
-            // Writer close fires the graceful-close epoch flush, which is a distinct site from the
-            // cadence-driven cut taken above.
+            // Writer close fires the graceful-close epoch flush, a distinct site from the cadence-driven cut.
             engine.releaseInactive();
 
             ff.assertNoReadOnlyFileBarrier();
             assertBarriersWereActuallyIssued(ff);
-            // The epoch machinery specifically: without this the test could pass having exercised only the
-            // same apply-path sites the sync case already covers, which is precisely the gap that let the
-            // epoch go unswept in the first place.
+            // The epoch itself must be reached; otherwise this case covers only the apply-path sites the sync
+            // case already covers.
             Assert.assertTrue(
                     "no durable-epoch barrier was issued, so this case adds nothing over the sync one"
                             + ff.debugDump(),
-                    ff.barrierCount(".epoch") > 0 || ff.barrierCount("_epoch.manifest") > 0
+                    ff.barrierCount("_epoch.manifest") > 0
             );
         });
     }
@@ -142,8 +100,8 @@ public class WriteAccessBarrierSweepTest extends AbstractCairoTest {
     }
 
     /**
-     * Without this the sweep is vacuous: a run that issued no barriers reports no violations, and would stay
-     * green with every barrier in the engine deleted.
+     * Guards against a vacuous sweep: a run that issues no barriers reports no violations, and would pass
+     * with every barrier in the engine deleted.
      */
     private static void assertBarriersWereActuallyIssued(WindowsBarrierContractFilesFacade ff) {
         Assert.assertTrue(
@@ -154,8 +112,8 @@ public class WriteAccessBarrierSweepTest extends AbstractCairoTest {
     }
 
     /**
-     * The workload battery. Deliberately small per operation -- this is about reaching barrier SITES, not
-     * about volume, so it stays fast enough to sit in PR CI.
+     * The workloads. Each operation is small: the point is to reach barrier sites, not volume, so the test
+     * stays fast.
      */
     private void runStorageWorkloads() throws Exception {
         // Ordinary create + append, the plain commit path.
@@ -168,8 +126,8 @@ public class WriteAccessBarrierSweepTest extends AbstractCairoTest {
         // O3: lands before the last row of an existing partition.
         execute("INSERT INTO t VALUES (4, 'a', 4.5, 'four', '2024-06-10T00:30:00.000000Z')");
 
-        // Structural DDL. These are one-shot writes that no epoch covers, so they take the eager grade
-        // even under adaptive -- and _meta.swp, one of the four broken sites, lives here.
+        // Structural DDL. These are one-shot writes that no epoch covers, so they take the eager grade even
+        // under adaptive; the _meta.swp barrier sits on this path.
         execute("ALTER TABLE t ADD COLUMN extra LONG");
         execute("ALTER TABLE t ALTER COLUMN s ADD INDEX");
         execute("INSERT INTO t VALUES (5, 'd', 5.5, 'five', '2024-06-13T01:00:00.000000Z', 50)");
@@ -185,9 +143,8 @@ public class WriteAccessBarrierSweepTest extends AbstractCairoTest {
         execute("ALTER TABLE t DROP PARTITION LIST '2024-06-11'");
 
         // Detach moves a partition directory, which is the rename-versus-publish family. The matching
-        // ATTACH is NOT covered: it needs the .detached directory renamed to .attachable out of band, and
-        // the file juggling that takes is more fragility than the extra site is worth here. If you touch
-        // an attach-path barrier, cover it yourself.
+        // ATTACH is not covered: it needs the .detached directory renamed to .attachable out of band. A
+        // change to an attach-path barrier needs its own coverage.
         execute("ALTER TABLE t DETACH PARTITION LIST '2024-06-12'");
 
         // Checkpoint copies _txn/_cv and is the path a restore later lands on.

@@ -25,45 +25,26 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A durable epoch must never be published from a writer that is part-way through a structural change.
- * <p>
- * The epoch's {@code _meta.epoch.N} and {@code _txn.epoch.N} are two independent copies that recovery
- * restores TOGETHER, so they must describe the same table shape. {@code _txn}'s symbol area is written from
- * {@code denseSymbolMapWriters}; {@code _meta} carries the live symbol columns. Those counts agreeing is
- * exactly the precondition for a mutually consistent pair.
- * <p>
- * {@code TableWriter.changeColumnType} transiently breaks it: it creates the destination SYMBOL column's map
- * writer BEFORE running the conversion, and publishes the column to {@code _meta} only afterwards. When the
- * conversion had to pull a partition back from parquet, it used to take a durable epoch cut from inside that
- * window ({@code ConvertOperatorImpl.convertColumn -> TableWriter.commitPendingParquetToNativeConversions ->
- * advanceDurableEpoch}); the prepass no longer writes {@code _txn} at all, and the epoch is cut after the
- * ALTER's final commit. The symbol-count check remains the backstop for any future caller in that window.
- * Such an epoch would record a {@code _txn} that counts the not-yet-published symbol
- * column against a {@code _meta} that lacks it — at the SAME {@code metadataVersion}, so every identity
- * check in {@code RecoveryCoordinator.epochCopiesValid} passes and the pair is adopted.
- * <p>
- * Adopting it rewinds the table into a state nothing can open: {@code rollbackSymbolTables} iterates the
- * {@code _txn} count over the shorter {@code denseSymbolMapWriters} and throws ArrayIndexOutOfBounds inside
- * the {@code TableWriter} constructor; past that, WAL apply rejects the table with "unexpected new WAL
- * structure version". The table stays permanently suspended while the sequencer runs ahead. It surfaced as
- * an {@code ArrayIndexOutOfBoundsException} in the adaptive crash-fuzz soak, thousands of crash points from
- * anything that looked structural.
- * <p>
- * This test asserts the invariant directly on the published epoch, with no crash machinery: whatever the
- * cadence decides to publish, the two copies must agree. Declining to publish is a valid outcome (the method
- * is best-effort by contract), which is why the assertion is conditional on an epoch existing.
+ * A durable epoch must never be published from a writer that is part-way through a structural change. Recovery
+ * restores the save point's copies of {@code _meta} and {@code _txn} together, so their symbol columns must agree.
+ * {@code TableWriter.changeColumnType} to SYMBOL creates the new map writer before it publishes the column to
+ * {@code _meta}; an epoch cut in that window would pass {@code RecoveryCoordinator.areEpochCopiesValid} and restore a
+ * table that WAL apply rejects. The test converts a column of a parquet partition to SYMBOL and checks the
+ * published save point directly. The cut is best-effort, so the assertion applies only when an epoch exists.
  */
 public class AdaptiveEpochStructuralConsistencyTest extends AbstractCairoTest {
 
@@ -79,12 +60,12 @@ public class AdaptiveEpochStructuralConsistencyTest extends AbstractCairoTest {
                     "'s2_' || (x % 5), 'value_long_string_d2_' || x FROM long_sequence(50)");
             drainWalQueue();
 
-            // Parquet storage is what forces the conversion to pull the partition back to native, which is
-            // the path that takes an epoch cut from inside the structural window.
+            // Parquet storage makes the conversion pull the partition back to native inside the structural
+            // window.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
 
-            // The trigger: a non-symbol column becomes a SYMBOL, so a NEW symbol map writer exists before
+            // The trigger: a non-symbol column becomes a SYMBOL, so a new symbol map writer exists before
             // _meta names the column.
             execute("ALTER TABLE x ALTER COLUMN v TYPE SYMBOL");
             drainWalQueue();
@@ -99,31 +80,26 @@ public class AdaptiveEpochStructuralConsistencyTest extends AbstractCairoTest {
     }
 
     /**
-     * Reads the epoch copies the way {@link io.questdb.cairo.RecoveryCoordinator} does and asserts the one
-     * property recovery depends on but never checked: that the {@code _txn} and {@code _meta} it restores
-     * together were captured from the same table shape.
+     * Reads the saved sections the way {@link io.questdb.cairo.RecoveryCoordinator} does and asserts a
+     * property recovery depends on but does not check: the {@code _txn} and {@code _meta} it restores together
+     * come from the same table shape.
      */
     private void assertEpochCopiesAgreeOnSymbolCount(TableToken token) {
         try (Path path = new Path()) {
-            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            final SnapshotMarker marker = new SnapshotMarker(engine.getConfiguration());
-            final int generation;
-            try {
-                marker.of(path.$());
-                if (!marker.tryLoad() || marker.getGeneration() == SnapshotMarker.LEGACY_GENERATION) {
-                    // No metadata-bound epoch was published. Legitimate: the cut is best-effort, and
-                    // declining to publish is exactly what the fix does in the structural window.
-                    return;
-                }
-                generation = marker.getGeneration();
-            } finally {
-                marker.close();
+            path.of(engine.getConfiguration().getDbRoot()).concat(token);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(engine.getConfiguration().getFilesFacade(), path, path.size(), token.getTableId());
+            if (saved.length == 0) {
+                // No epoch was published: the cut is best-effort, and declines to publish in the structural
+                // window.
+                return;
             }
+            final int generation = saved[0].generation;
 
-            final int rootLen = path.of(engine.getConfiguration().getDbRoot()).concat(token).size();
-
-            path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
+            final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            final CharSequence dbRoot = engine.getConfiguration().getDbRoot();
+            // The readers load files, so each saved section is copied out first.
+            path.of(dbRoot).concat("saved" + TableUtils.META_FILE_NAME);
+            TestUtils.copySavePointSection(ff, dbRoot, token, generation, TableUtils.META_FILE_NAME, path.$());
             int metaSymbolColumns = 0;
             int partitionBy;
             int timestampType;
@@ -139,12 +115,12 @@ public class AdaptiveEpochStructuralConsistencyTest extends AbstractCairoTest {
                 }
             }
 
-            path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME)
-                    .put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
+            path.of(dbRoot).concat("saved" + TableUtils.TXN_FILE_NAME);
+            TestUtils.copySavePointSection(ff, dbRoot, token, generation, TableUtils.TXN_FILE_NAME, path.$());
             final int txnSymbolColumns;
-            try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+            try (TxReader txReader = new TxReader(ff)) {
                 txReader.ofRO(path.$(), timestampType, partitionBy);
-                Assert.assertTrue("could not load _txn.epoch." + generation, txReader.unsafeLoadAll());
+                Assert.assertTrue("could not load the saved _txn of generation " + generation, txReader.unsafeLoadAll());
                 txnSymbolColumns = txReader.getSymbolColumnCount();
             }
 

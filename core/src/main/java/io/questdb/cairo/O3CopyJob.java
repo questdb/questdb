@@ -193,7 +193,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } catch (Throwable th) {
             // Notify table writer of error before clocking down done counters
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            tableWriter.o3BumpErrorCount(th);
 
             // We cannot close / unmap fds here. Other copy jobs may still be running and using them.
             // exception handling code of the stack will check if all the parts are finished before closing the memory / fds.
@@ -653,10 +653,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             // The writer's own grade, not the raw global mode: a table held at SYNC pending adaptive
             // enrolment must flush here even though the instance runs ADAPTIVE.
             final int commitMode = tableWriter.getEffectiveCommitMode();
-            // Apply-path destination-column sync. Gated on appliesColumnSync (SYNC/ASYNC only): under
-            // ADAPTIVE this O3-merged column is a rebuildable cache of the durable WAL, so it is left
-            // non-durable here (lazy apply) and made crash-safe by the durable epoch + recovery
-            // roll-forward (Plan 3). NOSYNC skips as before. See CommitMode.appliesColumnSync.
+            // Apply-path destination-column sync, SYNC and ASYNC only (CommitMode.appliesColumnSync). Under
+            // ADAPTIVE the durable epoch and recovery make the lazily applied column crash-safe.
             if (CommitMode.appliesColumnSync(commitMode)) {
                 syncColumns(
                         columnCounter,
@@ -759,7 +757,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$("sync error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount(false);
+            tableWriter.o3BumpErrorCount(e, false);
             unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -829,11 +827,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     }
                 }
                 indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
-                // Thread the table's EFFECTIVE commit mode into this (possibly transient) index writer, so
-                // its commit() flush decision matches the destination-column sync gate above
-                // (CommitMode.appliesColumnSync on getEffectiveCommitMode). Without it the index kept
-                // reading the instance-global mode and flushed on every O3 merge of an ADAPTIVE table --
-                // whose merged columns are deliberately left lazy and made durable by the epoch instead.
+                // Give this possibly transient index writer the table's effective commit mode, so its commit()
+                // flush follows the destination-column sync gate above rather than the instance-wide mode.
                 indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
                 updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
                 indexWriter.commit();
@@ -847,7 +842,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$("index error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount(false);
+            tableWriter.o3BumpErrorCount(e, false);
             unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,

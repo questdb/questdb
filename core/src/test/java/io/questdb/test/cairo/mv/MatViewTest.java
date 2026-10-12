@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
@@ -1068,6 +1069,7 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -2619,6 +2621,7 @@ public class MatViewTest extends AbstractCairoTest {
             // writer to flush a durable epoch (as prod eviction does) before asserting the now-consumed
             // base WAL is reclaimed.
             engine.releaseInactive();
+            takeSavePointIfAdaptive(baseTableToken);
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2706,6 +2709,7 @@ public class MatViewTest extends AbstractCairoTest {
             // writer to flush a durable epoch (as prod eviction does) before asserting the now-consumed
             // base WAL is reclaimed.
             engine.releaseInactive();
+            takeSavePointIfAdaptive(baseTableToken);
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2771,6 +2775,7 @@ public class MatViewTest extends AbstractCairoTest {
                 // the applied tail -- exactly as an idle writer's eviction does in production -- before
                 // asserting the now-superseded base WAL is reclaimed.
                 engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6725,6 +6730,7 @@ public class MatViewTest extends AbstractCairoTest {
                 // the applied tail -- exactly as an idle writer's eviction does in production -- before
                 // asserting the now-superseded base WAL is reclaimed.
                 engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6850,6 +6856,7 @@ public class MatViewTest extends AbstractCairoTest {
                 // the applied tail -- exactly as an idle writer's eviction does in production -- before
                 // asserting the now-superseded base WAL is reclaimed.
                 engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6919,17 +6926,16 @@ public class MatViewTest extends AbstractCairoTest {
             final long counterAfterInitial = TestTimestampCounterFactory.COUNTER.get();
             Assert.assertEquals("Initial period refresh should emit 1 bucket", 1, counterAfterInitial);
 
-            // Seed the EMA so the cost model has a known threshold, exactly as
+            // Seed the EMA so the cost model has a known threshold, as
             // testRefreshIntervalsO3MergesNarrowGap does for the merge case.
-            // Without this the threshold is commit * range / sample measured off
-            // the warmup refresh, i.e. a WALL-CLOCK property of the agent: under
-            // the suite's ADAPTIVE commit mode every commit fsyncs, and on a slow
-            // Windows agent that inflates avgCommitNanos until the threshold
-            // exceeds the 30h gap below, merging the two intervals and sweeping
-            // the untouched 10:00 bucket back in (3 buckets, not 2).
-            // threshold = commit * range / sample, so sample = range = 1 reduces
-            // it to threshold = commit; 5s is far below the 30h gap, which is the
-            // regime this test means to pin: SPLIT, not merge.
+            // Otherwise the threshold is commit * range / sample taken from the
+            // warmup refresh, a wall-clock property of the machine: under the
+            // suite's ADAPTIVE commit mode every commit fsyncs, and on a slow
+            // machine avgCommitNanos can grow until the threshold exceeds the
+            // 30h gap below, merging the two intervals and sweeping the untouched
+            // 10:00 bucket back in (3 buckets, not 2). With sample = range = 1 the
+            // threshold equals the commit cost; 5s is far below the 30h gap, so
+            // the test stays in the split regime.
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
             final long fiveSecondsInTsUnits = timestampType.getDriver().fromMicros(5_000_000L);
@@ -6943,7 +6949,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // O3 write 24h back, plus a current write -- arrived as 2 separate
             // WAL txns. With a 30h gap and the threshold pinned to 5s above,
-            // clustering splits them regardless of how slow this agent is.
+            // clustering splits them regardless of machine speed.
             execute("insert into base_price(price, ts) values (2.0, '2024-09-09T05:01')");
             execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:01')");
 
@@ -9877,6 +9883,35 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTxnRangeLoaderSkipsRebaseSeeds() throws Exception {
+        // REBASE WAL seeds the table with two empty transactions. They hold no rows, so they add no refresh interval.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute("alter table base suspend wal");
+            execute("alter table base rebase wal");
+            execute("insert into base values ('a', 2.0, '2024-09-10T13:00')");
+            drainWalQueue();
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+                loader.load(engine, path, baseToken, intervals, 0, 3);
+                final long ts = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
+                Assert.assertEquals(ts, loader.getMinTimestamp());
+                Assert.assertEquals(ts, loader.getMaxTimestamp());
+            }
+        });
+    }
+
+    @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -10313,6 +10348,16 @@ public class MatViewTest extends AbstractCairoTest {
                 throw new OutOfMemoryError(message);
             }
         };
+    }
+
+    // The WAL purge keeps the WAL above the older of the two save points, which recovery falls back to; one more
+    // save point at the applied cut moves the older one past the WAL the test expects purged.
+    private static void takeSavePointIfAdaptive(TableToken tableToken) {
+        if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+            }
+        }
     }
 
     /**

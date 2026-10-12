@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -40,6 +41,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
@@ -184,6 +186,10 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public CairoConfiguration getConfiguration() {
+        return configuration;
+    }
+
     public int getCurrentWalId(final TableToken tableToken) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             try {
@@ -293,9 +299,9 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
-     * The engine's adaptive group-commit (Deferred 2) pending-flush registry. Exposed here so a
-     * {@link io.questdb.cairo.wal.WalWriter} (which holds the sequencer API, not the engine) can register
-     * itself when it defers a device flush under {@code cairo.adaptive.commit.group.window > 0}.
+     * The engine's set of WAL writers with a pending adaptive group-commit flush. A
+     * {@link io.questdb.cairo.wal.WalWriter}, which holds the sequencer API and not the engine, registers itself
+     * here when it defers a device flush.
      */
     @NotNull
     public io.questdb.cairo.wal.WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {
@@ -304,6 +310,10 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void handleDataSyncFailure(Throwable failure) {
         engine.handleDataSyncFailure(failure);
+    }
+
+    public boolean isDataSyncFailureFatal(Throwable failure) {
+        return engine.isDataSyncFailureFatal(failure);
     }
 
     public boolean isDurabilityFailed() {
@@ -385,18 +395,26 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
-     * Adaptive group-commit (Deferred 2): perform the DEFERRED device flush ({@code fdatasync}) of the
-     * sequencer txn log for {@code tableToken}, the final (seq) step of the batched data→events→seq flush.
-     * Opens the sequencer under the WRITE lock (the same lock {@code nextTxn} takes) so the flush cannot
-     * race a concurrent sequencer append/rotation. A no-op-safe call: callers only invoke it for ADAPTIVE
-     * tables that have deferred at least one sequencer commit under {@code W > 0}.
+     * Flushes the sequencer transaction log of {@code tableToken} to the device, the last step of the adaptive
+     * group commit's batched flush, after the data and the events. Opens the sequencer under the write lock, the
+     * lock {@code nextTxn} takes, so the flush cannot race an append or a rotation. Callers invoke it only for
+     * adaptive tables with at least one deferred sequencer commit.
      *
      * @return the highest seqTxn the flush covered; see {@link TableSequencerImpl#fdatasyncTxnLog()}.
      */
     public long fdatasyncTxnLog(final TableToken tableToken) {
+        return fdatasyncTxnLog(tableToken, Long.MAX_VALUE);
+    }
+
+    /**
+     * Flushes like {@link #fdatasyncTxnLog(TableToken)}, and also the older part files of a V2 log that hold txns
+     * from {@code fromTxn} on, for a flush that must cover records a run in a mode that does not flush the log
+     * left; see {@link TableTransactionLogFile#fdatasyncTxnLog(long)}.
+     */
+    public long fdatasyncTxnLog(final TableToken tableToken, long fromTxn) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
-                return tableSequencer.fdatasyncTxnLog();
+                return tableSequencer.fdatasyncTxnLog(fromTxn);
             } finally {
                 tableSequencer.unlockWrite();
             }
@@ -424,7 +442,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public CairoError poisonOnDataSyncFailure(Throwable failure) {
+    public @Nullable CairoError poisonOnDataSyncFailure(Throwable failure) {
         return engine.poisonOnDataSyncFailure(failure);
     }
 
@@ -458,22 +476,14 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
-     * TEST-ONLY reboot model for crash-consistency sweeps: force-close the table's cached sequencer AND drop
-     * its in-memory {@link SeqTxnTracker}, so the next access reloads BOTH from the durable txnlog on disk,
-     * exactly as a freshly booted engine does.
+     * Closes the table's cached sequencer and drops its {@link SeqTxnTracker}, so the next access reloads both
+     * from the transaction log on disk, as a freshly started engine does. A simulated crash can roll back a txn
+     * that the open sequencer still counts in its in-memory {@code lastTxn}; through that sequencer,
+     * {@link #forAllWalTables} would seed the tracker above the durable writer txn, and the apply job would wait
+     * forever for a txn the WAL no longer has.
      * <p>
-     * Needed because a sequenced-but-non-durable txn (adaptive group commit {@code W > 0}: the transaction
-     * was assigned a seqTxn in memory, but its txnlog record's device flush was DEFERRED to the WAL writer's
-     * close and a swept crash rolled it back) otherwise wedges recovery. The still-open sequencer keeps the
-     * stale in-memory {@code lastTxn}; {@link #forAllWalTables} reads it (the slow path) instead of the
-     * durable txnlog high-water and re-seeds the tracker's {@code seqTxn} above the durable {@code writerTxn},
-     * so the apply job spins forever (updateWriterTxns keeps returning {@code writerTxn < seqTxn} for a txn
-     * the rolled-back WAL no longer has). Closing the sequencer discards that stale high-water and forces
-     * {@code forAllWalTables} onto the fast path (reads the durable txnlog), so the fresh tracker re-inits to
-     * the rolled-back frontier and the apply converges.
-     * <p>
-     * Closes only an idle sequencer ({@link TableSequencerImpl#checkClose()} takes the schema write lock);
-     * the crash-sweep driver has already released readers/writers/WAL writers, so it is unreferenced.
+     * Closes only an idle sequencer ({@link TableSequencerImpl#checkClose()} takes the schema write lock); the
+     * caller has already released every reader and writer of the table.
      */
     @TestOnly
     public void resetForReboot(TableToken tableToken) {
@@ -542,32 +552,86 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void resumeTable(TableToken tableToken, long resumeFromTxn) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                if (!isSuspended(tableToken)) {
-                    // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
-                    // as a way to resume table which is not moving even if it's marked as not suspended.
-                    sequencer.resumeTable();
-                    return;
-                }
-                final long nextTxn = sequencer.lastTxn() + 1;
-                if (resumeFromTxn > nextTxn) {
-                    throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
-                }
-                // resume from the latest on negative value
-                if (resumeFromTxn > 0) {
-                    try (TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
-                        long seqTxn = tableWriter.getAppliedSeqTxn();
-                        if (resumeFromTxn - 1 > seqTxn) {
-                            // including resumeFromTxn
-                            tableWriter.commitSeqTxn(resumeFromTxn - 1);
+        // Holds the writer of an adaptive table whose skip, or an earlier change outside the WAL, still needs a
+        // durable epoch.
+        TableWriter skipWriter = null;
+        try {
+            try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+                try {
+                    if (!isSuspended(tableToken)) {
+                        // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
+                        // as a way to resume table which is not moving even if it's marked as not suspended.
+                        sequencer.resumeTable();
+                        return;
+                    }
+                    final long nextTxn = sequencer.lastTxn() + 1;
+                    if (resumeFromTxn > nextTxn) {
+                        throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
+                    }
+                    // resume from the latest on negative value
+                    if (resumeFromTxn > 0) {
+                        final TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON);
+                        try {
+                            long seqTxn = tableWriter.getAppliedSeqTxn();
+                            if (resumeFromTxn - 1 > seqTxn) {
+                                // including resumeFromTxn
+                                tableWriter.commitSeqTxn(resumeFromTxn - 1);
+                                if (tableWriter.isEnrolledAdaptive()) {
+                                    skipWriter = tableWriter;
+                                }
+                            } else if (tableWriter.isEnrolledAdaptive()) {
+                                // A repeat must verify disk coverage, not just the owed bit: another publication or
+                                // writer close may have cleared it while an older selectable cut still precedes the skip.
+                                skipWriter = tableWriter;
+                            }
+                        } finally {
+                            if (skipWriter == null) {
+                                tableWriter.close();
+                            }
+                        }
+                    } else if (engine.getResolvedCommitMode() == CommitMode.ADAPTIVE || getTxnTracker(tableToken).isDurableEpochOwed()) {
+                        // Outside local adaptive durability preserve plain RESUME's no-writer fast path.
+                        // A plain RESUME also certifies the current cut, including a previous skip or a partial
+                        // direct change whose required publication failed. Missing bookkeeping is not coverage.
+                        final TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON);
+                        if (tableWriter.isEnrolledAdaptive()) {
+                            skipWriter = tableWriter;
+                        } else {
+                            tableWriter.close();
                         }
                     }
+                    if (skipWriter == null) {
+                        sequencer.resumeTable();
+                        return;
+                    }
+                } finally {
+                    sequencer.unlockWrite();
                 }
-                sequencer.resumeTable();
-            } finally {
-                sequencer.unlockWrite();
             }
+            // The skip is not in the WAL, so the table needs a durable epoch before it resumes, or a crash would
+            // replay the skipped transactions; so does an epoch still owed. The epoch may take the sequencer lock
+            // itself, so it is taken with the lock released; the table stays suspended meanwhile, and stays
+            // suspended if the epoch fails.
+            try {
+                skipWriter.completeDurableEpochAfter("resume wal");
+            } catch (CairoException e) {
+                if (engine.isDataSyncFailureFatal(e)) {
+                    engine.handleDataSyncFailure(e);
+                }
+                throw CairoException.nonCritical()
+                        .put("could not take the durable epoch the table owes, the table stays suspended; retry RESUME WAL [table=")
+                        .put(tableToken.getTableName()).put(", reason=").put(e.getFlyweightMessage()).put(']');
+            }
+            skipWriter = Misc.free(skipWriter);
+            try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+                try {
+                    sequencer.resumeTable();
+                } finally {
+                    sequencer.unlockWrite();
+                }
+            }
+        } finally {
+            Misc.free(skipWriter);
         }
     }
 

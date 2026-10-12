@@ -452,26 +452,23 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     // what lets the cursor trim phase 1 -- the property the comment above
                     // documents as load-bearing for this test.
                     //
-                    // The ack barrier has to come BEFORE the WAL drain below, not after it.
-                    // The server acks a frame only once its rows are committed, so drain()
-                    // returning is precisely what makes the sequencer txn PUBLISHED and hence
-                    // drainable. flush() alone promises nothing about the server.
+                    // The ack barrier comes before the WAL drain below, not after it. The
+                    // server acks a frame only once its rows are committed, so drain()
+                    // returning means the sequencer txn is published and drainable. flush()
+                    // alone promises nothing about the server.
                     Assert.assertTrue("phase-1 acks must reach the client before the bounce",
                             sender.drain(30_000));
 
-                    // Apply the committed txn, and retry the DRAIN, not just the assertion:
-                    // drainWalQueue() makes a SINGLE pass, and nothing applies the WAL in the
-                    // background here -- RestartableQwpServer's pool gets
-                    // WorkerPoolUtils.setupWriterJobs, which assigns no ApplyWal2TableJob. A
-                    // drain that misses the commit therefore leaves the writer frontier behind
-                    // the sequencer until the NEXT drain, so the drain must live inside the
-                    // retried body.
+                    // Apply the committed txn, and retry the drain, not just the assertion:
+                    // drainWalQueue() makes a single pass, and nothing applies the WAL in the
+                    // background here (RestartableQwpServer's pool gets
+                    // WorkerPoolUtils.setupWriterJobs, which assigns no ApplyWal2TableJob). A
+                    // drain that misses the commit leaves the writer frontier behind the
+                    // sequencer until the next drain, so the drain lives inside the retried body.
                     //
-                    // engine.awaitTable() must NOT be that body's failure mode: it waits on a
-                    // frontier only a drain can move, and it reports the timeout as a
-                    // CairoException, which assertEventually does not catch (AssertionError
-                    // only). One lost race then aborts the loop on its first pass with
-                    // "txn timed out [expectedTxn=1, writerTxn=0]" after burning the full 30s.
+                    // engine.awaitTable() does not fit that body: it waits on a frontier only a
+                    // drain can move, and it reports the timeout as a CairoException, which
+                    // assertEventually does not catch (it retries on AssertionError only).
                     TestUtils.assertEventually(() -> {
                         drainWalQueue();
                         assertRowCount(rowsPerPhase);
@@ -501,25 +498,12 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * ADAPTIVE commit mode with a W=50ms group-commit window, exercised through
-     * the same-sender-survives-restart path. Under group commit the LOCAL
-     * durable-ack frontier ({@code getLocalDurableSeqTxn}) advances only when the
-     * batched {@code fdatasync} fires -- once per 50ms window -- so it LAGS the
-     * bytes the sender has already handed off. At the bounce the SF cursor
-     * therefore holds a larger un-acked window than it would under NOSYNC/SYNC
-     * (which ack every commit), and it must REPLAY that window on reconnect. The
-     * acked rows are durable and survive; the un-acked tail is resent;
-     * {@code DEDUP UPSERT KEYS(ts, id)} collapses the resend against the rows
-     * already committed pre-bounce. Net: every row written across the bounce is
-     * present exactly once -- no loss, no over-count -- which is the durable-ack
-     * replay contract holding end to end at W=50ms.
-     *
-     * <p>Scope: this bounces the QWP <em>server</em> (a WS reconnect); the shared
-     * engine, its WAL, and the durable-ack frontier persist across the bounce, so
-     * this proves the <em>client</em> store-and-forward replay against adaptive's
-     * lagging ack. The <em>engine</em> power-loss + WAL-prefix recovery side of
-     * the same contract at W&gt;0 is covered by
-     * {@code AdaptiveGroupCommitCrashTest} and the adaptive crash sweeps.
+     * ADAPTIVE with a 50ms group-commit window, through the same-sender-survives-restart path. The local
+     * durable-ack frontier ({@code getLocalDurableSeqTxn}) advances only when the batched {@code fdatasync} fires,
+     * so at the bounce the sender's store-and-forward cursor holds a larger un-acked window than under NOSYNC or
+     * SYNC and replays it on reconnect. {@code DEDUP UPSERT KEYS(ts, id)} collapses the resent tail, so every row
+     * written across the bounce is present exactly once. Only the QWP server bounces; the engine, its WAL and the
+     * frontier persist, so this covers the client's replay against the lagging ack, not power-loss recovery.
      */
     @Test
     public void testSameSenderReplaysUnackedAcrossRestartUnderAdaptiveW50ms() throws Exception {
@@ -536,14 +520,14 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     server.start();
 
                     int rowsPerPhase = 500;
-                    // Under adaptive's lagging ack, close()/flush() must wait long
-                    // enough for the batched fdatasync to ack the tail; give the
-                    // reconnect + final drain generous windows.
+                    // Under the lagging adaptive ack, close() and flush() must wait for
+                    // the batched fdatasync to ack the tail, so the reconnect and the
+                    // final drain get generous windows.
                     String connect = "ws::addr=localhost:" + port + ";sf_dir=" + sfDir
                             + ";reconnect_max_duration_millis=120000;close_flush_timeout_millis=120000;";
                     try (Sender sender = Sender.fromConfig(connect)) {
                         // Phase 1: write, flush. Some of this tail is sent but not yet
-                        // durably acked (still inside the open 50ms window).
+                        // durably acked, still inside the open 50ms window.
                         writeRows(sender, /*idBase*/ 0L, rowsPerPhase, 1_700_000_000_000_000_000L);
                         sender.flush();
 
@@ -560,7 +544,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
 
                     drainWalQueue();
                     engine.awaitTable(TABLE_NAME, 30, TimeUnit.SECONDS);
-                    // No loss AND no surviving duplicate: exactly the rows we wrote.
+                    // No loss and no surviving duplicate: exactly the rows written.
                     assertRowCount(2L * rowsPerPhase);
                     assertQuery(
                             "SELECT count_distinct(id) cnt FROM " + TABLE_NAME)

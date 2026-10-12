@@ -196,10 +196,10 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
 
     @Test
     public void testIdleEvictionKeepsEpochPinInItsSlot() throws Exception {
-        // Epoch every batch, so the pin walks A, B, A, B through the ping-pong slots. The board is evicted
-        // after every epoch. The replacement must hold the pin in the slot the tracker names: the next
-        // epoch pins the OTHER slot and releases this one, so a pin seeded into the wrong slot would either
-        // block that epoch or leak forever.
+        // Epoch every batch, so the pin walks A, B, A, B through the ping-pong slots, and the prior epoch stays
+        // pinned in the other slot. The board is evicted after every epoch. The replacement must hold both pins in
+        // the slots the tracker names: the next epoch releases the other pin and takes its slot, so a pin seeded
+        // into the wrong slot would either block that epoch or leak forever.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         assertMemoryLeak(() -> {
@@ -213,8 +213,10 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
                 final long pinnedTxn = tracker.getPinnedEpochTxn();
                 Assert.assertTrue("every batch must publish a new epoch", pinnedTxn > priorPinnedTxn);
                 Assert.assertEquals("the pin alternates between the slots", i % 2 == 0, tracker.isPinnedEpochSlotA());
-                // The board that handed the pin over (seeded after the previous eviction) holds only the new one.
-                assertOnlyEpochPin(token, pinnedTxn);
+                // The board that handed the pin over (seeded after the previous eviction) holds the new one and the
+                // prior one, nothing older.
+                Assert.assertEquals("the prior epoch stays pinned", priorPinnedTxn, tracker.getOtherPinnedEpochTxn());
+                assertOnlyEpochPins(token, pinnedTxn, priorPinnedTxn);
 
                 final TxnScoreboard evicted;
                 try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
@@ -224,7 +226,7 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
                 try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
                     Assert.assertNotSame("idle eviction must free the pooled scoreboard", evicted, scoreboard);
                 }
-                assertOnlyEpochPin(token, pinnedTxn);
+                assertOnlyEpochPins(token, pinnedTxn, priorPinnedTxn);
                 priorPinnedTxn = pinnedTxn;
             }
         });
@@ -279,11 +281,14 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
 
     // Reads the board without scanning a range: scanRangeHolders() and isRangeAvailable() push the board's
     // max txn, which would stop a later reader from acquiring the current txn.
-    private static void assertOnlyEpochPin(TableToken token, long pinnedTxn) {
+    private static void assertOnlyEpochPins(TableToken token, long pinnedTxn, long otherPinnedTxn) {
         try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
             final TxnScoreboardV2 board = (TxnScoreboardV2) scoreboard;
             Assert.assertEquals("the epoch pin must be held once", 1, board.getActiveReaderCount(pinnedTxn));
-            Assert.assertEquals("no older pin may be left behind", pinnedTxn, board.getMin());
+            if (otherPinnedTxn > -1) {
+                Assert.assertEquals("the other epoch pin must be held once", 1, board.getActiveReaderCount(otherPinnedTxn));
+            }
+            Assert.assertEquals("no older pin may be left behind", otherPinnedTxn > -1 ? otherPinnedTxn : pinnedTxn, board.getMin());
         }
     }
 }

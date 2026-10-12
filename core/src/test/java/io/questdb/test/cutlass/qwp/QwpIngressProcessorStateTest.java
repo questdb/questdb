@@ -751,14 +751,14 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
     @Test
     public void testOnDurableAckSentPrunesCaughtUpTables() throws Exception {
-        // Regression: the per-connection pending maps pendingDurableSeqTxns and
+        // The per-connection pending maps pendingDurableSeqTxns and
         // lastDurableSeqTxns must not grow one entry per unique table name for
         // the connection's lifetime. When the durable watermark catches up to
-        // the committed seqTxn for a table, onDurableAckSent prunes both. A
-        // later commit to the same table name re-populates via
-        // recordCommittedTable. tableIncarnations deliberately keeps one small
-        // entry per name, as the client keeps one watermark per name: it is
-        // what places a re-created table's seqTxns above that watermark.
+        // the committed seqTxn for a table, onDurableAckSent prunes both, and a
+        // later commit to the same name re-populates them via
+        // recordCommittedTable. tableIncarnations keeps one small entry per
+        // name, as the client keeps one watermark per name: it places a
+        // re-created table's seqTxns above that watermark.
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -824,9 +824,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     public void testRecordCommittedTableSkipsDurableMapsWhenDisabled() throws Exception {
         // Regression: connections that did not opt into durable-ack (no
         // X-QWP-Request-Durable-Ack header) must not pay the tracking cost.
-        // recordCommittedTable used to populate its per-name durable maps on
-        // every commit regardless of durableAckEnabled, leaking one entry per
-        // unique table name for the connection's lifetime.
+        // recordCommittedTable must leave its per-name durable maps empty
+        // while durableAckEnabled is false, or it leaks one entry per unique
+        // table name for the connection's lifetime.
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -965,7 +965,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         // same name, so this connection commits to the new directory before any poll saw the drop. The
         // old incarnation reached seqTxn 3, the new one starts at seqTxn 1. The client still holds entries
         // up to 3 for the name, so the old incarnation must be reported covered (it is gone), and the new
-        // incarnation's seqTxns must reach the wire ABOVE 3 -- otherwise a report of the new frontier would
+        // incarnation's seqTxns must reach the wire above 3 -- otherwise a report of the new frontier would
         // also cover the new entries the old values shadow.
         assertMemoryLeak(() -> {
             execute("create table recreated (ts timestamp, v long) timestamp(ts) partition by day wal");
@@ -1039,7 +1039,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
     @Test
     public void testCollectDurableProgressLiveOldIncarnationGatesNewOne() throws Exception {
-        // The old incarnation is NOT gone: the table was renamed away (its directory still resolves) and
+        // The old incarnation is not gone: the table was renamed away (its directory still resolves) and
         // a new table took the name. Its commits must be covered by its own frontier before anything of
         // the new incarnation may be reported under the shared name, because any report of the name
         // covers every lower value the client holds for it.
@@ -1162,12 +1162,11 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
     @Test
     public void testCollectDurableProgressSelectsByTier() throws Exception {
-        // Anti-downgrade regression: collectDurableProgress must SELECT the
-        // frontier for the connection's negotiated tier, never max() the two
-        // tiers together. Since localDurableSeqTxn >= uploadedSeqTxn always
-        // holds in practice, a blind max() resolves to the local frontier --
-        // which would silently downgrade a REPLICATED (failover-safe) client
-        // to mere LOCAL (power-loss-safe) durability.
+        // collectDurableProgress must select the frontier for the connection's
+        // negotiated tier, never max() the two tiers together. localDurableSeqTxn
+        // >= uploadedSeqTxn holds in practice, so a max() resolves to the local
+        // frontier and downgrades a REPLICATED (failover-safe) client to LOCAL
+        // (power-loss-safe) durability.
         assertMemoryLeak(() -> {
             // registry where local (10) >= uploaded (4), as always holds in practice
             DurableAckRegistry registry = new DurableAckRegistry() {
@@ -1187,7 +1186,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 }
             };
 
-            // REPLICATED connection must NOT advance past the uploaded frontier. The pending seqTxn sits
+            // REPLICATED connection must not advance past the uploaded frontier. The pending seqTxn sits
             // above both frontiers, so the per-connection cap does not mask the selection.
             QwpIngressProcessorState replicated = newStateWithPendingTable("t", "t~1", 20L);
             try {
@@ -1214,17 +1213,15 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
     @Test
     public void testDurableWorkCoverageSelectsByTier() throws Exception {
-        // isDurableWorkFullyCovered gates the role-change close's exactly-once guard: it asks "will the
-        // final durable ack we are about to flush cover ALL of this connection's committed work?". That ack
-        // is built by collectDurableProgress from the connection's NEGOTIATED tier, so this predicate must
-        // read the SAME frontier. Reading the REPLICATED frontier unconditionally (as it once did) is always
-        // -1 for a LOCAL-tier connection in OSS, which made the predicate permanently false: every LOCAL
-        // role-change close burned the full grace budget and then logged the "closing with un-acked durable
-        // work" alarm even when the local frontier had in fact covered everything.
+        // isDurableWorkFullyCovered gates the role-change close's exactly-once guard: it asks whether the
+        // final durable ack about to be flushed covers all of this connection's committed work.
+        // collectDurableProgress builds that ack from the connection's negotiated tier, so this predicate
+        // must read the same frontier. The replicated frontier is always -1 for a LOCAL-tier connection in
+        // OSS: reading it would make every LOCAL role-change close burn the full grace budget and log the
+        // "closing with un-acked durable work" alarm although the local frontier covers everything.
         assertMemoryLeak(() -> {
             // Asymmetric registry: the local (fdatasync) frontier covers the pending seqTxn 1; the
-            // replicated (upload) frontier does not. Exactly the OSS shape, where there is no upload
-            // pipeline at all.
+            // replicated (upload) frontier does not. This is the OSS shape, which has no upload pipeline.
             DurableAckRegistry registry = new DurableAckRegistry() {
                 @Override
                 public long getLocalDurableSeqTxn(CharSequence tableDirName) {
@@ -1256,7 +1253,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
 
             // A REPLICATED-tier connection asked for a stronger guarantee this registry cannot yet meet, so
-            // it must NOT be judged covered -- the tier selection must not simply always pick the (weaker,
+            // it must not be judged covered -- the tier selection must not simply always pick the (weaker,
             // numerically higher) local frontier either.
             QwpIngressProcessorState replicated = newStateWithPendingTable("t", "t~1");
             try {
@@ -6692,18 +6689,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             return v == null ? -1L : v;
         }
 
-        // This shared fake predates per-connection tier selection and does not
-        // model two independent frontiers: it mirrors the same watermark for
-        // the local tier as for the uploaded tier, so tests using it via set()
-        // get consistent progress regardless of which tier the connection
-        // under test negotiated (most don't set one and default to
-        // DurabilityTier.NONE, which reads this method). Before tier selection
-        // replaced collectDurableProgress's Math.max(), that max() collapsed to
-        // the uploaded value anyway because this fake's local tier was always
-        // -1 -- so mirroring here preserves those tests' original behavior
-        // exactly. Tests that must tell LOCAL and REPLICATED apart (e.g.
-        // testCollectDurableProgressSelectsByTier) construct their own
-        // asymmetric DurableAckRegistry instead of using this fake.
+        // This shared fake does not model two independent frontiers: it
+        // reports the same watermark for the local tier as for the uploaded
+        // tier, so tests using it via set() get the same progress whichever
+        // tier the connection under test negotiated (most leave the default
+        // DurabilityTier.NONE, which reads this method). Tests that must tell
+        // LOCAL and REPLICATED apart construct their own asymmetric
+        // DurableAckRegistry instead.
         @Override
         public long getLocalDurableSeqTxn(CharSequence tableDirName) {
             return getReplicatedDurableSeqTxn(tableDirName);

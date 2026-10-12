@@ -47,9 +47,8 @@ public class VarcharFdAccessorTest extends AbstractTest {
 
     @Test
     public void testDeepColumnNoStackOverflow() throws Exception {
-        // Previously the recursive getDataVectorSizeAtFromFd would StackOverflow on large row counts.
-        // This test writes 10000 split rows and calls the accessor on the last row to prove it
-        // returns the correct total without any recursion/overflow.
+        // Writes 10000 split rows and calls getDataVectorSizeAtFromFd on the last row: it returns the
+        // correct total without recursing, so a large row count cannot overflow the stack.
         final var ff = TestFilesFacadeImpl.INSTANCE;
         TestUtils.assertMemoryLeak(() -> {
             try (Path auxPath = new Path().of(temp.newFile().getAbsolutePath())) {
@@ -84,13 +83,13 @@ public class VarcharFdAccessorTest extends AbstractTest {
                         VarcharTypeDriver.appendValue(auxMem, dataMem, new Utf8String(SPLIT));
                     }
 
-                    // clean read: must return correct size and must NOT throw for row 0
+                    // clean read: returns the correct size and does not throw for row 0
                     long auxFdClean = ff.openRO(auxPath.$());
                     try {
                         long sz = VarcharTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, auxFdClean, rows - 1);
                         // last row ends at offset (rows-1)*SPLIT.length() + SPLIT.length() = rows * SPLIT.length()
                         Assert.assertEquals((long) rows * SPLIT.length(), sz);
-                        // row 0: offset is 0 for first split entry, must NOT throw
+                        // row 0: offset is 0 for the first split entry, does not throw
                         VarcharTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, auxFdClean, 0);
                     } finally {
                         ff.close(auxFdClean);

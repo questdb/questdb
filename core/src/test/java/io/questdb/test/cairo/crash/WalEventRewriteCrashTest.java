@@ -53,31 +53,29 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * A WAL event record rewritten in place must read back after a power loss, in every commit mode, whatever
- * the kernel wrote back on its own.
+ * A WAL event record rewritten in place must read back after a power loss, in SYNC and ADAPTIVE, whatever
+ * the kernel wrote back on its own. NOSYNC and ASYNC promise nothing across a power loss.
  * <p>
  * When a concurrent ALTER TABLE ADD COLUMN ... SYMBOL is sequenced while a writer commits pending rows, the
  * writer's commit gets NO_TXN, replays the ALTER, and rewrites its already sealed record in place so that
- * the record carries the new column's null flag. The rewrite replaces bytes in three files that the kernel
- * writes back independently: {@code _event}, {@code _event.i} and {@code _event.c}. It can write any of them
- * back while it still holds the ORIGINAL record (between the first seal and the rewrite), and any of them
- * after the rewrite.
+ * the record carries the new column's null flag. The rewrite replaces bytes in two files that the kernel
+ * writes back independently: {@code _event} and {@code _event.i}. It can write either of them back while it
+ * still holds the original record (between the first write and the rewrite), and either of them after the
+ * rewrite.
  * <p>
- * Each case promotes one subset of the three files to durable at the pre-rewrite point, the complementary
+ * Each case promotes one subset of the two files to durable at the pre-rewrite point, the complementary
  * subset after the commit, and everything else the txn needs (sequencer, columns, directory entries), so
  * that the sequencer names the txn. {@code markFileDurable} models the kernel writeback. Without a barrier
- * after the rewrite, a pre-rewrite file next to post-rewrite ones is a mixed image: the reader condemns an
- * intact record as torn against the other version's sealed checksum entry, or finds it longer than its
- * stale index entry, and the table suspends. Where the original record survives in full, it applies without
- * the new column's null flag. The fix flushes all three files after the rewrite and before the txn is
- * sequenced, so the only image a sequenced txn can meet is the rewritten one.
+ * after the rewrite, a pre-rewrite file next to a post-rewrite one is a mixed image: the reader finds the
+ * record longer than its stale index entry, and the table suspends. Where the original record survives in
+ * full, it applies without the new column's null flag. The writer flushes both files after the rewrite and
+ * before it sequences the txn, so the only image a sequenced txn can meet is the rewritten one.
  */
 @RunWith(Parameterized.class)
 public class WalEventRewriteCrashTest extends AbstractAdaptiveCrashTest {
     private static final String[] EVENT_FILES = {
             WalUtils.EVENT_FILE_NAME,
-            WalUtils.EVENT_INDEX_FILE_NAME,
-            WalUtils.EVENT_CHECKSUM_FILE_NAME
+            WalUtils.EVENT_INDEX_FILE_NAME
     };
     private final String commitMode;
     private final long groupWindowUs;
@@ -94,8 +92,6 @@ public class WalEventRewriteCrashTest extends AbstractAdaptiveCrashTest {
     @Parameterized.Parameters(name = "mode={0}, window={1}, roll={2}, stale={3}")
     public static Collection<Object[]> data() {
         final Object[][] modes = {
-                {"nosync", 0L},
-                {"async", 0L},
                 {"sync", 0L},
                 {"adaptive", 0L},
                 {"adaptive", 50_000L}
@@ -222,8 +218,7 @@ public class WalEventRewriteCrashTest extends AbstractAdaptiveCrashTest {
 
     /**
      * The kernel writes back everything except the rewritten segment's event files, and journals every
-     * directory entry. In NOSYNC and ASYNC nothing else would make the sequencer record or the rolled
-     * segment durable; in the other modes this only repeats what the commit already made durable.
+     * directory entry. This only repeats what the commit already made durable.
      */
     private void promoteEverythingElse(Path tableDir, Path segmentDir) {
         final List<Path> directories = new ArrayList<>();

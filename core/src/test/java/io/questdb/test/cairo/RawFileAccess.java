@@ -34,10 +34,9 @@ import org.junit.Assert;
 /**
  * Positional (pread/pwrite) peek/poke primitives for the test-only on-disk corruption helpers.
  * <p>
- * Deliberately NOT mmap-based: a writable mapping of one of these files can truncate it on close, which
- * would destroy the very geometry a corruption test is trying to edit in place. Extracted so
- * {@link CvCorruptionUtils} and {@link TxnCorruptionUtils} share one implementation rather than each
- * carrying its own copy.
+ * Not mmap-based: a writable mapping of one of these files can truncate it on close, which would destroy
+ * the geometry a corruption test edits in place. {@link CvCorruptionUtils} and {@link TxnCorruptionUtils}
+ * share this implementation.
  */
 public final class RawFileAccess {
 

@@ -384,15 +384,15 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void syncFlushKick() {
-    }
-
-    @Override
     public void syncFlushDrain() {
     }
 
     @Override
     public void syncFlushFinishIfExtended() {
+    }
+
+    @Override
+    public void syncFlushKick() {
     }
 
     @Override

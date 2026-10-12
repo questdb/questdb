@@ -27,14 +27,12 @@ package io.questdb.test.cairo.crash;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -46,6 +44,7 @@ import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
+import io.questdb.test.cairo.wal.GroupCommitTestUtils.ExposedFlusher;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Rule;
@@ -59,36 +58,35 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import static io.questdb.test.cairo.wal.GroupCommitTestUtils.commitRow;
+
 /**
- * Multi-writer durable-ack CONTIGUITY crash-fuzz for adaptive GROUP-COMMIT ({@code W > 0}) — the seeded,
- * deterministic, replayable fuzz proof for the CRITICAL-2 contiguous-durable-prefix contract (Task 5).
+ * Multi-writer durable-ack contiguity crash fuzz for adaptive group commit ({@code W > 0}): a seeded,
+ * replayable check that the durable-ack frontier covers only the contiguous durable prefix.
  *
- * <p>N concurrently-held {@link WalWriter}s of ONE adaptive {@code W>0} table share one {@link SeqTxnTracker}
- * and flush their deferred group-commit batches INDEPENDENTLY (per-writer commit-driven trigger + the
- * {@code WalGroupCommitFlushQueue} background sweep) with no cross-writer barrier. A single seeded {@link Rnd}
- * interleaves append+commit on random writers, clock advances, and background sweeps — so writers flush out of
- * order and the shared durable-ack frontier ({@code localDurableSeqTxn}) must track only the CONTIGUOUS
- * durable prefix across all writers.
+ * <p>N concurrently held {@link WalWriter}s of one adaptive {@code W>0} table share one {@link SeqTxnTracker}
+ * and flush their deferred group-commit batches independently (the per-writer commit-driven trigger and the
+ * {@code WalGroupCommitFlushQueue} background sweep), with no cross-writer barrier. A seeded {@link Rnd}
+ * interleaves append+commit on random writers, clock advances and background sweeps, so writers flush out of
+ * order and the shared frontier ({@code localDurableSeqTxn}) must track only the contiguous durable prefix.
  *
- * <h3>The core invariant (checked after EVERY op)</h3>
- * {@code localDurableSeqTxn} must NEVER exceed the highest seqTxn whose data is ACTUALLY device-durable. The
- * true device-durable frontier is computed INDEPENDENTLY of the tracker: a {@link CountingCrashFacade}
- * (extending the {@link CrashFaultFilesFacade} power-loss model) records, per {@code walN} directory, each
- * WAL-segment {@code _event} {@code fdatasync} — the exact once-per-batch device flush of
- * {@code WalWriter.flushPendingDurable}. The test knows which writer committed which seqTxn (single-threaded
- * interleave), so a writer's committed seqTxns become device-durable only when the facade observes its batch
- * {@code fdatasync}. The contiguous prefix of those device-durable seqTxns is the oracle; the tracker's
- * frontier may only sit AT or BELOW it. A violation is the CRITICAL-2 over-claim (an acknowledged-data loss).
+ * <h3>The invariant, checked after every op</h3>
+ * {@code localDurableSeqTxn} never exceeds the highest seqTxn whose data is device-durable. The test computes
+ * that frontier independently of the tracker: a {@link CountingCrashFacade} records, per {@code walN}
+ * directory, each WAL-segment {@code _event} {@code fdatasync}, the once-per-batch device flush of
+ * {@code WalWriter.flushPendingDurable}. The test knows which writer committed which seqTxn, so a writer's
+ * seqTxns become device-durable when the facade observes its batch {@code fdatasync}. The contiguous prefix of
+ * those seqTxns is the oracle; the tracker's frontier sits at or below it. A violation acknowledges data that
+ * a power loss can lose.
  *
- * <h3>End-to-end crash proof</h3>
- * At a seeded point the run models a POWER LOSS (drop every writer's un-flushed pending WITHOUT a device
- * flush, then roll files back to last-durable), recovers from the durable frontier, and asserts: (a) NO
- * silently-wrong rows survive; (b) the table is not left suspended; (c) every committed row within the
- * pre-crash durable-ack frontier (the contiguous durable prefix) SURVIVES — nothing acknowledged is lost.
+ * <h3>End-to-end crash</h3>
+ * At a seeded point the run models a power loss (drop every writer's unflushed pending without a device
+ * flush, then roll files back to last-durable), recovers, and asserts that (a) no wrong rows survive, (b) the
+ * table is not left suspended, and (c) every committed row within the pre-crash durable-ack frontier survives.
  *
- * <p>Deterministic + replayable: every run is driven by a fixed {@code (s0,s1)} seed and the test microsecond
- * clock, so a failure reproduces exactly (the seed is printed in every assertion message). CI runs a small
- * bounded sweep; a longer multi-seed sweep is {@code Assume}-gated to nightly ({@code -Dquestdb.fuzz.nightly}).
+ * <p>Every run is driven by a fixed {@code (s0,s1)} seed and the test clock, so a failure reproduces exactly
+ * (the seed is in every assertion message). CI runs a small bounded sweep; a longer multi-seed sweep runs only
+ * with {@code -Dquestdb.fuzz.nightly}.
  */
 public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashConsistencyTest {
 
@@ -99,8 +97,8 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
     private static final int WRITERS = 3;                 // concurrently-held WalWriters of the one table
     private static final long WINDOW_US = 1_000_000L;     // 1s group window, driven by the test clock
 
-    // A generous ceiling so a recovery WEDGE fails fast (loudly) instead of eating the whole build timeout;
-    // lifted under the nightly sweep, which runs many more seeds.
+    // A ceiling so a recovery wedge fails fast instead of eating the build timeout; lifted under the nightly
+    // sweep, which runs many more seeds.
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(Boolean.getBoolean(NIGHTLY_PROP) ? 30 * 60 * 1000L : 4 * 60 * 1000L, TimeUnit.MILLISECONDS)
@@ -120,9 +118,8 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
     }
 
     /**
-     * NIGHTLY-only: a broad multi-seed sweep with a much larger op count per seed, to stress rare out-of-order
-     * flush interleavings. Same invariant + crash proof as the CI test; mirrors
-     * {@code RandomizedAdaptiveCrashFuzzTest}'s nightly Assume gate.
+     * Nightly only: a broad multi-seed sweep with a much larger op count per seed, to stress rare out-of-order
+     * flush interleavings. Same invariant and crash check as the CI test.
      */
     @Test
     public void testMultiWriterContiguitySweepNightly() throws Exception {
@@ -162,8 +159,8 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                     final WalWriter writerA = a;
                     final WalWriter writerB = b;
 
-                    // B commits and is left PENDING — the ONLY pin in the shared map. Advance the clock past W so
-                    // a sweep can flush B on demand.
+                    // B commits and stays pending, the only pin in the shared map. Advance the clock past W so a sweep
+                    // can flush B on demand.
                     setCurrentMicros(CLOCK_START);
                     commitRow(writerB, 60_000_000L, 100);
                     setCurrentMicros(CLOCK_START + WINDOW_US + 1000L);
@@ -172,12 +169,12 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                     final long[] seqA = {-1};
                     final Throwable[] violation = {null};
                     WalWriter.deferredCommitInterceptor = (walId, seqTxn) -> {
-                        // Only interpose on A's FIRST deferred commit (its mid-flight window).
+                        // Only interpose on A's first deferred commit (its mid-flight window).
                         if (walId != writerA.getWalId() || seqA[0] != -1) {
                             return;
                         }
                         seqA[0] = seqTxn;
-                        // Flush B OUT OF ORDER inside A's window: peer markWriterDurable empties the pin map.
+                        // Flush B out of order inside A's window: the peer's markWriterDurable empties the pin map.
                         try (ExposedFlusher f = new ExposedFlusher(engine)) {
                             f.flushNow();
                         }
@@ -222,8 +219,8 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
     }
 
     private void runOneSeed(long s0, long s1, long ops) throws Exception {
-        // Each seed run installs its own facade and ends in markDurableBaseline() + crash(), so it must
-        // take the harness's POSIX gate itself (it does not go through runWithCrashFacade).
+        // Each seed run installs its own facade and ends in markDurableBaseline() + crash(), so it takes the
+        // harness's POSIX gate itself (it does not go through runWithCrashFacade).
         assumeCrashHarnessSupported();
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(WINDOW_US));
@@ -248,7 +245,7 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
         private final Rnd rnd;
         private final long s0;
         private final long s1;
-        // oracle state (single-threaded, so all reads below are this run's own):
+        // Oracle state (single-threaded, so all reads below are this run's own):
         private final Map<Integer, Long> deviceDurableByWal = new HashMap<>();  // walId -> highest device-durable seqTxn
         private final Map<Integer, Integer> lastEventFsyncByWal = new HashMap<>(); // walId -> last observed batch-fdatasync count
         private final Map<Integer, Long> latestCommittedByWal = new HashMap<>(); // walId -> latest sequenced seqTxn
@@ -267,9 +264,9 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
             this.s1 = s1;
             this.ops = ops;
             this.rnd = new Rnd(s0, s1);
-            // Unique per-seed table name: a torn-tail power loss can leave a table SUSPENDED (see
-            // assertRecovered), and a suspended table's DROP never applies, so a shared name would collide on
-            // the next seed's CREATE (the 2-arg assertMemoryLeak used here does not engine.clear() between seeds).
+            // Unique per-seed table name: a torn-tail power loss can leave a table suspended (see assertRecovered),
+            // and a suspended table's DROP never applies, so a shared name would collide on the next seed's CREATE
+            // (the 2-arg assertMemoryLeak used here does not engine.clear() between seeds).
             this.table = "t_" + Math.abs(s0) + "_" + Math.abs(s1);
         }
 
@@ -286,16 +283,16 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
             Assert.assertEquals(seedMsg("must be ADAPTIVE"), CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
 
-            // Baseline: the empty, structurally-materialized table is durable. Everything the fuzz commits
-            // above baseDurableSeqTxn is the "new" data whose durability the invariant + crash test track.
+            // Baseline: the empty table is durable. Everything committed above baseDurableSeqTxn is the data whose
+            // durability the invariant and the crash check track.
             drainWalQueue();
             baseDurableSeqTxn = tracker.getSeqTxn();
             maxSeqTxn = baseDurableSeqTxn;
             markDurableBaseline();
 
-            // Processor layer under the same random interleavings: the state whose snapshot becomes
-            // the client's STATUS_LOCAL_DURABLE_ACK frame, opted into the LOCAL tier as an OSS QWP
-            // connection would be. Fed per op below and checked against the same independent oracle.
+            // The processor layer under the same interleavings: the state whose snapshot becomes the client's
+            // STATUS_LOCAL_DURABLE_ACK frame, opted into the local tier as an OSS QWP connection would be. Fed per op
+            // below and checked against the same independent oracle.
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             final QwpIngressProcessorState ackState = new QwpIngressProcessorState(
                     1024, 1024, engine, httpConfig.getLineHttpProcessorConfiguration());
@@ -317,7 +314,7 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                 for (long op = 0; op < ops; op++) {
                     final int roll = rnd.nextInt(100);
                     if (roll < 65) {
-                        // COMMIT on a random writer: one WAL txn (ts strictly increasing, v globally unique).
+                        // Commit on a random writer: one WAL txn (ts strictly increasing, v globally unique).
                         final WalWriter w = writers[rnd.nextInt(WRITERS)];
                         final long ts = (tsCounter += 60_000_000L);
                         final long v = (vCounter += 1);
@@ -329,15 +326,15 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                         committedRows.add(new long[]{ts, v, seqTxn});
                         maxSeqTxn = Math.max(maxSeqTxn, seqTxn);
                     } else if (roll < 80) {
-                        // BACKGROUND SWEEP past the window: flush every writer whose oldest pending is >= W old.
+                        // Background sweep past the window: flush every writer whose oldest pending is >= W old.
                         clock += WINDOW_US + 1000L;
                         setCurrentMicros(clock);
                         try (ExposedFlusher flusher = new ExposedFlusher(engine)) {
                             flusher.flushNow();
                         }
                     } else {
-                        // TICK: advance the clock by a random amount (sometimes crossing W so the NEXT commit on
-                        // an already-pending writer fires the commit-driven flush).
+                        // Tick: advance the clock by a random amount, sometimes crossing W so the next commit on an
+                        // already pending writer fires the commit-driven flush.
                         clock += rnd.nextLong(2 * WINDOW_US);
                         setCurrentMicros(clock);
                     }
@@ -354,10 +351,9 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                             frontier <= trueDurable
                     );
 
-                    // Same invariant one layer up: the snapshot the ack frame is serialized from must
-                    // never cover a seqTxn beyond the true device-durable frontier. onDurableAckSent()
-                    // simulates a completed send, so successive collects also exercise the real path's
-                    // lastSent de-dup and pending-set pruning between ops.
+                    // The same invariant one layer up: the snapshot the ack frame is serialized from never covers a
+                    // seqTxn beyond the device-durable frontier. onDurableAckSent() simulates a completed send, so
+                    // successive collects also exercise lastSent de-duplication and pending-set pruning between ops.
                     recordAckCommittedTable(ackState, table, tt.getDirName(), maxSeqTxn);
                     final CharSequenceLongHashMap ackSnapshot = ackState.collectDurableProgress(ackRegistry);
                     final int ackKey = ackSnapshot.keyIndex(table);
@@ -377,16 +373,14 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
                     }
                 }
 
-                // POWER LOSS: the durable-ack frontier we recorded here must survive the crash end-to-end.
+                // Power loss: the durable-ack frontier recorded here must survive the crash.
                 preCrashDurable = tracker.getLocalDurableSeqTxn();
-                for (WalWriter w : writers) {
-                    w.simulatePowerLossDropPending(); // distress + drop pending WITHOUT a device flush
-                }
+                powerLossDroppingPending(writers); // mark, then distress + drop pending WITHOUT a device flush
                 reachedCrash = true;
             } finally {
-                // Reclaim the held (now distressed) writers as a fresh boot's empty WAL-writer pool would —
-                // BEFORE crash() truncates the files, while the segment files are still their intact size.
-                // Runs on the invariant-violation exit too, so a mid-loop failure never leaks a held writer.
+                // Reclaim the held, distressed writers as a fresh boot's empty WAL-writer pool would, before crash()
+                // truncates the files. Runs on the invariant-violation exit too, so a failure never leaks a held
+                // writer.
                 ackState.close();
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
@@ -397,20 +391,19 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
             if (reachedCrash) {
                 recoverAfterPowerLoss(tt);
                 assertRecovered(tt, preCrashDurable);
-                // Release the recovered table's handles (a unique per-seed name means no DROP is needed — a
-                // suspended table cannot be dropped anyway; leftover applied tables hold no fds after this).
+                // Release the recovered table's handles. The per-seed name means no DROP is needed, and a suspended
+                // table cannot be dropped anyway.
                 engine.releaseAllReaders();
                 engine.releaseInactiveTableSequencers();
             }
         }
 
         /**
-         * Recover exactly as a fresh process restart would (mirrors
-         * {@code AbstractAdaptiveCrashSweepTest.recoverAfterCrash} for one table): roll the files back to the
-         * durable content, then FORCE the sequencer + its {@link SeqTxnTracker} to reload from the durable
-         * txnlog ({@code resetForReboot}). Without that reset the sequencer's stale in-memory {@code lastTxn}
-         * (advanced by the just-dropped, non-durable pending) wedges recovery's apply in an infinite re-notify
-         * loop ({@code writerTxn < seqTxn} forever, for a txn the rolled-back WAL no longer has).
+         * Recovers as a fresh process would ({@code AbstractAdaptiveCrashSweepTest.recoverAfterCrash} for one table):
+         * roll the files back to the durable content, then make the sequencer and its {@link SeqTxnTracker} reload
+         * from the durable txnlog ({@code resetForReboot}). Without that reset, the sequencer's in-memory
+         * {@code lastTxn}, advanced by the dropped non-durable pending, makes recovery's apply re-notify forever
+         * ({@code writerTxn < seqTxn} for a txn the rolled-back WAL no longer has).
          */
         private void recoverAfterPowerLoss(TableToken tt) {
             ff.crash(engine.getConfiguration().getDbRoot());
@@ -425,18 +418,18 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
         }
 
         private void assertRecovered(TableToken tt, long preCrashDurable) {
-            // A power loss can tear the UN-ACKED tail so a writer's non-durable _event ends up BELOW the
-            // (peer-flushed) durable shared sequencer; recovery then LOUDLY suspends on that torn tail. That is
-            // an acceptable, NON-silent power-loss outcome — the acked data stays durable on disk for a resume —
-            // and is exactly the tolerance the two-writer oracle AdaptiveGroupCommitCrashTest applies (it reads
-            // quietly and does not require "never suspended"). What is NEVER acceptable is a silently-WRONG row.
+            // A power loss can tear the unacknowledged tail so a writer's non-durable _event ends up below the
+            // peer-flushed durable sequencer; recovery then suspends on that torn tail. That is an acceptable, visible
+            // outcome (the acked data stays durable on disk for a resume), the same tolerance DurableFrontierTest
+            // applies. A wrong row is never acceptable.
             final boolean suspended = engine.getTableSequencerAPI().isSuspended(tt);
             final Map<Long, Long> recovered = readRowsQuietly();
             final Map<Long, Long> committedByTs = new HashMap<>();
             for (long[] r : committedRows) {
                 committedByTs.put(r[0], r[1]);
             }
-            // Bar 1 (ALWAYS): every readable (ts,v) matches a committed row; never more rows than were committed.
+            // Bar 1 (always): every readable (ts,v) matches a committed row, and there are never more rows than
+            // committed.
             for (Map.Entry<Long, Long> e : recovered.entrySet()) {
                 final Long committedV = committedByTs.get(e.getKey());
                 Assert.assertNotNull(seedMsg("recovered a row (ts=" + e.getKey() + ") that was never committed"), committedV);
@@ -445,10 +438,9 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
             Assert.assertTrue(seedMsg("recovered more rows than were ever committed"),
                     recovered.size() <= committedRows.size());
 
-            // Bar 2 (durable-ack NO-LOSS on a CLEAN roll-forward): when recovery did NOT suspend on a torn tail,
-            // every committed row within the pre-crash durable-ack frontier (the contiguous device-durable
-            // prefix) MUST survive and be correct — nothing acknowledged is lost. (Under a suspend the acked WAL
-            // is still durable on disk; the loud suspend, not a silent loss, is the safe outcome we allow.)
+            // Bar 2 (no loss of acknowledged rows on a clean roll-forward): when recovery did not suspend, every
+            // committed row within the pre-crash durable-ack frontier survives and is correct. Under a suspend the
+            // acked WAL is still durable on disk, and the visible suspend is the allowed outcome.
             if (!suspended) {
                 for (long[] r : committedRows) {
                     if (r[2] <= preCrashDurable) {
@@ -472,8 +464,8 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
         }
 
         /**
-         * For each held writer, if the facade observed a NEW batch {@code _event} fdatasync since the last
-         * check, that writer's whole pending batch is now device-durable up to its latest committed seqTxn.
+         * For each held writer, if the facade observed a new batch {@code _event} fdatasync since the last check,
+         * that writer's whole pending batch is device-durable up to its latest committed seqTxn.
          */
         private void detectFlushes(WalWriter[] writers) {
             for (WalWriter w : writers) {
@@ -494,9 +486,9 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
         }
 
         /**
-         * The highest seqTxn N such that EVERY committed seqTxn in {@code (baseDurableSeqTxn, N]} is
-         * device-durable (its owning writer's batch fdatasync covering it has been observed). The contiguous
-         * device-durable prefix across all writers — the ceiling the tracker frontier may not exceed.
+         * The highest seqTxn N such that every committed seqTxn in {@code (baseDurableSeqTxn, N]} is device-durable
+         * (its owning writer's batch fdatasync has been observed): the contiguous device-durable prefix across all
+         * writers, which the tracker frontier may not exceed.
          */
         private long trueDurableFrontier() {
             long f = baseDurableSeqTxn;
@@ -535,32 +527,10 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
         }
     }
 
-    private static void commitRow(WalWriter w, long tsMicros, long v) {
-        TableWriter.Row row = w.newRow(tsMicros);
-        row.putLong(1, v);
-        row.append();
-        w.commit();
-    }
-
     /**
-     * Exposes {@link WalPurgeJob#runSerially()} so the background group-commit sweep runs deterministically
-     * against the test microsecond clock.
-     */
-    static final class ExposedFlusher extends WalPurgeJob {
-        ExposedFlusher(io.questdb.cairo.CairoEngine engine) {
-            super(engine);
-        }
-
-        boolean flushNow() {
-            return runSerially();
-        }
-    }
-
-    /**
-     * The {@link CrashFaultFilesFacade} power-loss model PLUS an independent per-{@code walN} counter of WAL
-     * segment {@code _event} {@code fdatasync}s — the once-per-batch device flush the deferred group-commit
-     * path performs in {@code WalWriter.flushPendingDurable}. This lets the test know the TRUE device-durable
-     * frontier of each writer independently of {@code SeqTxnTracker.localDurableSeqTxn}.
+     * The {@link CrashFaultFilesFacade} power-loss model plus a per-{@code walN} counter of WAL segment
+     * {@code _event} {@code fdatasync}s, the once-per-batch device flush of {@code WalWriter.flushPendingDurable}.
+     * It gives each writer's device-durable frontier independently of {@code SeqTxnTracker.localDurableSeqTxn}.
      */
     static final class CountingCrashFacade extends CrashFaultFilesFacade {
         private final List<String> eventFdatasyncPaths = new ArrayList<>();
@@ -602,9 +572,9 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
         }
 
         /**
-         * Number of WAL segment {@code _event} device flushes observed under the {@code walN} directory of the
-         * given wal id (matched exactly — {@code /walN/} not {@code /walN0/}). Once-per-batch, so a strictly
-         * increasing count is the "this writer flushed its batch" signal.
+         * Number of WAL segment {@code _event} device flushes observed under the {@code walN} directory of the given
+         * wal id (matched exactly: {@code /walN/}, not {@code /walN0/}). Once per batch, so an increasing count means
+         * the writer flushed its batch.
          */
         int walEventFdatasyncs(int walId) {
             int c = 0;
@@ -627,8 +597,8 @@ public class AdaptiveMultiWriterDurableAckCrashFuzzTest extends AbstractCrashCon
 
     private static Method recordCommittedTableMethod;
 
-    // Seeds the ack state's pending-durable set through the exact private consumer the commit path
-    // runs per committed table -- the same doorway AdaptiveQwpDurableAckNoLossCrashTest uses.
+    // Seeds the ack state's pending-durable set through the private consumer the commit path runs per committed
+    // table, as AdaptiveQwpDurableAckNoLossCrashTest does.
     private static void recordAckCommittedTable(
             QwpIngressProcessorState state, String tableName, String dirName, long seqTxn
     ) throws Exception {

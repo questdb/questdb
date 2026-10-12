@@ -124,17 +124,26 @@ public interface TableTransactionLogFile extends Closeable {
     long endMetadataChangeEntry();
 
     /**
-     * Device-flushes ({@code fdatasync}) the sequencer log files in the durability-ordered
-     * part-before-header sequence (so the header's {@code maxTxn} is never device-visible before the record
-     * it points to). Used by the adaptive GROUP-COMMIT batched flush (Deferred 2): under {@code W > 0} the
-     * per-commit {@code sync0()} does the SYNC-grade {@code msync} (page-cache, ordered) but DEFERS the
-     * device flush; this performs that deferred device flush as the final (seq) step of the batched
-     * data→events→seq fdatasync. A no-op when the log is closed.
+     * Flushes the sequencer log files to the device with {@code fdatasync}, parts before the header, so the
+     * header's {@code maxTxn} never reaches the device before the record it points to. The adaptive group commit
+     * calls this as the last step of its batched flush: with a group window above zero, the per-commit
+     * {@code sync0()} only syncs the page cache with {@code msync}. A no-op when the log is closed.
      */
     void fdatasyncTxnLog();
 
     /**
-     * Syncs/flushes the log files to the disk unconditionally.
+     * Flushes like {@link #fdatasyncTxnLog()}, and first, in a log kept in parts, every older part file the log
+     * still keeps that holds txns from {@code fromTxn} on (a part the WAL purge deleted is skipped, not a stop): a
+     * run in a mode that does not flush the log may have left any of them in the page cache only. A single-file log
+     * has nothing more to flush.
+     */
+    default void fdatasyncTxnLog(long fromTxn) {
+        fdatasyncTxnLog();
+    }
+
+    /**
+     * Syncs the log to the disk with {@code MS_SYNC}, in every commit mode. Under SYNC and ADAPTIVE that covers
+     * every log file; under NOSYNC and ASYNC a V2 log syncs its header alone.
      */
     void fullSync();
 

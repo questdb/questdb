@@ -37,41 +37,26 @@ import org.junit.Assume;
 import org.junit.Test;
 
 /**
- * Executable evidence that the {@code syncfs}-based batched column flush's WITHIN-PAGE durability is NO LONGER
- * dependent on the SHARED-JOURNAL semantics of default ext4 (jbd2) / xfs: it now holds even under ext4
- * {@code fast_commit}'s PER-INODE journaling. This is the inverse-mutation proof of the salvage fix.
- *
- * <p><b>History.</b> The original batched path relied on a FOREIGN flush — the single {@code _cv}
- * {@code fdatasync} — to journal the columns' within-page extent conversions. That only works under a shared
- * journal; under per-inode journaling {@code fdatasync(_cv)} journals only {@code _cv}'s own inode, so the
- * columns' at-device within-page bytes were NEVER journaled and reverted on crash. A real ext4 power-cut
- * harness PROVED that loss (committed columns read back as zeros). The fix replaces that foreign-flush
- * reliance with ONE explicit {@code syncfs(columnFd)} after the columns are drained: {@code syncfs(2)}
- * journals EVERY inode's pending extent conversions for the whole filesystem in one device flush, regardless
- * of journal policy.
- *
- * <p>This test runs the SAME wide-table within-page SYNC workload as before but under
- * {@code modelSharedJournal=false} (per-inode journaling), and now asserts the within-page tail SURVIVES —
- * because the batched path's {@code syncfs} journaled the columns even though no shared journal and no
- * per-column {@code fdatasync} was involved. Contrast: {@link BatchedFlushDurabilityCrashTest} runs the wide
- * workload under the default {@code modelSharedJournal=true} and also keeps every row. The two together show
- * the salvaged path is durable under BOTH journal policies. If this test ever STARTED losing the within-page
- * tail again, the batched path's {@code syncfs} was dropped or stopped journaling the columns — the exact
- * corruption the fix closes; investigate immediately.
- *
- * <p>A LARGE data-append page (16 MiB) is used precisely so the columns extend ONCE on the first commits and
- * then absorb many subsequent commits WITHIN the already-allocated page — manufacturing the within-page,
- * no-extend regime where the OLD path lost data and the {@code syncfs} path now does not. Linux-only (the
- * batched path is guarded on {@link Os#isLinux()}; elsewhere SYNC falls back to per-file {@code sync(false)}).
+ * Checks that a SYNC commit keeps a within-page column tail durable under per-inode journaling (ext4
+ * {@code fast_commit}), not only under the shared journal of default ext4 and xfs. Under per-inode journaling an
+ * {@code fdatasync} of {@code _cv} journals only that inode, so the columns' within-page extent conversions are
+ * lost on a crash unless the column flush itself journals them.
+ * <p>
+ * The test enables the batched column flush ({@code CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED}), which ends with
+ * one {@code syncfs(columnFd)}, but a SYNC commit flushes its columns per file in {@code TableWriter.syncColumns()};
+ * the batched passes run only for the adaptive durable epoch.
+ * <p>
+ * A 16 MiB data-append page makes the columns extend once on the first commits and then take many commits within
+ * the allocated page, with no extend and so no per-column {@code fdatasync}. {@link BatchedFlushDurabilityCrashTest}
+ * runs a wide workload under the shared journal. Linux only: the batched path is guarded on {@link Os#isLinux()}.
  */
 public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsistencyTest {
 
-    // A large append page so that, after the first few extending commits allocate the page, subsequent
-    // commits append strictly WITHIN it (no extend -> no per-column fdatasync -> _cv flush is the only thing
-    // that could make the column data durable).
+    // A large append page: after the first extending commits allocate it, later commits append within it,
+    // with no extend and so no per-column fdatasync.
     private static final long BIG_PAGE = 16 * Numbers.SIZE_1MB;
-    // Enough commits to comfortably exceed the initial page-allocating extends and accumulate a within-page
-    // tail. 16 MiB / (a few hundred bytes per wide row) is many thousands of rows, so this stays within-page.
+    // Commits past the page-allocating extends that build a within-page tail. A wide row takes a few hundred
+    // bytes, so the 16 MiB page holds many thousands of rows and the tail stays within it.
     private static final int EXTEND_PHASE = 8;   // first commits that allocate/extend the column pages
     private static final int WITHIN_PAGE_TAIL = 40; // further commits that stay within the allocated page
 
@@ -79,13 +64,9 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
     public void testWithinPageBatchedSyncSurvivesUnderPerInodeJournalViaSyncfs() throws Exception {
         Assume.assumeTrue("batched SYNC flush is Linux-only", Os.isLinux());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        // FORCE the batched path on. This test PROVES the syncfs-based batched path is durable even under
-        // per-inode journaling, so it must actually run the batched path: if CI ran on an ext4 fast_commit
-        // mount the production config would auto-disable batching (falling back to per-file fsync) and this
-        // test would no longer characterise the optimization. The test harness builds its config with
-        // detection OFF, so this property is the raw, deterministic enable.
+        // Force the batched path on, whatever the test configuration's default.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
-        // LARGE append page: force the within-page (no-extend) regime after the initial allocation.
+        // A large append page forces the within-page, no-extend regime after the initial allocation.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(BIG_PAGE));
         try {
             Assert.assertEquals("test requires SYNC commit mode",
@@ -93,9 +74,7 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
             Assert.assertTrue("test must exercise the BATCHED SYNC path",
                     engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
             runWithCrashFacade(() -> {
-                // Per-inode journaling world (ext4 fast_commit): an fsync of _cv does NOT journal the columns.
-                // The OLD path lost the within-page tail here; the syncfs in the batched path now journals the
-                // columns regardless, so the tail must SURVIVE.
+                // Per-inode journaling, as on ext4 fast_commit: an fsync of _cv does not journal the columns.
                 crashFf.modelSharedJournal = false;
 
                 StringBuilder ddl = new StringBuilder("create table w (ts timestamp");
@@ -107,29 +86,24 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
                 ddl.append(") timestamp(ts) partition by none");
                 execute(ddl.toString());
 
-                // Seed row: its first commit extends every column from 0 to the 16 MiB page. Each commit's
-                // batched flush ends in one syncfs, which journals the columns' extents -> the seed is durable
-                // regardless of the shared-journal flag. (We deliberately do NOT call markDurableBaseline: that
-                // would seed journaledDataEnd to the fallocate-inflated file LENGTH, masking the within-page
-                // behaviour we are characterising. Letting the real commit path's syncfs do the journaling is
-                // both faithful and the point of the test.)
+                // Seed row: its first commit extends every column from 0 to the 16 MiB page, and the commit's
+                // column flush journals the extents. The test does not call markDurableBaseline: that would seed
+                // journaledDataEnd to the fallocate-inflated file length and hide the within-page behaviour, so
+                // the commit path's own flush does the journaling.
                 insertRow(0);
 
                 int row = 1;
-                // Phase 1: allocate/extend the column pages. These commits cross from 0 into the 16 MiB page
-                // (and the first few may touch a 2nd page for the widest aux vectors). They are journaled by
-                // each commit's syncfs -> the durable floor.
+                // Phase 1: allocate and extend the column pages. These commits cross from 0 into the 16 MiB
+                // page (the widest aux vectors may touch a second page), and each commit's column flush
+                // journals them.
                 for (int i = 0; i < EXTEND_PHASE; i++, row++) {
                     insertRow(row);
                 }
-                // Everything committed so far is journaled by its commit's syncfs -> the durable floor.
+                // Everything committed so far is journaled by its commit's column flush -> the durable floor.
                 final long durableFloor = rowCount("w");
 
-                // Phase 2: within-page commits. With a 16 MiB page these rows append into the already-mapped
-                // page, so NO column extends -> NO per-column fdatasync. The column data reaches the device via
-                // msync-async + sync_file_range, and the batched path's ONE syncfs(columnFd) then journals
-                // every column's within-page extent conversion in a single device flush — independent of the
-                // journal policy. So even under modelSharedJournal=false this tail is durable.
+                // Phase 2: within-page commits. The rows append into the already-mapped page, so no column
+                // extends and no extend-time fdatasync runs.
                 for (int i = 0; i < WITHIN_PAGE_TAIL; i++, row++) {
                     insertRow(row);
                 }
@@ -139,11 +113,8 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
 
                 crashAndReopen();
 
-                // THE FINDING (post-fix): under per-inode journaling the within-page tail SURVIVES, because the
-                // batched path's syncfs journaled the columns' extent conversions even though no shared journal
-                // and no per-column fdatasync was involved. This is the inverse of the pre-fix behaviour (the
-                // OLD foreign-_cv-flush path lost this exact tail) and the executable proof the salvage works.
-                // rowCountTolerant only maps a LOUD reopen corruption to 0; here we require the full, clean set.
+                // Under per-inode journaling the within-page tail must survive the crash. rowCountTolerant maps a
+                // loud reopen corruption to 0; the assertion requires the full set.
                 long after = rowCountTolerant("w");
                 Assert.assertEquals(
                         "within-page batched-SYNC tail must SURVIVE under per-inode journaling via syncfs " +
@@ -208,7 +179,7 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
     }
 
     /**
-     * After the crash, assert every surviving row carries exactly the values written for its timestamp.
+     * After the crash, asserts that every surviving row carries the values written for its timestamp.
      */
     private void assertAllRowsCorrect(long expectedRows) {
         final String sql = "select ts, f0, s1, s2, v, sym1, sym2 from w order by ts";
@@ -242,11 +213,11 @@ public class BatchedFlushSharedJournalDependencyTest extends AbstractCrashConsis
     }
 
     /**
-     * Like {@link #rowCount} but tolerant of a loud crash-corruption signal. A column / index file truncated
-     * to its last-journaled extent makes the post-crash reopen fail LOUDLY — e.g. a SIGBUS (InternalError),
-     * a CairoException/CairoError, or a SqlException at reader-open time such as "bitmap index value file too
-     * short [... actual=0 ...]". The workload compiled and ran cleanly BEFORE the crash, so any such failure
-     * AFTER it is itself proof the within-page data was not durable; we map it to "0 rows survived".
+     * Like {@link #rowCount} but tolerant of a loud crash-corruption signal. A column or index file truncated
+     * to its last journaled extent makes the reopen after the crash fail loudly: a SIGBUS (InternalError), a
+     * CairoException or CairoError, or a SqlException at reader open such as "bitmap index value file too
+     * short [... actual=0 ...]". The workload ran cleanly before the crash, so such a failure proves the
+     * within-page data was not durable, and the method returns 0 rows.
      */
     private long rowCountTolerant(String table) {
         try {

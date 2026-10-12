@@ -327,21 +327,15 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
-            // Crash-consistency guard (mirror of VarcharTypeDriver). aux[pos] is the
-            // N+1 offset = the last row's data end, written after that row's data. The
-            // previous offset aux[pos-1] is the last row's data start. Data offsets are
-            // monotonic, so a last data end that fell below the last data start means
-            // the aux tail was torn/partially flushed; fail loudly rather than jump the
-            // data cursor backwards and let the next append overwrite committed rows.
-            // As in VarcharTypeDriver this O(1) check cannot catch a whole unflushed aux
-            // page (consecutive zeroed entries) - a residual window inherent to the
-            // default commit.mode=nosync; use commit.mode=sync for durability.
-            //
-            // Read aux[pos-1] FIRST, while its own page is the one mapped: this aux
-            // memory is paged (MemoryPMARImpl maps ~one segment at a time and unmaps
-            // the rest), so jumping to aux[pos] and reading getAppendAddress()-WIDTH
-            // would dereference the prior, now-unmapped segment whenever pos<<SHL lands
-            // on a page boundary - garbage / SIGSEGV, a false positive on large tables.
+            // Crash-consistency guard, as in VarcharTypeDriver. aux[pos] is the last
+            // row's data end, written after that row's data; aux[pos-1] is its data
+            // start. Offsets are monotonic, so an end below the start means the aux
+            // tail is torn, and the open fails rather than move the data cursor back
+            // over committed rows. The O(1) check does not catch a whole unflushed aux
+            // page, which nosync may lose on power loss by design.
+            // Read aux[pos-1] first, while its page is mapped: the paged aux memory
+            // (MemoryPMARImpl) would otherwise touch an unmapped page whenever pos<<SHL
+            // lands on a page boundary.
             long prevPos = -1;
             if (pos > 1) {
                 auxMem.jumpTo((pos - 1) << LEGACY_VAR_SIZE_AUX_SHL);

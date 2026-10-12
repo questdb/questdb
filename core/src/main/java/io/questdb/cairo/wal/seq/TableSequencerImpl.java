@@ -28,10 +28,12 @@ import io.questdb.cairo.BinaryAlterSerializer;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IDGenerator;
 import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -51,6 +53,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
+import static io.questdb.cairo.wal.seq.TableTransactionLogFile.STRUCTURAL_CHANGE_WAL_ID;
 
 public class TableSequencerImpl implements TableSequencer {
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
@@ -100,7 +103,12 @@ public class TableSequencerImpl implements TableSequencer {
                     WAL_INDEX_FILE_NAME,
                     configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep()
             );
-            tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy);
+            // The engine swaps its policy when the node changes role; the log reads the current one.
+            tableTransactionLog = new TableTransactionLog(
+                    configuration,
+                    walDirectoryPolicy,
+                    () -> engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()
+            );
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
                 schemaLock.writeLock().lock();
@@ -170,7 +178,8 @@ public class TableSequencerImpl implements TableSequencer {
         final int rootLen = path.concat(SEQ_DIR).size();
         try (
                 SequencerMetadata metadata = new SequencerMetadata(configuration);
-                TableTransactionLog tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy)
+                // Only creates the log, which writes no field, so the policy plays no part.
+                TableTransactionLog tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy, LocalDurabilityPolicy.ALWAYS_ON)
         ) {
             createSequencerFiles(
                     configuration.getFilesFacade(),
@@ -223,10 +232,23 @@ public class TableSequencerImpl implements TableSequencer {
     public void dropTable() {
         checkDropped();
         final long timestamp = microClock.getTicks();
-        final long txn = tableTransactionLog.addEntry(
-                getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
-                0, 0, timestamp, 0, 0, 0
-        );
+        final long txn;
+        try {
+            txn = tableTransactionLog.addEntry(
+                    getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
+                    0, 0, timestamp, 0, 0, 0
+            );
+            // Group commit leaves the log's flush to the next batch, and no writer flushes a dropped table again.
+            final CairoConfiguration configuration = engine.getConfiguration();
+            // Local commits keep the configured grade, including on a replica.
+            if (configuration.getCommitMode() == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
+                fdatasyncTxnLog();
+            }
+        } catch (CairoException e) {
+            // The log is flushed in the append or right after it. A failed flush stops the engine, as on the commit path.
+            engine.handleDataSyncFailure(e);
+            throw e;
+        }
         metadata.dropTable();
         notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
@@ -352,22 +374,30 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     /**
-     * Adaptive group-commit (Deferred 2) deferred device flush of the sequencer txn log
-     * (part-before-header). Must be called holding the sequencer WRITE lock (the same lock {@code nextTxn}
-     * takes), so it cannot race a concurrent sequencer append/rotation of the txn-log mmaps.
+     * Flushes the sequencer transaction log to the device, parts before the header, for the adaptive group
+     * commit. The caller holds the sequencer write lock, the lock {@code nextTxn} takes, so no append or rotation
+     * of the log's mappings runs concurrently.
      *
-     * @return the highest seqTxn this flush covered. Read under the WRITE lock, where no append is in flight,
-     * so everything at or below it was in the log before the fdatasync; anything sequenced once the lock is
-     * released is not covered. Passed on to {@link SeqTxnTracker#markWriterDurable(int, long, long)}.
+     * @return the highest seqTxn this flush covers. It is read under the write lock, where no append is in
+     * flight, so every txn at or below it is in the log before the fdatasync; a txn sequenced after the lock is
+     * released is not covered. The caller passes it to {@link SeqTxnTracker#markWriterDurable(int, long, long)}.
      */
     public long fdatasyncTxnLog() {
+        return fdatasyncTxnLog(Long.MAX_VALUE);
+    }
+
+    /**
+     * Flushes like {@link #fdatasyncTxnLog()}, and also the older part files of a V2 log that hold txns from
+     * {@code fromTxn} on; see {@link TableTransactionLogFile#fdatasyncTxnLog(long)}.
+     */
+    public long fdatasyncTxnLog(long fromTxn) {
         assert !closed;
         final long coveredSeqTxn = seqTxnTracker.getSeqTxn();
         try {
-            tableTransactionLog.fdatasyncTxnLog();
+            tableTransactionLog.fdatasyncTxnLog(fromTxn);
         } catch (Throwable th) {
-            // Fence while the caller still holds the WRITE lock: the next writer to take it would fdatasync the
-            // same file, and the kernel has already reported this error, so that call can return 0.
+            // Fence while the caller still holds the write lock: the next writer to take it would fdatasync the
+            // same file, and that call can return 0 because the kernel has already reported this error.
             seqTxnTracker.fenceDurableFrontier(th);
             throw th;
         }
@@ -402,6 +432,11 @@ public class TableSequencerImpl implements TableSequencer {
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
                 final long timestamp = microClock.getTicks();
+                // Local commits keep the configured grade, including on a replica.
+                final int commitMode = engine.getConfiguration().getCommitMode();
+                final boolean isDurableMode = commitMode == CommitMode.ADAPTIVE || commitMode == CommitMode.SYNC;
+                // Orphaned pins registered by now are covered by the flushes of this change.
+                final long orphanSweepMark = isDurableMode ? seqTxnTracker.snapshotOrphanSweepMark() : 0;
                 tableTransactionLog.beginMetadataChangeEntry(
                         expectedStructureVersion + 1, alterCommandWalFormatter, change, timestamp);
 
@@ -423,6 +458,10 @@ public class TableSequencerImpl implements TableSequencer {
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
+                // The change flushed the whole log; under group commit the frontier still waits for earlier pins.
+                if (isDurableMode && !seqTxnTracker.isDurableFrontierFenced()) {
+                    seqTxnTracker.markWriterDurable(STRUCTURAL_CHANGE_WAL_ID, orphanSweepMark, txn);
+                }
 
                 if (!seqTxnTracker.isSuspended()) {
                     notifyTxnCommitted(txn);
@@ -585,6 +624,7 @@ public class TableSequencerImpl implements TableSequencer {
             long txnMaxTimestamp,
             long txnRowCount
     ) {
+        // Local commits keep the configured grade, including on a replica.
         final int effectiveMode = engine.getConfiguration().getCommitMode();
         final long txn = tableTransactionLog.addEntry(
                 getStructureVersion(),
@@ -596,18 +636,19 @@ public class TableSequencerImpl implements TableSequencer {
                 txnMaxTimestamp,
                 txnRowCount
         );
-        // Task 1b (CRITICAL-2 residual): for an ADAPTIVE group-commit (W>0) deferral, register this writer's
-        // durable-ack contiguous-prefix pin ATOMICALLY with the seqTxn assignment — under the sequencer WRITE
-        // lock and BEFORE the caller's notifyTxnCommitted publishes this txn to tracker.seqTxn. This closes the
-        // mid-flight window in which a peer writer's markWriterDurable, seeing the advanced seqTxn while this
-        // txn is sequenced-but-not-yet-pinned, would empty the pin map and over-claim this still-non-durable
-        // txn into the frontier. registerWriterPending is putIfAbsent, so a writer's later commits in the same
-        // un-flushed batch do NOT lower its pin; the pin is dropped only by the writer's own post-fdatasync
-        // markWriterDurable (WalWriter.flushPendingDurable) or reset on reboot (resetDurableFrontier). Gated to
-        // ADAPTIVE+W>0 so W=0 and legacy SYNC/ASYNC/NOSYNC are byte-identical (they never pin/markWriterDurable).
+        // Under adaptive group commit, pin this writer's txn under the sequencer write lock, before the caller's
+        // notifyTxnCommitted publishes it to the tracker. Otherwise a peer writer's markWriterDurable could see
+        // the new seqTxn with no pin for it and advance the durable frontier over a txn that is not yet durable.
+        // registerWriterPending is putIfAbsent, so later commits in the same batch keep the writer's first pin;
+        // the writer's own markWriterDurable after its flush, or resetDurableFrontier at start-up, drops it.
         if (effectiveMode == io.questdb.cairo.CommitMode.ADAPTIVE
                 && engine.getConfiguration().getAdaptiveCommitGroupWindowUs() > 0) {
             seqTxnTracker.registerWriterPending(walId, txn);
+        } else if (effectiveMode == CommitMode.ADAPTIVE || effectiveMode == CommitMode.SYNC) {
+            // The append flushed the log itself, and a writer's private files are flushed before it sequences.
+            if (!seqTxnTracker.isDurableFrontierFenced()) {
+                seqTxnTracker.setLocalDurableSeqTxn(txn);
+            }
         }
         return txn;
     }

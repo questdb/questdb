@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
@@ -138,11 +139,55 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return critical(CV_TORN);
     }
 
-    public static CairoException dataSyncFailure(int errno, String operation) {
+    /**
+     * A failed flush ({@code fsync}, {@code fdatasync}, {@code syncfs}, {@code sync_file_range}, a synchronous
+     * {@code msync}, {@code sync}) of a file through {@code ff}, the one way Java code raises one. The failure is
+     * recorded where it is created: every live engine whose files facade is {@code ff} is told at once and stops if
+     * its commit mode requires it, so a path that later drops, counts or wraps the exception cannot lose the stop.
+     */
+    public static CairoException dataSyncFailure(FilesFacade ff, int errno, String operation, CharSequence message) {
+        return dataSyncFailure(ff, null, errno, operation, message);
+    }
+
+    /**
+     * {@link #dataSyncFailure(FilesFacade, int, String, CharSequence)} for a flush of the file or directory at
+     * {@code path}, or null when it is not known. The path names the file in the message and, when engines share
+     * {@code ff}, picks the engine whose roots hold it.
+     */
+    public static CairoException dataSyncFailure(FilesFacade ff, @Nullable CharSequence path, int errno, String operation, CharSequence message) {
+        final CairoException exception = dataSyncFailureCarry(errno, operation).put(message);
+        if (path != null) {
+            exception.put(" [path=").put(path).put(']');
+        }
+        CairoEngine.recordDataSyncFailure(ff, path, exception);
+        return exception;
+    }
+
+    /**
+     * A failed flush that {@link #dataSyncFailure(FilesFacade, int, String, CharSequence)} already recorded, raised
+     * again by the code that carries it: a task failure the writer rethrows, the sequencer's fenced frontier. It
+     * does not tell the engines again.
+     */
+    public static CairoException dataSyncFailureCarry(int errno, String operation) {
         CairoException exception = critical(errno);
         exception.dataSyncOperation = operation;
         exception.flags |= FLAG_DATA_SYNC_FAILURE;
         return exception;
+    }
+
+    /**
+     * A failed flush of {@code fd}: the message names the descriptor and, where the OS can tell, the file.
+     */
+    public static CairoException dataSyncFailureOfFd(FilesFacade ff, long fd, int errno, String operation, CharSequence message) {
+        return dataSyncFailure(ff, Files.findPathOfFd(fd), errno, operation, message + " [fd=" + fd + ']');
+    }
+
+    /**
+     * A failed flush ({@code msync}) of the memory mapped at {@code address}: the message names the file where the
+     * OS can tell.
+     */
+    public static CairoException dataSyncFailureOfMapping(FilesFacade ff, long address, int errno, String operation, CharSequence message) {
+        return dataSyncFailure(ff, Files.findPathOfMapping(address), errno, operation, message);
     }
 
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {

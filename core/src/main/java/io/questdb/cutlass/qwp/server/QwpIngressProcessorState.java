@@ -152,7 +152,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final int maxResponseErrorMessageLength;
     private final CharSequenceLongHashMap pendingAckSeqTxns = new CharSequenceLongHashMap();
     // Wire seqTxn of the latest commit per table name that no durable ack has covered yet, for the
-    // name's CURRENT incarnation (tableIncarnations). Older incarnations still owed an ack sit in
+    // name's current incarnation (tableIncarnations). Older incarnations still owed an ack sit in
     // retiredIncarnations.
     private final CharSequenceLongHashMap pendingDurableSeqTxns = new CharSequenceLongHashMap();
     private final StringSink rejectMsg = new StringSink();
@@ -420,23 +420,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * {@link #isDurableProgressSnapshotFullyUploaded()} until the next call.
      * The caller must consume the map before the next call.
      * <p>
-     * The primary snapshot reads the frontier of the strongest granted tier
-     * ({@link #durableAckTiers}) instead of taking the max of both tiers:
+     * The primary snapshot reads the frontier of the strongest granted tier ({@link #durableAckTiers}):
      * <ul>
-     *   <li>{@link DurabilityTier#REPLICATED} granted: {@link DurableAckRegistry#getReplicatedDurableSeqTxn(CharSequence)} —
+     *   <li>{@link DurabilityTier#REPLICATED} granted: {@link DurableAckRegistry#getReplicatedDurableSeqTxn(CharSequence)},
      *       uploaded to an object store (Enterprise replication only)</li>
-     *   <li>otherwise ({@link DurabilityTier#LOCAL}): {@link DurableAckRegistry#getLocalDurableSeqTxn(CharSequence)} —
-     *       fdatasync'd to local disk (ADAPTIVE tables, OSS + Enterprise)</li>
+     *   <li>otherwise ({@link DurabilityTier#LOCAL}): {@link DurableAckRegistry#getLocalDurableSeqTxn(CharSequence)},
+     *       fdatasynced to local disk (ADAPTIVE tables)</li>
      * </ul>
-     * No {@code max()}: {@code localDurableSeqTxn >= replicatedDurableSeqTxn} always holds, so a blind
-     * max would silently resolve to the local frontier and downgrade a REPLICATED
-     * (failover-safe) client's guarantee to mere LOCAL (power-loss-safe) durability.
+     * It does not take the max of both: the local frontier is never behind the replicated one, so a max would
+     * downgrade a REPLICATED client's guarantee to LOCAL.
      * <p>
-     * When BOTH tiers are granted, the same traversal also fills the additive
-     * LOCAL stream's snapshot ({@link #getLocalDurableProgressSnapshot()}) from
-     * the local-fsync frontier. That stream is an early progress signal ahead
-     * of the replicated ack: it is never consulted for coverage and never
-     * prunes the pending set -- the replicated (laggard) stream owns both.
+     * When both tiers are granted, the same traversal also fills the additive LOCAL stream's snapshot
+     * ({@link #getLocalDurableProgressSnapshot()}) from the local frontier. That stream is an early progress
+     * signal: it never decides coverage and never prunes the pending set; the replicated stream owns both.
      * <p>
      * Reported values are wire seqTxns (see {@link #recordCommittedTable}) and never exceed the
      * connection's own pending value for the table, so a registry sentinel such as Enterprise's
@@ -453,11 +449,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         if (!durableAckEnabled) {
             return durableProgressSnapshot;
         }
-        // Primary frontier: the strongest granted tier. REPLICATED reads the replicated frontier; a
-        // LOCAL-only grant reads the local-fsync frontier. No max(): the strongest granted tier is exactly
-        // the requested guarantee (local >= replicated), so a REPLICATED client is never advanced by the
-        // weaker local tier. The same selection as isDurableWorkFullyCovered, so the fused coverage result
-        // below answers the same question that predicate does.
+        // Primary frontier: the strongest granted tier, as in isDurableWorkFullyCovered, so the fused coverage
+        // result below answers the same question that predicate does.
         final boolean isReplicatedPrimary = DurabilityTier.hasReplicated(durableAckTiers);
         final boolean hasAdditiveLocalStream = isReplicatedPrimary && DurabilityTier.hasLocal(durableAckTiers);
         ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
@@ -824,9 +817,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * True when every seqTxn this connection has committed but not yet durably
-     * acked is covered by the durability frontier of THIS connection's
-     * strongest granted tier ({@link #durableAckTiers}) -- i.e. a durable ack flushed right now
-     * would advance the client's replay watermark past ALL of this connection's
+     * acked is covered by the durability frontier of this connection's
+     * strongest granted tier ({@link #durableAckTiers}), so a durable ack flushed at this point
+     * would advance the client's replay watermark past all of this connection's
      * committed work, leaving no replay window.
      * Trivially true when nothing is pending (or durable ack is disabled:
      * {@code pendingDurableSeqTxns} is only populated when enabled).
@@ -835,17 +828,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * {@code durableProgressSnapshot} may belong to an in-flight durable ACK
      * and must remain unchanged until {@link #onDurableAckSent()} consumes it.
      * <p>
-     * <b>Must use the same frontier selection as {@link #collectDurableProgress}.</b>
-     * The question this predicate answers is "will the final durable ack we are about
-     * to flush actually cover everything?", and that ack is produced by
-     * {@code collectDurableProgress} from the negotiated tier's frontier -- so testing a
-     * DIFFERENT frontier here answers the wrong question. Reading the REPLICATED frontier
-     * unconditionally (as an earlier revision did) is always {@code -1} for a
-     * {@link DurabilityTier#LOCAL} connection in OSS, which made the predicate permanently
-     * false and forced every LOCAL-tier role-change close to burn the full
-     * {@link #ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS} grace budget and then log the
-     * "un-acked durable work" alarm, even when the local frontier had in fact covered
-     * everything and the exactly-once guard was satisfiable.
+     * Uses the same frontier selection as {@link #collectDurableProgress}, which builds the final durable ack
+     * from the negotiated tier's frontier: the predicate asks whether that ack covers everything. The
+     * replicated frontier of a {@link DurabilityTier#LOCAL} connection in OSS is always {@code -1}, so testing
+     * it here would keep the predicate false and make every role-change close wait out the full
+     * {@link #ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS} grace.
      */
     public boolean isDurableWorkFullyCovered(DurableAckRegistry registry) {
         final boolean isReplicatedTier = DurabilityTier.hasReplicated(durableAckTiers);
@@ -1105,7 +1092,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * Marks which stream the next durable-ack frame belongs to. Set before
-     * each send attempt; a blocked send keeps the value so the resume path
+     * each send; a blocked send keeps the value so the resume path
      * advances the right stream's watermark in {@link #onDurableAckSent()}.
      */
     public void setSendingLocalDurableAck(boolean isLocalStream) {
@@ -1140,7 +1127,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 releaseReportedIncarnations(tableName, durableSeqTxn);
             }
             if (durableSeqTxn >= pendingDurableSeqTxns.get(tableName)) {
-                // Watermark caught up — prune the per-table pending
+                // Watermark caught up: prune the per-table pending
                 // tracking so these maps don't grow one entry per unique
                 // table name for the connection's lifetime. A later commit
                 // to the same table re-populates via recordCommittedTable.
@@ -1733,21 +1720,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     /**
      * Records a committed seqTxn for the OK ack and, when durable ack is enabled, for the durable ack.
      * <p>
-     * Both frames name a table only by its NAME, and a client keeps one durable watermark per name for
-     * the whole connection. A seqTxn, however, belongs to one table directory, and a new directory
-     * under the same name (drop + auto-create, rename + create, REBASE WAL) restarts at a low seqTxn.
-     * Sent raw, such a seqTxn would sit at or below the watermark the client already holds for the
-     * name: the client would trim the new table's frame on its OK, before it is durable, and a report
-     * of the new table's frontier would also cover the old table's still-pending entries.
+     * Both frames name a table only by its name, and the client keeps one durable watermark per name for the
+     * connection's lifetime. A seqTxn belongs to one table directory, and a new directory under the same name
+     * (drop and auto-create, rename and create, REBASE WAL) restarts at a low seqTxn. Sent raw, it would sit at
+     * or below the client's watermark for the name: the client would trim the new table's frame on its OK,
+     * before it is durable, and a report of the new frontier would cover the old table's pending entries.
      * <p>
-     * Durable-ack connections therefore see WIRE seqTxns: the table's own seqTxn plus an offset chosen
-     * when the connection first commits to a new directory under the name, so that the new directory's
-     * values start above every value the connection reported for the name before. The first directory
-     * a connection writes under a name gets offset 0, so the wire carries the real seqTxn unless the
-     * name changed directory mid-connection. An older directory that is still owed a durable ack
-     * moves to {@link #retiredIncarnations}, and {@link #resolveCoveredSeqTxn} reports it before the
-     * new one. The offsets live only as long as the connection, like the client's watermarks: a
-     * reconnect starts both sides from scratch.
+     * Durable-ack connections therefore see wire seqTxns: the table's own seqTxn plus an offset, chosen when
+     * the connection first commits to a new directory under the name, that puts the new values above every
+     * value reported for the name before. The first directory gets offset 0. An older directory still owed a
+     * durable ack moves to {@link #retiredIncarnations}, and {@link #resolveCoveredSeqTxn} reports it before
+     * the new one. The offsets live as long as the connection, like the client's watermarks.
      */
     private void recordCommittedTable(String tableName, String tableDirName, long seqTxn) {
         if (seqTxn < 0) {

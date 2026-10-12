@@ -25,9 +25,8 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.SnapshotMarker;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.FilesFacade;
@@ -39,10 +38,9 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * S5: the adaptive apply-side durable epoch is skipped when the engine's LocalDurabilityPolicy is
- * REPLICA_SKIP (the behavior Enterprise installs on a replica), and fires under the default
- * ALWAYS_ON. The epoch interval is set to 0 so the epoch is eligible on every apply batch — thus
- * the ONLY thing that suppresses it under REPLICA_SKIP is the new policy gate, not the cadence.
+ * The adaptive apply-side durable epoch is skipped when the engine's LocalDurabilityPolicy is REPLICA_SKIP
+ * (what Enterprise installs on a replica), and fires under the default ALWAYS_ON. The epoch interval is 0,
+ * so the epoch is eligible on every apply batch and only the policy gate suppresses it under REPLICA_SKIP.
  */
 public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
 
@@ -64,8 +62,8 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 Assert.assertEquals("REPLICA_SKIP must fire no epoch (lastEpochTs stays 0)",
                         0L, tracker.getLastEpochTs());
 
-                // Visibility is unaffected — the epoch governs durability, not apply. Lazy apply
-                // still writes the columns, so the row is readable.
+                // Visibility is unaffected: the epoch governs durability, not apply. Lazy apply still
+                // writes the columns, so the row is readable.
                 assertQuery("select count() from x")
                         .noLeakCheck()
                         .noRandomAccess()
@@ -81,14 +79,12 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
     }
 
     /**
-     * S5 hardening (review Finding 2): a demote (Enterprise installs {@link LocalDurabilityPolicy#REPLICA_SKIP}
-     * and clears the epoch trio) that lands INSIDE the epoch's gate-&gt;fsync window must not let the in-flight
-     * apply (re-)create the epoch trio on the demoted node. {@code ApplyWal2TableJob.maybeAdvanceDurableEpoch}
-     * checks the policy at its gate, then {@code advance()} RE-CHECKS it as its first statement (immediately
-     * before {@code fsyncMaterializedState}). Here the policy returns ENABLED at the gate (so we enter
-     * {@code advance()}) then DISABLED at the re-check — modelling the demote landing in the window — and the
-     * epoch trio ({@code _snapshot}/{@code _txn.epoch}/{@code _cv.epoch}) must NOT be created and the durable
-     * frontier must NOT advance. (Without the re-check the epoch was created despite the demote.)
+     * A demote that lands inside the epoch's gate-&gt;fsync window must not let the in-flight apply publish an
+     * epoch on the demoted node (on a demote Enterprise installs {@link LocalDurabilityPolicy#REPLICA_SKIP}).
+     * {@code ApplyWal2TableJob.maybeAdvanceDurableEpoch} checks the policy at its gate, then {@code advance()}
+     * checks it again as its first statement, before {@code fsyncMaterializedState}. Here the policy answers
+     * ENABLED at the gate and DISABLED at the re-check, modelling the demote in the window: the durable
+     * frontier must not advance and the {@code _epoch.manifest} save point must not change.
      */
     @Test
     public void testDemoteInEpochWindowRecheckSuppressesEpoch() throws Exception {
@@ -96,35 +92,34 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0); // epoch eligible every batch
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
-            // Apply the CREATE under REPLICA_SKIP so it fires no epoch (the table starts with no trio).
+            // Apply the CREATE under REPLICA_SKIP, so it fires no epoch beyond the enrollment baseline.
             engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("x");
             final long baselineEpochSeqTxn;
             final long baselineEpochTxn;
             final int baselineGeneration;
-            try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                markerPath.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                marker.of(markerPath);
-                Assert.assertTrue("adaptive enrollment baseline marker must load", marker.tryLoad());
-                baselineEpochSeqTxn = marker.getEpochSeqTxn();
-                baselineEpochTxn = marker.getEpochTxn();
-                baselineGeneration = marker.getGeneration();
+            try (Path markerPath = new Path()) {
+                markerPath.of(configuration.getDbRoot()).concat(tt);
+                final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), markerPath, markerPath.size(), tt.getTableId());
+                Assert.assertTrue("adaptive enrollment baseline must load", saved.length > 0);
+                baselineEpochSeqTxn = saved[0].epochSeqTxn;
+                baselineEpochTxn = saved[0].epochTxn;
+                baselineGeneration = saved[0].generation;
             }
 
-            // The demote-in-window policy. Installing it changes the policy version, so the batch first asks it
-            // from TableWriter.reconcileDurableEpochAnchor() (call 0, answered ENABLED: the table keeps its
-            // anchor). Then ENABLED on the gate call (call 1, maybeAdvanceDurableEpoch), DISABLED on advance()'s
-            // re-check (call 2) and every call thereafter.
+            // Calls 0-3 construct the apply job and writer (including its two structural purge gates).
+            // Call 4 reconciles the anchor, call 5 is maybeAdvanceDurableEpoch's gate, and call 6 is
+            // advance()'s re-check. Only the re-check and subsequent calls see the demote.
             final AtomicInteger calls = new AtomicInteger();
             final boolean[] sawEnabledAtGate = {false};
             final boolean[] sawDisabledAtRecheck = {false};
             final LocalDurabilityPolicy demoteInWindow = () -> {
                 final int call = calls.getAndIncrement();
-                final boolean enabled = call < 2;
-                if (call == 1) {
+                final boolean enabled = call < 6;
+                if (call == 5) {
                     sawEnabledAtGate[0] = true;
-                } else if (call == 2) {
+                } else if (call == 6) {
                     sawDisabledAtRecheck[0] = true;
                 }
                 return enabled;
@@ -134,16 +129,12 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
                 drainWalQueue();
 
-                // The gate passed (entered advance()) but the re-check fired — proving the epoch was
-                // suppressed by advance()'s re-check, not merely by the gate.
+                // The gate passed (entered advance()) and the re-check saw DISABLED: advance()'s re-check
+                // suppressed the epoch, not the gate.
                 Assert.assertTrue("epoch gate must have seen local durability ENABLED (entered advance())",
                         sawEnabledAtGate[0]);
                 Assert.assertTrue("advance()'s re-check must have seen local durability DISABLED",
                         sawDisabledAtRecheck[0]);
-                // Pin the sequence: anchor reconcile, gate, re-check. Another caller in between would silently
-                // shift which call this policy answers ENABLED, and the re-check would no longer be exercised.
-                Assert.assertEquals("policy consulted exactly by the reconcile, the gate and the re-check",
-                        3, calls.get());
 
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
                 Assert.assertEquals("a demote in the epoch window must not advance the durable epoch frontier",
@@ -151,18 +142,21 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 Assert.assertEquals("a demote in the epoch window must not publish an epoch (lastEpochTs stays 0)",
                         0L, tracker.getLastEpochTs());
 
-                // Safe legacy enrollment may have published an epoch-0 baseline before this window. The
-                // demoted node must not advance or replace that marker.
-                try (Path markerPath = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                    markerPath.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-                    marker.of(markerPath);
-                    Assert.assertTrue("enrollment baseline marker must remain loadable", marker.tryLoad());
-                    Assert.assertEquals(baselineEpochSeqTxn, marker.getEpochSeqTxn());
-                    Assert.assertEquals(baselineEpochTxn, marker.getEpochTxn());
-                    Assert.assertEquals(baselineGeneration, marker.getGeneration());
+                // Pin the exact sequence so a new policy reader cannot silently move the demote before the gate.
+                Assert.assertEquals("setup, reconcile, gate, then disabled re-check", 7, calls.get());
+
+                // Enrollment may have published an epoch-0 baseline before this window. The demoted node must
+                // not advance or replace that save point.
+                try (Path markerPath = new Path()) {
+                    markerPath.of(configuration.getDbRoot()).concat(tt);
+                    final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), markerPath, markerPath.size(), tt.getTableId());
+                    Assert.assertTrue("enrollment baseline must remain loadable", saved.length > 0);
+                    Assert.assertEquals(baselineEpochSeqTxn, saved[0].epochSeqTxn);
+                    Assert.assertEquals(baselineEpochTxn, saved[0].epochTxn);
+                    Assert.assertEquals(baselineGeneration, saved[0].generation);
                 }
 
-                // Visibility is unaffected — lazy apply still wrote the columns.
+                // Visibility is unaffected: lazy apply still writes the columns.
                 assertQuery("select count() from x")
                         .noLeakCheck()
                         .noRandomAccess()

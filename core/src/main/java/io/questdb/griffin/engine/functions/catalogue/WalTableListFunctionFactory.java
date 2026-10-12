@@ -291,9 +291,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             durableEpochSeqTxn = seqTxnTracker.getDurableEpochSeqTxn();
                             recoveryIncarnation = seqTxnTracker.getRecoveryIncarnation();
                             localDurableSeqTxn = seqTxnTracker.getLocalDurableSeqTxn();
-                            // getLastEpochTs() is wall-clock MILLIS (0 == no epoch yet); the column is
-                            // TIMESTAMP (MICROS). Render NULL for "no epoch" rather than a misleading
-                            // 1970-01-01 (epoch 0) timestamp; scale ms -> micros when a real epoch exists.
+                            // getLastEpochTs() is wall-clock millis, 0 when there is no epoch yet; the
+                            // column is a microsecond TIMESTAMP. Render NULL for no epoch rather than
+                            // 1970-01-01, and scale millis to micros otherwise.
                             long lastEpochMs = seqTxnTracker.getLastEpochTs();
                             lastEpochTs = lastEpochMs > 0 ? lastEpochMs * 1000 : Numbers.LONG_NULL;
                             if (suspendedFlag) {
@@ -319,9 +319,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             // but we no longer need it since we ignore suspended flag on the restart
                             // and try to apply transactions once any way.
 
-                            // Not initialized means there will be an attempt to apply, so the table is not
-                            // suspended -- unless that attempt already failed to open the writer, which
-                            // suspends the table without initialising the tracker.
+                            // Not initialized means WAL apply has yet to run on the table, so it is not
+                            // suspended, unless an apply already failed to open the writer, which suspends
+                            // the table without initialising the tracker.
                             suspendedFlag = seqTxnTracker.isSuspended();
                             if (suspendedFlag) {
                                 errorTag = seqTxnTracker.getErrorTag().text();
@@ -404,7 +404,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         errorMessageColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("memoryPressure", ColumnType.INT));
         memoryPressureLevelColumn = metadata.getColumnCount() - 1;
-        // Plan 4 adaptive observability columns (appended — existing positional consumers unaffected)
+        // Adaptive columns, appended so that positional consumers of the earlier columns are unaffected
         metadata.add(new TableColumnMetadata("durableEpochSeqTxn", ColumnType.LONG));
         durableEpochSeqTxnColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("recoveryIncarnation", ColumnType.LONG));

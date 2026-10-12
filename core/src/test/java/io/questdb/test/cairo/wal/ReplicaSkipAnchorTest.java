@@ -25,37 +25,52 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
-import io.questdb.cairo.SnapshotMarker;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.crash.CrashFaultFilesFacade;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
+
 /**
- * An adaptive replica ({@link LocalDurabilityPolicy#REPLICA_SKIP}) advances no durable epoch and keeps no WAL
- * purge floor, and nothing downloads purged WAL again. So a replica must never keep an anchor that startup would
- * rewind a table to: the replay would need WAL the purge job deleted, and the table would come back suspended
- * and truncated to the anchor. Each test models one Enterprise lifecycle sequence with the OSS primitives
- * Enterprise calls:
+ * An adaptive replica ({@link LocalDurabilityPolicy#REPLICA_SKIP}) advances no durable epoch and keeps no WAL purge
+ * floor, so it must never keep an anchor that startup would rewind a table to: the replay would need WAL the purge
+ * job deleted. Each test models one Enterprise lifecycle sequence with the OSS primitives Enterprise calls:
  * <ul>
  *   <li>ReplicaRoleState ctor: {@code engine.setLocalDurabilityPolicy(REPLICA_SKIP)}</li>
- *   <li>ReplicaRoleState.openLoops (the demote clear): mark for enrolment, then remove the anchor, for every
- *       table present at that moment</li>
- *   <li>WalEvents.registerTable: the same enrolment the OSS CREATE path performs (modelled here by CREATE)</li>
+ *   <li>ReplicaRoleState.openLoops (the demote clear): remove the anchor of every table present at that moment</li>
+ *   <li>WalEvents.registerTable: CREATE, which keeps no anchor on a replica</li>
  *   <li>ReplicaRoleState.close / PrimaryRoleState ctor: {@code setLocalDurabilityPolicy(ALWAYS_ON)}</li>
  *   <li>boot: {@code RecoveryCoordinator.recover()} under ALWAYS_ON, before any role state exists</li>
  * </ul>
- * Every scenario purges applied WAL and then restarts. The table must come back with every applied row, and
- * must not be suspended.
+ * Every scenario purges applied WAL and restarts; the table must come back unsuspended, with every applied row.
  */
 public class ReplicaSkipAnchorTest extends AbstractCairoTest {
 
@@ -114,7 +129,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
 
     @Test
     public void testCreateUnderReplicaSkipCrashAfterPurge() throws Exception {
-        // The reviewer's probe: a table created (Enterprise: registered by the downloader) while the node is a
+        // A table created (Enterprise: registered by the downloader) while the node is a
         // replica, applied in several batches with idle eviction, WAL purged, then a crash.
         run(() -> {
             setAdaptive(true);
@@ -129,16 +144,14 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateUnderReplicaSkipEnrolsWithoutAnchor() throws Exception {
+    public void testCreateUnderReplicaSkipKeepsNoSavePoint() throws Exception {
         setAdaptive(true);
         assertMemoryLeak(() -> {
             engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
             try {
                 execute("create table no_anchor (ts timestamp, v long) timestamp(ts) partition by day wal");
                 final TableToken tt = engine.verifyTableName("no_anchor");
-                Assert.assertFalse("a replica must not publish an anchor", fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME));
-                Assert.assertTrue("the enrolment marker must stand in for it", fileExists(tt, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME));
-                Assert.assertEquals(CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
+                Assert.assertFalse("a replica must not publish an anchor", fileExists(tt, DurableEpochManifest.FILE_NAME + ".0"));
             } finally {
                 engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
             }
@@ -161,7 +174,6 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             suppressCadenceEpoch(tt);
             insertAndRelease("flap", 3, 3, false);
             Assert.assertEquals("the baseline must be published at the cut before the batch", 2, readAnchorSeqTxn(tt));
-            Assert.assertFalse("the baseline must consume the enrolment marker", fileExists(tt, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME));
             crashRestartAndAssertNoLoss(tt, false, 3);
         });
     }
@@ -169,7 +181,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
     @Test
     public void testEnrolmentUnderReplicaSkipCrashAfterPurge() throws Exception {
         // A table created and applied while the instance ran NOSYNC (not enrolled, no anchor), then the node runs
-        // as an adaptive replica: its first writer enrols it during the tenure.
+        // as an adaptive replica, which keeps it without a save point.
         run(() -> {
             setAdaptive(false);
             execute("create table enrol (ts timestamp, v long) timestamp(ts) partition by day wal");
@@ -179,15 +191,14 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
             clearLikeOpenLoops(tt);
             insertAndRelease("enrol", 3, 5, true);
-            Assert.assertEquals(CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
-            Assert.assertFalse("enrolment on a replica must not publish an anchor", fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME));
+            Assert.assertFalse("enrolment on a replica must not publish an anchor", fileExists(tt, DurableEpochManifest.FILE_NAME + ".0"));
             drainPurgeJob();
             crashRestartAndAssertNoLoss(tt, false, 5);
         });
     }
 
     @Test
-    public void testFailedDemoteClearAnchorIsReplacedBeforeApply() throws Exception {
+    public void testFailedDemoteClearAnchorIsRemovedBeforeApply() throws Exception {
         // The demote clear skipped this table (it logs and moves on when a delete fails), so the primary-tenure
         // anchor at 2 survives into the replica tenure. The next batch must not be applied on top of it.
         run(() -> {
@@ -197,8 +208,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             insertAndRelease("noclear", 1, 2, true);
             engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
             insertAndRelease("noclear", 3, 3, true);
-            Assert.assertFalse("the anchor must be gone before the replica applies on top of it", fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME));
-            Assert.assertTrue("the enrolment marker must replace it", fileExists(tt, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME));
+            Assert.assertFalse("the anchor must be gone before the replica applies on top of it", fileExists(tt, DurableEpochManifest.FILE_NAME + ".0"));
             insertAndRelease("noclear", 4, 5, true);
             drainPurgeJob();
             crashRestartAndAssertNoLoss(tt, false, 5);
@@ -256,7 +266,6 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             // Keep the writer pooled: evicting it would run the close-time epoch at seqTxn 6.
             insertAndRelease("promo_write", 6, 6, false);
             Assert.assertEquals("the baseline must be published at the cut before the batch", 5, readAnchorSeqTxn(tt));
-            Assert.assertFalse("the baseline must consume the enrolment marker", fileExists(tt, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME));
             drainPurgeJob();
             crashRestartAndAssertNoLoss(tt, false, 6);
         });
@@ -265,7 +274,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
     @Test
     public void testRebaseUnderReplicaSkipCrashAfterPurge() throws Exception {
         // The REBASE WAL clone is a new table at seqTxn 0 (Enterprise runs the replica variant, REBASE WAL INTO,
-        // to follow the primary), so on a replica it must come out with the marker instead of an anchor too.
+        // to follow the primary), so on a replica it must come out without an anchor too.
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         run(() -> {
             setAdaptive(true);
@@ -276,12 +285,100 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             execute("alter table rb rebase wal");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("rb");
-            Assert.assertFalse("a clone made on a replica must not carry an anchor", fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME));
-            Assert.assertTrue("the enrolment marker must stand in for it", fileExists(tt, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME));
-            Assert.assertEquals(CommitMode.ADAPTIVE, readEnrolledCommitMode(tt));
+            Assert.assertFalse("a clone made on a replica must not carry an anchor", fileExists(tt, DurableEpochManifest.FILE_NAME + ".0"));
             insertAndRelease("rb", 3, 5, true);
             drainPurgeJob();
             crashRestartAndAssertNoLoss(tt, false, 5);
+        });
+    }
+
+    @Test
+    public void testReplicaMakesTableDurableBeforeItRemovesSavePoint() throws Exception {
+        // A primary's save point lags rows it applied lazily, then the node becomes a replica. Before the writer
+        // removes the save point, every file of the table must be durable: a replica keeps no purge floor, so once
+        // the save point is gone nothing else brings back the WAL those rows came from.
+        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
+        final SavePointRemovalFacade removalFf = new SavePointRemovalFacade();
+        removalFf.setDbRoot(root);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        assertMemoryLeak(removalFf, () -> {
+            try {
+                setAdaptive(true);
+                execute("create table replica_flush (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("replica_flush");
+                insertAndRelease("replica_flush", 1, 1, false);
+                Assert.assertEquals("setup: a save point at the first batch", 1, readAnchorSeqTxn(tt));
+                removalFf.markDurableBaseline(configuration.getDbRoot());
+                suppressCadenceEpoch(tt);
+                insertAndRelease("replica_flush", 2, 3, false);
+                Assert.assertEquals("setup: the save point lags the applied rows", 1, readAnchorSeqTxn(tt));
+                Assert.assertFalse("setup: the lazily applied rows are not durable", removalFf.notDurableFiles(tt).isEmpty());
+
+                removalFf.watch(tt);
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+                try (TableWriter writer = getWriter(tt)) {
+                    writer.reconcileDurableEpochAnchor();
+                }
+                Assert.assertTrue("the replica removes the save point", removalFf.removalSeen);
+                Assert.assertEquals("files not durable when the replica removed the save point",
+                        "[]", removalFf.notDurableAtRemoval.toString());
+                Assert.assertEquals("the save point is gone", -1, readAnchorSeqTxn(tt));
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
+        });
+    }
+
+    @Test
+    public void testRoleSwitchDuringBatchThatAppliesDrop() throws Exception {
+        // A DROP TABLE that reaches a running batch destroys the writer before the batch returns. A role switch
+        // during that batch, in either direction, must not make the after-batch reconcile touch that writer.
+        final AtomicReference<LocalDurabilityPolicy> switchTo = new AtomicReference<>();
+        final String[] dropped = new String[2];
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (dropped[1] != null && Utf8s.containsAscii(name, dropped[1]) && Utf8s.containsAscii(name, "2024-01-02")) {
+                    final LocalDurabilityPolicy policy = switchTo.getAndSet(null);
+                    if (policy != null) {
+                        try {
+                            execute("drop table " + dropped[0]);
+                        } catch (SqlException e) {
+                            throw new RuntimeException(e);
+                        }
+                        engine.setLocalDurabilityPolicy(policy);
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        setAdaptive(true);
+        assertMemoryLeak(ff, () -> {
+            try {
+                for (boolean demote : new boolean[]{true, false}) {
+                    engine.setLocalDurabilityPolicy(demote ? LocalDurabilityPolicy.ALWAYS_ON : LocalDurabilityPolicy.REPLICA_SKIP);
+                    final String table = demote ? "drop_on_demote" : "drop_on_promote";
+                    execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
+                    final TableToken tt = engine.verifyTableName(table);
+                    execute("insert into " + table + " values ('2024-01-01T00:00:00.000000Z', 1)");
+                    drainWalQueue();
+                    // The batch that applies this row opens the new partition, takes the DROP and the role switch.
+                    execute("insert into " + table + " values ('2024-01-02T00:00:00.000000Z', 2)");
+                    dropped[0] = table;
+                    dropped[1] = tt.getDirName();
+                    switchTo.set(demote ? LocalDurabilityPolicy.REPLICA_SKIP : LocalDurabilityPolicy.ALWAYS_ON);
+                    drainWalQueue();
+                    Assert.assertNull("the DROP must reach the running batch", switchTo.get());
+                    Assert.assertTrue(engine.isTableDropped(tt));
+                    dropped[1] = null;
+                    drainWalQueue();
+                    drainPurgeJob();
+                }
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
         });
     }
 
@@ -304,7 +401,6 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
     private static void clearLikeOpenLoops(TableToken tt) {
         try (Path path = new Path()) {
             final int rootLen = path.of(configuration.getDbRoot()).concat(tt).size();
-            RecoveryCoordinator.markRestoredForEnrolment(configuration.getFilesFacade(), path, rootLen);
             RecoveryCoordinator.removeAdaptiveEpochArtifacts(configuration.getFilesFacade(), path, rootLen);
         }
     }
@@ -344,13 +440,10 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
     }
 
     private static long readAnchorSeqTxn(TableToken tt) {
-        if (!fileExists(tt, TableUtils.SNAPSHOT_FILE_NAME)) {
-            return -1;
-        }
-        try (Path p = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-            p.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            marker.of(p.$());
-            return marker.tryLoad() ? marker.getEpochSeqTxn() : -1;
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(tt);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), p, p.size(), tt.getTableId());
+            return saved.length > 0 ? saved[0].epochSeqTxn : -1;
         }
     }
 
@@ -360,13 +453,6 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
             tx.ofRO(p.$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
             tx.unsafeLoadAll();
             return tx.getSeqTxn();
-        }
-    }
-
-    private static int readEnrolledCommitMode(TableToken tt) {
-        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tt)) {
-            metadata.loadMetadata();
-            return metadata.getEnrolledCommitMode();
         }
     }
 
@@ -426,5 +512,60 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface Scenario {
         void run() throws Exception;
+    }
+
+    // Records which files of a watched table were not durable when its first save point file was removed.
+    private static final class SavePointRemovalFacade extends CrashFaultFilesFacade {
+        final List<String> notDurableAtRemoval = new ArrayList<>();
+        boolean removalSeen;
+        private TableToken watched;
+
+        @Override
+        public void remove(LPSZ name) {
+            onRemove(name);
+            super.remove(name);
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            onRemove(name);
+            return super.removeQuiet(name);
+        }
+
+        // Files of the table outside its WAL and sequencer whose bytes differ from what a power loss would keep.
+        List<String> notDurableFiles(TableToken tt) {
+            final java.nio.file.Path dir = Paths.get(configuration.getDbRoot().toString(), tt.getDirName());
+            final List<String> notDurable = new ArrayList<>();
+            try (Stream<java.nio.file.Path> stream = Files.walk(dir)) {
+                stream.filter(Files::isRegularFile).forEach(p -> {
+                    final String name = dir.relativize(p).toString();
+                    if (name.startsWith(WalUtils.WAL_NAME_BASE) || name.startsWith(WalUtils.SEQ_DIR) || name.startsWith("_epoch")) {
+                        return;
+                    }
+                    try {
+                        if (!Arrays.equals(durableContentOf(p.toAbsolutePath().toString()), Files.readAllBytes(p))) {
+                            notDurable.add(name);
+                        }
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            return notDurable;
+        }
+
+        void watch(TableToken tt) {
+            watched = tt;
+        }
+
+        private void onRemove(LPSZ name) {
+            if (watched != null && !removalSeen && Utf8s.containsAscii(name, watched.getDirName())
+                    && Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME + '.')) {
+                removalSeen = true;
+                notDurableAtRemoval.addAll(notDurableFiles(watched));
+            }
+        }
     }
 }

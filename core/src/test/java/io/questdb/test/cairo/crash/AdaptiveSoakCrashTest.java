@@ -51,110 +51,84 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * SP-D increment D3 — the ADAPTIVE crash-recovery <b>SOAK</b> test.
- *
- * <p>Sustained adaptive/WAL ingest with a PERIODIC simulated power loss + production-faithful recover,
- * over many cycles on ONE persistent db-root that is <b>never reset between cycles</b>. Where the D1/D2
- * sweeps ({@link AbstractAdaptiveCrashSweepTest#forEachAdaptiveCrashPoint}, {@link
- * RandomizedAdaptiveCrashFuzzTest}) rebuild a fresh table at every crash point to isolate a SINGLE
- * crash's correctness, this soak keeps recovering-then-continuing on the SAME accumulating table to catch
- * <b>cumulative / temporal</b> defects that only surface over many recover-then-continue cycles:
+ * Adaptive crash-recovery soak: sustained adaptive WAL ingest with a periodic simulated power loss and recovery,
+ * over many cycles on one persistent db root that is never reset between cycles. The sweeps
+ * ({@link AbstractAdaptiveCrashSweepTest#forEachAdaptiveCrashPoint}, {@link RandomizedAdaptiveCrashFuzzTest})
+ * rebuild a fresh table at every crash point to isolate one crash; this soak recovers and continues on the same
+ * accumulating table to catch defects that only surface over many cycles:
  * <ul>
- *   <li>resource leaks — fd / mmap not returned to the pool across cycles;</li>
- *   <li>unbounded growth of WAL-segment dirs (a WAL-purge floor that never advances);</li>
- *   <li>unbounded growth of generation-bound durable-epoch metadata/pointer copies;</li>
+ *   <li>fd and mmap leaks across cycles;</li>
+ *   <li>unbounded growth of WAL segment dirs (a WAL purge floor that never advances);</li>
+ *   <li>unbounded growth of save point files;</li>
  *   <li>stale partition-version dirs the recovery rewind never purges;</li>
- *   <li>durable-frontier drift / a committed count that silently truncates instead of accumulating.</li>
+ *   <li>durable-frontier drift, or a committed count that truncates instead of accumulating.</li>
  * </ul>
+ * It reuses the base classes' {@link CrashFaultFilesFacade}, the reboot model {@link #recoverAfterCrash}, the
+ * per-cycle handle release and fd reclamation ({@link #releaseEngineHandles},
+ * {@link #reclaimLingeringNonCacheFds}) and {@code anyTableSuspended}, driven per cycle rather than through the
+ * reset-per-point {@code forEachAdaptiveCrashPoint} driver.
  *
- * <h3>Reused infrastructure (NOT rebuilt)</h3>
- * Extends {@link AbstractAdaptiveCrashSweepTest} to inherit the {@link CrashFaultFilesFacade} + its
- * low-level primitives ({@code armCrashAt}/{@code durabilityOpCount}/{@code crash}), the reboot model
- * {@link #recoverAfterCrash} (release WAL writers &rarr; {@code crash()} &rarr; clear transient suspend
- * &rarr; evict scoreboard &rarr; {@code resetForReboot} &rarr; the recovery triple {@code
- * RecoveryCoordinator.recover()} &rarr; {@code notifyWalTxnRepublisher} &rarr; {@code drainWalQueue}), the
- * per-cycle handle release + fd reclamation ({@link #releaseEngineHandles}, {@link
- * #reclaimLingeringNonCacheFds}), and the {@code anyTableSuspended} oracle helper. The soak drives these
- * per cycle rather than through the reset-per-point {@code forEachAdaptiveCrashPoint} driver.
- *
- * <h3>Deterministic workload (mirrors the SP-D4 power-cut harness formula)</h3>
- * One adaptive WAL table {@code t (id long, v long, s symbol index, ts timestamp)} partitioned by DAY.
- * Row {@code i} is a pure function of {@code i}: {@code id=i}, {@code v=i*2654435761L} (Knuth hash),
- * {@code s=SYMBOLS[i % 4]} (indexed symbol dictionary), {@code ts=BASE_TS + i*TS_STRIDE}. The one
- * deliberate deviation from the D4 formula's {@code 1s} stride is a larger {@code TS_STRIDE} (8h) so the
- * DAY partition rolls every few rows — exercising multi-partition commit/recovery paths at smoke scale
- * (with {@code 1s} the DAY would not roll until 86 400 rows). Because every field is a pure function of
- * {@code id}, the committed state is ALWAYS exactly the identity prefix {@code {0..count-1}}; each cycle
- * re-ingests contiguously from the recovered frontier (a real WAL producer resuming from its last durable
- * offset), so the membership oracle is the exact-prefix check {@code id[i]==i}, {@code v[i]==i*MULT},
- * {@code s[i]==SYMBOLS[i%4]}.
+ * <h3>Deterministic workload</h3>
+ * One adaptive WAL table {@code t (id long, v long, s symbol index, ts timestamp)} partitioned by DAY. Row
+ * {@code i} is a pure function of {@code i}: {@code id=i}, {@code v=i*2654435761L} (Knuth hash),
+ * {@code s=SYMBOLS[i % 4]} (indexed symbol), {@code ts=BASE_TS + i*TS_STRIDE}. The 8h {@code TS_STRIDE} rolls the
+ * DAY partition every few rows, exercising multi-partition commit and recovery at smoke scale. The committed state
+ * is therefore always the identity prefix {@code {0..count-1}}; each cycle re-ingests contiguously from the
+ * recovered frontier, as a WAL producer resumes from its last durable offset, so the membership oracle is the
+ * exact-prefix check {@code id[i]==i}, {@code v[i]==i*MULT}, {@code s[i]==SYMBOLS[i%4]}.
  *
  * <h3>Per-cycle shape</h3>
  * <ol>
- *   <li><b>Durable prefix</b>: {@code PREFIX_ROWS} rows committed on a writer that is then CLOSED (a clean
- *       handoff device-flushes it — {@code WalWriter.cleanupBeforeClose}) and {@code drainWalQueue}'d, so
- *       they are materialized, durable and durable-ACK'd. {@link #markDurableBaseline() markDurableBaseline}
- *       anchors the WHOLE accumulated on-disk state as the durable floor.</li>
- *   <li><b>Crashable tail</b> on a HELD writer, mode-specific:
+ *   <li><b>Durable prefix</b>: {@code PREFIX_ROWS} rows committed on a writer that is then closed (a clean handoff
+ *       device-flushes it in {@code WalWriter.cleanupBeforeClose}) and drained, so they are materialized, durable
+ *       and acknowledged. {@link #markDurableBaseline() markDurableBaseline} anchors the whole accumulated on-disk
+ *       state as the durable floor.</li>
+ *   <li><b>Crashable tail</b> on a held writer:
  *     <ul>
- *       <li><b>W=0</b> (synchronous): commit {@code TAIL_ROWS} rows (each {@code fdatasync}'d = durable WAL,
- *           left UN-applied = a lazy gap) and {@code armCrashAt} a durability op mid-tail; the crash tears
- *           the in-flight commit. Recovery rolls the durable tail forward.</li>
- *       <li><b>W&gt;0</b> (group commit, 50ms): commit the tail PENDING ({@code msync(MS_ASYNC)}, not
+ *       <li><b>W=0</b> (synchronous): commit {@code TAIL_ROWS} rows (each {@code fdatasync}'d durable WAL, left
+ *           unapplied, a lazy gap) and {@code armCrashAt} a durability op mid-tail, tearing the in-flight commit.
+ *           Recovery rolls the durable tail forward.</li>
+ *       <li><b>W&gt;0</b> (group commit, 50ms): commit the tail pending ({@code msync(MS_ASYNC)}, not
  *           device-durable), assert the durable-ack lags ({@code localDurableSeqTxn < seqTxn}), then
- *           {@code simulatePowerLossDropPending} — the un-flushed tail is lost (RPO &le; W).</li>
+ *           {@code simulatePowerLossDropPending}: the unflushed tail is lost (RPO &le; W).</li>
  *     </ul></li>
- *   <li>{@link #recoverAfterCrash} (the reboot model), then the ORACLE, then CONTINUE on the SAME db-root.</li>
+ *   <li>{@link #recoverAfterCrash}, then the oracle, then continue on the same db root.</li>
  * </ol>
  *
- * <h3>Oracle (every cycle; reuses the D1/D2 bars, none weakened)</h3>
- * (1) no silent corruption — recovered rows are an exact identity prefix (membership in the committed set);
- * (2) no-suspend — {@code anyTableSuspended==false} after recover;
- * (3) durable-ack — every row of the durable-ACK'd prefix (captured pre-crash) SURVIVES;
- * (4) forward progress — the recovered committed count is monotonic non-decreasing across cycles (the soak
- * genuinely accumulates, never silently truncates). W=0 additionally pins zero-loss (the durable-ack never
- * lags a completed commit); W&gt;0 uses the membership + durable-ack bar (unflushed tail &le;W may be lost).
+ * <h3>Oracle, every cycle</h3>
+ * (1) no silent corruption: recovered rows are an exact identity prefix; (2) no suspend after recovery; (3) every
+ * row of the acknowledged prefix, captured before the crash, survives; (4) forward progress: the recovered count
+ * is non-decreasing across cycles. W=0 also requires zero loss (the durable-ack never lags a completed commit);
+ * W&gt;0 uses membership and the durable-ack bar (an unflushed tail &le;W may be lost).
  *
- * <h3>Leak / growth invariants over the whole soak (the NEW value vs D1/D2)</h3>
+ * <h3>Leak and growth invariants over the whole soak</h3>
  * <ul>
- *   <li><b>fd/mmap</b>: the enclosing {@code assertMemoryLeak} (via {@link #runWithCrashFacade}) HARD-asserts
- *       open OS + cached fd counts return EXACTLY to baseline at teardown and native memory is balanced; on
- *       top of that this soak asserts the open-OS-fd count does not grow across cycles ({@code <= firstCycle
- *       + FD_SLACK}) and logs the {@code fd/mmap reuse} deltas, bounding them by a generous linear ceiling.</li>
- *   <li><b>WAL segments</b>: the real {@link io.questdb.cairo.wal.WalPurgeJob} broad-sweep runs each cycle
- *       ({@link #forceWalPurge}). Every crash-recover cycle mints exactly ONE fresh single-segment {@code walN}
- *       reboot-orphan that the adaptive purge floor retains across the in-process {@code resetForReboot} — the
- *       dir is physically purgeable ({@code lockPurge} returns {@code SEG_NONE_ID} and {@code rmdir} succeeds),
- *       but {@code broadSweep}'s {@code getCursor(safeToPurgeTxn)}-derived {@code nextToApply} still lists it,
- *       even though {@code _txn} seqTxn == applied == lastTxn. The data is fully applied + correct, so this is a
- *       purge-floor artifact of the in-process reboot model, not a durability defect. The soak therefore bounds
- *       the wal-dir count at its true reboot-linear rate ({@code walDirs <= cycle + WAL_DIRS_PER_CYCLE_SLACK}),
- *       which stays green while catching SUPER-linear growth (a cycle leaking multiple wals), and separately
- *       caps the per-wal segment high-water ({@code <= SEG_PER_WAL_CAP}) so a WAL-purge floor that fails to
- *       advance WITHIN a wal's life trips. <b>Classified BENIGN</b> by the decisive A/B in {@link
- *       AdaptiveRebootOrphanReclaimCrashTest}: the retention is the transient window between a reboot and the
- *       FIRST post-reboot durable epoch (the in-memory {@code durableEpochSeqTxn} floor is 0 until then), a
- *       REAL fresh-process restart exhibits it IDENTICALLY, and the very next purge reclaims the orphan once
- *       ingest resumes — so production does NOT accumulate orphans across reboots. The soak sees one/cycle only
- *       because it forces the purge in that pre-epoch window every cycle (before the next cycle's write).</li>
- *   <li><b>Epoch copies</b>: EXACTLY six bounded payloads ({@code _meta/_txn/_cv} across generations
- *       0 and 1) are present — a growing count is a real artifact leak.</li>
- *   <li><b>Partition versions</b>: pure tail-append never supersedes a partition, so the count of
- *       stale VERSIONED partition dirs ({@code <day>.<n>}) stays 0 — a recovery rewind that leaked an
- *       orphan partition copy would trip this.</li>
+ *   <li><b>fd/mmap</b>: the enclosing {@code assertMemoryLeak} (via {@link #runWithCrashFacade}) asserts open OS
+ *       and cached fd counts return exactly to baseline at teardown and native memory is balanced. The soak also
+ *       asserts the open OS fd count does not grow across cycles ({@code <= firstCycle + FD_SLACK}) and bounds the
+ *       {@code fd/mmap reuse} deltas by a generous linear ceiling.</li>
+ *   <li><b>WAL segments</b>: the real {@link io.questdb.cairo.wal.WalPurgeJob} broad sweep runs each cycle
+ *       ({@link #forceWalPurge}). The wal dir count stays within one per cycle (see
+ *       {@code WAL_DIRS_PER_CYCLE_SLACK} for the dir each in-process reboot leaves), which catches super-linear
+ *       growth, and the per-wal segment high-water stays within {@code SEG_PER_WAL_CAP}, which catches a purge
+ *       floor that does not advance within a wal's life.</li>
+ *   <li><b>Save point files</b>: exactly two ({@code _epoch.manifest.0} and {@code _epoch.manifest.1}) and no
+ *       other epoch file; a growing count is a leak.</li>
+ *   <li><b>Partition versions</b>: tail-append never supersedes a partition, so the count of stale versioned
+ *       partition dirs ({@code <day>.<n>}) stays 0; a recovery rewind that leaked a partition copy trips it.</li>
  * </ul>
  *
  * <h3>Budget</h3>
- * Default is a SMALL smoke ({@link #SMOKE_CYCLES} cycles) that runs GREEN as an ordinary (non-nightly) unit
- * test. {@code -Dsoak.cycles=<n>} or {@code -Dsoak.minutes=<m>} override it for a real soak; under
- * {@code -Dquestdb.fuzz.nightly=true} the default jumps to {@link #NIGHTLY_CYCLES} and the {@code @Rule}
- * timeout lifts, exactly as {@link RandomizedAdaptiveCrashFuzzTest} gates its full-library sweeps.
+ * The default is a small smoke ({@link #SMOKE_CYCLES} cycles) that runs as an ordinary unit test.
+ * {@code -Dsoak.cycles=<n>} or {@code -Dsoak.minutes=<m>} override it; under {@code -Dquestdb.fuzz.nightly=true}
+ * the default becomes {@link #NIGHTLY_CYCLES} and the {@code @Rule} timeout lifts, as in
+ * {@link RandomizedAdaptiveCrashFuzzTest}.
  */
 public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
 
     private static final String NIGHTLY_PROP = "questdb.fuzz.nightly";
 
-    // --- deterministic workload (mirrors benchmarks/CrashIngestWriter, the SP-D4 power-cut harness) ---
+    // Deterministic workload.
     private static final long BASE_TS = 1_704_067_200_000_000L;           // 2024-01-01T00:00:00.000000Z (micros)
     private static final long TS_STRIDE = 8L * 3_600L * 1_000_000L;       // 8h/row -> DAY rolls every 3 rows
     private static final long V_MULT = 2_654_435_761L;                    // Knuth multiplicative hash
@@ -162,36 +136,31 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
 
     private static final int PREFIX_ROWS = 4;   // durable prefix committed + applied + epoch'd each cycle
     private static final int TAIL_ROWS = 6;     // crashable tail on a held writer each cycle
-    // W=0: arm the crash this many durability ops into the tail commits. Small enough to always fire within
-    // TAIL_ROWS commits, large enough that the first tail commit's ops elapse so recovery rolls PART of the
-    // durable tail forward (empirically ~2 ops/commit -> fires in the 2nd/3rd tail commit). The oracle
-    // asserts the crash fired, so a mis-tuned offset fails loudly rather than silently skipping the crash.
+    // W=0: arm the crash this many durability ops into the tail commits: small enough to always fire within
+    // TAIL_ROWS commits, large enough that the first tail commit's ops elapse, so recovery rolls part of the durable
+    // tail forward. The oracle asserts the crash fired, so a mis-tuned offset fails instead of skipping the crash.
     private static final int W0_CRASH_OFFSET = 3;
     private static final int WN_WINDOW_US = 50_000; // W>0 group-commit window (RPO knob a deployment trades)
 
     private static final int SMOKE_CYCLES = 8;      // default dev smoke (runs without the nightly flag)
     private static final int NIGHTLY_CYCLES = 240;  // default under -Dquestdb.fuzz.nightly=true
 
-    // Growth / leak ceilings — concrete and non-flaky (see the class javadoc for why each is sound). Calibrated
-    // to sit comfortably above the healthy steady state and well below what the corresponding leak would produce.
+    // Growth and leak ceilings (see the class javadoc), above the healthy steady state and well below what the
+    // corresponding leak would produce.
     //
-    // WAL dirs: the adaptive purge floor does not advance across an in-process resetForReboot, so each cycle
-    // retains exactly ONE fresh single-segment reboot-orphan walN dir (physically purgeable — lockPurge returns
-    // SEG_NONE_ID and rmdir succeeds — but broadSweep's cursor-derived nextToApply keeps it; the data is fully
-    // applied + correct). The healthy rate is thus 1 wal dir/cycle; the bound catches SUPER-linear growth (a
-    // cycle leaking multiple wals) while staying green at the observed rate. This retention is BENIGN and does
-    // NOT accumulate in production — see AdaptiveRebootOrphanReclaimCrashTest: a REAL fresh-process restart
-    // resets the same in-memory floor to 0 and retains identically, and the next purge reclaims the orphan once
-    // ingest resumes and fires the first post-reboot epoch. The soak just always purges in that pre-epoch window.
+    // WAL dirs: the adaptive purge floor does not advance across an in-process resetForReboot, so each cycle keeps
+    // one fresh single-segment walN dir (purgeable, but broadSweep's cursor-derived nextToApply keeps it; the data
+    // is applied and correct). The healthy rate is one wal dir per cycle; the bound catches super-linear growth (a
+    // cycle leaking several wals). AdaptiveRebootOrphanReclaimCrashTest shows a real restart retains the same dir
+    // and the next purge after the first post-reboot epoch reclaims it.
     private static final int WAL_DIRS_PER_CYCLE_SLACK = 2; // walDirs <= cycle + this (observed: == cycle)
     private static final int SEG_PER_WAL_CAP = 4;          // intra-wal segment high-water (observed: 1)
     private static final int FD_SLACK = 8;                 // open-OS-fd drift allowed across cycles (steady state ~0)
 
-    // Defensive per-cycle fd hygiene (mirrors the sweep driver): reclaim any NON-cached fd a fault-interrupted
-    // fsync left open, which a real power loss's process death would reclaim but the live JVM cannot. In the
-    // held-writer crash path below this happens to be a no-op (no fds are leaked — a good property), so it is
-    // NOT the non-vacuity control; the growth asserts are shown non-vacuous via the WAL-dir ceiling (see the
-    // report / verification). Kept as a guard so a future change to the crash path stays leak-clean.
+    // Per-cycle fd hygiene, as in the sweep driver: reclaim any non-cached fd a fault-interrupted fsync left open,
+    // which a real power loss's process death would reclaim but the live JVM cannot. The held-writer crash path
+    // below leaks none, so this is a guard that keeps a future change to the crash path leak-clean, not the
+    // control that shows the growth checks can fail.
     private static final boolean RECLAIM_FDS_EACH_CYCLE = true;
 
     @Rule
@@ -201,9 +170,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
             .build();
 
     /**
-     * W=0 (synchronous) soak: every completed commit is device-durable, so recovery is ZERO-LOSS — each cycle
-     * the recovered count covers the whole durable-ACK'd prefix AND whatever tail commits {@code fdatasync}'d
-     * before the crash (a lazy gap recovery rolls forward), and the durable-ack never lags a completed commit.
+     * W=0 (synchronous) soak: every completed commit is device-durable, so recovery loses nothing: each cycle the
+     * recovered count covers the whole acknowledged prefix and whatever tail commits {@code fdatasync}'d before the
+     * crash (a lazy gap recovery rolls forward), and the durable-ack never lags a completed commit.
      */
     @Test
     public void testSoakW0() throws Exception {
@@ -211,10 +180,10 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * W&gt;0 (group commit, 50ms) soak: the tail is committed PENDING and lost on the power loss (RPO &le; W),
-     * so the zero-loss bar does NOT apply — recovery must still land on a consistent committed prefix
-     * (membership), never suspend, and always preserve the durable-ACK'd prefix. The µs clock is pinned so the
-     * group-commit window is load-independent (mirrors {@link AdaptiveGroupCommitCrashTest}).
+     * W&gt;0 (group commit, 50ms) soak: the tail is committed pending and lost on the power loss (RPO &le; W), so the
+     * zero-loss bar does not apply; recovery still lands on a consistent committed prefix, never suspends, and keeps
+     * the acknowledged prefix. The clock is pinned so the group-commit window does not depend on load, as in
+     * {@code DurableFrontierTest}.
      */
     @Test
     public void testSoakWN() throws Exception {
@@ -233,10 +202,10 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         // growth invariant meaningful, and makes recovery's roll-forward anchor deterministic.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         if (windowUs > 0) {
-            // Pin the microsecond clock (see AdaptiveGroupCommitCrashTest / testConvertPartitionCrashSafeWN):
-            // under W>0 the group-commit deferral trigger and the WAL-apply time quota both read the engine
-            // clock, so a fixed clock keeps every commit inside the window (deterministic PENDING tail) and the
-            // apply quota effectively unbounded (single-pass), independent of load. Restored in the finally.
+            // Pin the microsecond clock (see DurableFrontierTest, testConvertPartitionCrashSafeWN): under W>0 the
+            // group-commit deferral trigger and the WAL-apply time quota both read the engine clock, so a fixed clock
+            // keeps every commit inside the window (deterministic pending tail) and the apply quota effectively
+            // unbounded (single pass), independent of load. Restored in the finally.
             setCurrentMicros(1_000_000L);
         }
         try {
@@ -264,8 +233,8 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                 while (deadlineMs != Long.MIN_VALUE ? System.currentTimeMillis() < deadlineMs : cycle < soakCycles) {
                     cycle++;
 
-                    // ---- 1. DURABLE PREFIX: rows [nextId, nextId+PREFIX) committed, closed (device-flushed),
-                    //         applied and epoch'd -> durable + durable-ACK'd. ----
+                    // 1. Durable prefix: rows [nextId, nextId+PREFIX) committed, closed (device-flushed), applied and
+                    //    with an epoch, so durable and acknowledged.
                     try (WalWriter w = engine.getWalWriter(tt)) {
                         for (int j = 0; j < PREFIX_ROWS; j++) {
                             appendRow(w, nextId++);
@@ -276,25 +245,26 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
 
                     final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
                     if (windowUs == 0) {
-                        // ZERO-LOSS signature: under W=0 the durable-ack never lags a completed commit.
+                        // Zero loss: under W=0 the durable-ack never lags a completed commit.
                         Assert.assertEquals(
                                 "cycle " + cycle + ": W=0 durable-ack must equal the committed frontier after a clean prefix",
                                 tracker.getSeqTxn(), tracker.getLocalDurableSeqTxn()
                         );
                     }
 
-                    // Anchor the WHOLE accumulated on-disk state as the durable floor (NO reset — accumulate).
+                    // Anchor the whole accumulated on-disk state as the durable floor (no reset: it accumulates).
                     markDurableBaseline();
 
-                    // ---- 2. CRASHABLE TAIL on a HELD writer (mode-specific), then reboot-recover. The tail
-                    //         appends from nextId; whatever it committed is superseded by `recovered` below. ----
+                    // 2. Crashable tail on a held writer (mode-specific), then reboot and recover. The tail appends
+                    // from
+                    //    nextId; `recovered` below supersedes whatever it committed.
                     if (windowUs == 0) {
                         crashTailW0(tt, tokens, nextId);
                     } else {
                         crashTailWN(tt, tokens, tracker, nextId);
                     }
 
-                    // ---- 3. ORACLE (every bar, unweakened). ----
+                    // 3. Oracle, every bar.
                     Assert.assertFalse("cycle " + cycle + ": table must NOT be suspended after recovery",
                             anyTableSuspended(tt)); // (2)
                     final int prefixLen = assertIdentityPrefixAllowTorn(cycle); // (1) membership / no silent corruption
@@ -314,15 +284,14 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                     prevRecovered = recovered;
                     nextId = recovered; // resume ingest contiguously from the durable frontier (re-fill lost tail)
 
-                    // ---- 4. Per-cycle WAL purge + handle release + fd reclaim, then the LEAK / GROWTH asserts
-                    //         (the soak's raison d'être). Purge BEFORE releasing the sequencer so broadSweep's
-                    //         forAllWalTables sees the table. ----
+                    // 4. Per-cycle WAL purge, handle release and fd reclaim, then the leak and growth asserts. Purge
+                    //    before releasing the sequencer so broadSweep's forAllWalTables sees the table.
                     forceWalPurge();       // run the real WalPurgeJob broad-sweep (production maintenance)
                     releaseEngineHandles();
                     if (RECLAIM_FDS_EACH_CYCLE) {
-                        // Close the per-cycle delta of NON-cached fds a fault-interrupted fsync left open (a real
-                        // power loss's process death reclaims them; the live JVM cannot). A no-op in the held-writer
-                        // crash path (it leaks none), kept as defensive hygiene — see the constant's comment.
+                        // Close the per-cycle delta of non-cached fds a fault-interrupted fsync left open (a real power
+                        // loss's process death reclaims them; the live JVM cannot). A no-op in the held-writer crash
+                        // path.
                         reclaimLingeringNonCacheFds(nonCacheFdBaseline);
                     }
 
@@ -342,9 +311,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                             .$(" fdReuseD=").$(Files.getFdReuseCount() - fdReuse0)
                             .$(" mmapReuseD=").$(Files.getMmapReuseCount() - mmapReuse0).I$();
 
-                    // WAL growth: at most ONE reboot-orphan wal dir per cycle (the adaptive purge-floor artifact),
-                    // and no intra-wal segment explosion. Super-linear dir growth or a ballooning per-wal segment
-                    // count (a WAL-purge floor genuinely not advancing WITHIN a wal's life) trips these.
+                    // WAL growth: at most one reboot-orphan wal dir per cycle (the adaptive purge-floor artifact), and
+                    // no intra-wal segment explosion. Super-linear dir growth or a growing per-wal segment count (a WAL
+                    // purge floor not advancing within a wal's life) trips these.
                     Assert.assertTrue(
                             "cycle " + cycle + ": WAL dir growth SUPER-LINEAR — walDirs=" + wal[0]
                                     + " > cycle(" + cycle + ") + slack(" + WAL_DIRS_PER_CYCLE_SLACK
@@ -357,14 +326,14 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                             wal[2] <= SEG_PER_WAL_CAP
                     );
                     Assert.assertEquals(
-                            "cycle " + cycle + ": durable-epoch payloads must be EXACTLY _meta/_txn/_cv "
-                                    + "for generations 0 and 1; a different count is an artifact leak",
-                            6, epochCopies
+                            "cycle " + cycle + ": the save point must be EXACTLY one file for each of "
+                                    + "generations 0 and 1; a different count is an artifact leak",
+                            2, epochCopies
                     );
-                    // Partition-version leak: exactly ONE live directory per committed day. A recovery rewind or
-                    // O3/append that leaks a STALE superseded partition-version copy would leave >1 dir for some
-                    // day (staleExtras>0). Legitimate day partitions grow with DATA (days) — that is NOT bounded
-                    // by a constant and NOT asserted; only per-day duplication (the leak) is.
+                    // Partition-version leak: exactly one live directory per committed day. A recovery rewind or
+                    // O3/append that leaks a stale superseded partition-version copy leaves more than one dir for some
+                    // day (staleExtras>0). Day partitions grow with the data and are not bounded; only per-day
+                    // duplication is.
                     Assert.assertEquals(
                             "cycle " + cycle + ": STALE partition-version dirs leaked (" + part[2] + " extra beyond "
                                     + part[1] + " distinct days) — a recovery rewind left an orphan partition copy: "
@@ -382,14 +351,14 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                     }
                 }
 
-                // Soak-end: the run genuinely ACCUMULATED (not a single cycle that silently truncated to it).
+                // Soak end: the run accumulated rows rather than truncating to a single cycle's worth.
                 Assert.assertTrue("soak did not accumulate: recovered=" + prevRecovered + " after " + cycle + " cycles",
                         prevRecovered > PREFIX_ROWS);
 
-                // Secondary churn guard: reuse counters are normal cache-HIT signals (grow with work), so bound
-                // them by a GENEROUS linear-in-cycles ceiling that only catches pathological blow-ups. The HARD
-                // fd/mmap-handle leak guarantee is the enclosing assertMemoryLeak's exact open-fd return + the
-                // per-cycle openFds ceiling above.
+                // Secondary churn guard: reuse counters are cache-hit signals that grow with work, so bound them by a
+                // generous linear-in-cycles ceiling that only catches pathological growth. The fd and mmap leak
+                // guarantee is the enclosing assertMemoryLeak's exact open-fd return and the per-cycle openFds ceiling
+                // above.
                 final long fdReuseDelta = Files.getFdReuseCount() - fdReuse0;
                 final long mmapReuseDelta = Files.getMmapReuseCount() - mmapReuse0;
                 final long reuseCeil = 5_000_000L * Math.max(1, cycle);
@@ -412,9 +381,9 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * W=0 crashable tail: commit TAIL_ROWS on a held writer (each {@code fdatasync}'d = durable WAL, left
-     * UN-applied so recovery must roll it forward), with a crash armed mid-tail that tears the in-flight
-     * commit. The completed tail commits are durable and survive; the torn one is rolled back. Then the reboot.
+     * W=0 crashable tail: commit TAIL_ROWS on a held writer (each {@code fdatasync}'d durable WAL, left unapplied so
+     * recovery rolls it forward), with a crash armed mid-tail that tears the in-flight commit. The completed tail
+     * commits are durable and survive; the torn one is rolled back. Then the reboot.
      */
     private void crashTailW0(TableToken tt, TableToken[] tokens, int startId) {
         final int base = crashFf.durabilityOpCount();
@@ -444,9 +413,10 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * W&gt;0 crashable tail: commit TAIL_ROWS PENDING on a held writer ({@code msync(MS_ASYNC)}, NOT
-     * device-durable), assert the durable-ack lags the committed frontier (the RPO precondition), then
-     * {@code simulatePowerLossDropPending} — the un-flushed tail is lost on the power loss. Then the reboot.
+     * W&gt;0 crashable tail: commit TAIL_ROWS pending on a held writer ({@code msync(MS_ASYNC)}, not device-durable),
+     * assert the durable-ack lags the committed frontier (the RPO precondition), then the power loss: the pending
+     * tail is dropped without a flush ({@code powerLossDroppingPending}), the writer's close comes after the mark so
+     * its page releases add no durability, and the reboot rolls the files back.
      */
     private void crashTailWN(TableToken tt, TableToken[] tokens, SeqTxnTracker tracker, int startId) {
         WalWriter w = engine.getWalWriter(tt);
@@ -457,25 +427,23 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
             }
             Assert.assertTrue("W>0 tail must be PENDING (durable-ack must lag the committed frontier)",
                     tracker.getLocalDurableSeqTxn() < tracker.getSeqTxn());
-            w.simulatePowerLossDropPending(); // drop the un-flushed tail; no false durable-ack advance
+            powerLossDroppingPending(w); // the power loss is now: drop the un-flushed tail, no false durable-ack advance
         } finally {
-            w.close();
+            w.close(); // after the mark, so the distressed close's page releases are not durable
         }
-        recoverAfterCrash(tokens); // recoverAfterCrash performs crash(dbRoot) -> rolls back the non-durable tail
+        recoverAfterCrash(tokens); // marks again (a no-op), releases the engine's handles, then crash(dbRoot) rolls back the non-durable tail
     }
 
     /**
-     * Run the WAL broad-sweep purge to completion. A stock {@link WalPurgeJob} only broad-sweeps when
+     * Runs the WAL broad-sweep purge to completion. A stock {@link WalPurgeJob} broad-sweeps only when
      * {@code last + checkInterval < clock.getTicks()} and inits {@code last = now - checkInterval/2}, so a
-     * same-instant drain (the harness default under a real OR a pinned clock) never actually purges — which
-     * is why {@code drainPurgeJob}/{@code TestUtils} leave applied-but-inactive WAL dirs behind and the sweep
-     * tests instead rely on DROP. Drive it with a strictly-increasing clock so the broad sweep ALWAYS fires,
-     * independent of the configured interval and of whether the engine clock is pinned (W&gt;0) or real (W=0).
+     * same-instant drain (the harness default under a real or a pinned clock) never purges, and
+     * {@code drainPurgeJob} leaves applied but inactive WAL dirs behind. A strictly increasing clock makes the broad
+     * sweep fire regardless of the configured interval and of whether the engine clock is pinned (W&gt;0) or real.
      */
     private void forceWalPurge() {
-        // All WAL writers are released here (recoverAfterCrash) so nothing live is at risk. NB: this reclaims a
-        // wal's applied EARLIER segments, but NOT the reboot-orphaned whole-wal shells — see
-        // WAL_DIRS_PER_CYCLE_SLACK for why the adaptive purge floor retains those across an in-process reboot.
+        // All WAL writers are released here (recoverAfterCrash), so nothing live is at risk. This reclaims a wal's
+        // applied earlier segments, but not the reboot-orphaned whole-wal dirs; see WAL_DIRS_PER_CYCLE_SLACK.
         engine.releaseAllWalWriters();
         final long step = engine.getConfiguration().getWalPurgeInterval() * 1000L + 1_000_000L;
         final long[] tick = {1L};
@@ -487,7 +455,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * Append one deterministic row for the given {@code id} to a held WalWriter and commit it (one WAL txn).
+     * Appends one deterministic row for the given {@code id} to a held WalWriter and commits it (one WAL txn).
      */
     private void appendRow(WalWriter w, int id) {
         final TableWriter.Row row = w.newRow(BASE_TS + (long) id * TS_STRIDE);
@@ -500,10 +468,10 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * Membership / no-silent-corruption oracle: read {@code select id, v, s from t order by id} (torn-tolerant)
-     * and assert the surviving rows are an EXACT identity prefix — {@code id[i]==i}, {@code v[i]==i*V_MULT},
-     * {@code s[i]==SYMBOLS[i%4]}. A loud torn read is an acceptable crash outcome (assert only the prefix read
-     * before the tear); a wrong/absent id, v or symbol is a FAILURE. Returns the prefix length observed.
+     * Membership oracle: reads {@code select id, v, s from t order by id} (torn-tolerant) and asserts the surviving
+     * rows are an exact identity prefix: {@code id[i]==i}, {@code v[i]==i*V_MULT}, {@code s[i]==SYMBOLS[i%4]}. A
+     * visible torn read is an acceptable crash outcome (only the prefix read before the tear is checked); a wrong or
+     * absent id, v or symbol fails. Returns the prefix length observed.
      */
     private int assertIdentityPrefixAllowTorn(int cycle) {
         int i = 0;
@@ -524,7 +492,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
                 }
             }
         } catch (CairoException | CairoError | InternalError torn) {
-            // acceptable: corruption detected loudly; the prefix read before the tear is validated above
+            // Acceptable: corruption detected visibly; the prefix read before the tear is validated above.
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }
@@ -532,7 +500,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * count(*) — the committed row count from metadata (reliable even if a column read would tear).
+     * count(*): the committed row count from metadata, reliable even if a column read would tear.
      */
     private long rowCount() {
         try (RecordCursorFactory f = select("select count() from t")) {
@@ -545,17 +513,15 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         }
     }
 
-    // === on-disk artifact enumeration (leak / growth invariants) ===
-
     private File tableDir(TableToken tt) {
         return new File(engine.getConfiguration().getDbRoot().toString(), tt.getDirName());
     }
 
     /**
-     * WAL directory stats: {@code {walDirCount, totalSegmentDirs, maxSegmentsPerWal}}. Each crash-recover
-     * cycle mints one fresh single-segment {@code walN} dir (the reboot orphan the adaptive purge floor
-     * retains — see the class javadoc), so the counts grow ~1/cycle; the {@code maxSegmentsPerWal} is the
-     * intra-wal segment high-water (a purge-floor failure WITHIN a wal would balloon it).
+     * WAL directory stats: {@code {walDirCount, totalSegmentDirs, maxSegmentsPerWal}}. Each crash-recover cycle
+     * leaves one fresh single-segment {@code walN} dir (the reboot orphan the adaptive purge floor retains, see the
+     * class javadoc), so the counts grow about one per cycle; {@code maxSegmentsPerWal} is the intra-wal segment
+     * high-water, which a purge-floor failure within a wal would inflate.
      */
     private int[] walStats(TableToken tt, StringBuilder dbg) {
         int walDirs = 0, totalSegs = 0, maxSegsPerWal = 0;
@@ -585,7 +551,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * Count bounded generation payloads ({@code _meta/_txn/_cv.epoch.{0,1}}).
+     * Counts save point files ({@code _epoch.manifest.{0,1}}) and any other {@code *.epoch*} file.
      */
     private int countEpochCopies(TableToken tt) {
         final File[] files = tableDir(tt).listFiles();
@@ -593,9 +559,7 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
         if (files != null) {
             for (File file : files) {
                 final String name = file.getName();
-                if (name.startsWith("_meta.epoch.")
-                        || name.startsWith("_txn.epoch.")
-                        || name.startsWith("_cv.epoch.")) {
+                if (name.startsWith("_epoch.manifest.") || name.contains(".epoch")) {
                     n++;
                 }
             }
@@ -604,12 +568,11 @@ public class AdaptiveSoakCrashTest extends AbstractAdaptiveCrashSweepTest {
     }
 
     /**
-     * Partition-directory stats: {@code {totalPartitionDirs, distinctDays, staleExtras}}. A DAY partition dir
-     * is named {@code YYYY-MM-DD} optionally with a {@code .<txn>} version suffix (the LIVE boundary partition
-     * legitimately carries one). The day KEY is the {@code YYYY-MM-DD} prefix; {@code staleExtras} is the count
-     * of directories BEYOND one-per-day (i.e. {@code totalPartitionDirs - distinctDays}) — the superseded
-     * partition-version copies that a healthy purge retires to exactly one live dir per day. Pure tail-append
-     * plus per-cycle purge keeps {@code staleExtras == 0}; a leaked orphan copy makes it grow.
+     * Partition-directory stats: {@code {totalPartitionDirs, distinctDays, staleExtras}}. A DAY partition dir is named
+     * {@code YYYY-MM-DD}, optionally with a {@code .<txn>} version suffix (the live boundary partition can carry one).
+     * {@code staleExtras} is the count of directories beyond one per day ({@code totalPartitionDirs - distinctDays}):
+     * superseded partition-version copies that a healthy purge retires. Tail-append plus per-cycle purge keeps
+     * {@code staleExtras == 0}; a leaked copy makes it grow.
      */
     private int[] partitionDirStats(TableToken tt, StringBuilder dbg) {
         final Set<String> days = new HashSet<>();

@@ -50,51 +50,47 @@ import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 /**
- * WHAT ORDERS WHAT inside an adaptive WAL commit: is the barrier between a segment's COLUMN data and its
- * {@code _event} record load-bearing on its own, or is the only load-bearing barrier the one between
- * {@code {columns, _event}} as a set and the SHARED SEQUENCER txn-log record that publishes them?
+ * What orders what inside an adaptive WAL commit: is the barrier between a segment's column data and its {@code _event}
+ * record needed on its own, or is the only needed barrier the one between {@code {columns, _event}} as a set and the
+ * shared sequencer txn-log record that publishes them?
  *
- * <p><b>Why the question matters.</b> {@code WalWriter.syncIfRequired0} pays one {@code fdatasync} per column
- * plus one for each {@code _event} file ({@code _event}, {@code _event.i}, {@code _event.c}) plus one for the
- * sequencer log, on the ingest thread, every commit — each a separate filesystem journal force.
- * {@code TableWriter.syncColumnsBatchedSync} already replaces exactly that shape on the materialized-state
- * path with ONE {@code syncfs}, which journals every inode in a single force. A {@code syncfs} cannot order
- * columns against {@code _event}, though: both become durable in the same barrier, so a crash inside it can
- * leave {@code _event} durable while a column is not. Porting the batched flush to the WAL path is therefore
- * sound only if that state is harmless. This decides it by construction rather than by argument — a
- * guarantee concluded by reasoning is not a guarantee.
+ * <p>{@code WalWriter.syncIfRequired0} pays one {@code fdatasync} per column, one per {@code _event} file
+ * ({@code _event}, {@code _event.i}) and one for the sequencer log, on the ingest thread, every commit.
+ * {@code TableWriter.syncColumnsBatchedSync} replaces that shape on the materialized-state path with one
+ * {@code syncfs}. A {@code syncfs} cannot order columns against {@code _event}: a crash inside it can leave
+ * {@code _event} durable while a column is not. Batching the WAL path the same way is sound only if that state
+ * is harmless, and this class constructs it.
  *
- * <p><b>Three cases over one construction.</b> Global {@code adaptive}, {@code W=0} (every barrier inline
- * and deterministic), per-inode journaling so no flush incidentally journals a neighbouring inode. Each case
- * runs an unarmed COUNT commit to learn the commit's real durability-op sequence, then replays an identical
- * commit with a crash armed at a named op and hand-promotes a chosen file set to durable
- * ({@code markFileDurable} models the kernel writing a mapped file back on its own).
- * <p>The facade applies an op's durability effect and only THEN fires the armed crash, so "armed at op k"
- * means ops {@code 1..k} took effect and nothing after them did.
+ * <p><b>Three cases over one construction.</b> Global {@code adaptive}, {@code W=0} (every barrier inline and
+ * deterministic), per-inode journaling so no flush journals a neighbouring inode. Each case runs an unarmed
+ * count commit to learn the commit's durability-op sequence, then replays an identical commit with a crash
+ * armed at a named op and promotes a chosen file set to durable ({@code markFileDurable} models the kernel
+ * writing a mapped file back on its own).
+ * <p>The facade applies an op's durability effect and then fires the armed crash, so "armed at op k" means ops
+ * {@code 1..k} took effect and nothing after them did.
  * <ol>
- *   <li>{@link #testEventRecordDurableAheadOfColumnsIsInertWithoutTheSequencerRecord()} — crash after op 1,
- *       so the first column barrier ran and no later one did; promote {@code _event*} only. That is the
- *       interleaving a {@code syncfs} risks: {@code _event} durable while a column of the same txn is not,
- *       and no sequencer record naming either. The txn must be invisible, and the case asserts the last
- *       column really is still at its pre-commit durable content.</li>
- *   <li>{@link #testTxnBeforeTheSequencerBarrierIsInvisibleDespiteDurableColumnsAndEvents()} — crash on the
- *       op immediately BEFORE the sequencer barrier: every column and {@code _event} file durable, sequencer
- *       barrier not run, nothing promoted. The txn must be invisible.</li>
- *   <li>{@link #testTxnBecomesVisibleOnceTheSequencerBarrierRuns()} — the same commit crashed ONE op later,
- *       so the sequencer barrier has run. The txn must be visible.</li>
+ *   <li>{@link #testEventRecordDurableAheadOfColumnsIsInertWithoutTheSequencerRecord()}: crash on the first
+ *       column barrier and promote {@code _event*} only, the interleaving a {@code syncfs} risks: {@code _event}
+ *       durable, a column of the same txn not, and no sequencer record naming either. The txn must be
+ *       invisible; the case also asserts the last column is still at its pre-commit durable content.</li>
+ *   <li>{@link #testTxnBeforeTheSequencerBarrierIsInvisibleDespiteDurableColumnsAndEvents()}: crash on the op
+ *       just before the sequencer barrier: every column and {@code _event} file durable, sequencer barrier not
+ *       run, nothing promoted. The txn must be invisible.</li>
+ *   <li>{@link #testTxnBecomesVisibleOnceTheSequencerBarrierRuns()}: the same commit crashed one op later, so
+ *       the sequencer barrier has run. The txn must be visible.</li>
  * </ol>
- * Cases 2 and 3 are the single-gate A/B: adjacent crash points straddling exactly one barrier, everything
- * else identical, and they disagree. That identifies the sequencer barrier as the publication point, which
- * is what makes case 1's result mean "no sequencer record names this" rather than "the test wrote nothing".
+ * Cases 2 and 3 straddle exactly one barrier and disagree, which identifies the sequencer barrier as the
+ * publication point. That makes case 1's result mean "no sequencer record names this" rather than "the test
+ * wrote nothing".
  *
- * <p>If case 1 ever starts failing, the WAL batched-flush port is unsound as specified and the {@code _event}
- * barrier must stay separate from the column barrier.
+ * <p>Case 1 is the precondition for batching the WAL column and {@code _event} barriers into one barrier; if it
+ * fails, the {@code _event} barrier must stay separate from the column barrier.
  */
 public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
 
     private static final int BASELINE_ROWS = 4;
     /**
-     * Rows durable and applied before the ARMED commit: the baseline plus the unarmed count-pass row.
+     * Rows durable and applied before the armed commit: the baseline plus the unarmed count-pass row.
      */
     private static final int ROWS_BEFORE_ARMED_COMMIT = BASELINE_ROWS + 1;
 
@@ -104,26 +100,37 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
      */
     @Test
     public void testEventRecordDurableAheadOfColumnsIsInertWithoutTheSequencerRecord() throws Exception {
+        // The writeback drain puts every column's bytes in the device cache before the first barrier, whose
+        // device flush then makes them all durable. This case needs a column left behind, so the drain is off.
+        node1.setProperty(PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, false);
         withAdaptiveW0(() -> {
             final TableToken tt = seedBaseline();
             final Path segmentDir = latestWalSegmentDir(tt);
             final Path eventFile = segmentDir.resolve(WalUtils.EVENT_FILE_NAME);
             final List<String> phaseOps = countPassOps(tt);
-            // The LAST column barrier of the commit — the column this case must leave NON-durable.
+            // The first column barrier of the commit, where the crash is armed, and the last one, the column this case
+            // leaves non-durable.
+            final int firstColumnOp = firstColumnBarrierOp(phaseOps);
+            final Path firstColumn = segmentDir.resolve(fileName(phaseOps.get(firstColumnOp - 1)));
             final Path lastColumn = segmentDir.resolve(lastColumnFileName(phaseOps));
 
             markDurableBaseline();
             final byte[] eventBefore = crashFf.durableContentOf(eventFile.toString());
+            final byte[] firstColumnBefore = crashFf.durableContentOf(firstColumn.toString());
             final byte[] lastColumnBefore = crashFf.durableContentOf(lastColumn.toString());
 
-            // The facade applies an op's durability effect and THEN fires the armed crash, so arming at op 1
-            // means the FIRST column barrier completed and nothing after it did. The event record is already
-            // appended to the mapped _event file (events.appendData precedes syncIfRequired), so promoting
-            // _event below yields exactly the interleaving a syncfs risks: _event durable while a column of
-            // the same txn is not, and no sequencer record naming either.
-            armAndInsert(tt, 1, ROWS_BEFORE_ARMED_COMMIT);
+            // The facade applies an op's durability effect and then fires the armed crash, so arming at the first
+            // column barrier means it completed and nothing after it did. The event record is already appended to the
+            // mapped _event file (events.appendData precedes syncIfRequired), so promoting _event below yields the
+            // interleaving a syncfs risks: _event durable while a column of the same txn is not, and no sequencer
+            // record naming either.
+            armAndInsert(tt, firstColumnOp, ROWS_BEFORE_ARMED_COMMIT);
+            Assert.assertFalse(
+                    "the crash must follow the first column barrier: " + firstColumn.getFileName() + " must be durable",
+                    Arrays.equals(firstColumnBefore, crashFf.durableContentOf(firstColumn.toString()))
+            );
 
-            // Hand the kernel's writeback to the _event files ONLY. This is the syncfs interleaving.
+            // Hand the kernel's writeback to the _event files only: the syncfs interleaving.
             promoteDurable(segmentDir, name -> name.startsWith(WalUtils.EVENT_FILE_NAME));
             assertPromotionChanged("_event", eventBefore, crashFf.durableContentOf(eventFile.toString()));
             Assert.assertArrayEquals(
@@ -140,14 +147,14 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
                     ROWS_BEFORE_ARMED_COMMIT
             );
 
-            // The orphan record is still physically on disk — ignored, not erased. If any reader ever began
-            // scanning _event independently of the sequencer, the row-count assertion above would break.
+            // The orphan record is still on disk, ignored rather than erased. A reader that scanned _event
+            // independently of the sequencer would break the row-count assertion above.
             Assert.assertFalse(
                     "the promoted orphan event record must survive the crash on disk",
                     Arrays.equals(eventBefore, crashFf.durableContentOf(eventFile.toString()))
             );
 
-            // ...and the table is still usable.
+            // The table is still usable.
             execute("insert into x values ('2024-10-01T09:00:00.000000Z', 99)");
             drainWalQueue();
             final List<Long> after = readVs(engine, "x");
@@ -157,9 +164,9 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Control arm A of the single-gate A/B: crash on the op immediately BEFORE the sequencer barrier, so
-     * every column and every {@code _event} file of the txn is durable and the sequencer barrier has not
-     * run. Nothing is promoted. The txn must be invisible.
+     * Control arm A: crash on the op just before the sequencer barrier, so every column and every {@code _event}
+     * file of the txn is durable and the sequencer barrier has not run. Nothing is promoted. The txn must be
+     * invisible.
      */
     @Test
     public void testTxnBeforeTheSequencerBarrierIsInvisibleDespiteDurableColumnsAndEvents() throws Exception {
@@ -182,11 +189,11 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Control arm B: the SAME commit crashed ONE op later — the sequencer barrier has now run. Nothing else
-     * differs and nothing is promoted, so the two arms straddle exactly one barrier; they must disagree.
-     * That is what identifies the sequencer barrier as the publication point, and so what makes the inert
-     * result in {@link #testEventRecordDurableAheadOfColumnsIsInertWithoutTheSequencerRecord()} evidence
-     * about {@code _event} rather than an artifact of a workload that wrote nothing.
+     * Control arm B: the same commit crashed one op later, after the sequencer barrier. Nothing else differs and
+     * nothing is promoted, so the two arms straddle exactly one barrier and must disagree. That identifies the
+     * sequencer barrier as the publication point, so the inert result in
+     * {@link #testEventRecordDurableAheadOfColumnsIsInertWithoutTheSequencerRecord()} is about {@code _event}
+     * rather than a workload that wrote nothing.
      */
     @Test
     public void testTxnBecomesVisibleOnceTheSequencerBarrierRuns() throws Exception {
@@ -208,7 +215,7 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Arm a crash at op {@code k} of the next commit, insert row {@code v}, and assert the crash fired.
+     * Arms a crash at op {@code k} of the next commit, inserts row {@code v}, and asserts the crash fired.
      */
     private void armAndInsert(TableToken tt, int k, int v) throws SqlException {
         crashFf.armCrashAt(crashFf.durabilityOpCount() + k);
@@ -229,9 +236,9 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Guard against a vacuous promotion: {@code durableContentOf} returns null for an untracked file, and
-     * {@code Arrays.equals(null, bytes)} is false, so a bare inequality check would pass even when the
-     * promotion did nothing. Require both a tracked before-image and a real change.
+     * Guards against a vacuous promotion: {@code durableContentOf} returns null for an untracked file, and
+     * {@code Arrays.equals(null, bytes)} is false, so a bare inequality check would pass when the promotion did
+     * nothing. Requires a tracked before-image and a real change.
      */
     private void assertPromotionChanged(String what, byte[] before, byte[] after) {
         Assert.assertNotNull(what + " must be tracked by the durability model before promotion", before);
@@ -252,10 +259,10 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Run ONE unarmed adaptive commit and return the durability ops it performed, one line each
-     * ({@code <n> <kind> <db-root-relative path>}). The row it writes is fully durable and becomes part of
-     * the pre-armed baseline, so the armed commit that follows is structurally identical to this one — same
-     * table, same segment, same schema — and its op indices therefore mean what this log says they mean.
+     * Runs one unarmed adaptive commit and returns the durability ops it performed, one line each
+     * ({@code <n> <kind> <db-root-relative path>}). Its row is fully durable and joins the pre-armed baseline, so
+     * the armed commit that follows is structurally identical (same table, segment and schema) and its op indices
+     * mean what this log says.
      */
     private List<String> countPassOps(TableToken tt) throws SqlException {
         final int base = crashFf.durabilityOpCount();
@@ -270,14 +277,17 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * The file name of the LAST column barrier in the commit phase — the ops before the first {@code _event}
-     * op are the column barriers, in traversal order. Read from the op log rather than assumed from the
-     * schema, so it stays correct if the column set or the barrier order changes.
+     * The file name of the last column barrier in the commit phase: the {@code fdatasync} ops before the first
+     * {@code _event} one are the column barriers, in traversal order. Read from the op log rather than assumed from
+     * the schema, so it stays correct if the column set or the barrier order changes.
      */
     private String lastColumnFileName(List<String> phaseOps) {
         String last = null;
         for (String op : phaseOps) {
-            final String name = op.substring(op.lastIndexOf('/') + 1);
+            if (!isFdatasync(op)) {
+                continue;
+            }
+            final String name = fileName(op);
             if (name.startsWith(WalUtils.EVENT_FILE_NAME)) {
                 break;
             }
@@ -296,13 +306,7 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * The 1-based index, within the commit phase, of its FIRST sequencer-log barrier. Everything before it
-     * is a column or {@code _event} barrier, so arming there yields "columns and events durable, sequencer
-     * record written but volatile". Located by scanning the op log rather than pinned to a number, so the
-     * case does not silently target the wrong op when the schema or the barrier set changes.
-     */
-    /**
-     * True when the op's PATH ends with {@code marker}. The op log lines are "&lt;kind&gt; &lt;path&gt;", so the
+     * True when the op's path ends with {@code marker}. The op log lines are "&lt;kind&gt; &lt;path&gt;", so the
      * path is the last whitespace-separated field.
      */
     private static boolean endsWithOp(String op, String marker) {
@@ -311,10 +315,40 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
         return path.endsWith(marker);
     }
 
+    private static String fileName(String op) {
+        return op.substring(op.lastIndexOf('/') + 1);
+    }
+
+    private static boolean isFdatasync(String op) {
+        return op.split(" ")[1].equals("fdatasync");
+    }
+
+    /**
+     * The 1-based index, within the commit phase, of its first column barrier: the first {@code fdatasync}, which
+     * runs before the {@code _event} and sequencer barriers. Located in the op log rather than pinned to a number,
+     * so the case still crashes right after a column barrier when the sync calls ahead of the barriers change.
+     */
+    private int firstColumnBarrierOp(List<String> phaseOps) {
+        for (int i = 0; i < phaseOps.size(); i++) {
+            final String op = phaseOps.get(i);
+            if (isFdatasync(op)) {
+                Assert.assertFalse(
+                        "the commit's first barrier must be a column barrier:\n" + String.join("\n", phaseOps),
+                        fileName(op).startsWith(WalUtils.EVENT_FILE_NAME) || op.contains(WalUtils.SEQ_DIR)
+                );
+                return i + 1; // ops are 1-based within the phase
+            }
+        }
+        throw new AssertionError("no fdatasync in the commit phase:\n" + String.join("\n", phaseOps));
+    }
+
+    /**
+     * The 1-based index, within the commit phase, of its first sequencer-log barrier. Everything before it is a
+     * column or {@code _event} barrier, so arming there yields "columns and events durable, sequencer record written
+     * but volatile". Located in the op log rather than pinned to a number, so the case does not target the wrong op
+     * when the schema or the barrier set changes.
+     */
     private int firstSequencerOp(List<String> phaseOps) {
-        // endsWith, NOT contains: the V1 sequencer's CRC sidecar is "_txnlog.c", whose path CONTAINS
-        // "txn_seq/_txnlog". A contains-match therefore locks onto the sidecar op -- which is ordered
-        // deliberately BEFORE the header -- and identifies the wrong barrier, crashing an op early.
         // The barrier this test is about is the header write that publishes the txn.
         final String marker = WalUtils.SEQ_DIR + "/" + WalUtils.TXNLOG_FILE_NAME;
         for (int i = 0; i < phaseOps.size(); i++) {
@@ -360,8 +394,8 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Promote every matching regular file in {@code dir} to durable — the kernel writing those mapped files
-     * back of its own accord, with no barrier from QuestDB.
+     * Promotes every matching regular file in {@code dir} to durable: the kernel writing those mapped files back
+     * on its own, with no barrier from QuestDB.
      */
     private void promoteDurable(Path dir, Predicate<String> nameFilter) {
         try (Stream<Path> files = Files.walk(dir)) {
@@ -395,7 +429,7 @@ public class AdaptiveWalEventOrderCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Create table {@code x} and commit + apply {@link #BASELINE_ROWS} rows under a durable epoch, so the
+     * Creates table {@code x} and commits and applies {@link #BASELINE_ROWS} rows under a durable epoch, so the
      * baseline is a durable cut recovery can rewind to.
      */
     private TableToken seedBaseline() throws SqlException {

@@ -205,12 +205,13 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
-        // The shipped default, which the whole product defers to via CommitMode.DEFAULT. It stays nosync
-        // until an ingest benchmark justifies moving it; adaptive buys local durability at a throughput
-        // cost and that trade has to be measured. The test suite runs adaptive regardless, so this
-        // assertion is about what a user gets, not what the tests exercise.
+        // The shipped default, which the whole product reads through CommitMode.DEFAULT. The test suite
+        // runs adaptive regardless, so this assertion is about what a user gets, not what the tests
+        // exercise.
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(CommitMode.DEFAULT, configuration.getCairoConfiguration().getCommitMode());
+        // RPO of the adaptive group commit out of the box.
+        Assert.assertEquals(50_000L, configuration.getCairoConfiguration().getAdaptiveCommitGroupWindowUs());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
@@ -578,9 +579,7 @@ public class PropServerConfigurationTest {
 
     @Test
     public void testBatchedColumnSyncForceDisable() throws Exception {
-        // cairo.adaptive.epoch.column.sync.batched=false must disable the batched SYNC flush deterministically:
-        // the production getter short-circuits on the raw property BEFORE any fast_commit detection, so this
-        // holds regardless of the host filesystem (this config is built with detection ENABLED, like prod).
+        // cairo.adaptive.epoch.column.sync.batched=false disables the batched save point column flush.
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED.getPropertyPath(), "false");
         PropServerConfiguration configuration = newPropServerConfiguration(properties);

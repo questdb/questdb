@@ -39,19 +39,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Cleanup-completes bar for {@code WalWriter}'s column-pair free path.
- * <p>
- * Changing a column's type makes the WalWriter drop the old column pair. Under any non-NOSYNC commit mode
- * those closes carry a durability barrier — {@code MemoryPMARImpl.close} -> {@code releaseCurrentPage} ->
- * {@code msync} — so the close itself can fail, for a simulated crash or a genuine EIO.
- * <p>
- * The failure must remain FAIL-STOP (it is rethrown), but it must not escape the free path part-way.
- * {@code freeAndRemoveColumnPair} detaches BOTH slots from {@code columns} before closing either, so a
- * throw from the primary's close used to leave the secondary mapped AND unreachable — {@code freeColumns}
- * could no longer see it, and nothing else ever would. That stranded a mapping and its descriptor.
- * <p>
- * Discovered by the randomized adaptive crash-fuzz once its seed stopped being hard-coded: every seed that
- * emitted a structural column change leaked exactly one page here.
+ * A failed close in {@code WalWriter}'s column-pair free path must not leak the other column. Changing a column's
+ * type drops the old pair, and under any mode but NOSYNC each close carries an {@code msync} that can fail. The
+ * failure is rethrown, but {@code freeAndRemoveColumnPair} detaches both slots from {@code columns} before closing
+ * either, so a throw from the primary's close must not leave the secondary mapped: {@code freeColumns} can no
+ * longer see it, and nothing else would release its mapping and descriptor.
  */
 public class WalWriterColumnPairCloseCleanupTest extends AbstractCairoTest {
 
@@ -69,8 +61,8 @@ public class WalWriterColumnPairCloseCleanupTest extends AbstractCairoTest {
             if (failNext) {
                 java.io.StringWriter sw = new java.io.StringWriter();
                 new Throwable().printStackTrace(new java.io.PrintWriter(sw));
-                // Only fail the msync that the column-pair free performs; any other msync during the ALTER
-                // would make this test pass for the wrong reason (and its negative control pass with it).
+                // Only fail the msync that the column-pair free performs; failing any other msync during the
+                // ALTER would make this test pass for the wrong reason.
                 if (!sw.toString().contains("freeAndRemoveColumnPair")) {
                     super.msync(addr, len, async);
                     return;
@@ -78,8 +70,7 @@ public class WalWriterColumnPairCloseCleanupTest extends AbstractCairoTest {
                 failNext = false;
                 injected++;
                 injectedAt = sw.toString();
-                throw CairoException.dataSyncFailure(5, "msync")
-                        .put("simulated msync failure during column-pair free");
+                throw CairoException.dataSyncFailure(this, 5, "msync", "simulated msync failure during column-pair free");
             }
             super.msync(addr, len, async);
         }
@@ -90,7 +81,7 @@ public class WalWriterColumnPairCloseCleanupTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "1h");
         final OneShotMsyncFailureFacade ff = new OneShotMsyncFailureFacade();
-        // assertMemoryLeak IS the cleanup bar: a stranded page shows up as a non-zero MMAP_TABLE_WRITER
+        // assertMemoryLeak is the cleanup bar: a stranded page shows up as a non-zero MMAP_TABLE_WRITER
         // balance, and a stranded descriptor trips the fd cache's paranoia check.
         assertMemoryLeak(ff, () -> {
             execute("create table wcp (ts timestamp, s string, v long) timestamp(ts) partition by day wal");

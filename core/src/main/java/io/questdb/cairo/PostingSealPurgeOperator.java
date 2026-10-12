@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -41,7 +42,7 @@ import java.io.Closeable;
  * when the table's {@link TxnScoreboard} confirms no reader is still in the
  * visibility window of the superseded sealed version.
  * <p>
- * Stateless aside from the reused {@link Path} buffer;
+ * Stateless aside from the reused {@link Path} buffer and {@link TxReader};
  * {@link PostingSealPurgeJob} owns one instance and feeds it tasks
  * sequentially.
  */
@@ -60,6 +61,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private int scanRemovedCoverIncludeIdx;
     private long scanTargetPostingTxn;
     private long scanTargetSealTxn;
+    private TxReader txReader;
     private TxnScoreboard txnScoreboard;
 
     public PostingSealPurgeOperator(CairoEngine engine) {
@@ -79,6 +81,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     @Override
     public void close() {
         Misc.free(path);
+        Misc.free(txReader);
         txnScoreboard = Misc.free(txnScoreboard);
     }
 
@@ -115,7 +118,12 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     public void onValueFile(long postingColumnNameTxn, long sealTxn) {
     }
 
-    public boolean purge(PostingSealPurgeTask task) {
+    /**
+     * @param isReplay true for a row the job replays from its log at start-up. Such a row can come from before a
+     *                 crash and end above the txn recovery rewound the table to; every task published since start-up
+     *                 ends at or below the committed txn.
+     */
+    public boolean purge(PostingSealPurgeTask task, boolean isReplay) {
         if (task.isEmpty()) {
             return true;
         }
@@ -156,20 +164,31 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
             }
         }
 
+        final long fromTxn = task.getFromTableTxn();
+        long toTxn = task.getToTableTxn();
         boolean safe;
         try {
-            safe = txnScoreboard.isRangeAvailable(task.getFromTableTxn(), task.getToTableTxn())
-                    && (!liveToken.isWal()
-                    || engine.getTableSequencerAPI().getTxnTracker(liveToken).isRangeAvailableToEpoch(
-                    task.getFromTableTxn(),
-                    task.getToTableTxn()
-            ));
+            if (liveToken.isWal()) {
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(liveToken);
+                // The pin before the scoreboard: the scoreboard check raises the scoreboard's max txn to toTxn, and
+                // a reader cannot open below that max.
+                if (!tracker.isRangeAvailableToEpoch(fromTxn, toTxn)) {
+                    return false;
+                }
+                // A replayed row can come from before an adaptive recovery's rewind and end above the committed txn,
+                // also at a later start in another mode, which has no pin. Clamped, it cannot raise the scoreboard
+                // max past the committed txn.
+                if (isReplay) {
+                    toTxn = Math.min(toTxn, readCommittedTxn(liveToken, task));
+                }
+            }
+            safe = txnScoreboard.isRangeAvailable(fromTxn, toTxn);
         } catch (CairoException ex) {
             LOG.error().$("posting seal purge: scoreboard query failed, retrying [table=")
                     .$(liveToken.getTableName())
                     .$(", column=").$(task.getIndexColumnName())
-                    .$(", from=").$(task.getFromTableTxn())
-                    .$(", to=").$(task.getToTableTxn())
+                    .$(", from=").$(fromTxn)
+                    .$(", to=").$(toTxn)
                     .$(", msg=").$safe(ex.getFlyweightMessage())
                     .I$();
             return false;
@@ -326,5 +345,23 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         scanColumnName = null;
         path.trimTo(pathTableLen);
         return done;
+    }
+
+    // Readers open at the committed txn or later, so checking readers up to it is enough. Whether the file is still
+    // needed at the committed txn is for the pin and the live chain head check.
+    private long readCommittedTxn(TableToken token, PostingSealPurgeTask task) {
+        if (txReader == null) {
+            txReader = new TxReader(ff);
+        }
+        try {
+            path.trimTo(pathRootLen).concat(token.getDirName()).concat(TableUtils.TXN_FILE_NAME);
+            txReader.ofRO(path.$(), task.getTimestampType(), task.getPartitionBy());
+            final CairoConfiguration configuration = engine.getConfiguration();
+            TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            return txReader.getTxn();
+        } finally {
+            txReader.close();
+            path.trimTo(pathRootLen);
+        }
     }
 }

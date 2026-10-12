@@ -21,119 +21,133 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 /**
  * Fault-injection FilesFacade that models the OS durability contract on a simulated power loss.
  *
- * <h3>Size model (original)</h3>
- * {@code durableSize[path]} is advanced by fsync/fdatasync/fsyncAndClose; {@link #crash} truncates each
- * file to its last-durable size. msync alone does not advance durable size (it flushes data pages but not
- * the inode size after a grow). Queued torn-tail ranges are zeroed after the rollback.
+ * <h3>Size model</h3>
+ * {@code durableSize[path]} is advanced by fsync/fdatasync/fsyncAndClose; {@link #crash} truncates each file to
+ * its last durable size. msync alone does not advance the durable size: it flushes data pages but not the inode
+ * size after a grow. Queued torn-tail ranges are zeroed after the rollback.
  *
- * <h3>Content + device-flush-batching model (added for the SYNC-mode flush-batching safety net)</h3>
+ * <h3>Content and device-flush model</h3>
  * Alongside the size model, a content model tracks, per file:
  * <ul>
- *   <li>{@code pteFlushed} — whether the file's mmap-dirty pages have been pushed to the page cache via
- *       msync since it became mappable (so {@code sync_file_range} can see them);</li>
- *   <li>{@code deviceCacheContent} — the bytes written back to the device's (volatile) cache, pending a
- *       device flush;</li>
- *   <li>{@code durableContent} — the bytes that SURVIVE a crash (promoted from the device cache by a flush,
- *       then TRUNCATED to the journaled extent — see the metadata-journaling dimension below).</li>
+ *   <li>{@code pteFlushed}: whether the model has seen an msync of the file since it became mappable. The model
+ *       lets {@code sync_file_range} write back only such a file. Linux tracks mmap-dirty pages from the write
+ *       fault and writes them back without an msync, so this under-states {@code sync_file_range}, which is safe:
+ *       the product never relies on it for durability;</li>
+ *   <li>{@code deviceCacheContent}: the bytes written back to the device's volatile cache, pending a device
+ *       flush. A whole-file sync ({@code fsync}, {@code fdatasync}, {@code syncfs}) writes back the whole current
+ *       image; a ranged one ({@code msync(MS_SYNC)}, {@code sync_file_range}) only its range, so a page dirtied
+ *       through an earlier, already unmapped mapping stays behind;</li>
+ *   <li>{@code durableContent}: the bytes that survive a crash, promoted from the device cache by a flush and
+ *       truncated to the journaled extent (see below).</li>
  * </ul>
  *
- * <h3>The metadata-journaling dimension (data-at-device vs metadata-journaled)</h3>
- * Durability of a written byte requires THREE independent things, and the original content model conflated
- * the last two by treating any device flush as making all {@code deviceCacheContent} durable. They are NOT
- * the same:
+ * <h3>Data at the device versus journaled metadata</h3>
+ * A written byte is durable only when three independent things have happened:
  * <ol>
- *   <li><b>data-at-device</b> — the bytes physically reaching the device's (volatile) write cache. This is
- *       what {@code sync_file_range(WRITE | WAIT_AFTER)} and {@code msync} push out
- *       ({@code sync_file_range} man page: it does NOT flush disk write caches and "does not provide any
- *       data integrity on systems with volatile disk write caches", but WAIT_AFTER does land the data IN
- *       the device cache);</li>
- *   <li><b>metadata-journaled</b> — the filesystem extent-tree / {@code i_size} update that makes those
- *       blocks actually BELONG to the file. This is provided ONLY by a JOURNAL COMMIT
- *       ({@code fsync}/{@code fdatasync}, and {@code msync(MS_SYNC)} since it is a range-fsync).
- *       {@code sync_file_range} does NOT journal it — man page: "When writing into preallocated space, many
- *       filesystems also require calls into the block allocator, which this system call does not sync out to
- *       disk" and "None of these operations writes out the file's metadata." QuestDB writes into
- *       {@code posix_fallocate}'d (unwritten-extent) space constantly, so a WITHIN-PAGE append converts an
- *       unwritten extent and needs this journal commit even when {@code i_size} does not change;</li>
- *   <li><b>device-flush</b> — the volatile write cache being flushed to non-volatile media (REQ_PREFLUSH /
- *       REQ_FUA; kernel block/writeback_cache_control). {@code fsync}/{@code fdatasync} ("This includes
- *       writing through or flushing a disk cache if present") and {@code msync(MS_SYNC)} carry one;
- *       {@code sync_file_range} does not.</li>
+ *   <li><b>data-at-device</b>: the bytes reach the device's volatile write cache.
+ *       {@code sync_file_range(WRITE | WAIT_AFTER)} and {@code msync} push them there. The {@code sync_file_range} man
+ *       page: it does not flush disk write caches and "does not provide any data integrity on systems with volatile
+ *       disk write caches";</li>
+ *   <li><b>metadata-journaled</b>: the extent-tree and {@code i_size} update that makes those blocks belong to
+ *       the file. Only a journal commit provides it ({@code fsync}, {@code fdatasync}, and {@code msync(MS_SYNC)},
+ *       a range fsync). {@code sync_file_range} does not: "When writing into preallocated space, many filesystems
+ *       also require calls into the block allocator, which this system call does not sync out to disk" and "None
+ *       of these operations writes out the file's metadata." QuestDB writes into {@code posix_fallocate}'d
+ *       (unwritten-extent) space, so a within-page append converts an unwritten extent and needs a journal
+ *       commit even when {@code i_size} does not change;</li>
+ *   <li><b>device-flush</b>: the volatile write cache is flushed to non-volatile media (REQ_PREFLUSH/REQ_FUA,
+ *       kernel block/writeback_cache_control). {@code fsync}/{@code fdatasync} ("This includes writing through or
+ *       flushing a disk cache if present") and {@code msync(MS_SYNC)} carry one; {@code sync_file_range} does
+ *       not.</li>
  * </ol>
- * The model therefore tracks, per file, three additional watermarks:
+ * The model tracks three watermarks per file:
  * <ul>
- *   <li>{@code writtenDataEnd[F]} — high-water of bytes actually WRITTEN (real data, NOT
- *       {@code posix_fallocate}'d unwritten zero), as a FILE-ABSOLUTE offset. Advanced by
- *       {@code write}/{@code append} (real writes), by {@code msync} (the mmap'd range — translated to
- *       file-absolute via the mapping's file offset, since paged {@code MemoryPMARImpl} msyncs a
- *       page-relative length at a non-zero page offset), and by {@code sync_file_range} (already fd-relative,
- *       i.e. file-absolute). A whole-filesystem {@code syncfs} conservatively advances it to the current file
- *       length because it must also capture dirty mmap stores made invisible to the facade by {@code munmap}.
- *       Otherwise this is the written-data-END proxy that keeps a per-file flush from pretending a file's
- *       fallocate-inflated (zero) tail is durable: a freshly fallocate'd-to-16MiB column with only a few KB
- *       written has {@code writtenDataEnd} of those few KB, not 16 MiB.</li>
- *   <li>{@code syncedDataEnd[F]} — the written-data end that has reached the device cache
- *       ({@code <= writtenDataEnd}). Advanced to the synced RANGE end (capped at {@code writtenDataEnd}) by
- *       {@code sync_file_range}/{@code msync}, and to {@code writtenDataEnd} by a device flush
- *       ({@code fsync}/{@code fdatasync}, which writes back ALL dirty page-cache data).</li>
- *   <li>{@code journaledDataEnd[F]} — the {@code syncedDataEnd} captured at the last JOURNAL COMMIT covering
- *       F. Content at the device beyond this end sits in non-journaled (still-unwritten) extents and is NOT
- *       durable: on crash the extent conversion never happened, so those blocks do not belong to the file
- *       and read back as zero / rolled-back.</li>
+ *   <li>{@code writtenDataEnd[F]}: the file-absolute high-water of bytes actually written, as opposed to
+ *       {@code posix_fallocate}'d unwritten zeros. {@code write}/{@code append} advance it, as do {@code msync}
+ *       (the mmap'd range, made file-absolute through the mapping's file offset, since paged
+ *       {@code MemoryPMARImpl} msyncs a page-relative length at a non-zero page offset) and
+ *       {@code sync_file_range} (already file-absolute). {@code syncfs} advances it to the current file length,
+ *       because it also captures dirty mmap stores the facade cannot see after {@code munmap}. It keeps a
+ *       per-file flush from treating a file's fallocated zero tail as durable: a column fallocated to 16 MiB
+ *       with a few KB written has a {@code writtenDataEnd} of those few KB.</li>
+ *   <li>{@code syncedDataEnd[F]}: the written-data end that has reached the device cache
+ *       ({@code <= writtenDataEnd}). {@code sync_file_range}/{@code msync} advance it to the synced range end,
+ *       capped at {@code writtenDataEnd}; a device flush ({@code fsync}/{@code fdatasync}, which writes back all
+ *       dirty page-cache data) advances it to {@code writtenDataEnd}.</li>
+ *   <li>{@code journaledDataEnd[F]}: the {@code syncedDataEnd} captured at the last journal commit covering F.
+ *       Content beyond it sits in unwritten extents and is not durable: after a crash those blocks do not
+ *       belong to the file and read back as zero.</li>
  * </ul>
- * {@link #doFlush()} sets {@code durableContent[F]} = {@code deviceCacheContent[F]} TRUNCATED to
- * {@code journaledDataEnd[F]} — durable means data-at-device AND its extent metadata journaled.
+ * {@link #doFlush()} sets {@code durableContent[F]} to {@code deviceCacheContent[F]} truncated to
+ * {@code journaledDataEnd[F]}.
  *
- * <h3>The shared-journal assumption ({@link #modelSharedJournal}, default true)</h3>
- * On default ext4 (jbd2) and xfs the journal is a single filesystem-wide log: an {@code fsync} of inode A
- * forces a journal commit that also persists EVERY other inode's pending extent conversions (jbd2 "operates
- * on blocks, so when it commits a transaction, this transaction includes all changed blocks"). With
- * {@code modelSharedJournal=true} (the default, faithful to default ext4/xfs), a journal commit on ANY file
- * advances {@code journaledDataEnd[G]=syncedDataEnd[G]} for EVERY tracked G. This is exactly what lets the
- * batched optimization's single {@code _cv} {@code fdatasync} make the OTHER columns' within-page data
- * durable.
+ * <h3>The shared journal ({@link #modelSharedJournal}, default true)</h3>
+ * On default ext4 (jbd2) and xfs the journal is one filesystem-wide log: an {@code fsync} of inode A forces a
+ * journal commit that also persists every other inode's pending extent conversions (jbd2 "operates on blocks, so
+ * when it commits a transaction, this transaction includes all changed blocks"). With
+ * {@code modelSharedJournal=true}, a journal commit on any file advances {@code journaledDataEnd[G]} to
+ * {@code syncedDataEnd[G]} for every tracked G. That is what lets the batched flush's single {@code _cv}
+ * {@code fdatasync} make the other columns' within-page data durable.
  *
- * <p><b>fast_commit caveat.</b> ext4 {@code fast_commit} (opt-in, newer) journals at the FILE/inode level
- * rather than committing the whole filesystem-wide transaction (LWN: the fast-commit journal "contains
- * changes at the file level"); under its soft-consistency mode only the fsync'd inode is guaranteed. So an
- * {@code fsync(A)} does NOT reliably journal B's pending extent conversions. Set
- * {@code modelSharedJournal=false} to model that per-inode world; under it, new-allocation content needs the
- * file's OWN journal commit (see {@code CrashModelSelfCheckTest} ST7 and
+ * <p><b>fast_commit.</b> ext4 {@code fast_commit} (opt-in) journals at the inode level (LWN: the fast-commit
+ * journal "contains changes at the file level"); in its soft-consistency mode only the fsync'd inode is
+ * guaranteed, so {@code fsync(A)} does not reliably journal B's pending extent conversions. Set
+ * {@code modelSharedJournal=false} to model that; new-allocation content then needs the file's own journal
+ * commit (see {@code CrashModelSelfCheckTest.test7_perInodeJournalingNewAllocationLost} and
  * {@code BatchedFlushSharedJournalDependencyTest}).
  *
- * <p><b>syncfs is journal-policy-INDEPENDENT.</b> {@link #syncfs(long)} models {@code syncfs(2)}: it writes
- * back ALL dirty data of the whole filesystem and performs ONE journal commit covering EVERY inode's pending
- * extent conversions, then a single device flush. Unlike {@code fdatasync}, this is NOT gated on
- * {@code modelSharedJournal} — syncfs ALWAYS journals every tracked file, even under per-inode
- * ({@code fast_commit}) journaling. This is the salvage property the batched SYNC commit relies on: one
- * {@code syncfs(anyColumnFd)} makes every just-drained column's data AND extent conversions durable in a
- * single flush (see {@code CrashModelSelfCheckTest} ST9).
+ * <p><b>syncfs does not depend on the journal policy.</b> {@link #syncfs(long)} models {@code syncfs(2)}: it
+ * writes back all dirty data of the filesystem, performs one journal commit covering every inode's pending extent
+ * conversions, then one device flush. Unlike {@code fdatasync}, it journals every tracked file even when
+ * {@code modelSharedJournal} is false, so one {@code syncfs(anyColumnFd)} makes every drained column's data and
+ * extent conversions durable (see {@code CrashModelSelfCheckTest.test9_syncfsJournalsEveryoneUnderPerInodeJournaling}).
  *
- * <p>{@code readCurrent(path)} reads the real file's CURRENT bytes via a plain {@code read()}; because
- * MAP_SHARED mmap writes and {@code read()} share the kernel page cache, a {@code read()} sees the bytes a
- * test wrote into an mmap'd region (even before any msync). msync is what moves those page-cache bytes on
- * toward the device; {@code read()} merely lets the model snapshot the current page-cache state at a sync
- * point.
+ * <p>{@code readCurrent(path)} reads the file's current bytes with a plain {@code read()}. MAP_SHARED mmap writes
+ * and {@code read()} share the page cache, so a {@code read()} sees bytes a test stored into a mapping before any
+ * msync. msync moves page-cache bytes toward the device; {@code read()} lets the model snapshot the page cache at
+ * a sync point.
  *
- * <h3>Modeling limitations</h3>
+ * <h3>The process-kill model (opt-in, {@link #armKillAt})</h3>
+ * Everything above models a power loss. A process kill ({@code kill -9}, the OOM killer, a JVM crash) keeps the
+ * page cache, so every byte the process wrote before it died is still there, flushed or not. The two models
+ * disagree on a byte rewritten in place after its last flush: a power loss brings back the flushed value, a kill
+ * keeps the new one. {@link #armKillAt} places the kill just before the n-th kill point (a {@code close},
+ * {@code munmap}, {@code truncate}, {@code rename}, {@code removeQuiet} or {@code rmdir}), and
+ * {@link #takeKillImage} places it at the moment of the call. Either way the bytes of every file and the
+ * directory tree under the root become the kill image; the engine runs on, and the next {@link #crash} restores
+ * that image instead of the last flushed content. Without an armed kill the facade models a power loss only.
+ *
+ * <h3>The instant of the power loss ({@link #powerLoss})</h3>
+ * A test cannot roll the files back under a live engine, so it releases the engine's handles first. Those closes
+ * flush: an adaptive writer's close takes a save point, whose {@code syncfs} makes every file durable, and a
+ * {@code WalWriter} close flushes its pending batch. A real power loss runs none of it. So the power loss and the
+ * rollback are two steps: {@link #powerLoss} freezes the durable state, and {@link #crash} restores the frozen state
+ * under its root, so nothing done in between counts. An armed crash marks the power loss when it fires, so the
+ * engine's own work after the {@link CrashSimulationError} (a swallowed error, its catch path, other jobs) does not
+ * count either. {@link #crash} refuses to run without a mark, so every caller states where the power loss is. After
+ * the rollback the files hold exactly their durable bytes, so the device cache and the watermarks restart from them.
+ *
+ * <h3>Modelling limitations</h3>
  * <ul>
- *   <li>{@code write}/{@code append} are intercepted ONLY to advance {@code writtenDataEnd} (real bytes
- *       written); they do NOT clear {@code pteFlushed}, so a write after an msync does not re-mark the
- *       mapping un-flushed. This is acceptable for the target optimization, which never writes between its
- *       msync and its {@code sync_file_range}; the self-tests exercise the un-msync'd path on FRESH files
- *       only. mmap STORES (the tests' {@code Unsafe.setMemory}) are not visible as {@code write} calls, so a
- *       mapping's written end is normally declared by msync; syncfs is the exception and snapshots the full
- *       current image because it writes dirty pages back even after their mapping has been removed.</li>
- *   <li>The device-cache/durable snapshots are full-file byte copies taken at sync points. Files are small
- *       in these tests, so this is cheap; if it ever became hot it could be narrowed to a dirty range.</li>
- *   <li>{@code syncedDataEnd} is a written-data-END proxy (the max synced range end), not a precise set of
- *       written extents. The target workload appends contiguously from offset 0, so a single end is exact
- *       for it; a sparse-write workload would need a per-extent set.</li>
+ *   <li>{@code write}/{@code append} are intercepted only to advance {@code writtenDataEnd}; they do not clear
+ *       {@code pteFlushed}, so a write after an msync does not re-mark the mapping un-flushed. The batched flush
+ *       issues no msync of its own before its {@code sync_file_range}, so the model often treats it as a no-op,
+ *       and the self-tests exercise the un-msync'd path on fresh files only. mmap stores (the tests' {@code Unsafe.setMemory}) are not
+ *       {@code write} calls, so msync normally declares a mapping's written end. syncfs snapshots the full current
+ *       image, because it writes dirty pages back even after their mapping is gone. A whole-file
+ *       {@code fsync}/{@code fdatasync} also counts non-zero bytes past the declared end as written: it writes
+ *       back every dirty page of its file, msync'd or not.</li>
+ *   <li>The device-cache and durable snapshots are full-file byte copies taken at sync points. Files are small in
+ *       these tests, so this is cheap.</li>
+ *   <li>{@code syncedDataEnd} is a single end (the max synced range end), not a set of written extents. The
+ *       workloads append contiguously from offset 0, so one end is exact; a sparse-write workload would need a
+ *       per-extent set.</li>
  * </ul>
  */
 public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
@@ -150,12 +164,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final java.util.List<String> durabilityOpLog = new java.util.ArrayList<>();
     private final java.util.List<String> syncOrder = new java.util.ArrayList<>();
 
-    // --- content + device-flush-batching model ---
-    // Live mmap mappings: base address -> path, so msync(addr,...) can resolve the file. mremap re-keys; munmap removes.
-    // The mapping's FILE OFFSET is tracked too: paged memory (MemoryPMARImpl) maps one page at a time at a
-    // non-zero file offset and msyncs a PAGE-RELATIVE length, so the file-absolute written end of an
-    // msync(addr,len) is mapFileOffset(addr)+len -- without the file offset the model would mistake a
-    // page-relative length for a file-absolute one and badly under-count writtenDataEnd.
+    // Live mmap mappings: base address -> path, so msync(addr,...) can resolve the file. mremap re-keys; munmap
+    // removes. The mapping's file offset is tracked too: paged memory (MemoryPMARImpl) maps one page at a time at a
+    // non-zero file offset and msyncs a page-relative length, so the file-absolute written end of msync(addr,len) is
+    // mapFileOffset(addr)+len.
     private final Map<Long, long[]> mmapAddrRange = new HashMap<>(); // addr -> {endAddrExclusive, fileOffset}
     private final Map<Long, String> mmapAddrToPath = new HashMap<>();
     // Every file the content model is tracking (insertion-ordered so doFlush() is deterministic).
@@ -163,24 +175,20 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final Map<String, Boolean> pteFlushed = new HashMap<>();
     private final Map<String, byte[]> deviceCacheContent = new HashMap<>();
     private final Map<String, byte[]> durableContent = new HashMap<>();
-    // --- metadata-journaling dimension (data-at-device vs metadata-journaled) ---
-    // writtenDataEnd[F]: high-water of bytes actually WRITTEN (real data, not posix_fallocate'd zero). It is
-    //   the written-data-END proxy: advanced by write()/append() (real writes) and by msync (the mmap'd
-    //   range the app declared dirty). This is what distinguishes written content from fallocate-inflated
-    //   file length, so a device flush of a sparsely-written-but-largely-fallocate'd file does NOT pretend
-    //   the whole (zero) tail is durable.
+    // Data at the device versus journaled metadata (see the class javadoc).
+    // writtenDataEnd[F]: high-water of bytes actually written (not posix_fallocate'd zeros), advanced by
+    //   write()/append() and by msync (the range the app declared dirty), so a device flush of a sparsely written,
+    //   largely fallocated file does not treat the zero tail as durable.
     // syncedDataEnd[F]: the written-data end that has reached the device cache (<= writtenDataEnd).
-    // journaledDataEnd[F]: syncedDataEnd[F] captured at the last journal commit covering F. doFlush()
-    //   truncates durableContent[F] to this end -> data beyond it lives in non-journaled extents and is lost.
+    // journaledDataEnd[F]: syncedDataEnd[F] captured at the last journal commit covering F. doFlush() truncates
+    //   durableContent[F] to this end; data beyond it lives in unjournaled extents and is lost.
     private final Map<String, Long> writtenDataEnd = new HashMap<>();
     private final Map<String, Long> syncedDataEnd = new HashMap<>();
     private final Map<String, Long> journaledDataEnd = new HashMap<>();
 
-    // Directory entries have an independent durability boundary. A parent-directory fsync snapshots only
-    // that directory's immediate namespace; syncfs snapshots every baseline root. Content durability remains
-    // governed by the existing per-file model above. File bytes are retained here only while an unsynced
-    // unlink/rename has hidden a durable name; ordinary namespace snapshots therefore add no duplicate
-    // full-file images, and a directory fsync/syncfs releases the pending images.
+    // Directory entries have their own durability boundary. A parent-directory fsync snapshots only that
+    // directory's immediate namespace; syncfs snapshots every baseline root. File bytes are kept here only while
+    // an unsynced unlink or rename hides a durable name, and a directory fsync or syncfs releases them.
     private final Set<String> namespaceRoots = new LinkedHashSet<>();
     private final Set<String> durableDirectories = new HashSet<>();
     private final Set<String> durableFileEntries = new HashSet<>();
@@ -188,16 +196,39 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final Map<String, byte[]> pendingRenameTargetImages = new HashMap<>();
 
     /**
-     * Whether a journal commit on ANY file persists EVERY tracked file's pending extent conversions
-     * (default true = faithful to default ext4/jbd2 + xfs's single filesystem-wide journal). Set false to
-     * model ext4 fast_commit's per-inode journaling, under which fsync(A) does NOT journal B's metadata.
+     * Whether a journal commit on any file persists every tracked file's pending extent conversions (true models
+     * the single filesystem-wide journal of default ext4/jbd2 and xfs). Set false to model ext4 fast_commit's
+     * per-inode journaling, under which fsync(A) does not journal B's metadata.
      */
     public boolean modelSharedJournal = true;
 
+    private final Set<String> killImageDirectories = new HashSet<>();
+    private final Map<String, byte[]> killImageFiles = new HashMap<>();
+    // The durable state frozen by powerLoss(); crash() restores it under the crashed root.
+    private final Map<String, byte[]> powerLossContent = new HashMap<>();
+    private final Set<String> powerLossDirectories = new HashSet<>();
+    private final Set<String> powerLossFileEntries = new HashSet<>();
+    private final Map<String, byte[]> powerLossNamespaceImages = new HashMap<>();
+    private final Map<String, byte[]> powerLossRenameTargetImages = new HashMap<>();
+    private final Map<String, Long> powerLossSize = new HashMap<>();
+    private boolean powerLossMarked;
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
+    private int killAtPoint = -1; // -1 = disarmed
+    private boolean killImageTaken;
+    private int killPoints = 0;
+    private String killRoot;
     private int syncfsCount = 0; // number of syncfs(2) calls observed (filesystem-wide flushes)
     private String dbRootPrefix; // set via setDbRoot(); scopes cached-fd reclamation to per-table files
+    // Handles open under a table directory of the root when crash() rolled it back. A mutation through one after
+    // the rollback changes the files recovery reads, outside the frozen window, and is refused (see crash()). close
+    // and munmap stay allowed. Cleared by the next markDurableBaseline, powerLoss or reset.
+    private final Set<Long> staleFds = new HashSet<>();
+    private final Set<Long> staleMappings = new HashSet<>(); // mapping base addresses
+    // The negative control of the sweeps: while set, a durability op whose first io.questdb.cairo frame matches
+    // returns before the model update (as a removed flush would) and is counted in neuteredOps, not as an op.
+    private Predicate<StackWalker.StackFrame> neuterPredicate;
+    private int neuteredOps = 0;
 
     /**
      * Ordered list of file paths as they were fsync'd/fsyncAndClose'd (for sync-order assertions).
@@ -207,7 +238,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Number of filesystem-wide syncfs(2) calls observed so far (for the I1 fs-wide-epoch-flush proof).
+     * Number of filesystem-wide syncfs(2) calls observed so far.
      */
     public int syncfsCount() {
         return syncfsCount;
@@ -219,6 +250,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -229,6 +261,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -239,6 +272,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -249,6 +283,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (fd > -1) {
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -260,6 +295,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             noCacheOpenFds.add(fd);
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
@@ -271,19 +307,23 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             noCacheOpenFds.add(fd);
             fdToPath.put(fd, toAbsPath(name));
             forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
         }
         return fd;
     }
 
     @Override
     public boolean close(long fd) {
+        countKillPoint();
         fdToPath.remove(fd);
         noCacheOpenFds.remove(fd);
+        staleFds.remove(fd); // fd reclamation, no durability: allowed on a stale handle
         return super.close(fd);
     }
 
     @Override
     public long write(long fd, long address, long len, long offset) {
+        assertNotStale(fd, "write");
         long n = super.write(fd, address, len, offset);
         String p = fdToPath.get(fd);
         if (p != null && n > 0) {
@@ -297,6 +337,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public long append(long fd, long buf, long len) {
+        assertNotStale(fd, "append");
         final long before = fdToPath.containsKey(fd) ? super.length(fd) : -1L;
         long n = super.append(fd, buf, len);
         String p = fdToPath.get(fd);
@@ -311,12 +352,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     public int copy(LPSZ from, LPSZ to) {
         final int rc = super.copy(from, to);
         if (rc == 0) {
-            // copy() (creat(O_TRUNC) + sendfile) writes REAL bytes for the whole source extent into the
-            // destination (replacing it). Track the destination's written-data end as the resulting file
-            // size, so a subsequent fsync of the copy journals its full content durable (otherwise the
-            // sendfile path bypasses write()/msync tracking, writtenDataEnd stays 0, and crash() would
-            // roll the copied file back to length 0). Mirrors how write()/append() advance writtenDataEnd.
+            // copy() (creat(O_TRUNC) + sendfile) writes real bytes for the whole source extent into the destination.
+            // The sendfile path bypasses write()/msync tracking, so set the destination's written-data end to the
+            // resulting size; otherwise a later fsync of the copy would leave writtenDataEnd at 0 and crash() would
+            // roll it to 0.
             final String dst = toAbsPath(to);
+            shrinkTo(dst, 0); // creat() truncated a destination that already existed
             track(dst);
             // After the copy the real file length IS the written extent (creat truncated, sendfile filled).
             advanceWrittenDataEnd(dst, length(to));
@@ -325,11 +366,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Same blind spot as {@link #copy(LPSZ, LPSZ)}, reached by fd instead of by path. An in-place content
-     * replacement ({@code TableUtils.replaceFileContent}: open read-write, truncate, transfer) moves its
-     * bytes through this call, which is the same sendfile family and so bypasses write()/msync tracking
-     * just as much. Untracked, {@code writtenDataEnd} stays 0 and {@link #crash} rolls the destination —
-     * a {@code _txn.epoch}/{@code _cv.epoch} payload, or a live file restored over — back to length 0.
+     * The fd form of {@link #copy(LPSZ, LPSZ)}. An in-place content replacement ({@code TableUtils.replaceFileContent}:
+     * open read-write, truncate, transfer) moves its bytes through this sendfile-family call, which bypasses
+     * write()/msync tracking. Untracked, {@code writtenDataEnd} stays 0 and {@link #crash} rolls the destination
+     * back to length 0.
      */
     @Override
     public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
@@ -375,44 +415,50 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void munmap(long address, long size, int memoryTag) {
-        // Drop the addr->path mapping but KEEP the content model state keyed by path: a file's durable
-        // content must outlive its mapping (e.g. unmap-then-crash), exactly like the size model.
+        countKillPoint();
+        // Drop the addr->path mapping but keep the content model state keyed by path: a file's durable content outlives
+        // its mapping (unmap, then crash), as in the size model.
         mmapAddrRange.remove(address);
         mmapAddrToPath.remove(address);
+        staleMappings.remove(address); // releasing a stale mapping is allowed, as close is
         super.munmap(address, size, memoryTag);
     }
 
     @Override
     public void barrierFsync(long fd) {
-        // Model it as fdatasync. Exact off Darwin, where barrierFsync IS fdatasync. On Darwin
-        // (F_BARRIERFSYNC) the real primitive only ORDERS -- the data may still be in the drive cache --
-        // so this model is OPTIMISTIC there and would not catch a loss that real macOS hardware allows.
-        // Acceptable because the power-loss harness (dm-flakey) is Linux-only anyway; noted so nobody reads
-        // a green macOS run as proof of the barrier's safety.
+        // Modelled as fdatasync. That is exact off Darwin, where barrierFsync is fdatasync. On Darwin, F_BARRIERFSYNC
+        // only orders writes and the data may still be in the drive cache, so this model is optimistic there and cannot
+        // catch a loss real macOS hardware allows. The power-loss harness (dm-flakey) is Linux-only, so a passing macOS
+        // run is no proof that the barrier is safe.
         fdatasync(fd);
     }
 
     @Override
     public void fsyncDurable(long fd) {
-        // Off Darwin this IS fsync; on Darwin F_FULLFSYNC is strictly stronger, so modelling it as fsync
-        // never under-reports durability.
+        // Off Darwin this is fsync; on Darwin F_FULLFSYNC is stronger, so modelling it as fsync never over-reports
+        // durability.
         fsync(fd);
     }
 
     @Override
     public void fdatasync(long fd) {
         assertNotForceClosed(fd, "fdatasync");
+        assertNotStale(fd, "fdatasync");
+        if (isNeutered()) {
+            return;
+        }
         super.fdatasync(fd);
         String p = fdToPath.get(fd);
         if (p != null) {
             syncOrder.add(p);
-            // fdatasync is a JOURNAL COMMIT + data-at-device + DEVICE FLUSH. Snapshot this file's current
-            // bytes into its device cache, push ALL written page-cache data to the device (at-device end ->
-            // writtenDataEnd; NOT the fallocate-inflated file length), commit F's metadata to the journal
-            // (and all files' if modelSharedJournal), then flush -> promotes the journaled extent to durable.
+            // fdatasync is a journal commit, data-at-device and a device flush. Snapshot this file's current bytes into
+            // its device cache, push all written page-cache data to the device (up to writtenDataEnd, not the
+            // fallocated length), commit F's metadata to the journal (all files' if modelSharedJournal), then flush,
+            // which promotes the journaled extent to durable.
             track(p);
             byte[] now = readCurrent(p);
             deviceCacheContent.put(p, now);
+            advanceWrittenDataEnd(p, nonZeroEnd(now));
             advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
             journalCommit(p);
             doFlush();
@@ -423,6 +469,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void syncfs(long fd) {
+        assertNotStale(fd, "syncfs");
+        if (isNeutered()) {
+            return;
+        }
         super.syncfs(fd);
         syncfsCount++;
         for (String root : namespaceRoots) {
@@ -432,15 +482,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (p != null) {
             syncOrder.add(p);
         }
-        // syncfs(2) is a WHOLE-FILESYSTEM operation: it writes back ALL dirty data of the filesystem AND
-        // performs ONE journal commit that journals EVERY inode's pending extent conversions (independent of
-        // modelSharedJournal -- syncfs ALWAYS journals everyone, that is the salvage property), then issues a
-        // single device flush. Snapshot every tracked file's COMPLETE current image. Unlike per-file sync
-        // operations, syncfs must not cap durability at writtenDataEnd: mmap stores are otherwise invisible
-        // after an ADAPTIVE writer unmaps a lazily-written partition without calling msync, even though real
-        // syncfs still writes those dirty page-cache pages back. The current file length may include a
-        // fallocate'd zero tail; retaining that tail is both harmless (_txn owns the logical row count) and
-        // faithful to a whole-filesystem sync that also persists the inode size and unwritten extents.
+        // syncfs(2) is a whole-filesystem operation: it writes back all dirty data, performs one journal commit
+        // covering every inode's pending extent conversions (regardless of modelSharedJournal), then one device flush.
+        // Snapshot every tracked file's complete current image. Unlike a per-file sync, syncfs does not cap durability
+        // at writtenDataEnd: an adaptive writer can unmap a lazily written partition without msync, and real syncfs
+        // still writes those dirty pages back. A fallocated zero tail in the file length is harmless (_txn owns the row
+        // count) and matches a sync that also persists the inode size.
         for (String f : trackedFiles) {
             final byte[] current = readCurrent(f);
             deviceCacheContent.put(f, current);
@@ -456,6 +503,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     @Override
     public void fsync(long fd) {
         assertNotForceClosed(fd, "fsync");
+        assertNotStale(fd, "fsync");
+        if (isNeutered()) {
+            return;
+        }
         super.fsync(fd);
         String p = fdToPath.get(fd);
         final boolean directory = p != null && Files.isDirectory(Paths.get(p));
@@ -465,10 +516,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         if (p != null) {
             syncOrder.add(p);
             if (!directory) {
-                // fsync: JOURNAL COMMIT + data-at-device + DEVICE FLUSH (like fdatasync for this model).
+                // fsync: journal commit, data-at-device and device flush, as fdatasync in this model.
                 track(p);
                 byte[] now = readCurrent(p);
                 deviceCacheContent.put(p, now);
+                advanceWrittenDataEnd(p, nonZeroEnd(now));
                 advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
                 journalCommit(p);
                 doFlush();
@@ -482,6 +534,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void fsyncAndClose(long fd) {
+        assertNotStale(fd, "fsyncAndClose");
+        if (isNeutered()) {
+            close(fd); // the flush is removed, the fd is still released
+            return;
+        }
         final String p = fdToPath.get(fd);
         final boolean directory = p != null && Files.isDirectory(Paths.get(p));
         final long size = p != null && !directory ? super.length(fd) : -1L;
@@ -497,10 +554,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                 if (size >= 0L) {
                     durableSize.put(p, size);
                 }
-                // fsync + close: JOURNAL COMMIT + data-at-device + DEVICE FLUSH. Snapshot+advance+commit+flush.
-                // writtenDataEnd is keyed by path so it survives the close above.
+                // fsync + close: journal commit, data-at-device and device flush. writtenDataEnd is keyed by path, so
+                // it survives the close above.
                 track(p);
                 deviceCacheContent.put(p, snapshot);
+                advanceWrittenDataEnd(p, nonZeroEnd(snapshot));
                 advanceSyncedDataEnd(p, writtenDataEnd.getOrDefault(p, 0L));
                 journalCommit(p);
                 doFlush();
@@ -511,6 +569,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public boolean removeQuiet(LPSZ name) {
+        countKillPoint();
         final String removedPath = toAbsPath(name);
         final byte[] restoreImage = durableFileEntries.contains(removedPath) ? durableImage(removedPath) : null;
         final boolean removed = super.removeQuiet(name);
@@ -525,13 +584,14 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public boolean rmdir(io.questdb.std.str.Path name, boolean haltOnError) {
+        countKillPoint();
         final String removedRoot = toAbsPath(name.$());
         preserveDurableSubtreeImages(removedRoot);
         final boolean removed = super.rmdir(name, haltOnError);
         if (removed) {
-            // FilesFacadeImpl's recursive rmdir bypasses removeQuiet for the children, so evict the entire
-            // subtree here. Without this, long crash sweeps retain full byte[] snapshots for every dropped
-            // physical table token (cf_wal~1, cf_wal~2, ...), making syncfs scan/copy stale tables until OOM.
+            // FilesFacadeImpl's recursive rmdir bypasses removeQuiet for the children, so evict the whole subtree here.
+            // Otherwise long crash sweeps keep full byte[] snapshots for every dropped table directory, and syncfs
+            // scans and copies them until the JVM runs out of memory.
             evictDurability(removedRoot, true);
         } else {
             // Best-effort recursive removal may delete some children before another child fails. Reconcile
@@ -548,9 +608,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         final String targetPath = toAbsPath(hardLink);
         final int result = super.hardLink(src, hardLink);
         if (result == io.questdb.std.Files.FILES_RENAME_OK) {
-            // Both names refer to the same inode. Seed the target's path-keyed durability state from the
-            // source so crash() never treats the new alias as an untracked zero-length file and truncates
-            // the shared inode (which would corrupt the still-live source name too).
+            // Both names refer to the same inode. Seed the target's durability state from the source, so crash() never
+            // treats the new name as an untracked zero-length file and truncates the shared inode under the source too.
             duplicateMapValue(durableContent, sourcePath, targetPath);
             duplicateMapValue(deviceCacheContent, sourcePath, targetPath);
             duplicateMapValue(durableSize, sourcePath, targetPath);
@@ -565,37 +624,32 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public int rename(LPSZ from, LPSZ to) {
+        countKillPoint();
         final String fromPath = toAbsPath(from);
         final String toPath = toAbsPath(to);
         final byte[] restoreImage = durableFileEntries.contains(fromPath) ? durableImage(fromPath) : null;
         final byte[] overwrittenImage = durableFileEntries.contains(toPath) ? durableImage(toPath) : null;
         preserveDurableSubtreeImages(fromPath);
-        // rename-overwrite must also retain the destination's previous durable inode/image until the parent
-        // directory is fsynced; an unsynced crash restores both original names.
+        // A rename that overwrites keeps the destination's previous durable image until the parent directory is
+        // fsynced; a crash before that restores both original names.
         preserveDurableSubtreeImages(toPath);
         final int res = super.rename(from, to);
         if (res == io.questdb.std.Files.FILES_RENAME_OK) {
-            // POSIX rename carries the inode's durable data to the new name, so the path-keyed durability
-            // model must follow the file(s): re-key every tracked entry from the old path -- or old-dir
-            // prefix, for a directory rename -- to the new one. Without this a synced-then-renamed file is
-            // wrongly seen as never-synced and crash() truncates it to 0.
+            // POSIX rename carries the inode's durable data to the new name, so re-key every tracked entry from the old
+            // path (or old directory prefix) to the new one; otherwise crash() treats a synced, renamed file as never
+            // synced and truncates it to 0.
             rekeyDurability(fromPath, toPath);
-            // Re-key LIVE MAPPINGS too. mmapAddrToPath is populated at mmap time, so without this a
-            // mapping opened before the rename keeps resolving to the OLD name: every later msync through
-            // it advances writtenDataEnd/syncedDataEnd on a path that no longer exists, while the renamed
-            // file accumulates none. crash() then truncates a file whose bytes ARE on disk back to zero,
-            // and WAL apply reports "WAL segment column too short for committed row range [... actual=0]".
-            // Renaming a column file with its column memory still open is exactly what WalWriter does.
+            // Re-key live mappings too: a mapping opened before the rename would otherwise keep advancing
+            // writtenDataEnd/syncedDataEnd on the old name, and crash() would truncate the renamed file to zero.
+            // WalWriter renames a column file with its column memory still open.
             for (Map.Entry<Long, String> e : mmapAddrToPath.entrySet()) {
                 final String remapped = remapKey(e.getValue(), fromPath, toPath);
                 if (remapped != null) {
                     e.setValue(remapped);
                 }
             }
-            // Same staleness for fd-keyed accounting: fdToPath is populated at OPEN, so an fd held across
-            // a rename keeps attributing its write()/fsync()/fdatasync() to the old name. WalWriter renames
-            // a WAL column file with its column memory (and fd) still open, so without this every barrier
-            // the renamed column pays lands on a path that no longer exists.
+            // The same for fd-keyed accounting: fdToPath is populated at open, so an fd held across a rename would keep
+            // attributing its write()/fsync()/fdatasync() to the old name.
             for (Map.Entry<Long, String> e : fdToPath.entrySet()) {
                 final String remapped = remapKey(e.getValue(), fromPath, toPath);
                 if (remapped != null) {
@@ -689,10 +743,20 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         trackedFiles.removeIf(key -> matchesRemovedPath(key, path, includeDescendants));
     }
 
+    // Drops the model state of every path at or under root that is no longer on disk. The keys come from every
+    // per-path map, not only trackedFiles: a rollback can put back a frozen entry for a path that is not tracked.
     private void evictMissingDurability(String root) {
-        final String prefix = root + File.separator;
-        for (String key : new ArrayList<>(trackedFiles)) {
-            if ((key.equals(root) || key.startsWith(prefix)) && !Files.exists(Paths.get(key))) {
+        final Set<String> keys = new HashSet<>(trackedFiles);
+        keys.addAll(durableContent.keySet());
+        keys.addAll(deviceCacheContent.keySet());
+        keys.addAll(durableSize.keySet());
+        keys.addAll(writtenDataEnd.keySet());
+        keys.addAll(syncedDataEnd.keySet());
+        keys.addAll(journaledDataEnd.keySet());
+        keys.addAll(pteFlushed.keySet());
+        keys.addAll(tornTails.keySet());
+        for (String key : keys) {
+            if (isUnder(key, root) && !Files.exists(Paths.get(key))) {
                 evictDurability(key, false);
             }
         }
@@ -731,60 +795,93 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     @Override
     public void msync(long addr, long len, boolean async) {
+        assertMappingNotStale(addr, async ? "msync-async" : "msync");
+        if (!async && isNeutered()) {
+            return;
+        }
         super.msync(addr, len, async);
         String p = pathForAddr(addr);
         if (p != null) {
             track(p);
-            // msync pushes this mapping's dirty pages to the page cache -> sync_file_range can now see them.
-            // The msync'd range declares those bytes WRITTEN. Paged memory (MemoryPMARImpl) maps one page at
-            // a non-zero file offset and msyncs a PAGE-RELATIVE len, so the FILE-ABSOLUTE written end is
-            // mapFileOffset(addr)+len -- advance the written-data end to that (regardless of async).
+            // msync marks the file pteFlushed (see the class comment) and declares the msync'd range written. Paged
+            // memory (MemoryPMARImpl) msyncs a page-relative len at a non-zero file offset, so the file-absolute
+            // written end is mapFileOffset(addr)+len.
             final long fileEnd = mapFileOffset(addr) + len;
             pteFlushed.put(p, Boolean.TRUE);
             advanceWrittenDataEnd(p, fileEnd);
             if (!async) {
-                // MS_SYNC is a range-fsync: JOURNAL COMMIT + data-at-device + DEVICE FLUSH. Snapshot current
-                // bytes, advance the at-device end to this file-absolute synced end (capped at the written
-                // end), commit F's metadata to the journal (and all files' if modelSharedJournal), then flush
-                // -> promotes the journaled extent of EVERY tracked file to durable.
-                deviceCacheContent.put(p, readCurrent(p));
+                // MS_SYNC is a range fsync: journal commit, data-at-device and device flush. Write back the current
+                // bytes of the msync'd range only (dirty pages elsewhere in the file stay behind), advance the
+                // at-device end to this synced end (capped at the written end), commit F's metadata to the journal (all
+                // files' if modelSharedJournal), then flush, which promotes the journaled extent of every tracked file
+                // to durable.
+                deviceCacheContent.put(p, withRangeWrittenBack(deviceCacheContent.get(p), readCurrent(p), fileEnd - len, fileEnd));
                 advanceSyncedDataEnd(p, Math.min(fileEnd, writtenDataEnd.getOrDefault(p, 0L)));
                 journalCommit(p);
                 doFlush();
             }
-            // MS_ASYNC: only dirties the page cache toward writeback. NOT data-at-device, NOT a journal
-            // commit -> neither syncedDataEnd nor journaledDataEnd advances here.
+            // MS_ASYNC only dirties the page cache toward writeback. It is neither data-at-device nor a journal commit,
+            // so neither syncedDataEnd nor journaledDataEnd advances.
         }
         bumpDurabilityOp(async ? "msync-async" : "msync", p);
     }
 
     @Override
     public int syncFileRange(long fd, long offset, long nbytes, int flags) {
+        assertNotStale(fd, "syncFileRange");
         int rc = super.syncFileRange(fd, offset, nbytes, flags);
         String p = fdToPath.get(fd);
         if (p != null) {
             track(p);
             if (Boolean.TRUE.equals(pteFlushed.get(p))) {
-                // DATA-AT-DEVICE only. sync_file_range is fd-relative, so offset+nbytes is ALREADY
-                // file-absolute (the product passes pageStart+inPageLen). The drained range is written data
-                // (the product only drains what it wrote), so advance BOTH the written and the at-device end
-                // to offset+nbytes. NO device flush and -- crucially -- NOT a journal commit: sync_file_range
-                // "does not write out the file's metadata" and "does not sync out [the block allocator] to
-                // disk", so journaledDataEnd does NOT advance. The within-page bytes it drains are durable
-                // ONLY once a later journal commit (this file's own, or a shared-journal commit) journals the
-                // extent conversion.
-                deviceCacheContent.put(p, readCurrent(p));
+                // Data-at-device only. sync_file_range is fd-relative, so offset+nbytes is already file-absolute (the
+                // product passes pageStart+inPageLen), and the product drains only what it wrote, so advance both the
+                // written and the at-device end to offset+nbytes. There is no device flush and no journal commit:
+                // sync_file_range "does not write out the file's metadata" and does not sync out the block allocator,
+                // so journaledDataEnd stays. The drained bytes become durable only once a later journal commit (this
+                // file's own, or a shared-journal commit) journals the extent conversion.
+                deviceCacheContent.put(p, withRangeWrittenBack(deviceCacheContent.get(p), readCurrent(p), offset, offset + nbytes));
                 advanceWrittenDataEnd(p, offset + nbytes);
                 advanceSyncedDataEnd(p, offset + nbytes);
             }
-            // If NOT pteFlushed: NO-OP. sync_file_range cannot see mmap-dirty pages the kernel does not yet
-            // track as dirty in the page cache (they were never msync'd / write()-n). This is the real footgun.
+            // Not pteFlushed: no-op, a deliberate under-statement (see the class comment): Linux would write the
+            // mmap-dirty pages back, but the product never relies on sync_file_range for durability.
         }
         return rc;
     }
 
+    @Override
+    public boolean allocate(long fd, long size) {
+        assertNotStale(fd, "allocate");
+        final long lengthBefore = trackedLength(fd);
+        final boolean ok = super.allocate(fd, size);
+        shrinkAfterAllocate(fd, lengthBefore);
+        return ok;
+    }
+
+    @Override
+    public boolean allocateRange(long fd, long offset, long size) {
+        assertNotStale(fd, "allocateRange");
+        final long lengthBefore = trackedLength(fd);
+        final boolean ok = super.allocateRange(fd, offset, size);
+        shrinkAfterAllocate(fd, lengthBefore);
+        return ok;
+    }
+
+    @Override
+    public boolean truncate(long fd, long size) {
+        assertNotStale(fd, "truncate");
+        countKillPoint();
+        final boolean ok = super.truncate(fd, size);
+        final String p = fdToPath.get(fd);
+        if (ok && p != null) {
+            shrinkTo(p, size);
+        }
+        return ok;
+    }
+
     /**
-     * Clear all tracked fd→path and durable-size/content state (for reuse across crash/retry cycles).
+     * Clears all tracked fd->path and durable-size/content state, for reuse across crash/retry cycles.
      */
     public void reset() {
         fdToPath.clear();
@@ -810,13 +907,26 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         pendingRenameTargetImages.clear();
         durabilityOps = 0;
         crashAtOp = -1;
-        // NB: modelSharedJournal is a configured policy, NOT per-cycle state -> intentionally NOT reset here.
+        killImageDirectories.clear();
+        killImageFiles.clear();
+        killAtPoint = -1;
+        killImageTaken = false;
+        killPoints = 0;
+        killRoot = null;
+        clearPowerLoss();
+        clearStaleHandles();
+        neuteredOps = 0;
+        // modelSharedJournal and the neuter predicate are configured policies, not per-cycle state, so they are not
+        // reset here.
     }
 
     /**
-     * Record current sizes (and content) of all files under dbRoot as durable ("prior committed, log-journaled").
+     * Records the current sizes and content of all files under dbRoot as durable (prior committed state). A pending
+     * {@link #powerLoss} mark is dropped: the baseline is the new durable state.
      */
     public void markDurableBaseline(CharSequence dbRoot) {
+        clearPowerLoss();
+        clearStaleHandles();
         final Path root = Paths.get(dbRoot.toString()).toAbsolutePath();
         namespaceRoots.add(root.toString());
         snapshotNamespaceTree(root);
@@ -827,8 +937,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             } catch (java.io.IOException e) {
                 throw new java.io.UncheckedIOException(e);
             }
-            // Mirror into the content model: whatever is on disk now is durable, is the device-cache state,
-            // and is FULLY journaled (prior committed, log-journaled state) -> both watermarks at full length.
+            // Whatever is on disk now is durable, is the device-cache state, and is fully journaled, so both watermarks
+            // sit at the full length.
             byte[] now = readCurrent(key);
             track(key);
             deviceCacheContent.put(key, now);
@@ -840,14 +950,13 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Mark ONE file's current content as fully durable (device-written AND journaled), leaving every other
+     * Marks one file's current content as fully durable (written to the device and journaled), leaving every other
      * file's durability state untouched. The per-file counterpart of {@link #markDurableBaseline}.
      * <p>
-     * This models the KERNEL independently writing back a file's dirty mmap pages before the crash --
-     * something that can happen to any mapped file at any time, with no {@code msync} from QuestDB. It is
-     * the only way to construct the "commit pointer survived AHEAD of the column data it exposes" state now
-     * that {@code _txn}/{@code _cv} are correctly lazy under ADAPTIVE: their per-apply flush used to create
-     * that skew on every commit, which made it reachable by accident rather than by intent.
+     * This models the kernel writing back a file's dirty mmap pages before the crash, which can happen to any
+     * mapped file at any time without an {@code msync} from QuestDB. Since {@code _txn} and {@code _cv} are lazy
+     * under adaptive mode, it is the way to construct a commit pointer that survived ahead of the column data it
+     * exposes.
      *
      * @param absPath absolute path of the file to promote to durable; a no-op if it does not exist
      */
@@ -869,10 +978,46 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         writtenDataEnd.put(key, (long) now.length);
         syncedDataEnd.put(key, (long) now.length);
         journaledDataEnd.put(key, (long) now.length);
+        if (powerLossMarked) {
+            // The test states what the power loss left, so it counts even when called after the mark.
+            powerLossContent.put(key, now);
+            powerLossSize.put(key, (long) now.length);
+        }
     }
 
     /**
-     * Zero [offset, offset+len) of the given file when crash() runs (deterministic torn-write injection).
+     * Marks the power loss: the durable state of every file and directory entry is frozen at this instant, and the
+     * next {@link #crash} rolls the files back to it, so what the engine or the test does afterwards (closing
+     * writers, releasing pools, a close-time save point, the catch path of a swallowed {@link CrashSimulationError},
+     * recovery work) adds no durability. An armed crash calls it when it fires. The first mark stands until
+     * {@link #crash}, {@link #markDurableBaseline} or {@link #reset} consumes it; marking again before that is a
+     * no-op, so a helper can mark unconditionally after an armed crash fired.
+     */
+    public void powerLoss() {
+        // A new power loss starts a new cycle: whatever a handle from the last rollback does after this mark is
+        // rolled back by the next crash() and needs no fence.
+        clearStaleHandles();
+        if (powerLossMarked) {
+            return;
+        }
+        powerLossMarked = true;
+        powerLossContent.putAll(durableContent);
+        powerLossSize.putAll(durableSize);
+        powerLossDirectories.addAll(durableDirectories);
+        powerLossFileEntries.addAll(durableFileEntries);
+        powerLossNamespaceImages.putAll(namespaceFileImages);
+        powerLossRenameTargetImages.putAll(pendingRenameTargetImages);
+    }
+
+    /**
+     * True between a {@link #powerLoss} mark (or an armed crash firing) and the {@link #crash} that consumes it.
+     */
+    public boolean isPowerLossMarked() {
+        return powerLossMarked;
+    }
+
+    /**
+     * Zeroes [offset, offset+len) of the given file when crash() runs (deterministic torn-write injection).
      */
     public void tornTail(LPSZ name, long offset, long len) {
         tornTails.computeIfAbsent(toAbsPath(name), k -> new ArrayList<>())
@@ -880,28 +1025,60 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Roll every file under {@code dbRoot} back to its durable state, then apply any torn-tail ranges.
+     * Rolls every file under {@code dbRoot} back to its durable state, then applies any torn-tail ranges.
      * <p>
-     * A file with a {@code durableContent} snapshot is restored to those exact bytes (content rollback,
-     * which also fixes the durable length); this GENERALIZES the size-only rollback. A file the content
-     * model never tracked falls back to truncation at its last-durable size.
+     * A file with a {@code durableContent} snapshot is restored to those exact bytes, which also fixes the durable
+     * length. A file the content model never tracked is truncated to its last durable size.
+     * <p>
+     * The durable state is the one frozen by {@link #powerLoss}, which must be marked first. Under {@code dbRoot}
+     * the mark is consumed and the model restarts from the rolled-back files: they are durable, and nothing is left
+     * in the page or device cache. Files outside {@code dbRoot} keep their live state (another engine's root, which
+     * this power loss did not hit).
+     * <p>
+     * When a kill image was taken ({@link #armKillAt}, {@link #takeKillImage}), the tree under the kill's root is
+     * restored to that image instead, and the image is consumed.
      */
     public void crash(CharSequence dbRoot) {
-        restoreNamespace(Paths.get(dbRoot.toString()).toAbsolutePath());
+        if (killImageTaken) {
+            clearPowerLoss();
+            restoreKillImage();
+            // A path the kill rollback deleted starts empty if the engine creates it again, as after a power loss:
+            // its durable bytes must not come back at a later power loss in the same facade lifetime. The page cache
+            // survives a kill, so the pre-kill durable state of what stays is the right durable state and no new
+            // baseline is taken.
+            evictMissingDurability(killRoot);
+            return;
+        }
+        if (!powerLossMarked) {
+            throw new IllegalStateException("crash() without a power loss: call powerLoss() at the instant of the "
+                    + "power loss, before releasing the engine's handles (their close flushes)");
+        }
+        final Path root = Paths.get(dbRoot.toString()).toAbsolutePath();
+        restorePowerLossState(root.toString());
+        clearPowerLoss();
+        restoreNamespace(root);
         walk(dbRoot, p -> {
             String key = p.toAbsolutePath().toString();
             byte[] durable = durableContent.get(key);
             try (FileChannel ch = FileChannel.open(p, StandardOpenOption.WRITE)) {
                 if (durable != null) {
-                    // Content rollback: overwrite the prefix with durable bytes, then truncate to its length.
+                    // Content rollback: overwrite the prefix with durable bytes, then set the durable length. A
+                    // whole-file sync makes the file size durable even where the content model cannot tell written zero
+                    // bytes from unwritten space (bytes stored by native code past the last non-zero one): the file
+                    // keeps that size, unless it was truncated below it since, and what lies past the durable bytes
+                    // reads as zero.
+                    final long length = Math.max(durable.length, Math.min(durableSize.getOrDefault(key, 0L), ch.size()));
                     if (durable.length > 0) {
                         ch.write(ByteBuffer.wrap(durable), 0);
                     }
-                    if (ch.size() > durable.length) {
-                        ch.truncate(durable.length);
+                    if (length > durable.length) {
+                        ch.write(ByteBuffer.allocate((int) (length - durable.length)), durable.length);
+                    }
+                    if (ch.size() > length) {
+                        ch.truncate(length);
                     }
                 } else {
-                    // No content snapshot for this file: original size-only rollback.
+                    // No content snapshot for this file: size-only rollback.
                     Long durableSz = durableSize.get(key);
                     if (durableSz != null) {
                         if (ch.size() > durableSz) {
@@ -933,26 +1110,76 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             }
         });
         pendingRenameTargetImages.clear();
+        // A path the rollback deleted starts empty if the engine creates it again: no durable bytes, device cache or
+        // watermarks of the deleted file survive.
+        evictMissingDurability(root.toString());
+        // A rebooted machine reads back exactly the durable bytes: no page-cache or device-cache content survives,
+        // so a later flush cannot promote bytes this power loss destroyed.
+        markDurableBaseline(dbRoot);
+        // A rebooted machine has no handle from before the power loss either. Every fd and mapping still open under a
+        // table directory of this root is stale from here: a mutation through it would change files recovery reads,
+        // and the baseline above has already counted it as durable. Engine-root files (tables.d, the id generator)
+        // are held by singletons that outlive the simulated restart and are exempt, as in noCacheOpenFdsSnapshot().
+        markStaleHandles(root.toString());
     }
 
     /**
-     * Arm a simulated crash: throw CrashSimulationError on the n-th durability op (fsync/fsyncAndClose/msync).
+     * Arms a simulated crash: throws CrashSimulationError on the n-th durability op (fsync/fsyncAndClose/msync).
      */
     public void armCrashAt(int n) {
         this.crashAtOp = n;
     }
 
     /**
-     * True while a crash armed by {@link #armCrashAt(int)} is still pending — i.e. the target durability op
-     * has NOT yet been reached. The arm is one-shot: reaching it resets the arm (back to disarmed), so after
-     * a commit phase {@code !isCrashArmed()} proves the armed op actually fired, EVEN when the resulting
-     * {@link CrashSimulationError} was best-effort-swallowed by the engine (a durable-epoch advance after an
-     * already-committed convert) rather than propagated or turned into a table suspend. The sweep uses this
-     * to distinguish "the crash fired but was safely absorbed" from a genuine op-count drift (arm never
-     * consumed).
+     * True while a crash armed by {@link #armCrashAt(int)} is pending, that is, the target durability op has not
+     * been reached. The arm is one-shot: reaching the op disarms it. After a commit phase, {@code !isCrashArmed()}
+     * shows the armed op fired, even when the engine swallowed the {@link CrashSimulationError} as best-effort
+     * (a durable-epoch advance after an already committed convert) instead of propagating it or suspending the
+     * table. The sweep uses it to tell an absorbed crash from op-count drift (an arm never consumed).
      */
     public boolean isCrashArmed() {
         return crashAtOp > 0;
+    }
+
+    /**
+     * Arm a process kill just before the {@code n}-th kill point (counted by {@link #killPointCount()}, so
+     * pass {@code killPointCount() + k} for the k-th point from now). At that point the bytes of every file
+     * and the directory tree under {@code dbRoot} become the kill image, and the next {@link #crash}
+     * restores it. The calling code is not interrupted: a killed process does nothing after the kill, and
+     * restoring the image discards whatever the engine does after it. {@code n < 1} disarms.
+     */
+    public void armKillAt(int n, CharSequence dbRoot) {
+        killAtPoint = n;
+        killRoot = dbRoot != null ? Paths.get(dbRoot.toString()).toAbsolutePath().toString() : null;
+        killImageTaken = false;
+        killImageFiles.clear();
+        killImageDirectories.clear();
+    }
+
+    /**
+     * True once an armed kill point was reached, or {@link #takeKillImage} ran, and the image has not yet
+     * been restored by {@link #crash}.
+     */
+    public boolean isKillImageTaken() {
+        return killImageTaken;
+    }
+
+    /**
+     * Number of kill points ({@code close}, {@code munmap}, {@code truncate}, {@code rename},
+     * {@code removeQuiet}, {@code rmdir}) observed so far.
+     */
+    public int killPointCount() {
+        return killPoints;
+    }
+
+    /**
+     * Kill the process now: the bytes of every file and the directory tree under {@code dbRoot} become the
+     * image the next {@link #crash} restores. Disarms a pending {@link #armKillAt}.
+     */
+    public void takeKillImage(CharSequence dbRoot) {
+        killAtPoint = -1;
+        killRoot = Paths.get(dbRoot.toString()).toAbsolutePath().toString();
+        captureKillImage();
     }
 
     /**
@@ -963,33 +1190,53 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * One line per counted durability op — {@code <n> <kind> <db-root-relative path>} — in the order they
-     * were observed. A pinned op count that drifts is otherwise a bare number with no story: this says WHICH
-     * op appeared or vanished, so the reviewer can decide whether the change moved a barrier or removed one.
-     * Cleared by {@link #reset()}; index 0 is the first op of the process, not of any one commit phase.
+     * One line per counted durability op, {@code <n> <kind> <db-root-relative path>}, in the order observed, so a
+     * drifting pinned op count names the op that appeared or disappeared. Cleared by {@link #reset()}; index 0 is
+     * the first op of the process, not of any one commit phase.
      */
     public java.util.List<String> durabilityOpLog() {
         return durabilityOpLog;
     }
 
     /**
-     * Snapshot of the NON-cached fds ({@code openRWNoCache}/{@code openRONoCache}) currently open. These
-     * bypass the path-keyed durability tracking (so they are recorded here, NOT in {@code fdToPath}); the
-     * sweep driver uses this to model process-death fd reclamation — a simulated crash on a live JVM cannot
-     * actually kill the process, so a NON-cached fd left open by an fsync-interrupted operation lingers
-     * where a real power loss would have the OS reclaim it. The driver closes the per-cycle delta.
+     * True while a neuter predicate is set ({@link #neuterFlushesAt}).
+     */
+    public boolean isNeutering() {
+        return neuterPredicate != null;
+    }
+
+    /**
+     * The negative control of a sweep: while {@code predicate} is set, a durability op ({@code fdatasync},
+     * {@code fsync}, {@code fsyncAndClose}, {@code syncfs}, {@code msync(MS_SYNC)}) whose first
+     * {@code io.questdb.cairo} frame matches returns before it touches the model, exactly as a removed flush would:
+     * no device-cache, journal or durable promotion, no crash point, no real syscall. It is counted in
+     * {@link #neuteredOpCount()} instead, so a workload in which the class takes no flush is visible. {@code null}
+     * turns the control off. The stack is walked only while a predicate is set.
+     */
+    public void neuterFlushesAt(Predicate<StackWalker.StackFrame> predicate) {
+        this.neuterPredicate = predicate;
+    }
+
+    /**
+     * Number of durability ops {@link #neuterFlushesAt} has removed so far.
+     */
+    public int neuteredOpCount() {
+        return neuteredOps;
+    }
+
+    /**
+     * Snapshot of the non-cached fds ({@code openRWNoCache}/{@code openRONoCache}) currently open. They bypass the
+     * path-keyed durability tracking, so they are recorded here, not in {@code fdToPath}. The sweep driver uses this
+     * to model process-death fd reclamation: a simulated crash on a live JVM leaves a non-cached fd open where a
+     * real power loss would have the OS reclaim it. The driver closes the per-cycle delta.
      */
     public java.util.List<Long> noCacheOpenFdsSnapshot() {
-        // Files.openRW/openRO wrappers are currently non-cached at the Files layer even when they arrive
-        // through the ordinary facade methods, so process-death simulation must be able to reclaim those
-        // too — but ONLY the ones a per-table durability op could have leaked. SCOPE the union to files
-        // living UNDER a table directory: engine-root files (the tables.d name registry, the table-id
-        // generator, config) sit directly in the db root and are owned by long-lived engine singletons
-        // that legitimately hold them open across the whole sweep and are NOT released by
-        // releaseEngineHandles(). Force-closing one of those is not process-death modelling — it leaves
-        // the live owner holding a dead fd, and the owner's next reopen double-closes it
-        // ("fd <n> is already closed!"). This mirrors the scoping invariant that
-        // {@link #reclaimCachedFdsUnder(String)} already documents.
+        // Files.openRW/openRO are non-cached at the Files layer even through the ordinary facade methods, so the
+        // snapshot includes those too, but only files under a table directory. Engine-root files (the tables.d name
+        // registry, the table-id generator, config) sit in the db root, are held open by long-lived engine singletons
+        // across the sweep, and are not released by releaseEngineHandles(). Force-closing one would leave its owner
+        // holding a dead fd that its next reopen double-closes ("fd <n> is already closed!"). The same scoping
+        // applies in {@link #reclaimCachedFdsUnder(String)}.
         final LinkedHashSet<Long> snapshot = new LinkedHashSet<>(noCacheOpenFds);
         if (dbRootPrefix != null) {
             for (Map.Entry<Long, String> e : fdToPath.entrySet()) {
@@ -1005,26 +1252,23 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Tell the facade which directory is the engine's db root, so {@link #noCacheOpenFdsSnapshot()} can
-     * tell a per-table fd (reclaimable) from an engine-root fd owned by a long-lived singleton (not).
-     * Until this is set the snapshot reports only the explicitly non-cached fds — the conservative
-     * direction: under-reclaiming can at worst leave a tracked fd behind, whereas over-reclaiming
-     * corrupts a live owner's state.
+     * Tells the facade which directory is the engine's db root, so {@link #noCacheOpenFdsSnapshot()} can tell a
+     * per-table fd (reclaimable) from an engine-root fd owned by a long-lived singleton. Until it is set, the
+     * snapshot reports only the explicitly non-cached fds: under-reclaiming at worst leaves a tracked fd behind,
+     * whereas over-reclaiming corrupts a live owner's state.
      */
     public void setDbRoot(CharSequence dbRoot) {
         this.dbRootPrefix = Paths.get(dbRoot.toString()).toAbsolutePath() + File.separator;
     }
 
     /**
-     * Force-close every open CACHED fd ({@code openRW}/{@code openRO}/{@code openCleanRW}, tracked in
-     * {@code fdToPath}) whose path contains {@code dirMarker}, returning the count closed. Companion to
+     * Force-closes every open cached fd ({@code openRW}/{@code openRO}/{@code openCleanRW}, tracked in
+     * {@code fdToPath}) whose path contains {@code dirMarker}, and returns the count closed. Companion to
      * {@link #noCacheOpenFdsSnapshot()}: a simulated crash can also leave a cached fd open when it unwinds an
-     * operation (e.g. a rebase clone's partition copy or an interrupted writer close) mid-flight, and on a
-     * live JVM that fd lingers where process death would reclaim it. Scoping to a table-dir marker is the
-     * safety net a blind fd-delta lacks: engine-root files (the {@code tables.d} name registry, config, id
-     * generator) live at the db root and never contain a table-dir marker, so this cannot touch a live
-     * registry/config fd — only fds under a (by call time, dropped) table dir. Routes through
-     * {@link #forceClose(long)} (proper cached close, robust to an already-gone fd).
+     * operation mid-flight (a rebase clone's partition copy, an interrupted writer close), and on a live JVM that fd
+     * lingers where process death would reclaim it. Engine-root files (the {@code tables.d} name registry, config,
+     * id generator) never contain a table-dir marker, so this touches only fds under a dropped table directory.
+     * Routes through {@link #forceClose(long)}.
      */
     public int reclaimCachedFdsUnder(String dirMarker) {
         int closed = 0;
@@ -1039,10 +1283,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Reclaim a non-cached fd (used by the sweep driver to model process-death fd closure). Robust to a
-     * stale bookkeeping entry: a non-cached fd can leave the fd cache via a path this facade does not
-     * intercept ({@code detach}, etc.), so the underlying close may report the fd as already gone — that is
-     * fine here (it means the OS descriptor is already reclaimed). Tracking is dropped regardless.
+     * Reclaims a non-cached fd, modelling process-death fd closure. A non-cached fd can leave the fd cache via a
+     * path this facade does not intercept ({@code detach} and others), so the underlying close may report the fd as
+     * already gone, which means the OS descriptor is already reclaimed. Tracking is dropped regardless.
      */
     public void forceClose(long fd) {
         final String path = fdToPath.get(fd);
@@ -1056,15 +1299,108 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Fail LOUDLY and locally if a force-closed fd is used again.
+     * Refuses a mutation through an fd that was open under a table directory when {@link #crash} rolled the root
+     * back. The rollback is the reboot: the engine's handles from before the power loss do not exist on the rebooted
+     * machine, and a flush, write or truncate through one here changes the files recovery reads after the baseline
+     * counted them as durable. The test must release its writers before {@code crash()} (see
+     * {@code AbstractCrashConsistencyTest.powerLossDroppingPending}); {@code close} and {@code munmap} stay allowed.
+     */
+    private void assertNotStale(long fd, String op) {
+        if (!staleFds.isEmpty() && staleFds.contains(fd)) {
+            throw new IllegalStateException("a handle opened before the power loss mutates "
+                    + relativePath(fdToPath.get(fd)) + " after it [op=" + op + ", fd=" + fd
+                    + "]: release writers before crash()");
+        }
+    }
+
+    /**
+     * {@link #assertNotStale(long, String)} for a mapping: the base of the mapping {@code addr} falls in.
+     */
+    private void assertMappingNotStale(long addr, String op) {
+        if (staleMappings.isEmpty()) {
+            return;
+        }
+        final long base = mappingBaseOf(addr);
+        if (base != 0 && staleMappings.contains(base)) {
+            throw new IllegalStateException("a handle opened before the power loss mutates "
+                    + relativePath(mmapAddrToPath.get(base)) + " after it [op=" + op + ", addr=" + addr
+                    + "]: release writers before crash()");
+        }
+    }
+
+    private void clearStaleHandles() {
+        staleFds.clear();
+        staleMappings.clear();
+    }
+
+    /**
+     * True, and counted, when a neuter predicate is set and matches the first {@code io.questdb.cairo} frame of the
+     * caller: the durability op is removed.
+     */
+    private boolean isNeutered() {
+        final Predicate<StackWalker.StackFrame> predicate = neuterPredicate;
+        if (predicate == null) {
+            return false;
+        }
+        final StackWalker.StackFrame frame = StackWalker.getInstance().walk(frames -> frames
+                .filter(f -> f.getClassName().startsWith("io.questdb.cairo."))
+                .findFirst()
+                .orElse(null));
+        if (frame != null && predicate.test(frame)) {
+            neuteredOps++;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Base address of the live mapping {@code addr} falls in, or 0.
+     */
+    private long mappingBaseOf(long addr) {
+        if (mmapAddrRange.containsKey(addr)) {
+            return addr;
+        }
+        for (Map.Entry<Long, long[]> e : mmapAddrRange.entrySet()) {
+            final long base = e.getKey();
+            if (addr >= base && addr < e.getValue()[0]) {
+                return base;
+            }
+        }
+        return 0L;
+    }
+
+    /**
+     * Records every open fd and live mapping under a table directory of {@code rootKey} as stale (see
+     * {@link #assertNotStale}). A file directly under the root, such as {@code tables.d}, is exempt; a directory fd
+     * of a table directory is not.
+     */
+    private void markStaleHandles(String rootKey) {
+        final String prefix = rootKey + File.separator;
+        for (Map.Entry<Long, String> e : fdToPath.entrySet()) {
+            if (isUnderTableDirectory(e.getValue(), prefix)) {
+                staleFds.add(e.getKey());
+            }
+        }
+        for (Map.Entry<Long, String> e : mmapAddrToPath.entrySet()) {
+            if (isUnderTableDirectory(e.getValue(), prefix)) {
+                staleMappings.add(e.getKey());
+            }
+        }
+    }
+
+    private static boolean isUnderTableDirectory(String path, String rootPrefix) {
+        return path != null
+                && path.startsWith(rootPrefix)
+                && (path.indexOf(File.separatorChar, rootPrefix.length()) >= 0 || Files.isDirectory(Paths.get(path)));
+    }
+
+    /**
+     * Fails at the point of use if a force-closed fd is used again.
      * <p>
-     * {@link #forceClose(long)} exists to model the OS reclaiming fds a simulated crash stranded. If it
-     * ever closes an fd a LIVE object still owns, the owner's next operation runs on a dead descriptor —
-     * and the only symptom is an {@code "Invalid fd=..., not found in cache"} assertion raised deep inside
-     * {@code FdCache}, from whatever unrelated code touches it next, potentially thousands of crash points
-     * later. That is what made the writer-release ordering bug in
-     * {@code AbstractAdaptiveCrashTest#releaseEngineHandles} so expensive to attribute. Naming the reclaim
-     * at the point of misuse turns that into a one-line diagnosis.
+     * {@link #forceClose(long)} models the OS reclaiming fds a simulated crash stranded. If it closes an fd a live
+     * object still owns, the owner's next operation runs on a dead descriptor, and otherwise the only symptom is an
+     * {@code "Invalid fd=..., not found in cache"} assertion deep in {@code FdCache}, from whatever unrelated code
+     * touches it next, possibly thousands of crash points later.
      */
     private void assertNotForceClosed(long fd, String op) {
         final String path = forceClosedFds.get(fd);
@@ -1077,8 +1413,6 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
-    // === content-model test introspection (used by CrashModelSelfCheckTest) ===
-
     /**
      * True if the content model has observed an msync on this file (so sync_file_range can see its pages).
      */
@@ -1087,10 +1421,19 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * The bytes the content model currently considers durable for this file (null if untracked).
+     * The bytes the content model considers durable for this file (null if untracked). After a {@link #powerLoss}
+     * mark, the bytes frozen by the mark, which {@link #crash} restores: a flush after the mark does not count.
      */
     public byte[] durableContentOf(CharSequence absPath) {
-        return durableContent.get(Paths.get(absPath.toString()).toAbsolutePath().toString());
+        final String key = Paths.get(absPath.toString()).toAbsolutePath().toString();
+        return powerLossMarked ? powerLossContent.get(key) : durableContent.get(key);
+    }
+
+    /**
+     * The path of an open file descriptor (null if not open through this facade).
+     */
+    public String pathOf(long fd) {
+        return fdToPath.get(fd);
     }
 
     /**
@@ -1116,14 +1459,16 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * The written-data end (data-at-device) the model has recorded for this file (0 if untracked).
+     * The written-data end (data-at-device) the model has recorded for this file (0 if untracked). Live: after a
+     * {@link #powerLoss} mark it still counts later writebacks, which {@link #crash} discards.
      */
     public long syncedDataEndOf(CharSequence absPath) {
         return syncedDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
     }
 
     /**
-     * The journaled written-data end (metadata-journaled) the model has recorded (0 if untracked).
+     * The journaled written-data end (metadata-journaled) the model has recorded (0 if untracked). Live: after a
+     * {@link #powerLoss} mark it still counts later journal commits, which {@link #crash} discards.
      */
     public long journaledDataEndOf(CharSequence absPath) {
         return journaledDataEnd.getOrDefault(Paths.get(absPath.toString()).toAbsolutePath().toString(), 0L);
@@ -1142,12 +1487,134 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         return path;
     }
 
+    private void captureKillImage() {
+        killImageFiles.clear();
+        killImageDirectories.clear();
+        final Path root = Paths.get(killRoot);
+        if (Files.exists(root)) {
+            try (Stream<Path> stream = Files.walk(root)) {
+                stream.forEach(path -> {
+                    final String key = path.toAbsolutePath().toString();
+                    if (Files.isDirectory(path)) {
+                        killImageDirectories.add(key);
+                    } else if (Files.isRegularFile(path)) {
+                        killImageFiles.put(key, readCurrent(key));
+                    }
+                });
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        killImageTaken = true;
+    }
+
+    private void countKillPoint() {
+        killPoints++;
+        if (killAtPoint > 0 && killPoints >= killAtPoint) {
+            killAtPoint = -1;
+            captureKillImage();
+        }
+    }
+
+    private void restoreKillImage() {
+        final Path root = Paths.get(killRoot);
+        if (Files.exists(root)) {
+            try (Stream<Path> stream = Files.walk(root)) {
+                stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+                    final String key = path.toAbsolutePath().toString();
+                    final boolean inImage = Files.isDirectory(path) ? killImageDirectories.contains(key) : killImageFiles.containsKey(key);
+                    if (!inImage && !path.equals(root)) {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    }
+                });
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        try {
+            for (String dir : killImageDirectories) {
+                Files.createDirectories(Paths.get(dir));
+            }
+            for (Map.Entry<String, byte[]> e : killImageFiles.entrySet()) {
+                try (FileChannel ch = FileChannel.open(Paths.get(e.getKey()), StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+                    ch.write(ByteBuffer.wrap(e.getValue()), 0);
+                    ch.truncate(e.getValue().length);
+                    ch.force(true);
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        killImageFiles.clear();
+        killImageDirectories.clear();
+        killImageTaken = false;
+        pendingRenameTargetImages.clear();
+    }
+
     private void bumpDurabilityOp(String kind, String path) {
         durabilityOps++;
         durabilityOpLog.add(durabilityOps + " " + kind + " " + relativePath(path));
         if (crashAtOp > 0 && durabilityOps >= crashAtOp) {
             crashAtOp = -1; // one-shot
+            // The op completed; the machine stops right after it.
+            powerLoss();
             throw new CrashSimulationError(durabilityOps);
+        }
+    }
+
+    private void clearPowerLoss() {
+        powerLossMarked = false;
+        powerLossContent.clear();
+        powerLossSize.clear();
+        powerLossDirectories.clear();
+        powerLossFileEntries.clear();
+        powerLossNamespaceImages.clear();
+        powerLossRenameTargetImages.clear();
+    }
+
+    /**
+     * Puts the durable state frozen by {@link #powerLoss} back for every path under {@code rootKey}. A durable file
+     * removed or renamed away after the mark kept its bytes in {@code namespaceFileImages}; those images are kept, so
+     * the rollback can recreate the name.
+     */
+    private void restorePowerLossState(String rootKey) {
+        final Map<String, byte[]> laterImages = new HashMap<>(namespaceFileImages);
+        restoreUnder(durableContent, powerLossContent, rootKey);
+        restoreUnder(durableSize, powerLossSize, rootKey);
+        restoreUnder(durableDirectories, powerLossDirectories, rootKey);
+        restoreUnder(durableFileEntries, powerLossFileEntries, rootKey);
+        restoreUnder(namespaceFileImages, powerLossNamespaceImages, rootKey);
+        restoreUnder(pendingRenameTargetImages, powerLossRenameTargetImages, rootKey);
+        for (Map.Entry<String, byte[]> e : laterImages.entrySet()) {
+            if (isUnder(e.getKey(), rootKey)) {
+                namespaceFileImages.putIfAbsent(e.getKey(), e.getValue());
+            }
+        }
+    }
+
+    private static boolean isUnder(String key, String rootKey) {
+        return key.equals(rootKey) || key.startsWith(rootKey + File.separator);
+    }
+
+    private static <V> void restoreUnder(Map<String, V> live, Map<String, V> frozen, String rootKey) {
+        live.keySet().removeIf(key -> isUnder(key, rootKey));
+        for (Map.Entry<String, V> e : frozen.entrySet()) {
+            if (isUnder(e.getKey(), rootKey)) {
+                live.put(e.getKey(), e.getValue());
+            }
+        }
+    }
+
+    private static void restoreUnder(Set<String> live, Set<String> frozen, String rootKey) {
+        live.removeIf(key -> isUnder(key, rootKey));
+        for (String key : frozen) {
+            if (isUnder(key, rootKey)) {
+                live.add(key);
+            }
         }
     }
 
@@ -1158,13 +1625,11 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
-    // --- content-model helpers ---
-
     /**
-     * ONE device flush promotes EVERY tracked file's device-cache content to durable (the batching
-     * semantic), but each file's durable content is TRUNCATED to its {@code journaledDataEnd}: only bytes
-     * whose extent metadata was journaled actually belong to the file after a crash. Device-cache content
-     * beyond {@code journaledDataEnd} sits in non-journaled (still-unwritten) extents and is dropped.
+     * One device flush promotes every tracked file's device-cache content to durable, but each file's durable
+     * content is truncated to its {@code journaledDataEnd}: only bytes whose extent metadata was journaled belong to
+     * the file after a crash. Device-cache content beyond {@code journaledDataEnd} sits in unwritten extents and is
+     * dropped.
      */
     private void doFlush() {
         for (String f : trackedFiles) {
@@ -1176,7 +1641,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Advance F's WRITTEN-data end (real bytes written) to the max end seen; never moves backward.
+     * Advances F's written-data end (real bytes written) to the max end seen; it never moves backward.
      */
     private void advanceWrittenDataEnd(String path, long end) {
         long cur = writtenDataEnd.getOrDefault(path, 0L);
@@ -1186,7 +1651,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Advance F's at-device (synced) end to the max value seen; never moves backward.
+     * Advances F's at-device (synced) end to the max value seen; it never moves backward.
      */
     private void advanceSyncedDataEnd(String path, long end) {
         long cur = syncedDataEnd.getOrDefault(path, 0L);
@@ -1196,10 +1661,51 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * A JOURNAL COMMIT covering F. F's own pending extent conversions become journaled
-     * ({@code journaledDataEnd[F]=syncedDataEnd[F]}). If {@link #modelSharedJournal} (default ext4 jbd2 /
-     * xfs single filesystem-wide journal), the same commit ALSO journals every OTHER tracked file's pending
-     * conversions; under fast_commit (per-inode) it does not, so only F advances.
+     * F shrank to {@code size}: its blocks past {@code size} are freed. Drop them from the device image and pull
+     * every watermark back to the new end, so space F grows into again starts unwritten, as re-allocated space
+     * does. Otherwise a later ranged sync (which merges its range into the previous device image) or any flush
+     * would bring the freed bytes back. The durable image is left alone: until a journal commit covers the
+     * shrink, a crash restores F as it was.
+     */
+    private void shrinkTo(String path, long size) {
+        if (!trackedFiles.contains(path)) {
+            return;
+        }
+        final byte[] device = deviceCacheContent.get(path);
+        if (device != null && device.length > size) {
+            deviceCacheContent.put(path, truncateTo(device, size));
+        }
+        clampTo(writtenDataEnd, path, size);
+        clampTo(syncedDataEnd, path, size);
+        clampTo(journaledDataEnd, path, size);
+    }
+
+    /**
+     * allocate() never shrinks a file on Linux (posix_fallocate), but on macOS and Windows it ends in a truncate
+     * to the requested size, which shrinks a longer file.
+     */
+    private void shrinkAfterAllocate(long fd, long lengthBefore) {
+        if (lengthBefore > 0) {
+            final long lengthAfter = super.length(fd);
+            if (lengthAfter >= 0 && lengthAfter < lengthBefore) {
+                shrinkTo(fdToPath.get(fd), lengthAfter);
+            }
+        }
+    }
+
+    /**
+     * The current length of a file the content model tracks, or -1 for any other fd.
+     */
+    private long trackedLength(long fd) {
+        final String p = fdToPath.get(fd);
+        return p != null && trackedFiles.contains(p) ? super.length(fd) : -1L;
+    }
+
+    /**
+     * A journal commit covering F: F's pending extent conversions become journaled
+     * ({@code journaledDataEnd[F]=syncedDataEnd[F]}). With {@link #modelSharedJournal} (the single filesystem-wide
+     * journal of default ext4/jbd2 and xfs), the same commit also journals every other tracked file's pending
+     * conversions; under fast_commit (per-inode) only F advances.
      */
     private void journalCommit(String path) {
         journaledDataEnd.put(path, syncedDataEnd.getOrDefault(path, 0L));
@@ -1210,8 +1716,15 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
     }
 
+    private static void clampTo(Map<String, Long> watermark, String path, long end) {
+        final Long current = watermark.get(path);
+        if (current != null && current > end) {
+            watermark.put(path, end);
+        }
+    }
+
     /**
-     * Return a prefix of {@code src} of length {@code min(end, src.length)} (the journaled extent).
+     * Returns a prefix of {@code src} of length {@code min(end, src.length)} (the journaled extent).
      */
     private static byte[] truncateTo(byte[] src, long end) {
         int n = (int) Math.max(0L, Math.min(end, src.length));
@@ -1224,16 +1737,48 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Begin tracking a file in the content model; seeds device-cache and durable snapshots from disk on
-     * first sight.
+     * The device image after a ranged write-back ({@code msync(MS_SYNC)} of a mapping, {@code sync_file_range}):
+     * the bytes of {@code [lo, hi)} come from the current page-cache image, every other byte stays as the
+     * device held it, and a byte the device never held reads as zero (an unwritten extent). The image keeps
+     * the current file length. A whole-file snapshot here would treat pages written through an earlier,
+     * already unmapped mapping as written back, and hide a missing flush of every page released unsynced.
+     */
+    private static byte[] withRangeWrittenBack(byte[] device, byte[] current, long lo, long hi) {
+        final byte[] out = new byte[current.length];
+        if (device != null) {
+            System.arraycopy(device, 0, out, 0, Math.min(device.length, current.length));
+        }
+        final int end = (int) Math.min(hi, current.length);
+        final int start = (int) Math.max(0L, Math.min(lo, end));
+        System.arraycopy(current, start, out, start, end - start);
+        return out;
+    }
+
+    /**
+     * End of the last non-zero byte of {@code image}. A whole-file sync writes back every dirty page of the
+     * file, including stores made through a mapping that was never msync'd, which this facade cannot see. In
+     * fallocate'd space such a store is the only way a non-zero byte gets past the declared written end, so
+     * the sync counts it as written; zero bytes stay indistinguishable from unwritten space.
+     */
+    private static long nonZeroEnd(byte[] image) {
+        for (int i = image.length - 1; i >= 0; i--) {
+            if (image[i] != 0) {
+                return i + 1;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Begins tracking a file in the content model; seeds the device-cache and durable snapshots from disk on first
+     * sight.
      * <p>
-     * CRUCIAL for the metadata-journaling dimension: a file first seen MID-RUN holds only
-     * {@code posix_fallocate}'d (unwritten-extent) bytes, which read back as ZERO and whose written-data
-     * extent has NOT been journaled. So both {@code syncedDataEnd} and {@code journaledDataEnd} seed to 0 —
-     * NOT the (possibly fallocate-inflated) file length. The bytes a test then writes through the mapping
-     * become durable only once a journal commit advances {@code journaledDataEnd} over them. Prior,
-     * already-committed state is instead introduced via {@link #markDurableBaseline} (which seeds the
-     * watermarks to the full length), exactly as the size model distinguishes baseline from fresh growth.
+     * A file first seen mid-run holds only {@code posix_fallocate}'d (unwritten-extent) bytes, which read back as
+     * zero and whose written-data extent is not journaled, so both {@code syncedDataEnd} and
+     * {@code journaledDataEnd} start at 0, not at the possibly fallocated file length. Bytes a test then writes
+     * through the mapping become durable only once a journal commit advances {@code journaledDataEnd} over them.
+     * Prior committed state comes in through {@link #markDurableBaseline}, which seeds the watermarks to the full
+     * length.
      */
     private void track(String path) {
         if (trackedFiles.add(path)) {
@@ -1251,8 +1796,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
 
     /**
      * Records the destination of an fd-to-fd transfer, mirroring {@link #copy(LPSZ, LPSZ)}: after the
-     * transfer the real file length IS the written extent, because the caller truncated the destination
-     * before filling it.
+     * transfer the real file length is the written extent, because the caller truncated the destination before
+     * filling it.
      */
     private void trackTransferredData(long destFd, long transferred) {
         final String p = fdToPath.get(destFd);
@@ -1272,6 +1817,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             mmapAddrToPath.put(addr, p);
             track(p);
         }
+        if (staleFds.contains(fd)) {
+            staleMappings.add(addr);
+        }
     }
 
     private void remapMoved(long oldAddr, long newAddr, long newSize, long fileOffset, long fd) {
@@ -1288,6 +1836,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             mmapAddrToPath.put(newAddr, p);
             track(p);
         }
+        if (staleMappings.remove(oldAddr) || staleFds.contains(fd)) {
+            staleMappings.add(newAddr);
+        }
     }
 
     /**
@@ -1302,8 +1853,8 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
             long base = e.getKey();
             long end = e.getValue()[0];
             if (addr >= base && addr < end) {
-                // The msync addr may be > the mapping base (a sub-range); the written byte at addr maps to
-                // file offset fileOffset + (addr - base).
+                // The msync addr may be past the mapping base (a sub-range); the byte at addr maps to file offset
+                // fileOffset + (addr - base).
                 return e.getValue()[1] + (addr - base);
             }
         }
@@ -1329,18 +1880,15 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Read the file's CURRENT on-disk/page-cache bytes via a plain read(). MAP_SHARED mmap writes share the
-     * page cache with read(), so this observes bytes written into a mapping even before any msync.
+     * Reads the file's current page-cache bytes with a plain read(). MAP_SHARED mmap writes share the page cache
+     * with read(), so this observes bytes written into a mapping before any msync.
      * <p>
-     * A DIRECTORY fd is treated as having no snapshottable byte content (empty), not an error: {@code
-     * TableWriter.addColumn} legitimately {@code fsyncAndClose}'s the partition directory itself after
-     * creating new column files (the standard POSIX "fsync the parent to persist the new dentry" idiom,
-     * guarded only on Windows) — a plain {@code read()} of a directory throws {@code IOException: Is a
-     * directory}, which would otherwise surface as an uncaught {@code UncheckedIOException} and wrongly
-     * distress/suspend the table (the engine's own catch around that fsync only expects {@code
-     * CairoException}). This is harmless: {@link #walk} (used by {@link #crash} and {@link
-     * #markDurableBaseline}) already filters to {@code Files::isRegularFile}, so a directory's entry in the
-     * content-model maps is never consulted for rollback.
+     * A directory fd has no byte content to snapshot and reads as empty: {@code TableWriter.addColumn}
+     * {@code fsyncAndClose}s the partition directory after creating column files (fsync the parent to persist the
+     * new dentry), and a plain {@code read()} of a directory throws {@code IOException: Is a directory}, which would
+     * surface as an {@code UncheckedIOException} and suspend the table (the engine's catch around that fsync expects
+     * {@code CairoException}). {@link #walk}, used by {@link #crash} and {@link #markDurableBaseline}, keeps regular
+     * files only, so a directory's entry in the content-model maps is never used for rollback.
      */
     private static byte[] readCurrent(String path) {
         Path pth = Paths.get(path);

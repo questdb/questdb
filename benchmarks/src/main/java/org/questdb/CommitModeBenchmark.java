@@ -241,8 +241,6 @@ public class CommitModeBenchmark {
         writer.commit();
     }
 
-    // ---- helpers ----
-
     private static int parseCommitMode(String name) {
         return switch (name) {
             case "NOSYNC" -> CommitMode.NOSYNC;

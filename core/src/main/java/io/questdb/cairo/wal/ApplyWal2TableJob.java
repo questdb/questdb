@@ -41,6 +41,7 @@ import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
@@ -126,7 +127,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         metrics = engine.getMetrics().walMetrics();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
-        blockFileWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
+        blockFileWriter = new BlockFileWriter(config.getFilesFacade(), engine.getResolvedCommitMode());
     }
 
     @Override
@@ -607,17 +608,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         writer.commitSeqTxn();
                     }
 
-                    // Adaptive durable epoch (Plan 3B): right after the batch commits, while we still
-                    // hold the writer (single-threaded per table -> a consistent cut, no quiesce
-                    // needed), fire a durable epoch at most once per the configured cadence. This is
-                    // the main place the table's COLUMN state is forced durable under ADAPTIVE (a
-                    // graceful writer close also flushes a final epoch over any tail -- see
-                    // TableWriter.doClose); without it the lazily-applied columns are non-durable
-                    // between epochs, until the next epoch or a clean close.
-                    // Materialized-view / view block-file state (_mv.s / _mv / _view) is a separate
-                    // concern, independently policy-gated at each write site via
-                    // LocalDurabilityPolicy.resolveCommitMode (S5.1 Task 5).
-                    if (totalTransactionCount > 0) {
+                    // Right after the batch commits, while this thread holds the writer and so sees a
+                    // consistent cut, take a durable epoch at most once per configured cadence. Under ADAPTIVE
+                    // this is the main place the table's column state becomes durable; a graceful writer close
+                    // also takes a final epoch (TableWriter.doClose). Materialized view and view block files
+                    // (_mv.s, _mv, _view) are gated at each write site by LocalDurabilityPolicy.resolveCommitMode.
+                    // A run that applies nothing takes the idle save point WalPurgeJob asked for, under the same
+                    // gates: it puts both save point generations on the current state, so the purges free what
+                    // the older one kept.
+                    final boolean idleEpochRequested = seqTxnTracker.consumeIdleEpochRequest();
+                    if (totalTransactionCount > 0 || idleEpochRequested) {
                         maybeAdvanceDurableEpoch(tableToken, writer, rowsAdded);
                     }
 
@@ -699,16 +699,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
-     * Fire a durable epoch (Plan 3B) for {@code tableToken} iff commit mode is ADAPTIVE and either
-     * the configured per-table cadence interval has elapsed or the un-epoched applied-row backlog has
-     * reached the configured row cap, whichever comes first. Called from the apply loop right after a
-     * batch commits while the writer is still held. Best-effort: a (non-Error) failure here is logged
-     * and the epoch is skipped — the batch's rows are already durably committed in the WAL, so a
-     * missed epoch only means more WAL to roll forward on recovery, never data loss. Errors (OOM,
-     * writer distress) propagate to the apply loop's existing failure handling.
+     * Takes a durable epoch for {@code tableToken} under ADAPTIVE once the per-table cadence interval has
+     * elapsed or the rows applied since the last epoch reach the row cap, whichever comes first. The apply
+     * loop calls it right after a batch commits, while it holds the writer. An Exception is logged and the
+     * epoch skipped: the batch is already durable in the WAL, so a missed epoch means more WAL to replay on
+     * recovery, not data loss. An Error, such as OOM or writer distress, propagates to the apply loop. A data
+     * sync failure stops the engine in either case.
      *
-     * @param rowsApplied rows applied in this batch; fed to the per-table un-epoched-row backlog
-     *                    counter before the interval/row-cap gate is evaluated.
+     * @param rowsApplied rows applied in this batch, added to the backlog before the gate is evaluated
      */
     private void maybeAdvanceDurableEpoch(TableToken tableToken, TableWriter writer, long rowsApplied) {
         // The writer's own grade, not the raw global mode: a table that has not yet published its adaptive
@@ -716,51 +714,45 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (writer.getEffectiveCommitMode() != CommitMode.ADAPTIVE) {
             return;
         }
-        // S5: role-aware skip. On a replica the adaptive durable epoch is skipped: the replica keeps its
-        // applied state at NOSYNC grade, so skip the per-batch fsyncMaterializedState + durable epoch
-        // copies. Nothing re-downloads WAL a crash would need, so the replica must not keep an anchor to
-        // rewind to either: TableWriter.reconcileDurableEpochAnchor() swaps it for the enrolment marker
-        // before the batch, and startup then re-baselines at the live cut. Fail-safe: the OSS default is
-        // ALWAYS_ON; only a live Enterprise replica installs REPLICA_SKIP. One volatile read on the hot
-        // apply path.
+        // A replica takes no durable epoch: it keeps its applied state at NOSYNC grade, and since nothing
+        // re-downloads WAL a crash would need, it keeps no anchor to rewind to either.
+        // TableWriter.reconcileDurableEpochAnchor() makes the table durable and removes the anchor before the
+        // batch, and startup then leaves the table at its live cut. The OSS default policy is ALWAYS_ON; only a
+        // live Enterprise replica installs REPLICA_SKIP.
         if (!engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             return;
         }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        // An epoch owed after a change no WAL replay can redo is taken whatever the cadence.
+        final boolean epochOwed = tracker.isDurableEpochOwed();
         final long intervalMs = config.getAdaptiveEpochIntervalMs();
-        // A negative interval disables adaptive epochs entirely (operator opt-out / test isolation).
-        if (intervalMs < 0) {
+        // A negative interval disables adaptive epochs, except an owed one.
+        if (intervalMs < 0 && !epochOwed) {
             return;
         }
-        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-        // Feed the backlog counter for THIS batch BEFORE the gate, so the just-applied rows count toward it.
+        // Count this batch's rows before the gate, so they count toward the cap.
         tracker.addRowsSinceEpoch(rowsApplied);
         final long nowMs = microClock.getTicks() / 1000L;
         final long lastEpochTs = tracker.getLastEpochTs();
         final long maxRows = config.getAdaptiveEpochMaxRows();
-        // Fire on the first batch (lastEpochTs == 0), once intervalMs has elapsed, OR once the un-epoched
-        // applied-row backlog reaches the cap (maxRows > 0). The cap bounds WAL retention + recovery replay
-        // so the interval can be long; maxRows <= 0 disables it (interval-only). A negative interval already
-        // returned above, so an operator opt-out of epochs also opts out of the cap.
-        // MicrosecondClock is wall time. A backwards NTP/admin step must not suppress epochs until the
-        // clock catches up; treat it as an elapsed interval (safe early flush) so the replay bound holds.
+        // Fire on the first batch (lastEpochTs == 0), once intervalMs has elapsed, or once the applied-row
+        // backlog reaches the cap. The cap bounds WAL retention and recovery replay, so the interval can be
+        // long; maxRows <= 0 disables it. MicrosecondClock is wall time: a backwards clock step counts as an
+        // elapsed interval, so it cannot suppress epochs until the clock catches up.
         final boolean timeElapsed = lastEpochTs == 0 || nowMs < lastEpochTs || (nowMs - lastEpochTs) >= intervalMs;
         final boolean backlogHit = maxRows > 0 && tracker.getRowsSinceEpoch() >= maxRows;
-        if (!timeElapsed && !backlogHit) {
+        if (!timeElapsed && !backlogHit && !epochOwed) {
             return;
         }
         try {
             advance(writer, nowMs);
         } catch (CairoException e) {
-            if (e.isDataSyncFailure()) {
-                engine.handleDataSyncFailure(e);
-            }
+            engine.handleDataSyncFailure(e);
             LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
                     .$(", error=").$(e.getFlyweightMessage()).I$();
         } catch (Throwable th) {
             // Let Errors (OOM / writer distress CairoError) propagate; swallow only Exceptions.
-            if (CairoException.isDataSyncFailure(th)) {
-                engine.handleDataSyncFailure(th);
-            }
+            engine.handleDataSyncFailure(th);
             if (th instanceof Exception) {
                 LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
                         .$(", error=").$(th).I$();
@@ -771,14 +763,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
-     * WAL-apply cadence hook for the adaptive durable epoch: delegates to
-     * {@link TableWriter#advanceDurableEpoch(long)}, which records a fully-durable, self-consistent cut of
-     * the table's materialized state (INV-5 strict ordering) so recovery can land exactly on it.
+     * Delegates to {@link TableWriter#advanceDurableEpoch(long)}, which records a durable, self-consistent cut
+     * of the table's materialized state for recovery to land on. The table writer owns the cut so that
+     * partition DDL, such as convertPartitionNativeToParquet, can take an epoch at its own txn.
      */
     private void advance(TableWriter writer, long nowMs) {
-        // The durable-epoch cut is owned by TableWriter (advanceDurableEpoch) so partition-structural DDL
-        // (convertPartitionNativeToParquet) can advance the epoch at its own txn too; the WAL-apply cadence
-        // gate above just delegates. See TableWriter.advanceDurableEpoch for the INV-5 ordering.
         writer.advanceDurableEpoch(nowMs);
     }
 
@@ -791,6 +780,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private void handleWalApplyFailure(TableToken tableToken, Throwable throwable, SeqTxnTracker txnTracker) {
+        // Every apply path ends here: a failed data sync that no handler below has seen stops the engine instead
+        // of suspending the table, so a resumed apply cannot build on pages the kernel dropped
+        engine.handleDataSyncFailure(throwable);
+
         ErrorTag errorTag;
         String errorMessage;
 
@@ -890,6 +883,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 final long latency = microClock.getTicks() - start;
                 long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
                 long lastCommittedSeqTxn = writer.getAppliedSeqTxn();
+                // a writer that dropped its WAL lag applies the lag's transactions again; their rows left the
+                // pending WAL row count when they first entered the lag
+                final RecentWriteTracker.WriteStats writeStats = engine.getRecentWriteTracker().getWriteStats(tableToken);
+                final long pendingFloorSeqTxn = writeStats != null ? writeStats.getFloorSeqTxn() : 0;
+                long pendingRowsProcessed = 0;
                 lastCommittedRows = 0;
                 for (long s = seqTxn; s <= lastCommittedSeqTxn; s++) {
                     long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
@@ -897,11 +895,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     metrics.addApplyRowsWritten(walRowCount, commitPhRowCount, latency);
                     walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency, txnDetails.getMinTimestamp(s), txnDetails.getMaxTimestamp(s));
                     lastCommittedRows += walRowCount;
+                    if (s > pendingFloorSeqTxn) {
+                        pendingRowsProcessed += walRowCount;
+                    }
                 }
 
                 // Decrement pending WAL row count and track dedup after successful processing
                 final long dedupRowsRemoved = writer.getDedupRowsRemovedSinceLastCommit();
-                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, lastCommittedRows, dedupRowsRemoved);
+                engine.getRecentWriteTracker().recordWalProcessed(writer.getTableToken(), lastCommittedSeqTxn, pendingRowsProcessed, dedupRowsRemoved);
                 // Dedup-base signal: a DATA batch matches its raw WAL stream only if it skipped
                 // nothing (a skipped DATA commit's rows never materialise), deduped nothing
                 // (a dedup replaced/removed a row the raw append would keep) and expired nothing
@@ -929,6 +930,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         -1
                                 );
                             } catch (CairoException e) {
+                                engine.handleDataSyncFailure(e);
                                 LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
                                         .$(", msg=").$safe(e.getFlyweightMessage())
                                         .$(", errno=").$(e.getErrno())
@@ -1009,6 +1011,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             info.getRefreshIntervalsBaseTxn()
                     );
                 } catch (CairoException e) {
+                    engine.handleDataSyncFailure(e);
                     LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
                             .$(", msg=").$safe(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
@@ -1027,12 +1030,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
                     final WalEventCursor.ViewDefinitionInfo info = walEventCursor.getViewDefinitionInfo();
-                    // Same resolveCommitMode pattern proven by updateMatViewRefreshState / TableWriter's
-                    // _mv definition write below; this call site only runs when a REPLICA is replaying a
-                    // WAL VIEW_DEFINITION event a primary already wrote (the primary itself writes _view
-                    // synchronously via SqlCompilerImpl, not through this apply path), so end-to-end
-                    // _view coverage is left to the view-replication suite.
-                    blockFileWriter.setCommitMode(LocalDurabilityPolicy.resolveCommitMode(config.getCommitMode(), engine.getLocalDurabilityPolicy()));
+                    // Only a replica replaying a VIEW_DEFINITION event reaches this write; a primary writes
+                    // _view through SqlCompilerImpl. As for _mv, the local durability policy resolves the mode.
+                    blockFileWriter.setCommitMode(engine.getResolvedCommitMode());
                     engine.updateViewDefinition(viewToken, info.getViewSql(), info.getViewDependencies(), seqTxn, blockFileWriter, path);
                 } catch (CairoException e) {
                     LOG.error().$("could not update view definition [view=").$(viewToken)
@@ -1221,7 +1221,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     ) {
         try (BlockFileWriter stateWriter = blockFileWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-            stateWriter.setCommitMode(LocalDurabilityPolicy.resolveCommitMode(config.getCommitMode(), engine.getLocalDurabilityPolicy()));
+            stateWriter.setCommitMode(engine.getResolvedCommitMode());
             MatViewState.append(
                     lastRefreshTimestamp,
                     lastRefreshBaseTxn,
@@ -1288,6 +1288,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } else {
                 long writerTxn, dirtyWriterTxn;
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                if (txnTracker.isSuspended() && txnTracker.consumeIdleEpochRequest()) {
+                    // The idle save point request raced a suspension: a suspended table gets no run, so its
+                    // failed transaction is not retried; RESUME WAL notifies the table again.
+                    return;
+                }
+                // A run for the idle save point alone has nothing to apply, so any holder of the writer is a
+                // normal one: the request is asked again at a later purge pass.
+                final boolean idleRunOnly = txnTracker.isIdleEpochRequested() && txnTracker.getSeqTxn() <= txnTracker.getWriterTxn();
                 TableWriterPressureControl pressureControl = txnTracker.getMemPressureControl();
                 TableWriter writer = null;
                 try {
@@ -1298,6 +1306,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         return;
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationExecutor, tempPath, runStatus, pressureControl);
+                    // A role switch during the batch is reconciled before the writer goes back to the pool: the
+                    // table may get no next batch, and a notification dropped while the writer was busy is not
+                    // republished.
+                    writer.reconcileDurableEpochAnchor();
                     if (pressureControl.onEnoughMemory()) {
                         LOG.info().$("table writing memory pressure is easing up [table=").$(tableToken)
                                 .$(", parallelMemoryLimit=").$(pressureControl.getMemoryPressureRegulationValue())
@@ -1306,7 +1318,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
-                    if (isUnsolicitedTableLock(tableBusy.getReason())) {
+                    if (!idleRunOnly && isUnsolicitedTableLock(tableBusy.getReason())) {
                         LOG.critical().$("unsolicited table lock [table=").$(tableToken)
                                 .$(", lockReason=").$(tableBusy.getReason())
                                 .I$();

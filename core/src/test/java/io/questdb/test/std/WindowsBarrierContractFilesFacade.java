@@ -34,30 +34,14 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Enforces, on Linux, the one durability rule that only Windows actually polices: a barrier must be
- * issued through a handle that has WRITE access.
- *
- * <p>On Windows {@code fsync} is {@code FlushFileBuffers}, which requires {@code GENERIC_WRITE} on the
- * handle and returns {@code ERROR_ACCESS_DENIED} (errno 5) for the {@code GENERIC_READ}-only handle
- * {@code openRO} produces. On POSIX an {@code O_RDONLY} fd fsyncs perfectly well. A barrier written the
- * wrong way round is therefore GREEN on every Linux leg and DEAD on Windows -- and since the DEFAULT OSS PR
- * CI pipeline is Linux-only, nothing notices there. The Windows legs that do exist
- * ({@code ci/test-hosted-pipeline.yml}) run only on demand ({@code /azp run macwin}) and in the merge queue,
- * so they catch such a barrier late rather than never. That is exactly how the {@code data.parquet} barrier
- * shipped broken for two months and took Enterprise cold storage down with it on that platform.
- *
- * <p>DIRECTORIES are exempt, and the exemption is the whole reason this has to be a runtime check rather
- * than a source scan: a directory barrier is impossible on Windows and every such site in the engine is
- * already behind an {@code Os.isWindows()} / {@code isRestrictedFileSystem()} guard, while on Linux those
- * same sites are legitimate and load-bearing. Only at runtime, at {@code open} time, can a directory be
- * told from a file -- static text cannot.
- *
- * <p>{@code Os.isWindows()} is a runtime constant a test cannot fake, so this does not pretend to be
- * Windows. It models the single behaviour that differs, and nothing else.
- *
- * <p>Violations are RECORDED as well as thrown, so an assertion can name the offending path instead of
- * surfacing as a bare {@code [5] could not fsync [fd=...]} the way the Windows CI leg did. Call
- * {@link #assertNoReadOnlyFileBarrier()} after the workload.
+ * Enforces on Linux the rule that only Windows polices: a barrier goes through a handle with write access. On
+ * Windows {@code fsync} is {@code FlushFileBuffers}, which returns {@code ERROR_ACCESS_DENIED} (errno 5) for the
+ * {@code GENERIC_READ}-only handle {@code openRO} produces, while POSIX fsyncs an {@code O_RDONLY} fd without
+ * error. The Windows CI legs run only on demand and in the merge queue, so this facade lets every Linux run
+ * catch such a barrier. Directories are exempt: the engine guards every directory barrier with
+ * {@code Os.isWindows()} or {@code isRestrictedFileSystem()}, and only {@code open} can tell a directory from a
+ * file. The facade records each violation as well as throwing it; call {@link #assertNoReadOnlyFileBarrier()}
+ * after the workload to name the offending path.
  */
 public class WindowsBarrierContractFilesFacade extends TestFilesFacadeImpl {
 
@@ -68,7 +52,7 @@ public class WindowsBarrierContractFilesFacade extends TestFilesFacadeImpl {
 
     /**
      * Total barriers charged to paths containing {@code pathContains}. Use it to prove the workload
-     * actually reached the code under test: a run that issued NO barriers passes the violation check too,
+     * actually reached the code under test: a run that issued no barriers passes the violation check too,
      * and would keep passing with the barrier deleted.
      */
     public synchronized int barrierCount(String pathContains) {
@@ -98,7 +82,7 @@ public class WindowsBarrierContractFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Forget the counters. The fd table describes live open handles and is KEPT.
+     * Forget the counters. The fd table describes live open handles and is kept.
      */
     public synchronized void clearCounters() {
         barriers.clear();
@@ -218,7 +202,7 @@ public class WindowsBarrierContractFilesFacade extends TestFilesFacadeImpl {
         }
         if (readOnlyFileFds.contains(fd)) {
             violations.add(path == null ? "<fd " + fd + '>' : path);
-            // The exact shape Windows produces, so a failure here reads like the CI log it stands in for.
+            // The exact shape Windows produces, so a failure here reads like the Windows failure.
             throw CairoException.critical(5).put("could not fsync [fd=").put(fd).put(']');
         }
     }
@@ -229,9 +213,9 @@ public class WindowsBarrierContractFilesFacade extends TestFilesFacadeImpl {
     }
 
     /**
-     * Decode by BYTES: {@code Path$PathLPSZ} does not override {@code toString()}, so the obvious
-     * conversions yield an identity hash, every lookup silently misses, and the facade reports nothing --
-     * which reads exactly like a clean run.
+     * Decode by bytes: {@code Path$PathLPSZ} does not override {@code toString()}, so the obvious
+     * conversions yield an identity hash, every lookup misses, and the facade reports nothing, which reads
+     * like a clean run.
      */
     private static String pathToString(LPSZ name) {
         final int n = name.size();
@@ -248,7 +232,7 @@ public class WindowsBarrierContractFilesFacade extends TestFilesFacadeImpl {
         }
         final String path = pathToString(name);
         fdToPath.put(fd, path);
-        // isDirOrSoftLinkDir is evaluated HERE, while the path is still in hand: by barrier time only the fd
+        // isDirOrSoftLinkDir is evaluated here, while the path is still in hand: by barrier time only the fd
         // remains, and an fd cannot be asked whether it names a directory through this interface.
         if (writable || isDirOrSoftLinkDir(name)) {
             readOnlyFileFds.remove(fd);

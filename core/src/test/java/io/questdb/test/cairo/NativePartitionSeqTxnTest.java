@@ -1305,13 +1305,12 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                 mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                 mem.putLong(fileOffset, word);
-                // The _txn body checksum covers [0,80) PLUS the partition table, so a raw poke into a
-                // partition word TEARS the live area. That is not what this test is about: it wants a
-                // "well-formed but wrong" released-base word, so that the GATED READ has to quarantine it.
-                // Leave the area internally consistent by restamping the checksum over the poked bytes --
-                // otherwise TxReader falls back to the previous A/B area, whose older txn the reader
-                // scoreboard then refuses, and every reader open spins to a "Transaction read timeout".
-                // Detection of a byte that does NOT match its checksum is covered by the _txn checksum tests.
+                // The _txn body checksum covers [0,80) plus the partition table, so a raw poke into a
+                // partition word tears the live area. This test wants a "well-formed but wrong" released-base
+                // word that the gated read has to quarantine, so it restamps the checksum over the poked bytes.
+                // Otherwise TxReader falls back to the previous A/B area, whose older txn the reader scoreboard
+                // refuses, and every reader open spins to a "Transaction read timeout". The _txn checksum tests
+                // cover a byte that does not match its checksum.
                 mem.putLong(
                         baseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64,
                         TableUtils.calculateTxnBodyChecksum(mem.addressOf(baseOffset), recordSize, partitionTableStart)

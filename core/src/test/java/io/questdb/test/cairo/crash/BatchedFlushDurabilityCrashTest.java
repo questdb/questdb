@@ -13,30 +13,20 @@ import org.junit.Assume;
 import org.junit.Test;
 
 /**
- * End-to-end durability proof for the Linux SYNC-mode batched column flush
- * ({@link io.questdb.cairo.TableWriter#syncColumns()} -> syncColumnsBatchedSync()): per-file
- * {@code msync(MS_SYNC)} device flushes are replaced by {@code msync(MS_ASYNC)} +
- * {@code sync_file_range(WAIT_AFTER)} per file plus ONE {@code syncfs(columnFd)} over the table's
- * filesystem (the single device flush that ALSO journals every column's ext4 extent conversions + i_size,
- * replacing the broken reliance on the {@code _cv} commit's flush to journal the columns). This test
- * exercises the scheme on a REALISTIC WIDTH (30+ columns spanning fixed-width, string, varchar, and
- * indexed symbol) under repeated commits that force file extends, then simulates power loss mid-stream and
- * asserts EVERY committed row (and indexed-symbol lookups) survives.
+ * Durability of SYNC commits on a wide table: 30+ columns spanning fixed-width, string, varchar and
+ * indexed symbol, under repeated commits that force file extends. The test simulates power loss after the
+ * commits and asserts that every committed row, and the indexed-symbol lookups, survive.
  *
- * <p>It runs against the same crash model ({@link CrashFaultFilesFacade}) that the Stage-1 self-tests
- * pin down: that model promotes device-cache content to durable on ONE device flush (the batching
- * semantic), makes {@code sync_file_range} a NO-OP unless the file was first msync'd, and makes
- * {@code syncfs} journal+flush the whole filesystem. So if the batched path ever dropped the
- * {@code sync_file_range} drain, or skipped the {@code syncfs}, committed rows would read back MISSING
- * here and the test would go RED. (Verified by hand: skipping the drain reddens this test.)
+ * <p>It runs against the {@link CrashFaultFilesFacade} crash model: content becomes durable on a device
+ * flush, {@code sync_file_range} is a no-op unless the file is msync'd first, and {@code syncfs} journals
+ * and flushes the whole filesystem.
  *
  * <p>A minimal mmap append-page size forces the wide columns to cross page boundaries during the run, so
- * the file-extend path is exercised repeatedly (now journaled by the single {@code syncfs}, with
- * {@code syncFlushFinishIfExtended()} reduced to watermark bookkeeping).
+ * the file-extend path runs repeatedly.
  *
- * <p>Linux-only: the batched path is guarded on {@link Os#isLinux()} (non-Linux falls back to the
- * per-file {@code sync(false)} which this test is not trying to characterise), so it is skipped
- * elsewhere.
+ * <p>The test enables the batched column flush ({@code CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED}), but a
+ * SYNC commit flushes its columns per file in {@code TableWriter.syncColumns()}; the batched kick, drain
+ * and {@code syncfs} passes run only for the adaptive durable epoch. Linux-only, like the batched path.
  */
 public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTest {
 
@@ -47,14 +37,10 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
     public void testWideTableBatchedSyncSurvivesCrash() throws Exception {
         Assume.assumeTrue("batched SYNC flush is Linux-only", Os.isLinux());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        // FORCE the batched path on regardless of this CI machine's filesystem. The TableWriter gate is
-        // `... && configuration.isAdaptiveEpochColumnSyncBatched()`; if CI happened to run on an ext4 fast_commit
-        // mount the production config would disable batching and this test would silently stop exercising
-        // the batched path. The test harness builds its config with detection OFF, so this property is the
-        // raw, deterministic enable.
+        // Enable the batched flush explicitly, whatever the test configuration's default.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, "true");
         // Tiny append page so the (many, wide) column files extend repeatedly during the run, exercising the
-        // extend path (now journaled by the single syncfs; syncFlushFinishIfExtended() only advances watermarks).
+        // extend path.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, String.valueOf(MIN_PAGE));
         try {
             Assert.assertEquals("test requires SYNC commit mode",
@@ -62,9 +48,9 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
             Assert.assertTrue("test must exercise the BATCHED SYNC path",
                     engine.getConfiguration().isAdaptiveEpochColumnSyncBatched());
             runWithCrashFacade(() -> {
-                // A WIDE table: a fixed-width spread, two strings, a varchar, and TWO indexed symbols.
-                // That mix drives every batched mem family through the 3-phase flush: column data (.d)
-                // + aux (.i) for var-size types, symbol char/offset (.c/.o) + symbol .k/.v index.
+                // A wide table: a fixed-width spread, two strings, a varchar, and two indexed symbols.
+                // The mix covers every column file family: column data (.d) + aux (.i) for var-size
+                // types, symbol char/offset (.c/.o) and the symbol .k/.v index.
                 StringBuilder ddl = new StringBuilder("create table w (ts timestamp");
                 for (int c = 0; c < 20; c++) {
                     ddl.append(", f").append(c).append(c % 2 == 0 ? " long" : " double");
@@ -79,20 +65,20 @@ public class BatchedFlushDurabilityCrashTest extends AbstractCrashConsistencyTes
                 markDurableBaseline();
 
                 for (int i = 1; i <= COMMITS; i++) {
-                    insertRow(i); // each insert is its own SYNC commit -> batched flush + _cv + _txn
+                    insertRow(i); // each insert is its own SYNC commit -> column flush + _cv + _txn
                 }
 
                 crashAndReopen();
 
-                // 1) Row COUNT: every committed row (seed + COMMITS) is durable. A dropped drain or a missing
-                //    syncfs would leave columns' extents unjournaled -> tail rows read as zeros/missing -> RED.
+                // 1) Row count: every committed row (seed + COMMITS) is durable. A missing column flush would
+                //    leave tail rows reading as zeros or missing.
                 Assert.assertEquals("committed row count after crash", COMMITS + 1, rowCount("w"));
 
-                // 2) CONTENT: each surviving row matches what we wrote (no silent corruption), across a
+                // 2) Content: each surviving row matches the written values (no silent corruption), across a
                 //    fixed-width column, both strings, the varchar, and the symbols.
                 assertAllRowsCorrect();
 
-                // 3) INDEXED lookups: the symbol .k/.v index (also batched) resolves every committed key.
+                // 3) Indexed lookups: the symbol .k/.v index resolves every committed key.
                 //    sym1 has 7 distinct values; each appears ceil/floor of (COMMITS+1)/7 times.
                 long viaIndex = 0;
                 for (int k = 0; k < 7; k++) {

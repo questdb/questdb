@@ -80,6 +80,7 @@ public class CopyWalSegmentUtils {
         columnRollSink.setDestSecondaryFd(secondaryFd);
 
         boolean success;
+        Throwable failure = null;
         if (columnType == newColumnType) {
             if (ColumnType.isVarSize(columnType)) {
                 success = copyVarSizeFiles(
@@ -174,12 +175,13 @@ public class CopyWalSegmentUtils {
 
             } catch (Throwable th) {
                 LOG.critical().$("Failed to convert column [name=").$(newSegPath).$(", error=").$(th).I$();
+                failure = th;
                 success = false;
             }
         }
 
         if (!success) {
-            throw CairoException.critical(ff.errno()).put("failed to copy column file to new segment" +
+            final CairoException exception = CairoException.critical(ff.errno()).put("failed to copy column file to new segment" +
                             " [path=").put(newSegPath)
                     .put(", column=").put(columnName)
                     .put(", errno=").put(ff.errno())
@@ -187,6 +189,12 @@ public class CopyWalSegmentUtils {
                     .put(", rowCount=").put(rowCount)
                     .put(", columnType=").put(columnType)
                     .put(", newColumnType=").put(newColumnType).put("]");
+            if (failure != null) {
+                // A failed flush inside the conversion keeps its flag through the cause: the writer's handler
+                // decides the stop on it, with or without a process halt installed.
+                exception.initCause(failure);
+            }
+            throw exception;
         }
     }
 

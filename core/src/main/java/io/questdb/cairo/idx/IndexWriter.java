@@ -75,15 +75,15 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
-     * Threads the owning writer's commit mode into this indexer so {@link #commit()} flushes on the grade
-     * that writer commits under. A table that is not yet enrolled in adaptive runs at SYNC while the
-     * instance runs ADAPTIVE. Implementations seed it from the instance-global {@code cairo.commit.mode}.
+     * Passes the owning writer's commit mode to this indexer, so {@link #commit()} flushes at the grade that
+     * writer commits under: a table not yet enrolled in adaptive runs at SYNC while the instance runs
+     * ADAPTIVE. Implementations start from the instance-global {@code cairo.commit.mode}.
      * <p>
-     * Under {@link io.questdb.cairo.CommitMode#ADAPTIVE} {@link #commit()} publishes buffered writes but
-     * does NOT flush: index files are re-derivable from the durable WAL exactly like the column data they
-     * index, and are made crash-safe by the durable epoch (which forces
-     * {@code sync(false)} on every indexer, then a filesystem-wide {@code syncfs}) plus recovery
-     * roll-forward. This keeps the index consistent with {@code CommitMode.appliesColumnSync}.
+     * Under {@link io.questdb.cairo.CommitMode#ADAPTIVE}, {@link #commit()} publishes buffered writes but does
+     * not flush, as {@code CommitMode.appliesColumnSync} has it for columns: index files are re-derivable
+     * from the durable WAL like the column data they index, and a save point (which calls
+     * {@code sync(false)} on every indexer, then a filesystem-wide {@code syncfs}) and recovery make them
+     * crash-safe.
      *
      * @param commitMode the mode the owning writer commits under
      */

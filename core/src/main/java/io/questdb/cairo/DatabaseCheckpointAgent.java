@@ -214,8 +214,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
      * Makes durable what a checkpoint restore step changed under {@code dir}: the restored files, or the
      * removal of the trigger or of the checkpoint directory. A restore writes through many code paths, so
      * this flushes whole filesystems rather than a tracked set of files. {@link RecoveryCoordinator} also
-     * calls it before it anchors tables that a replica tenure or an out-of-process restore marked for
-     * adaptive enrolment.
+     * calls it on a start outside adaptive, where syncfs(2) is filesystem-wide, to make the live files of the
+     * tables that leave adaptive durable before it removes their save points.
      * <ul>
      *     <li>Linux: syncfs(2) on the filesystem holding {@code dir} and, with {@code includeVolumes}, on
      *     every volume a table directory under {@code dir} links to. Unlike sync(2), syncfs(2) reports
@@ -226,7 +226,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
      *     <li>Elsewhere: sync(2), which flushes every filesystem.</li>
      * </ul>
      */
-    static void syncRestoredState(FilesFacade ff, Path dir, boolean includeVolumes) {
+    public static void syncRestoredState(FilesFacade ff, Path dir, boolean includeVolumes) {
         if (ff.isSyncfsFileSystemWide()) {
             final int dirLen = dir.size();
             syncFileSystemOf(ff, dir.$());
@@ -242,8 +242,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
         if (ff.sync() != 0) {
             final int errno = ff.errno();
-            throw CairoException.dataSyncFailure(errno, "sync")
-                    .put("sync() failed during checkpoint recovery [errno=").put(errno).put(']');
+            // dir is the restored root: it names the engine that owns the failure
+            throw CairoException.dataSyncFailure(ff, dir.toString(), errno, "sync", "sync() failed during checkpoint recovery [errno=" + errno + ']');
         }
     }
 
@@ -1038,18 +1038,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    boolean hasRecoveredCheckpoint() {
-        return recoveredCheckpoint;
-    }
-
     void completeRecovery() {
         if (!recoveredCheckpoint || recoveredCheckpointDir == null) {
             return;
         }
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
-            // Remove and durably commit the trigger FIRST. A crash after this point can leave an inert
-            // checkpoint directory, but can never leave a trigger pointing at an already-deleted checkpoint.
+            // Remove the trigger and make its removal durable first. A crash after this point can leave an inert
+            // checkpoint directory, but never a trigger that points at a deleted checkpoint.
             path.of(configuration.getInstallRoot()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             if (recoveredCheckpointTriggerExists
                     && ff.exists(path.$())
@@ -1237,9 +1233,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 LOG.critical().$("checkpoint listener failed on restore complete [error=").$(ex).I$();
             }
 
-            // Make the restored cut durable, but retain the checkpoint + trigger until RecoveryCoordinator
-            // has published every missing adaptive baseline. A crash in that interval must re-run restore,
-            // not strand current-format adaptive tables markerless on the next ordinary startup.
+            // Make the restored cut durable, but keep the checkpoint and the trigger until RecoveryCoordinator
+            // has run (completeRecovery() removes them), so a crash in between repeats the restore.
             srcPath.trimTo(checkpointRootLen).$();
             memFile.close();
             syncRestoredState(ff, dstPath.trimTo(rootLen), true);

@@ -4493,14 +4493,12 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         // durable-ack opt-in, as negotiated via X-QWP-Request-Durable-Ack
         state.setDurableAckEnabled(true);
         // This harness's registry (newEngineWithRegistry) models only the
-        // uploaded/Enterprise tier (getReplicatedDurableSeqTxn), with no local
-        // tracking -- so the connection must negotiate REPLICATED for
-        // collectDurableProgress to read that tier. Real handshake tier
-        // negotiation from the X-QWP-Request-Durable-Ack header value now
-        // happens in QwpIngressUpgradeProcessor; this harness builds the
-        // state directly (bypassing the handshake) and pins the tier the same
-        // way that negotiation would resolve it, to isolate
-        // collectDurableProgress's tier-selection behavior.
+        // uploaded tier (getReplicatedDurableSeqTxn), with no local tracking,
+        // so the connection must negotiate REPLICATED for
+        // collectDurableProgress to read that tier. The harness builds the
+        // state directly, bypassing the handshake in
+        // QwpIngressUpgradeProcessor, and pins the tier that negotiation of
+        // the X-QWP-Request-Durable-Ack header would resolve.
         state.setDurableAckTiers(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;
@@ -4521,14 +4519,12 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         // durable-ack opt-in, as negotiated via X-QWP-Request-Durable-Ack
         state.setDurableAckEnabled(true);
         // This harness's registry (newEngineWithRegistry) models only the
-        // uploaded/Enterprise tier (getReplicatedDurableSeqTxn), with no local
-        // tracking -- so the connection must negotiate REPLICATED for
-        // collectDurableProgress to read that tier. Real handshake tier
-        // negotiation from the X-QWP-Request-Durable-Ack header value now
-        // happens in QwpIngressUpgradeProcessor; this harness builds the
-        // state directly (bypassing the handshake) and pins the tier the same
-        // way that negotiation would resolve it, to isolate
-        // collectDurableProgress's tier-selection behavior.
+        // uploaded tier (getReplicatedDurableSeqTxn), with no local tracking,
+        // so the connection must negotiate REPLICATED for
+        // collectDurableProgress to read that tier. The harness builds the
+        // state directly, bypassing the handshake in
+        // QwpIngressUpgradeProcessor, and pins the tier that negotiation of
+        // the X-QWP-Request-Durable-Ack header would resolve.
         state.setDurableAckTiers(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;

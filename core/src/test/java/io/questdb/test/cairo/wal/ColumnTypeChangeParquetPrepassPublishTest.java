@@ -25,7 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.SnapshotMarker;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -35,16 +35,13 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A column-type change whose parquet->native prepass converts partitions must publish the whole
- * ALTER with a single {@code _txn} write. The writer already carries the ALTER's seqTxn while the
- * prepass runs, so an intermediate {@code _txn} would bind the OLD {@code _meta} to the NEW seqTxn;
- * anything that adopts that cut (an adaptive epoch, a crash in a syncing mode, an ALTER that fails
- * after the prepass) then skips the ALTER and keeps the old column type.
- * <p>
- * The single publish is observable as exactly one table-txn increment across the ALTER. Under
- * adaptive the epoch must be cut at the ALTER's own seqTxn, after that commit, and the superseded
- * parquet directory must be reclaimed inline: {@code drainWalQueue()} runs no partition purge job,
- * so a directory that is gone afterwards was removed by the writer itself.
+ * A column-type change whose parquet->native prepass converts partitions publishes the whole ALTER with a
+ * single {@code _txn} write, seen as exactly one table-txn increment. The writer already carries the ALTER's
+ * seqTxn while the prepass runs, so an intermediate {@code _txn} would bind the old {@code _meta} to the new
+ * seqTxn, and anything that adopts that cut (an adaptive epoch, a crash in a syncing mode, an ALTER that fails
+ * after the prepass) would keep the old column type. Under ADAPTIVE the epoch is cut at the ALTER's own seqTxn,
+ * and the writer reclaims the superseded parquet directory inline: {@code drainWalQueue()} runs no partition
+ * purge job.
  */
 public class ColumnTypeChangeParquetPrepassPublishTest extends AbstractCairoTest {
 
@@ -70,11 +67,12 @@ public class ColumnTypeChangeParquetPrepassPublishTest extends AbstractCairoTest
             try (TableReader reader = getReader(token)) {
                 seqTxn = reader.getTxFile().getSeqTxn();
             }
-            try (Path path = new Path(); SnapshotMarker marker = new SnapshotMarker(configuration)) {
-                marker.of(path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.SNAPSHOT_FILE_NAME).$());
-                Assert.assertTrue("an adaptive epoch must exist after the ALTER", marker.tryLoad());
-                Assert.assertEquals("epoch must be cut at the ALTER's seqTxn", seqTxn, marker.getEpochSeqTxn());
-                Assert.assertEquals("epoch must be cut on the ALTER's single commit", txnBefore + 1, marker.getEpochTxn());
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), path, path.size(), token.getTableId());
+                Assert.assertTrue("an adaptive epoch must exist after the ALTER", saved.length > 0);
+                Assert.assertEquals("epoch must be cut at the ALTER's seqTxn", seqTxn, saved[0].epochSeqTxn);
+                Assert.assertEquals("epoch must be cut on the ALTER's single commit", txnBefore + 1, saved[0].epochTxn);
             }
             Assert.assertFalse(
                     "the post-commit epoch moves the pin, so the parquet source dir is reclaimed inline",

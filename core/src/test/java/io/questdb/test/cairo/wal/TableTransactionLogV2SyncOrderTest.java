@@ -43,6 +43,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -55,10 +56,6 @@ import java.util.Map;
  * <p>The invariant "part-file durable before the header that points to it" prevents a crash window
  * where maxTxn=N is persisted in the header but the record for txn N in the part file has not yet
  * been written back by the OS, leaving a zeroed/partial record on reopen.
- *
- * <p>This test would FAIL against the old code because the old sync0() synced only txnMem and
- * never called txnPartMem.sync() at all, so txnPartMem would never appear first in the msync order.
- * Similarly fullSync() only synced txnMem, missing txnPartMem entirely.
  */
 public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
 
@@ -79,8 +76,6 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
 
     /**
      * Verifies that for addEntry (sync0 path), the part file is msync'd before the header.
-     * RED against the old code (sync0 only synced txnMem, never txnPartMem).
-     * GREEN after the fix (sync0 syncs txnPartMem first, then txnMem).
      */
     @Test
     public void testAddEntrySyncsPartFileBeforeHeader() throws Exception {
@@ -113,9 +108,59 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
     }
 
     /**
+     * Verifies that the flush from a txn reaches every older part file the log keeps from that txn's part on, past
+     * the parts the WAL purge deleted (it keeps a backup-locked or in-use part while it deletes later ones), and
+     * flushes them before the open part and the header. Only part files are flushed: a stray entry is ignored.
+     */
+    @Test
+    public void testFdatasyncTxnLogFromTxnFlushesTheKeptPartsBeforeTheHeader() throws Exception {
+        assertMemoryLeak(() -> {
+            final SyncOrderFilesFacade syncFf = new SyncOrderFilesFacade();
+            final CairoConfiguration cfg = syncConfig(syncFf);
+
+            try (Path path = new Path()) {
+                path.of(root).concat("v2seqparts");
+                syncFf.mkdir(path.$(), configuration.getMkDirMode());
+
+                TableTransactionLogV2 v2 = new TableTransactionLogV2(cfg, 2, DefaultWalDirectoryPolicy.INSTANCE);
+                try {
+                    v2.create(path, System.currentTimeMillis());
+                    v2.open(path);
+                    // Txns 1 to 9 fill parts 0 to 3 and open part 4.
+                    for (int i = 0; i < 9; i++) {
+                        v2.addEntry(i, i + 1, i + 2, i + 3, System.currentTimeMillis(), 0L, 0L, 0L);
+                    }
+                    // The purge deleted part 1 and kept part 0, as a backup lock does.
+                    final int len = path.size();
+                    Assert.assertTrue(syncFf.removeQuiet(path.concat(WalUtils.TXNLOG_PARTS_DIR).slash().put(1).$()));
+                    // A stray file and a directory next to the parts.
+                    Assert.assertTrue(syncFf.touch(path.trimTo(len).concat(WalUtils.TXNLOG_PARTS_DIR).concat("12x").$()));
+                    Assert.assertEquals(0, syncFf.mkdir(path.trimTo(len).concat(WalUtils.TXNLOG_PARTS_DIR).concat("7").$(), configuration.getMkDirMode()));
+                    path.trimTo(len);
+
+                    final long[] fromTxns = {0, 1, 3, 6, 7, Long.MAX_VALUE};
+                    final String[] expected = {
+                            "[3, 2, 0, 4, _txnlog]",
+                            "[3, 2, 0, 4, _txnlog]",
+                            "[3, 2, 4, _txnlog]",
+                            "[3, 2, 4, _txnlog]",
+                            "[3, 4, _txnlog]",
+                            "[4, _txnlog]"
+                    };
+                    for (int i = 0; i < fromTxns.length; i++) {
+                        syncFf.getFdatasyncs().clear();
+                        v2.fdatasyncTxnLog(fromTxns[i]);
+                        Assert.assertEquals("from txn " + fromTxns[i], expected[i], syncFf.getFdatasyncs().toString());
+                    }
+                } finally {
+                    v2.close();
+                }
+            }
+        });
+    }
+
+    /**
      * Verifies that for fullSync (metadata-change path), the part file is msync'd before the header.
-     * RED against the old code (fullSync only synced txnMem, never txnPartMem).
-     * GREEN after the fix (fullSync syncs txnPartMem first, then txnMem).
      */
     @Test
     public void testFullSyncSyncsPartFileBeforeHeader() throws Exception {
@@ -198,16 +243,22 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
 
     /**
      * A FilesFacade that records the order of msync calls, keyed by the file path that was
-     * mmap'd to produce the address being sync'd. This lets us verify part-file-before-header
-     * ordering without relying on fsync (which is conditional on file size growth).
+     * mmap'd to produce the address being sync'd. This verifies part-file-before-header ordering
+     * without relying on fsync, which is conditional on file size growth.
      */
     static class SyncOrderFilesFacade extends FilesFacadeImpl {
-        // addr → path (resolved at mmap time via fd → path).
+        // addr -> path (resolved at mmap time via fd -> path).
         private final Map<Long, String> addrToPath = new HashMap<>();
-        // fd → path (populated at open time).
+        // fd -> path (populated at open time).
         private final Map<Long, String> fdToPath = new HashMap<>();
+        // file names as they were fdatasync'd
+        private final List<String> fdatasyncs = new ArrayList<>();
         // ordered list of file paths as they were msync'd.
         private final List<String> syncOrder = new ArrayList<>();
+
+        public List<String> getFdatasyncs() {
+            return fdatasyncs;
+        }
 
         public List<String> getSyncOrder() {
             return syncOrder;
@@ -223,9 +274,9 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
         }
 
         /**
-         * Clear only the sync-order log; keep fd→addr mappings intact so that subsequent msync
+         * Clear only the sync-order log; keep fd->addr mappings intact so that subsequent msync
          * calls (e.g. after addEntry) can still resolve addresses to file paths. Use this when the
-         * files are already open and you only want to discard syncs that happened during create/open.
+         * files are already open and only the syncs that happened during create/open should go.
          */
         public void resetSyncOrder() {
             syncOrder.clear();
@@ -235,6 +286,15 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
         public boolean close(long fd) {
             fdToPath.remove(fd);
             return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            super.fdatasync(fd);
+            String p = fdToPath.get(fd);
+            if (p != null) {
+                fdatasyncs.add(Paths.get(p).getFileName().toString());
+            }
         }
 
         @Override

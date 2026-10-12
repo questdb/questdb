@@ -2057,6 +2057,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                                     symbolTableProvider,
                                     configuration,
                                     conversionContext,
+                                    engine.getResolvedCommitMode(),
                                     txReader.getSeqTxn()
                             )
                     );
@@ -4148,6 +4149,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     symbolTableProvider,
                     configuration,
                     conversionContext,
+                    engine.getResolvedCommitMode(),
                     txReader.getSeqTxn()
             );
             Assert.assertTrue("candidate parquet should be non-empty", candidateParquetFileSize > 0);

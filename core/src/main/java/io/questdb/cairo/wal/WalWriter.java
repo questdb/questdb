@@ -126,10 +126,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final int columnsMadviseMode;
     private final DdlListener ddlListener;
     private final AtomicIntList initialSymbolCounts;
-    // Whether to run the advisory writeback drain before the commit's barriers. Gated on the operator switch
-    // and on the filesystem (sync_file_range buys nothing on ZFS). Resolved once: neither changes for the
-    // writer's lifetime, and the filesystem probe allocates and costs a statfs, which the commit path must not.
-    // Probed on the writer's own directory, so a table in a volume is judged by the volume's filesystem.
+    // Whether to run the advisory writeback drain before the commit's barriers: the operator switch, and not on
+    // ZFS, where sync_file_range buys nothing. Resolved once, because neither changes for the writer's lifetime
+    // and the file system check allocates and calls statfs, which the commit path must not. It checks the
+    // writer's own directory, so a table in a volume is judged by the volume's file system.
     private final boolean isWritebackDrainEnabled;
     private final IntList localSymbolIds;
     private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
@@ -160,21 +160,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private ConversionSymbolMapWriter conversionSymbolMap;
     private ConversionSymbolTable conversionSymbolTable;
     private long currentTxnStartRowNum = -1;
-    // --- adaptive group commit (Deferred 2) ---
-    // The highest seqTxn whose WAL commit was SEQUENCED + msync'd (page-cache, ordered) but whose batched
-    // device flush (fdatasync data→events→seq) has NOT yet been performed under W>0. -1 == nothing pending.
-    // Guarded by `this` (the writer monitor) together with pendingSinceMicros: written by the committing
-    // thread, read+cleared by both the committing thread (commit-driven flush) and the background flusher.
+    // The highest seqTxn this writer sequenced under a group window whose batched device flush has not run yet;
+    // -1 when nothing is pending. Guarded by the writer monitor, as are the two fields below: the committing
+    // thread sets it, and both the committing thread and the background flusher read and clear it.
     private long pendingDurableSeqTxn = -1L;
-    // Microsecond wall-clock of the OLDEST un-flushed pending commit (when pendingDurableSeqTxn was first
-    // set after a flush). The flush trigger fires once now - pendingSinceMicros >= W. Guarded by `this`.
+    // Wall-clock micros of the oldest pending commit. The flush fires once now - pendingSinceMicros >= W.
     private long pendingSinceMicros = -1L;
-    // The OLDEST un-flushed seqTxn of the current group-commit batch (the first commit after a flush), also
-    // registered on the shared SeqTxnTracker as this writer's contiguous-prefix pin (registerWriterPending).
-    // -1 == nothing pending. Guarded by `this`. Concurrent writers of one table flush independently, so the
-    // shared durable-ack frontier must only advance to min(oldest-un-flushed) across writers, not to this
-    // writer's own flushed seqTxn (CRITICAL 2).
-    private long pendingLoSeqTxn = -1L;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
     private long lastMatViewPeriodHi = WAL_DEFAULT_LAST_PERIOD_HI;
@@ -237,7 +228,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             configureSymbolTable();
         } catch (Throwable e) {
             CairoError fatal = null;
-            if (CairoException.isDataSyncFailure(e)) {
+            if (sequencer.isDataSyncFailureFatal(e)) {
                 distressed = true;
                 dropPendingDurable();
                 // Poison now, throw after doClose(): fail-stop must not strand the WAL lock, fds and memory.
@@ -312,7 +303,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
             if (syncedMode == CommitMode.ADAPTIVE) {
-                if (deferDeviceFlush()) {
+                if (isDeviceFlushDeferred()) {
                     recordPendingDurable(seqTxn);
                 } else {
                     checkDistressed();
@@ -322,7 +313,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             return seqTxn;
         } catch (Throwable th) {
             distressed = true;
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
             }
@@ -333,11 +324,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
-        // Deferred 2 (group commit, W>0): a metadata change must not let its sequencer record become durable
-        // ahead of prior pending DATA commits — a structural change's endMetadataChangeEntry() does an
-        // MS_SYNC (fullSync) of the sequencer txn log, which would device-flush the seq while the prior data
-        // commits' columns are only MS_ASYNC'd (page-cache), a torn data→events→seq order on crash. Flush the
-        // pending backlog FIRST so every prior commit is on disk before this txn sequences.
+        // Flush the pending batch first. A structural change's endMetadataChangeEntry() syncs the sequencer log
+        // with MS_SYNC, which would put this record on the device ahead of earlier data commits whose files are
+        // still only in the page cache.
         flushPendingDurable();
 
         if (alterOp.isStructural()) {
@@ -354,8 +343,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             throw CairoException.critical(0).put("cannot update table with uncommitted inserts [table=")
                     .put(tableToken.getTableName()).put(']');
         }
-        // Deferred 2 (group commit, W>0): flush prior pending data commits before sequencing this update,
-        // for the same data→events→seq ordering reason as in apply(AlterOperation).
+        // Flush the pending batch before sequencing this update, as in apply(AlterOperation).
         flushPendingDurable();
 
         // it is guaranteed that there is no join in UPDATE statement
@@ -646,13 +634,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             );
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
-            // W>0: private events are already durable; record the deferred shared-sequencer barrier so the
-            // next commit/background flusher bounds visibility to <= W even if commits stop.
-            if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            // W>0: the private events are already durable. Record the deferred sequencer flush as pending, so
+            // the next commit or the background flusher runs it within W even if commits stop.
+            if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
@@ -667,7 +655,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             openNewSegment();
         } catch (Throwable e) {
             distressed = true;
-            if (CairoException.isDataSyncFailure(e)) {
+            if (sequencer.isDataSyncFailureFatal(e)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(e);
             }
@@ -684,11 +672,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     protected final void cleanupBeforeClose() {
         // If distressed, no need to rollback, WalWriter will not be used any more.
         if (isDistressed()) {
-            // A distressed writer is discarded; its un-flushed group-commit tail (if any) never advanced
-            // localDurableSeqTxn, so no false durability is claimed. Clear the pending fields AND deregister
-            // under the writer monitor BEFORE doClose closes any fd, so a background flusher that captured
-            // this writer reference before the deregister (weakly-consistent iterator) cannot fdatasync a
-            // closed fd (use-after-close). dropPendingDurable() restores the invariant on the distressed path.
+            // A distressed writer is discarded, but the batch it already sequenced still needs its flush, or
+            // nothing moves the frontier past it. Then dropPendingDurable() clears the pending fields and
+            // deregisters under the writer monitor before doClose closes any fd, so a background flusher that
+            // captured this writer before the deregister cannot fdatasync a closed fd.
+            flushDiscardedBatch();
             dropPendingDurable();
             return;
         }
@@ -696,11 +684,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             if (isInColumnarWrite()) {
                 columnarAppender.cancelColumnarWrite();
             }
-            // Deferred 2 (group commit): flush any pending device flush so a CLEAN handoff (pool return /
-            // close) is durable — the next acquirer and any durable-ack consumer must see the frontier on
-            // disk. Before rollback0(), which only rewinds UNCOMMITTED rows: the frontier being flushed
-            // here is already committed, so the two are independent and this order keeps the durability
-            // work ahead of the rewind.
+            // Flush the pending batch, so a clean handoff (pool return or close) leaves the frontier on disk
+            // for the next acquirer and any durable-ack consumer. rollback0() rewinds only uncommitted rows, so
+            // it is independent of this flush.
             flushPendingDurable();
             rollback0();
         } catch (Throwable th) {
@@ -710,9 +696,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // its own failures; this extends the same guarantee to the
             // columnar cancel.
             distressed = true;
-            // A flush failure here is a genuine durability fault, and distressing alone is not enough:
-            // clear pending AND deregister under the writer monitor BEFORE doClose can close any fd, or a
-            // background flusher holding this writer reference could fdatasync a closed fd.
+            // A flush failure here is a durability fault, and distressing alone is not enough: clear the pending
+            // fields and deregister under the writer monitor before doClose closes any fd, or a background
+            // flusher holding this writer could fdatasync a closed fd.
             dropPendingDurable();
             throw th;
         }
@@ -772,6 +758,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         symbolMapReaders.setQuick(columnIndex, symbolMapReader);
     }
 
+    @Override
+    void syncSegmentFilesBeforeSequencing(int commitMode) {
+        metadata.syncBeforeSequencing(commitMode);
+    }
+
     /**
      * Validates that a designated timestamp value is within allowed bounds. The columnar
      * appender calls this per row to match the validation in {@link #newRow(long)}.
@@ -828,7 +819,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             // Each appendData + getSequencerTxn pair is one sequencer transaction (segment_txn 0 and 1 ->
             // seqTxn 1 and 2). Both seeds are identical 0-row commits, so no per-txn state needs resetting
-            // in between (currentTxnStartRowNum and segmentRowCount both stay 0).
+            // in between (currentTxnStartRowNum and segmentRowCount both stay 0). Their min and max timestamps
+            // stay 0: the apply ignores the timestamps of a transaction with no rows, while a min of
+            // Long.MAX_VALUE would read as a forced full commit and send the seeds one by one through
+            // TableWriter.processWalCommit, which opens a partition at that timestamp on an empty table.
             for (int i = 0; i < REBASE_SEED_TXN_COUNT; i++) {
                 lastSegmentTxn = events.appendData(
                         WalTxnType.DATA,
@@ -848,12 +842,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 final long seqTxn = getSequencerTxn();
                 // W>0: carry the remaining shared-sequencer barrier in the batched flush, which
                 // cleanupBeforeClose runs when this writer closes after the seeds.
-                if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+                if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
                     recordPendingDurable(seqTxn);
                 }
             }
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
@@ -875,11 +869,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
             // W>0: private events are durable; record the remaining shared-sequencer barrier pending.
-            if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
                 recordPendingDurable(seqTxn);
             }
         } catch (Throwable th) {
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
@@ -1027,9 +1021,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         final int commitMode = walCommitMode();
         if (commitMode == CommitMode.ADAPTIVE) {
             events.sync(commitMode);
-            if (deferDeviceFlush()) {
-                // Under W>0 sync() is MS_ASYNC. Private event/index/checksum dependencies still have to be
-                // device-durable before any writer can flush the shared sequencer.
+            if (isDeviceFlushDeferred()) {
+                // Under W>0 sync() is MS_ASYNC. The private event and index files still have to be on the device
+                // before any writer can flush the shared sequencer.
                 events.barrierFsync();
             }
         }
@@ -1048,26 +1042,22 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         try {
             lastSegmentTxn = events.appendSql(op.getCmdType(), op.getSqlText(), op.getSqlExecutionContext());
-            // Make THIS SQL txn's private event/index/checksum files durable BEFORE the shared sequencer
-            // records it. This is required for both W=0 and W>0: another writer may fdatasync the shared
-            // sequencer while this writer's batch is pending, so deferring private WAL durability would let
-            // that peer publish a seqTxn whose _event.i entry can disappear on crash.
+            // Make this txn's private event and index files durable before the shared sequencer records it, at every
+            // window: another writer may fdatasync the sequencer while this writer's batch is pending, and the
+            // sequencer must not name an _event.i entry that a crash can lose.
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
-            // Deferred 2 (group commit, W>0): mirror the commit0 durable-ack path. The callers
-            // (apply(AlterOperation) and apply(UpdateOperation)) already flushed any prior pending DATA
-            // commits before reaching here (preserving data→events→seq order for PRIOR data), so it is safe to
-            // start a NEW pending batch for THIS SQL txn. Without this call, a SQL-only-then-idle table's
-            // localDurableSeqTxn would never advance over the SQL txn under W>0 (durable-ack liveness gap); the
-            // batched flush carries the SQL txn's shared sequencer barrier to durable within ≤W even when commits stop.
-            if (syncedMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
+            // W>0: start a pending batch for this txn, as commit0 does. The callers, apply(AlterOperation) and
+            // apply(UpdateOperation), have already flushed earlier pending data commits. Without the batch, the
+            // frontier of a table that goes idle after a SQL txn would never pass it.
+            if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
                 recordPendingDurable(seqTxn);
             }
             return seqTxn;
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
             distressed = true;
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
             }
@@ -1109,7 +1099,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             } catch (CairoException e) {
                 distressed = true;
-                if (e.isDataSyncFailure()) {
+                if (sequencer.isDataSyncFailureFatal(e)) {
                     dropPendingDurable();
                     sequencer.handleDataSyncFailure(e);
                 }
@@ -1127,7 +1117,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } catch (Throwable th) {
             LOG.critical().$("Exception during alter [ex=").$(th).I$();
             distressed = true;
-            if (CairoException.isDataSyncFailure(th)) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(th);
             }
@@ -1181,34 +1171,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles) {
-        int commitMode = walCommitMode();
+        final int commitMode = walCommitMode();
+        // Every file is closed even when a flush fails; the first failure is rethrown after the last close.
+        Throwable flushFailure = null;
         for (int columnIndex = 0, n = newColumnFiles.count(); columnIndex < n; columnIndex++) {
-            // A fixed-size column (or the designated timestamp) has no aux file, so its dest aux fd is -1;
-            // a dropped / not-rolled column can likewise leave a -1 dest fd in the sink. fsyncAndClose(-1)
-            // would throw "could not fsync [fd=-1]"; route the sentinel to plain close (a no-op on -1),
-            // exactly as the NOSYNC branch already does.
-            final long primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
-            if (commitMode != CommitMode.NOSYNC && primaryFd != -1) {
-                ff.fsyncAndClose(primaryFd);
-            } else {
-                ff.close(primaryFd);
-            }
-
-            final long secondaryFd = newColumnFiles.getDestAuxFd(columnIndex);
-            if (commitMode != CommitMode.NOSYNC && secondaryFd != -1) {
-                ff.fsyncAndClose(secondaryFd);
-            } else {
-                ff.close(secondaryFd);
-            }
+            flushFailure = fsyncAndCloseSegmentSwitchFile(commitMode, newColumnFiles.getDestPrimaryFd(columnIndex), flushFailure);
+            flushFailure = fsyncAndCloseSegmentSwitchFile(commitMode, newColumnFiles.getDestAuxFd(columnIndex), flushFailure);
+        }
+        if (flushFailure instanceof Error e) {
+            throw e;
+        }
+        if (flushFailure != null) {
+            throw (RuntimeException) flushFailure;
         }
     }
 
     /**
-     * TEST-ONLY seam for the CRIT-2 mid-flight window (Task 1b). Invoked inside {@link #commit0} for an
-     * ADAPTIVE group-commit ({@code W>0}) deferral, AFTER the txn is sequenced (the shared tracker's seqTxn has
-     * advanced to it) and BEFORE the durable-ack contiguous-prefix pin is registered. A test may interpose a
-     * peer writer's flush here to deterministically reproduce the mid-flight over-claim; production leaves it
-     * {@code null} (a single volatile read, then a no-op). Never installed outside tests.
+     * Test hook, called inside {@link #commit0} under a group window after the txn is sequenced, and with it
+     * pinned by the sequencer, before the writer records it as pending. A test interposes a peer writer's flush
+     * here to drive that race. Null outside tests.
      */
     @TestOnly
     public interface DeferredCommitInterceptor {
@@ -1264,35 +1245,28 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         replaceRangeHiTs,
                         dedupMode
                 );
-                // flush disk before getting next txn. Under ADAPTIVE+W=0 syncIfRequired/getSequencerTxn
-                // fdatasync data→events→seq synchronously; under ADAPTIVE+W>0 they do the SYNC-grade msync
-                // (page-cache, ordered) and DEFER the device flush to the batched flushPendingDurable below.
+                // Flush before getting the next txn. Under ADAPTIVE with no window, syncIfRequired and getSequencerTxn
+                // fdatasync data, events and sequencer in order; with a window they msync, and flushPendingDurable
+                // does the batch's device flush.
                 final int commitMode = walCommitMode();
-                // ONE read of the test seam for the whole commit. It is a static volatile on the
-                // hottest path in the system and is null in production.
+                // Read the test hook once per commit: it is a static volatile on the hot path.
                 final DeferredCommitInterceptor commitInterceptor = deferredCommitInterceptor;
                 syncIfRequired(commitMode);
                 final long seqTxn = getSequencerTxn();
                 if (commitMode == CommitMode.ADAPTIVE) {
-                    if (deferDeviceFlush()) {
-                        // TEST-ONLY seam (Task 1b): the mid-flight window — the txn is now sequenced (the shared
-                        // tracker's seqTxn has advanced to it) but its durable-ack pin was registered ATOMICALLY
-                        // with that assignment in the sequencer, so a peer's markWriterDurable here can no longer
-                        // empty the pin map and over-claim this still-non-durable txn. Lets a test drive that race.
+                    if (isDeviceFlushDeferred()) {
+                        // Test hook: the txn is sequenced and the sequencer pinned it with the assignment, so a peer's
+                        // markWriterDurable here cannot advance the frontier over it.
                         if (commitInterceptor != null) {
                             commitInterceptor.onSequencedBeforePin(walId, seqTxn);
                         }
-                        // Deferred 2 (group commit, W>0): the commit is SEQUENCED and msync'd to the page
-                        // cache but NOT yet device-durable. Record it as the pending-durable frontier and
-                        // DO NOT advance localDurableSeqTxn — the durable-ack must not fire until the batch
-                        // fdatasync lands (flushPendingDurable). Then bound the backlog age to <= W on the
-                        // commit path: if the oldest un-flushed commit is already W old, flush the whole
-                        // backlog (including this commit) now. The background WalPurgeJob flusher covers the
-                        // case where commits STOP before the window elapses.
+                        // The commit is sequenced and in the page cache, but not on the device. Record it as pending and leave
+                        // localDurableSeqTxn alone until the batch flush lands. recordPendingDurable flushes the backlog at once
+                        // if its oldest commit is W old; the background flusher covers commits that stop before then.
                         recordPendingDurable(seqTxn);
                     } else {
-                        // W=0 (today's behaviour): fdatasync completed (data→events→seq) before this point,
-                        // so the commit is device-durable. Re-check the process fence before publishing.
+                        // W=0: data, events and sequencer are already on the device. Re-check the process fence before
+                        // publishing.
                         checkDistressed();
                         seqTxnTracker.setLocalDurableSeqTxn(seqTxn);
                     }
@@ -1343,7 +1317,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
         } catch (CairoException | TableReferenceOutOfDateException ex) {
             distressed = true;
-            if (CairoException.isDataSyncFailure(ex)) {
+            if (sequencer.isDataSyncFailureFatal(ex)) {
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(ex);
             }
@@ -1585,20 +1559,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private void doClose(boolean truncate) {
         if (open) {
             open = false;
-            // Release every native resource even if one step throws. A power loss (simulated by the crash
-            // harness, or a genuine disk fault in production) can fire on a close-time durability op; doClose has
-            // already cleared `open`, so any resource skipped by an aborting throw would never be reclaimed (a
-            // retry finds open==false and no-ops) and its memory would leak until the process exits. Run each
-            // step in turn, keep the FIRST fault, and rethrow it after everything is released so callers/pools
-            // still observe the failure.
+            // Release every native resource even if one step throws, for example on a close-time fd sync failure.
+            // doClose has already cleared `open`, so a retry is a no-op and a skipped resource would leak until the
+            // process exits. Run every step, keep the first failure, and rethrow it once everything is released.
             Throwable closeError = null;
-            // Deferred 2 (group commit): ensure this writer is never left in the background flush queue past
-            // its own lifetime. cleanupBeforeClose already flushed (clean) or dropped (distressed) it; this
-            // is the belt-and-suspenders for any close path that bypasses cleanupBeforeClose (e.g. a
-            // constructor failure before the writer ever committed). Use dropPendingDurable() (synchronized)
-            // so pending is cleared under the monitor BEFORE the fd-close loop below — closing the
-            // use-after-close race even on this fallback path (doClose is not itself synchronized). Wrapped so a
-            // fault here (it can perform a device flush) still lets the memory frees below run.
+            // Never leave this writer in the background flush queue. cleanupBeforeClose has already flushed or
+            // dropped the pending batch; this covers a close path that bypasses it, such as a constructor failure.
+            // dropPendingDurable() is synchronized, so the pending fields are cleared and the writer deregistered
+            // before the fd-close steps below, which are not. It can flush, so a failure must not skip the frees.
             try {
                 dropPendingDurable();
             } catch (Throwable th) {
@@ -1654,18 +1622,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             txReader = Misc.free(txReader);
 
             // All native resources are now released; surface the first close-time fault (if any) to the caller.
-            throwFirstCloseError(closeError);
+            sequencer.handleDataSyncFailure(closeError);
+            CairoException.rethrowCleanupFailure(closeError);
         }
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
         final MemoryMA primaryColumn = columns.getAndSetQuick(pi, null);
         final MemoryMA secondaryColumn = columns.getAndSetQuick(si, null);
-        // Both slots are detached from `columns` BEFORE either close, so a close that throws part-way makes
-        // the other half unreachable -- freeColumns() can no longer see it, and nothing else ever will. Under
-        // adaptive commit these closes carry a real durability barrier (MemoryPMARImpl.close -> msync), so a
-        // simulated crash or a genuine EIO here would strand the secondary column's mapping and its fd.
-        // Close BOTH, then surface the first fault, exactly as freeColumns does.
+        // Both slots are detached from `columns` before either close, so a close that throws would leave the
+        // other half unreachable. Under adaptive commit these closes sync (MemoryPMARImpl.close calls msync), so
+        // they can fail: close both, then rethrow the first failure, as freeColumns does.
         Throwable closeError = null;
         try {
             primaryColumn.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
@@ -1681,7 +1648,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
         }
-        throwFirstCloseError(closeError);
+        CairoException.rethrowCleanupFailure(closeError);
     }
 
     private void freeColumns(boolean truncate) {
@@ -1694,30 +1661,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     try {
                         m.close(truncate, Vm.TRUNCATE_TO_POINTER);
                     } catch (Throwable th) {
-                        // A close-time durability fault on one column (e.g. a power loss the crash harness
-                        // simulates by throwing on its fd sync, or a genuine disk error) must not strand the
-                        // REST mapped: MemoryCMARWImpl.close unmaps before that fd sync, so the faulting column
-                        // is already released -- keep going so every other column is unmapped too (doClose has
-                        // cleared `open`, so no retry would ever reach them). Rethrow the first fault after.
+                        // A close-time sync failure on one column must not leave the rest mapped. MemoryCMARWImpl.close
+                        // unmaps before its fd sync, so the failed column is already released; doClose has cleared `open`, so
+                        // no retry would reach the others. Rethrow the first failure afterwards.
                         if (closeError == null) {
                             closeError = th;
                         }
                     }
                 }
             }
-            throwFirstCloseError(closeError);
-        }
-    }
-
-    private static void throwFirstCloseError(Throwable closeError) {
-        if (closeError != null) {
-            if (closeError instanceof Error) {
-                throw (Error) closeError;
-            }
-            if (closeError instanceof RuntimeException) {
-                throw (RuntimeException) closeError;
-            }
-            throw new RuntimeException(closeError);
+            CairoException.rethrowCleanupFailure(closeError);
         }
     }
 
@@ -1726,21 +1679,23 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         Misc.freeObjListIfCloseable(symbolMaps);
     }
 
-    /**
-     * fsyncs the table directory, which holds the entry of the {@code wal<N>} directory this writer's
-     * constructor created. The writer's first commit names {@code wal<N>}, so the entry has to survive a power
-     * loss by the time that commit is sequenced. One barrier per writer is enough: later segments add entries
-     * to {@code wal<N>}, not to the table directory.
-     */
-    private void fsyncTableDir() {
-        final int tableDirLen = pathSize - walName.length() - 1;
-        try {
-            TableUtils.fsyncDirDurable(ff, path.trimTo(tableDirLen).$());
-        } finally {
-            // $() wrote a NUL over the separator in front of wal<N>, and every other use of `path` extends it
-            // past that point again, so restore the prefix.
-            path.trimTo(tableDirLen).concat(walName);
+    private Throwable fsyncAndCloseSegmentSwitchFile(int commitMode, long fd, Throwable flushFailure) {
+        // A fixed-size column, the designated timestamp included, has no aux file, and a dropped or not-rolled
+        // column can leave a -1 dest fd in the sink. fsyncAndClose(-1) throws, so the -1 sentinel goes to plain
+        // close, a no-op on -1, as in the NOSYNC branch.
+        if (commitMode == CommitMode.NOSYNC || fd == -1) {
+            ff.close(fd);
+            return flushFailure;
         }
+        try {
+            // fsyncAndClose closes the fd even when the flush fails
+            ff.fsyncAndClose(fd);
+        } catch (Throwable th) {
+            if (flushFailure == null) {
+                return th;
+            }
+        }
+        return flushFailure;
     }
 
     private long getColumnStructureVersion() {
@@ -1772,14 +1727,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             long seqTxn;
             do {
-                seqTxn = sequencer.nextTxn(tableToken, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
+                seqTxn = nextSeqTxn(getColumnStructureVersion(), txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
                 if (seqTxn == NO_TXN) {
                     applyMetadataChangeLog(Long.MAX_VALUE);
                 }
             } while (seqTxn == NO_TXN);
             return lastSeqTxn = seqTxn;
         } catch (Throwable failure) {
-            if (CairoException.isDataSyncFailure(failure)) {
+            if (sequencer.isDataSyncFailureFatal(failure)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(failure);
@@ -1845,11 +1800,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     configuration.getWriterFileOpenOpts(),
                     columnsMadviseMode
             );
-            // WAL column DATA vector is strictly append-only (row values appended via put*(value),
-            // cursor moved only with jumpTo/truncate), so the SYNC msync can be narrowed to the
-            // written range -- but ONLY under ADAPTIVE: legacy modes keep appendOnly=false so sync()
-            // takes its full-extent else branch, byte-identical to master. Re-set after every of()
-            // because WAL reuses the PMAR across segments.
+            // A WAL data column is append-only (put* appends; the cursor moves only by jumpTo or truncate), so
+            // under ADAPTIVE the MS_SYNC msync can be narrowed to the written range. Other modes keep
+            // appendOnly=false and sync the full extent. Set after every of(), because WAL reuses the memory
+            // across segments.
             final boolean columnAppendOnly = walCommitMode() == CommitMode.ADAPTIVE;
             dataMem.setAppendOnly(columnAppendOnly);
 
@@ -1867,8 +1821,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         configuration.getWriterFileOpenOpts(),
                         columnsMadviseMode
                 );
-                // WAL column AUX vector is likewise strictly append-only under ADAPTIVE only
-                // (configureAuxMemMA re-opens it via of(), so set the flag afterwards).
+                // The aux column is append-only too; configureAuxMemMA reopens it with of(), so set the flag afterwards.
                 auxMem.setAppendOnly(columnAppendOnly);
             }
         } finally {
@@ -1877,12 +1830,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void openNewSegment() {
-        // Group commit: flush any pending sequencer flush BEFORE this segment roll. flushPendingDurable()
-        // flushes, clears pending, and DEREGISTERS this writer from the background flush queue under the writer
-        // monitor, so once it returns a flusher that grabs the monitor finds pendingDurableSeqTxn == -1 and
-        // no-ops. The flush covers only the sequencer txn log: the segment's column and event files were
-        // fdatasynced before their commits were sequenced. A no-op when nothing is pending (W=0, or already
-        // flushed), so the constructor's first openNewSegment and the W=0 path are untouched.
+        // Flush the pending batch before the segment roll. flushPendingDurable() flushes, clears the pending
+        // fields and deregisters this writer under the writer monitor, so a flusher that takes the monitor
+        // afterwards finds nothing pending. Only the sequencer log needs the flush: the segment's column and
+        // event files were fdatasynced before their commits were sequenced. A no-op when nothing is pending.
         flushPendingDurable();
         boolean refreshed = refreshSymbolWatermarks();
         final int newSegmentId = segmentId + 1;
@@ -1939,13 +1890,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 final long fd = dirFd;
                 dirFd = -1; // clear before fsyncAndClose so the finally never double-closes (it closes even if the fsync fails)
                 ff.fsyncAndClose(fd);
-                if (CommitMode.isPowerLossDurable(commitMode)) {
-                    // The segment's own entry, in wal<N>: the first commit into the segment names it.
-                    TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).$());
-                    if (newSegmentId == 0) {
-                        fsyncTableDir();
-                    }
-                }
+                fsyncSegmentDirEntries(commitMode, newSegmentId);
             }
             lastSegmentTxn = -1;
             path.trimTo(pathSize).slash().put(newSegmentId);
@@ -2208,20 +2153,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
         final int commitMode = walCommitMode();
         events.sync(commitMode);
-        if (isCommittingData && commitMode == CommitMode.ADAPTIVE && deferDeviceFlush()) {
-            // The commit's own pre-sequencing barrier (syncIfRequired) ran on the OLD segment before the
-            // sequencer answered NO_TXN, and the commit sequences this copy as soon as the change log is
-            // applied. Under W>0 sync() above is only MS_ASYNC: without this barrier the batched sequencer
-            // flush would acknowledge the txn durable while its record was still only in the page cache.
+        if (isCommittingData && commitMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
+            // The commit's own pre-sequencing barrier (syncIfRequired) ran on the old segment before the sequencer
+            // answered NO_TXN, and the commit sequences this copy as soon as the change log is applied. Under W>0
+            // sync() above is only MS_ASYNC: without this barrier the batched sequencer flush would acknowledge the
+            // txn durable while its record is still only in the page cache.
             events.barrierFsync();
         }
     }
 
     private void rollUncommittedToNewSegment(int convertColumnIndex, int convertToColumnType) {
-        // Deferred 2 (group commit): like openNewSegment(), flush + deregister any pending device flush of
-        // the current segment before its column files are closed/replaced, so the background flusher cannot
-        // race the fd close. Defensive: the structural callers reach here via apply(), which already flushed;
-        // this is a no-op then (and under W=0), and bulletproofs any future direct caller.
+        // As in openNewSegment(), flush the pending batch and deregister before the current segment's column
+        // files are closed or replaced, so the background flusher cannot race the fd close. The structural
+        // callers come through apply(), which has already flushed, so this is a no-op for them.
         flushPendingDurable();
         final long uncommittedRows = getUncommittedRowCount();
         final long oldLastSegmentTxn = lastSegmentTxn;
@@ -2391,14 +2335,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * MS_ASYNC vs MS_SYNC for the structural null-backfill, using the same rule as
-     * {@link #syncIfRequired0()}: ASYNC mode is async by definition, and under ADAPTIVE the group-commit
-     * window (W&gt;0) defers the device flush, so the msync only has to order the pages -- the explicit
-     * fdatasync that follows is the barrier.
+     * Whether the structural null backfill msyncs with MS_ASYNC: under ASYNC, and under ADAPTIVE with a group
+     * window, where the msync flushes nothing and the barrierFsync that follows writes the pages back and orders
+     * them.
      */
-    private boolean adaptiveMsyncAsync(int commitMode) {
+    private boolean isAdaptiveMsyncAsync(int commitMode) {
         return commitMode == CommitMode.ASYNC
-                || (commitMode == CommitMode.ADAPTIVE && deferDeviceFlush());
+                || (commitMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred());
     }
 
     private void setColumnNull(int columnType, int columnIndex, long rowCount, int commitMode) {
@@ -2445,19 +2388,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             try {
                 columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(auxMemAddr, auxMemSize, adaptiveMsyncAsync(commitMode));
+                    ff.msync(auxMemAddr, auxMemSize, isAdaptiveMsyncAsync(commitMode));
                 }
             } finally {
                 ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
             }
-            // ADAPTIVE handshake, matching syncIfRequired0 and syncAdaptiveEventsBeforeSequencing: the
-            // msync ORDERS the bytes (MS_ASYNC when the group-commit window defers the device flush,
-            // MS_SYNC otherwise) and an EXPLICIT fdatasync provides the device barrier. Relying on
-            // msync(MS_SYNC) alone would make this path's durability grade depend on the kernel treating
-            // msync as a range-fsync, and under W>0 it would force a synchronous device flush on the
-            // structural path that the group-commit design deliberately defers. This backfill is written
-            // on the STRUCTURAL path, which sequences via events-only barriers and never runs
-            // syncIfRequired0's per-column loop, so it must carry its own.
+            // As in syncAdaptiveEventsBeforeSequencing, barrierFsync writes the bytes back and orders them ahead
+            // of the sequencer record; msync(MS_SYNC) alone would depend on the kernel treating it as a
+            // range fsync. This structural path never runs syncIfRequired0's per-column loop, so the backfill
+            // takes its own barrier.
             if (commitMode == CommitMode.ADAPTIVE) {
                 ff.barrierFsync(auxMem.getFd());
             }
@@ -2473,19 +2412,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             try {
                 columnTypeDriver.setDataVectorEntriesToNull(dataMemAddr, rowCount);
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.msync(dataMemAddr, varColSize, adaptiveMsyncAsync(commitMode));
+                    ff.msync(dataMemAddr, varColSize, isAdaptiveMsyncAsync(commitMode));
                 }
             } finally {
                 ff.munmap(dataMemAddr, varColSize, MEM_TAG);
             }
-            // ADAPTIVE handshake, matching syncIfRequired0 and syncAdaptiveEventsBeforeSequencing: the
-            // msync ORDERS the bytes (MS_ASYNC when the group-commit window defers the device flush,
-            // MS_SYNC otherwise) and an EXPLICIT fdatasync provides the device barrier. Relying on
-            // msync(MS_SYNC) alone would make this path's durability grade depend on the kernel treating
-            // msync as a range-fsync, and under W>0 it would force a synchronous device flush on the
-            // structural path that the group-commit design deliberately defers. This backfill is written
-            // on the STRUCTURAL path, which sequences via events-only barriers and never runs
-            // syncIfRequired0's per-column loop, so it must carry its own.
+            // The same barrier as in setVarColumnAuxFileNull.
             if (commitMode == CommitMode.ADAPTIVE) {
                 ff.barrierFsync(dataMem.getFd());
             }
@@ -2493,30 +2425,47 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void switchColumnsToNewSegment(SegmentColumnRollSink rollSink, int columnsToRoll, int convertColumnIndex) {
-        for (int i = 0; i < columnsToRoll; i++) {
-            final int columnType = metadata.getColumnType(i);
-            if (columnType > 0) {
-                if (i != convertColumnIndex) {
-                    switchColumnsToNewSegmentRollColumn(rollSink, i, i);
-                } else {
-                    // Column is converted, the destination column objects are for the last added column
-                    switchColumnsToNewSegmentRollColumn(rollSink, i, columnCount - 1);
+        int i = 0;
+        try {
+            for (; i < columnsToRoll; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
+                    if (i != convertColumnIndex) {
+                        switchColumnsToNewSegmentRollColumn(rollSink, i, i);
+                    } else {
+                        // Column is converted, the destination column objects are for the last added column
+                        switchColumnsToNewSegmentRollColumn(rollSink, i, columnCount - 1);
+                    }
                 }
             }
+        } catch (Throwable th) {
+            // The columns after the failed one have not handed their destination files to a column memory yet.
+            for (int j = i + 1, n = rollSink.count(); j < n; j++) {
+                ff.close(rollSink.getDestPrimaryFd(j));
+                ff.close(rollSink.getDestAuxFd(j));
+            }
+            throw th;
         }
     }
 
     private void switchColumnsToNewSegmentRollColumn(SegmentColumnRollSink rollSink, int srcColumnIndex, int destColumnIndex) {
-        long currentOffset = rollSink.getSrcPrimaryOffset(srcColumnIndex);
-        MemoryMA primaryColumnFile = getDataColumn(srcColumnIndex);
-        primaryColumnFile.jumpTo(currentOffset);
-        primaryColumnFile.close(isTruncateFilesOnClose());
+        try {
+            long currentOffset = rollSink.getSrcPrimaryOffset(srcColumnIndex);
+            MemoryMA primaryColumnFile = getDataColumn(srcColumnIndex);
+            primaryColumnFile.jumpTo(currentOffset);
+            primaryColumnFile.close(isTruncateFilesOnClose());
 
-        MemoryMA auxColumn = getAuxColumn(srcColumnIndex);
-        if (auxColumn != null) {
-            long auxOffset = rollSink.getSrcAuxOffset(srcColumnIndex);
-            auxColumn.jumpTo(auxOffset);
-            auxColumn.close(isTruncateFilesOnClose());
+            MemoryMA auxColumn = getAuxColumn(srcColumnIndex);
+            if (auxColumn != null) {
+                long auxOffset = rollSink.getSrcAuxOffset(srcColumnIndex);
+                auxColumn.jumpTo(auxOffset);
+                auxColumn.close(isTruncateFilesOnClose());
+            }
+        } catch (Throwable th) {
+            // Closing a source column flushes its last page and can fail: the destination files are not handed over.
+            ff.close(rollSink.getDestPrimaryFd(srcColumnIndex));
+            ff.close(rollSink.getDestAuxFd(srcColumnIndex));
+            throw th;
         }
 
         long newSize = rollSink.getDestPrimarySize(srcColumnIndex);
@@ -2535,7 +2484,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * The commit mode governing WAL durability. Instance-wide and fixed for the life of the process:
      * {@code cairo.commit.mode} is a final field read once at construction, so every WAL writer of every
-     * table answers the same grade and no commit can straddle a change.
+     * table answers the same grade and no commit can straddle a change. A replica's local commits keep
+     * the configured grade on purpose: the object store does not hold these files.
      */
     private int walCommitMode() {
         return configuration.getCommitMode();
@@ -2545,7 +2495,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             syncIfRequired0(commitMode);
         } catch (Throwable failure) {
-            if (CairoException.isDataSyncFailure(failure)) {
+            if (sequencer.isDataSyncFailureFatal(failure)) {
                 distressed = true;
                 dropPendingDurable();
                 sequencer.handleDataSyncFailure(failure);
@@ -2556,37 +2506,32 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private void syncIfRequired0(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            // W>0 uses MS_ASYNC here, then fdatasyncs these writer-private files explicitly before
-            // sequencing. Only the shared sequencer barrier is deferred/batched; this safe fallback prevents
-            // one writer's shared flush from publishing another writer's volatile dependencies. Other modes
-            // (and ADAPTIVE W=0) keep their exact existing mmap sync grade.
-            final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush();
-            final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
+            // ADAPTIVE uses MS_ASYNC here at every window, then fdatasyncs these writer-private files before
+            // sequencing. Only the shared sequencer flush is batched, so one writer's flush of the sequencer cannot
+            // publish another writer's files that are not yet durable. ASYNC and SYNC keep their own grade.
+            final boolean adaptive = commitMode == CommitMode.ADAPTIVE;
+            final boolean async = commitMode == CommitMode.ASYNC || adaptive;
             for (int i = 0, n = columns.size(); i < n; i++) {
                 MemoryMA column = columns.getQuick(i);
                 if (column != null) {
                     column.sync(async);
                 }
             }
-            // WRITEBACK DRAIN (advisory, no barrier moved). Each fdatasync below does writeback AND a
-            // journal force, serially, so N files cost N serialised writebacks. One
-            // sync_file_range(WRITE|WAIT_AFTER) pass first lets the device write every file back
-            // concurrently, leaving each fdatasync with little more than its journal force.
-            //
-            // NOT a durability step: sync_file_range journals NO metadata, so it can never stand in for a
-            // barrier -- every file still gets its own fdatasync below, which is what journals the extent
-            // conversions this segment's ftruncate-preallocated mmap appends create. (Leaning on it as a
-            // barrier, or on one foreign flush to journal N inodes, is the ext4 trap that cost this
-            // codebase real data -- see BatchedFlushSharedJournalDependencyTest.) Being advisory is also
-            // what makes it safe to skip on a filesystem where it does nothing: ZFS loses the speedup and
-            // nothing else.
-            //
-            // Only under deferDeviceFlush (W>0): events.sync() is then MS_ASYNC, so hoisting it above the
-            // column barriers moves no barrier and the data->events->seq fdatasync order below is intact.
-            // Under W=0 events.sync() IS a barrier and must stay after the column barriers.
-            final boolean drain = commitMode == CommitMode.ADAPTIVE && deferDeviceFlush && isWritebackDrainEnabled;
-            if (drain) {
-                events.sync(commitMode); // MS_ASYNC only: makes the event mappings' pages known-dirty
+            // Advisory writeback drain. Each fdatasync below writes back and forces the journal, serially; starting
+            // every file's writeback first (sync_file_range WRITE) and only then waiting on each lets the device
+            // write them back at once, which leaves the fdatasyncs little more than the journal force. It journals
+            // no metadata, so it never replaces a barrier, and on ext4 one file's fdatasync does not journal
+            // another's inode: every file still gets its own fdatasync below, which journals the extent conversions
+            // of this segment's preallocated mmap appends. Being advisory, it is safe to skip where it does nothing,
+            // such as on ZFS. The waits stay before every barrier, so the data, events, sequencer order is unchanged.
+            if (adaptive && isWritebackDrainEnabled) {
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    final MemoryMA column = columns.getQuick(i);
+                    if (column != null) {
+                        column.syncFlushKick();
+                    }
+                }
+                events.syncFlushKick();
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     final MemoryMA column = columns.getQuick(i);
                     if (column != null) {
@@ -2595,62 +2540,52 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
                 events.syncFlushDrain();
             }
-            // Fail-safe group-commit protocol: every writer makes its private WAL dependencies durable
-            // BEFORE sequencing. This prevents a peer's later fdatasync of the shared sequencer from
-            // publishing a record whose data/_event is still volatile. W>0 still batches the shared
-            // sequencer barrier, but no longer batches private data/event barriers.
-            //
-            // These barriers are NOT replaceable by one syncfs per window. syncfs is filesystem-wide
-            // (files.c: "ALL dirty data of the WHOLE filesystem"), so on the COMMIT path it would force
-            // out exactly the lazily-applied table state ADAPTIVE defers to the epoch -- at the W cadence
-            // (50ms) rather than the epoch's (60s). Routing per-commit sync through that machinery was
-            // already tried and reverted; see TableWriter.syncColumns and adaptive-commit-internals.md
-            // §4 "Why not one syncfs per window". Batching these barriers across commits instead
-            // requires a coordinated cross-writer flush, not a wider one.
-            if (commitMode == CommitMode.ADAPTIVE) {
+            // Every writer makes its private WAL files durable before sequencing, so a peer's later fdatasync of
+            // the shared sequencer never publishes a record whose data or _event is still volatile; W>0 batches only
+            // the sequencer flush. One syncfs per window cannot replace these barriers: it flushes the whole file
+            // system, so on the commit path it would also force out the lazily applied table state that ADAPTIVE
+            // leaves to the epoch, at the window's cadence instead of the epoch's. Batching these barriers across
+            // commits needs a coordinated cross-writer flush, not a wider one.
+            if (adaptive) {
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     MemoryMA column = columns.getQuick(i);
                     if (column != null && !(column instanceof NullMemory) && column.getFd() != -1) {
-                        // ORDERING only: these must precede the sequencer record on the medium, and the
-                        // commit point's full device flush is what makes them durable. See
-                        // Files.barrierFsync.
+                        // Ordering only: these must reach the medium before the sequencer record, and the commit
+                        // point's full device flush makes them durable. See Files.barrierFsync.
                         ff.barrierFsync(column.getFd());
                     }
                 }
             }
-            if (!drain) {
-                events.sync(commitMode);
-            }
-            if (commitMode == CommitMode.ADAPTIVE && deferDeviceFlush) {
+            // ADAPTIVE syncs the event mappings at the ASYNC grade (MS_ASYNC) and takes the barrier itself below.
+            events.sync(adaptive ? CommitMode.ASYNC : commitMode);
+            if (adaptive) {
                 events.barrierFsync();
             }
         }
     }
 
     /**
-     * Adaptive group commit: true when a window {@code W > 0} is configured. Private columns/events are
-     * still fdatasync'd before sequencing; only the shared sequencer barrier is deferred to
-     * {@link #flushPendingDurable()}. The caller invokes this only on adaptive paths.
+     * True when a group window above zero is configured. Private columns and events are still fdatasync'd
+     * before sequencing; only the shared sequencer flush is deferred to {@link #flushPendingDurable()}.
+     * Callers invoke it only on adaptive paths.
      */
-    private boolean deferDeviceFlush() {
+    private boolean isDeviceFlushDeferred() {
         return configuration.getAdaptiveCommitGroupWindowUs() > 0;
     }
 
     /**
-     * Record {@code seqTxn} as the pending (private dependencies durable, shared sequencer not yet
-     * device-flushed) adaptive group-commit frontier, then apply the COMMIT-DRIVEN flush trigger: if the OLDEST un-flushed commit in
-     * this backlog is already {@code >= W} old, flush the whole backlog now so the device-flush latency (and
-     * thus RPO) is bounded to {@code <= W} on the commit path. Registers the writer with the background
-     * flush queue so an idle tail (commits then STOP) is still flushed within {@code <= W}.
-     *
-     * <p>Synchronized on the writer monitor so the pending fields and the trigger decision are consistent
-     * with {@link #forceDurableIfPending(long, long)} and {@link #flushPendingDurable()}.
+     * Records {@code seqTxn} as pending: its private files are durable, the shared sequencer is not flushed
+     * yet. If the oldest pending commit is already W old, flushes the whole backlog at once, so the commit
+     * path bounds the flush delay to W. Registers the writer with the background flush queue, which flushes
+     * an idle tail within W.
+     * <p>
+     * Synchronized on the writer monitor, so the pending fields and the flush decision agree with
+     * {@link #forceDurableIfPending(long, long)} and {@link #flushPendingDurable()}.
      */
     private synchronized void recordPendingDurable(long seqTxn) {
         if (pendingDurableSeqTxn < 0) {
-            // first commit of a new batch: stamp the batch's age clock (the OLDEST un-flushed commit).
+            // First commit of a new batch: start the batch's age clock.
             pendingSinceMicros = configuration.getMicrosecondClock().getTicks();
-            pendingLoSeqTxn = seqTxn;
             // The sequencer already pinned this txn under its write lock (TableSequencerImpl.nextTxn), so this
             // is normally a no-op. It matters when this writer's own flush was in progress at the time: the
             // txn was sequenced after that flush's fdatasync and reused the previous batch's pin, which the
@@ -2658,7 +2593,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             seqTxnTracker.registerWriterPending(walId, seqTxn);
         }
         pendingDurableSeqTxn = seqTxn;
-        // Register BEFORE the trigger: if the trigger flushes, flushPendingDurable() deregisters; if it does
+        // Register before the trigger: if the trigger flushes, flushPendingDurable() deregisters; if it does
         // not, the writer is left registered so the background flusher can pick up the idle tail.
         sequencer.getWalGroupCommitFlushQueue().register(this);
         final long windowUs = configuration.getAdaptiveCommitGroupWindowUs();
@@ -2672,17 +2607,38 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Perform the batched shared-sequencer flush for adaptive group commit, then advance
-     * {@code localDurableSeqTxn} to the pending frontier and clear the pending state. Private WAL dependencies
-     * were made durable before sequencing, so this barrier cannot publish volatile data/events.
-     *
-     * <p>{@code localDurableSeqTxn} (the durable-ack frontier) advances ONLY here, AFTER the device flush
-     * completes — so a durable-ack'd txn is always physically on disk.
-     *
-     * <p>Synchronized on the writer monitor: the background flusher ({@link #forceDurableIfPending}) and the
-     * committing thread (commit-driven trigger) both route through this method, so at most one device flush
-     * of a given backlog runs and the pending fields are mutated under one lock. Idempotent: a no-op when
-     * nothing is pending (a second caller that lost the race simply finds pendingDurableSeqTxn == -1).
+     * Flushes the sequencer log for the batch of a writer that is being discarded. The batch's private files
+     * were flushed before it sequenced, so the log flush makes it durable and moves the frontier past it. Not
+     * after a failed barrier, which no later flush can prove. A failed flush poisons the engine, as on the
+     * commit path, but does not throw: the writer is being torn down.
+     */
+    private synchronized void flushDiscardedBatch() {
+        if (pendingDurableSeqTxn < 0 || sequencer.isDurabilityFailed() || seqTxnTracker.isDurableFrontierFenced()) {
+            return;
+        }
+        try {
+            final long orphanSweepMark = seqTxnTracker.snapshotOrphanSweepMark();
+            final long coveredSeqTxn = sequencer.fdatasyncTxnLog(tableToken);
+            seqTxnTracker.markWriterDurable(walId, orphanSweepMark, coveredSeqTxn);
+        } catch (Throwable th) {
+            LOG.error().$("could not flush the sequencer log for a discarded WAL writer [table=").$(tableToken)
+                    .$(", walId=").$(walId)
+                    .$(", error=").$(th)
+                    .I$();
+            if (sequencer.isDataSyncFailureFatal(th)) {
+                sequencer.poisonOnDataSyncFailure(th);
+            }
+        }
+    }
+
+    /**
+     * Runs the batched sequencer flush of the adaptive group commit, then advances {@code localDurableSeqTxn}
+     * and clears the pending state. The private WAL files were made durable before sequencing, so this flush
+     * cannot publish volatile data or events, and the frontier advances only after the device flush completes.
+     * <p>
+     * Synchronized on the writer monitor: the background flusher ({@link #forceDurableIfPending}) and the
+     * committing thread both route through here, so at most one flush of a backlog runs. A no-op when nothing
+     * is pending, as for the loser of that race.
      */
     private synchronized void flushPendingDurable() {
         final long flushTo = pendingDurableSeqTxn;
@@ -2691,36 +2647,29 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
         checkDistressed();
         try {
-            // Take the orphan-sweep mark BEFORE the barrier: only pins registered by now are provably
-            // covered by the fdatasync below, so only those may be reaped. See
-            // SeqTxnTracker.snapshotOrphanSweepMark.
+            // Take the orphan-sweep mark before the flush: only pins registered by now are covered by the
+            // fdatasync below, so only those may be reaped. See SeqTxnTracker.snapshotOrphanSweepMark.
             final long orphanSweepMark = seqTxnTracker.snapshotOrphanSweepMark();
-            // Private WAL dependencies were fdatasync'd before sequencing. Only the shared sequencer
-            // barrier remains deferred/batched, so it can never expose a peer's volatile dependency.
             final long coveredSeqTxn = sequencer.fdatasyncTxnLog(tableToken);
-            // Only NOW is this writer's batch on disk. The frontier advances to the contiguous durable prefix
-            // across ALL writers, bounded by coveredSeqTxn -- NOT to our own flushTo, which would over-claim a
-            // peer's still-unflushed lower seqTxn (CRITICAL 2), and not to the live seqTxn either: the sequencer
-            // lock is free again, and our own next commit may already be sequenced (getSequencerTxn runs outside
-            // the writer monitor). flushTo above only gates the nothing-pending early return. Re-check process
-            // poison after the barriers and before publication. The poison lands only after a failed peer has
-            // released the sequencer lock, so markWriterDurable also refuses a tracker that the failed peer
-            // fenced under that lock: our fdatasync above may have returned 0 on an error already reported.
+            // The batch is on disk. The frontier advances to the contiguous durable prefix across all writers,
+            // bounded by coveredSeqTxn: not to flushTo, which could pass a peer's lower seqTxn that is not flushed
+            // yet, and not to the live seqTxn, since this writer's next commit may already be sequenced
+            // (getSequencerTxn runs outside the writer monitor). Re-check the process poison before publishing. A
+            // failed peer poisons only after releasing the sequencer lock, so markWriterDurable also refuses a
+            // tracker that the peer fenced: this fdatasync may have returned 0 on an error already reported.
             checkDistressed();
             seqTxnTracker.markWriterDurable(walId, orphanSweepMark, coveredSeqTxn);
             pendingDurableSeqTxn = -1L;
             pendingSinceMicros = -1L;
-            pendingLoSeqTxn = -1L;
             sequencer.getWalGroupCommitFlushQueue().unregister(this);
         } catch (CairoException e) {
-            if (e.isDataSyncFailure()) {
+            if (sequencer.isDataSyncFailureFatal(e)) {
                 distressed = true;
-                // The fdatasync FAILED, so this batch was not proven durable and its floor must stand. Orphan
-                // (do not remove) the pin: this writer is now distressed and will never flush again, so only a
-                // later SUCCESSFUL peer flush of the shared sequencer log may reap it.
+                // The flush failed, so the batch is not proven durable and its floor must stand. Orphan the pin
+                // rather than remove it: this writer is distressed and never flushes again, so only a later
+                // successful peer flush of the sequencer log may reap it.
                 pendingDurableSeqTxn = -1L;
                 pendingSinceMicros = -1L;
-                pendingLoSeqTxn = -1L;
                 seqTxnTracker.orphanWriterPending(walId);
                 sequencer.getWalGroupCommitFlushQueue().unregister(this);
                 sequencer.handleDataSyncFailure(e);
@@ -2730,31 +2679,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Background-flusher entry point (Deferred 2): if this writer has a pending commit whose oldest
-     * deferral is at least {@code windowUs} old relative to {@code nowMicros}, perform the batched device
-     * flush so the commit becomes durable within {@code <= W} even though commits have STOPPED.
-     *
-     * <p>Thread-safe: synchronizes on the writer monitor (the same lock {@link #flushPendingDurable()} and a
-     * committing thread's commit-driven flush take). If a commit is in flight it will either have already
-     * advanced the frontier or will register fresh pending state; the monitor serialises us against it so we
-     * never double-flush or read a torn pending snapshot. The age check is taken under the lock so a flush
-     * that a concurrent commit just performed (clearing pending) makes this a clean no-op.
+     * Background flusher entry point: if this writer's oldest pending commit is at least {@code windowUs} old
+     * at {@code nowMicros}, runs the batched flush, so the commit becomes durable within W after commits stop.
+     * <p>
+     * Synchronized on the writer monitor, as are {@link #flushPendingDurable()} and the commit-driven flush, so
+     * it never flushes twice or reads half-updated pending fields. When a concurrent commit has just flushed,
+     * nothing is pending and this call returns false.
      *
      * @return {@code true} if a flush was performed
      */
     synchronized boolean forceDurableIfPending(long nowMicros, long windowUs) {
-        // CLOCK-UNIT INVARIANT: both nowMicros (caller's clock) and pendingSinceMicros (set in
-        // recordPendingDurable via configuration.getMicrosecondClock()) MUST be in MICROSECONDS.
-        // WalPurgeJob constructs with getMicrosecondClock() by default (the single-arg constructor) and
-        // passes t = clock.getTicks() here. If a future test or constructor ever injects a millisecond
-        // clock, the age comparison will silently read 1000× too small and the W-window bound will break.
-        // Keep both sources as MicrosecondClock (extends Clock); never inject a MillisecondClock here.
+        // Both nowMicros, from the caller's clock, and pendingSinceMicros, from
+        // configuration.getMicrosecondClock(), must be in microseconds. WalPurgeJob passes MicrosecondClock
+        // ticks; a millisecond clock would make every batch look 1000 times younger and break the window bound.
         if (pendingDurableSeqTxn < 0) {
             return false;
         }
         final long elapsedMicros = nowMicros - pendingSinceMicros;
         if (elapsedMicros >= 0 && elapsedMicros < windowUs) {
-            return false; // still within the RPO budget — leave it for a later sweep / the next commit
+            return false; // still within the window: leave it for a later sweep or the next commit
         }
         // A backwards wall-clock step is not evidence that the batch became younger. Flush immediately
         // rather than extending the idle-tail RPO until the clock catches up.
@@ -2763,37 +2706,28 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Clear the pending group-commit fields AND deregister from the background flush queue, ALL under the
-     * writer monitor. This restores the invariant "pending is cleared before any fd is closed" on every
-     * teardown path: a background flusher sweep that captured this writer reference before the deregister
-     * (the {@link ConcurrentHashMap#newKeySet()} iterator is weakly consistent) will enter the synchronized
-     * block, find {@code pendingDurableSeqTxn == -1}, and return immediately without touching any fd.
-     *
-     * <p>Must be called from ALL teardown paths ({@code cleanupBeforeClose} distressed branch, flush-failure
-     * catch, and {@code doClose} belt-and-suspenders) BEFORE closing any column/events fds. {@code doClose}
-     * is not itself synchronized, so it MUST route through this helper rather than calling {@code unregister}
-     * directly.
+     * Clears the pending group-commit fields and deregisters from the background flush queue under the writer
+     * monitor, so the pending state is cleared before any fd closes: a flusher sweep that captured this writer
+     * before the deregister (the queue's iterator is weakly consistent) enters the monitor, finds nothing
+     * pending and touches no fd.
+     * <p>
+     * Every teardown path calls it before closing any column or event fd: the distressed branch and the
+     * flush-failure catch of {@code cleanupBeforeClose}, and {@code doClose}, which is not synchronized and so
+     * must not call {@code unregister} directly.
      */
     private synchronized void dropPendingDurable() {
         pendingDurableSeqTxn = -1L;
         pendingSinceMicros = -1L;
-        pendingLoSeqTxn = -1L;
-        // Do NOT remove this writer's contiguous-prefix pin: this teardown did NOT device-flush the batch, so
-        // right now its shared sequencer records are still page-cache-only and removing the pin would let the
-        // durable-ack frontier advance over them (the CRITICAL-2 over-claim).
+        // Orphan this writer's pin rather than remove it. This teardown did not flush the batch, so its
+        // sequencer records may be only in the page cache, and removing the pin would let the frontier pass
+        // them. Nothing calls markWriterDurable(walId) for a torn-down writer, so a pin left as it is would
+        // freeze the frontier for the life of the process; an orphan is reaped by the next peer flush of the
+        // sequencer log, which makes this writer's sequenced txns durable too. See
+        // SeqTxnTracker.orphanWriterPending.
         //
-        // Instead ORPHAN it. Nothing will ever call markWriterDurable(walId) for a torn-down writer, so a bare
-        // "leave the pin" froze the frontier at min(pending)-1 for the rest of the process lifetime. An orphan
-        // keeps the honest floor NOW but is reaped by the next peer flush, which fdatasyncs the whole shared
-        // sequencer log and therefore makes our already-sequenced txns durable too (private WAL dependencies
-        // were fdatasync'd before sequencing). See SeqTxnTracker.orphanWriterPending.
-        //
-        // NULL GUARD (load-bearing): this method runs on PARTIALLY-CONSTRUCTED writers. The constructor's
-        // catch block calls dropPendingDurable() then doClose(false), and `seqTxnTracker` is assigned INSIDE
-        // that same try — so any failure before that assignment (lockWal / mkWalDir / getTableMetadata, all
-        // reachable when a test or a real fault makes file operations fail) reaches here with a null tracker.
-        // An NPE here would REPLACE the constructor's real exception and skip doClose(false), leaking the
-        // writer. Such a writer never committed, so it holds no pin and there is nothing to orphan.
+        // The tracker is null on a partially constructed writer, whose constructor calls this method before
+        // doClose(false); such a writer never committed and holds no pin. An NPE here would replace the real
+        // exception.
         if (seqTxnTracker != null) {
             seqTxnTracker.orphanWriterPending(walId);
         }
@@ -2801,23 +2735,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * TEST-ONLY crash-simulation seam (group-commit RPO oracle): model a POWER LOSS by distressing this
-     * writer and dropping its pending group-commit state WITHOUT a device flush, so a subsequent
-     * {@link #close()} takes the distressed path ({@code cleanupBeforeClose} early-returns, skipping
-     * {@code flushPendingDurable}). This reproduces "the process died before the batch fdatasync ran": the
-     * un-flushed tail is NOT made durable and {@code localDurableSeqTxn} is NOT advanced over it — exactly
-     * what a real power loss leaves. Only flips the existing {@code distressed} state (a genuine production
-     * failure mode) and clears the pending fields + flush-queue registration; it injects no new behaviour.
+     * For tests: models a power loss before the batch flush. Distresses this writer and drops its pending
+     * group-commit state without a flush, so a later {@link #close()} takes the distressed path and the
+     * unflushed tail is neither made durable nor counted in {@code localDurableSeqTxn}.
      */
     @TestOnly
     public synchronized void simulatePowerLossDropPending() {
         distressed = true;
         pendingDurableSeqTxn = -1L;
         pendingSinceMicros = -1L;
-        pendingLoSeqTxn = -1L;
-        // Orphan (do not remove) the shared tracker pin, exactly as dropPendingDurable does: a power loss did
-        // NOT flush the batch, so the durable-ack frontier must stay honestly behind our un-flushed seqTxn
-        // until some writer's real fdatasync of the shared sequencer log covers it.
+        // Orphan the pin, as dropPendingDurable does: the batch is not flushed, so the frontier must stay
+        // behind it until a writer's fdatasync of the sequencer log covers it.
         seqTxnTracker.orphanWriterPending(walId);
         sequencer.getWalGroupCommitFlushQueue().unregister(this);
     }
@@ -3224,22 +3152,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // we should switch metadata to this new segment
                         path.trimTo(pathSize).slash().put(segmentId);
                         // this will close old _meta file and create the new one
-                        // DATA BEFORE POINTER. The segment _meta published by switchTo DECLARES this column;
-                        // apply then requires the column's file to exist for the committed row range. Doing
-                        // the switch first left a window where the durable metadata named a file that had
-                        // not been created yet -- a crash in it (the _meta.swp barrier) left the segment
-                        // permanently unappliable, and recovery suspended the table with "WAL segment column
-                        // too short for committed row range [... actual=-1]" (actual=-1 being a MISSING
-                        // file, not a short one). So: create the files, make their names durable by fsyncing
-                        // the segment directory (openNewSegment does the same for the files IT creates; a
-                        // column added to an already-open segment needs it too), and only then publish the
-                        // metadata that points at them.
+                        // Create the column files before publishing the segment _meta that declares the column. Apply
+                        // requires the file to exist for the committed row range, and the kernel can write _meta back at any
+                        // time, so a power loss between the two would leave a segment that can never be applied. Create the
+                        // files, fsync the segment directory so their names are durable (openNewSegment does the same for the
+                        // files it creates), and only then publish the metadata; nextSeqTxn flushes it before the segment's
+                        // next record is sequenced.
                         final int segPathLen = path.size();
                         openColumnFiles(columnName, columnType, columnIndex, segPathLen);
                         if (CommitMode.isPowerLossDurable(walCommitMode())) {
-                            // fsyncDirDurable, not a raw openRONoCache: a directory cannot be opened for
-                            // fsync on a restricted (Windows) file system, where the read-only handle fails
-                            // with ERROR_ACCESS_DENIED and takes the whole ALTER down.
+                            // fsyncDirDurable, not openRONoCache: a restricted (Windows) file system cannot open a
+                            // directory for fsync, and fsyncDirDurable skips the barrier there.
                             TableUtils.fsyncDirDurable(ff, path.trimTo(segPathLen).$());
                         }
                         metadata.switchTo(path.trimTo(segPathLen), segPathLen, isTruncateFilesOnClose());
@@ -3345,20 +3268,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                 // this means we have rolled uncommitted rows to a new segment already
                                 // we should switch metadata to this new segment
                                 path.trimTo(pathSize).slash().put(segmentId);
-                                // CREATE BEFORE PUBLISH -- the same rule the addColumn and renameColumn
-                                // in-segment paths above already follow, and the last place that still got it
-                                // backwards. The segment _meta written by switchTo describes the column with
-                                // its NEW type, and apply sizes the files from that type: converting to a
-                                // var-size type makes apply demand an aux (.i) vector that only
-                                // openColumnFiles creates. Publishing first left a window where the durable
-                                // segment _meta named a VARCHAR column whose .i file did not exist yet, and a
-                                // crash inside it (the _meta.swp barrier) made the segment permanently
-                                // unappliable: "WAL segment column too short for committed row range
-                                // [... actual=-1]", actual=-1 being a MISSING file, and the table suspended
-                                // for good while the sequencer ran ahead.
-                                //
-                                // So: create the files, fsync the segment directory so their names are
-                                // durable, and only then publish the metadata that points at them.
+                                // Create the files before publishing, as addColumn and renameColumn do. The segment _meta
+                                // written by switchTo describes the column with its new type, and apply sizes the files from
+                                // that type: a var-size type needs an aux (.i) vector that only openColumnFiles creates. The
+                                // kernel can write _meta back at any time, so a power loss between publish and create would
+                                // leave a segment that can never be applied. Create the files, fsync the segment directory so
+                                // their names are durable, and only then publish the metadata.
                                 final int segPathLen = path.size();
                                 if (segmentRowCount == 0) {
                                     openColumnFiles(columnName, newType, newColumnIndex, segPathLen);
@@ -3500,15 +3415,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             // this means we have rolled uncommitted rows to a new segment already
                             // we should switch metadata to this new segment
                             path.trimTo(pathSize).slash().put(segmentId);
-                            // RENAME BEFORE PUBLISH. The segment _meta written by switchTo names the column
-                            // by its NEW name, and apply resolves that name to a file. Switching first left
-                            // a window where durable metadata named new_col_N.d while the file on disk was
-                            // still old_name.d: a crash in it (the _meta.swp barrier) made the segment
-                            // permanently unappliable and suspended the table with "WAL segment column too
-                            // short for committed row range [... actual=-1]" -- actual=-1 being a MISSING
-                            // file. Move the names into place first, fsync the segment directory so those
-                            // names are durable (a rename publishes a dentry in the PARENT, which needs its
-                            // own barrier), and only then publish the metadata that points at them.
+                            // Rename before publishing. The segment _meta written by switchTo names the column by its new
+                            // name, and apply resolves that name to a file. The kernel can write _meta back at any time, so a
+                            // power loss between publish and rename would leave a segment that can never be applied. Move the
+                            // files into place, fsync the segment directory so the renames are durable (a rename changes an
+                            // entry in the parent, which needs its own barrier), and only then publish the metadata.
                             final int segPathLen = path.size();
                             renameColumnFiles(columnType, columnName, newColumnName);
                             if (CommitMode.isPowerLossDurable(walCommitMode())) {

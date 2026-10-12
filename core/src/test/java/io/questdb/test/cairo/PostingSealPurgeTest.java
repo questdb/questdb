@@ -736,23 +736,23 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReopenEnqueuesOrphansFromPriorIncarnation() throws Exception {
-        // A distressed writer can seal a generation at a table txn the table never
-        // commits to (txnAtSeal > the committed table txn). Reopening and arming the
-        // recovery walk via setCurrentTableTxn must drop that abandoned chain entry
-        // and enqueue its orphan .pv/.pc for purge: of() -> runRecoveryWalkIfRequested
-        // -> chain.recoveryDropAbandoned -> scheduleOrphanPurge. (v1's writer-open
-        // directory scan, logOrphanSealedFiles, is gone -- v2 routes orphan cleanup
-        // through the chain; the chain-level mechanics are covered by
+    public void testReopenUnlinksOrphansFromPriorIncarnation() throws Exception {
+        // A distressed writer, or a crash recovery that rewinds the table, can leave a
+        // generation sealed at a table txn the table never commits to (txnAtSeal > the
+        // committed table txn). Reopening and arming the recovery walk via
+        // setCurrentTableTxn must drop that abandoned chain entry and unlink its orphan
+        // .pv/.pc: of() -> runRecoveryWalkIfRequested -> chain.recoveryDropAbandoned ->
+        // unlinkAbandonedSealFiles. The chain-level mechanics are covered by
         // PostingIndexChainWriterTest's testRecoveryDropAbandoned* set, so this pins
-        // only the PostingIndexWriter.of() glue: that an armed reopen actually queues
-        // the orphan rather than leaving it on disk.)
+        // only the PostingIndexWriter.of() glue: that an armed reopen removes the orphan
+        // rather than leaving it on disk, and keeps the committed generation.
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final String name = "ps_purge_orphan";
                 final int plen = path.size();
                 FilesFacade ff = configuration.getFilesFacade();
                 long abandonedSealTxn;
+                long committedSealTxn;
                 try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
 
@@ -764,6 +764,9 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     writer.setMaxValue(7);
                     writer.commit();
                     writer.seal();
+                    committedSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    path.trimTo(plen);
 
                     // A second sealed entry at table txn 2 that the table txn never
                     // advanced to: the abandoned/distressed attempt recovery must drop.
@@ -782,13 +785,16 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     path.trimTo(plen);
 
                     // Reopen from disk and arm the recovery walk at table txn 1: the
-                    // txnAtSeal=2 entry is abandoned (2 > 1) -> dropped + its orphan queued.
+                    // txnAtSeal=2 entry is abandoned (2 > 1) -> dropped + its orphan unlinked.
                     writer.setCurrentTableTxn(1L);
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
 
-                    assertTrue(
-                            "the armed recovery walk must enqueue the abandoned entry's orphan",
-                            writer.getPendingPurgesSizeForTesting() >= 1);
+                    assertFalse("the armed recovery walk must unlink the abandoned entry's orphan", ff.exists(
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, abandonedSealTxn)));
+                    assertTrue("the committed generation must stay", ff.exists(
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, committedSealTxn)));
+                    path.trimTo(plen);
+                    assertEquals("nothing left for the purge job", 0, writer.getPendingPurgesSizeForTesting());
                 }
             }
         });

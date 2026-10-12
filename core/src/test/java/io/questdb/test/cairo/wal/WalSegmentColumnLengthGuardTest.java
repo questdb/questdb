@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -35,10 +36,18 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+
 /**
  * The WAL apply job checks that each segment column file covers the committed row range before it maps the
  * file. TableWriterSegmentFileCache remembers the lengths it has seen, so the check stats a column file only
- * when the rows to apply reach past the length it already knows.
+ * when the rows to apply reach past the length it already knows. A var-size column's data file must cover the
+ * end of the last row's data, which its last aux entry holds; a torn last entry must not be applied.
  */
 public class WalSegmentColumnLengthGuardTest extends AbstractCairoTest {
 
@@ -123,6 +132,97 @@ public class WalSegmentColumnLengthGuardTest extends AbstractCairoTest {
                             200011
                             """);
         });
+    }
+
+    @Test
+    public void testTornLastAuxEntryIsRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            // The second applied-row count puts the pending rows at the start of an aux page of a 16-byte entry
+            // column, so the entry before them is outside the aux mapping of their apply pass.
+            final long[] appliedRowCounts = {1, Files.PAGE_SIZE / 16};
+            final String[] tears = {"zero", "below", "past"};
+            final StringBuilder notRefused = new StringBuilder();
+            int table = 0;
+            for (String type : new String[]{"STRING", "VARCHAR", "DOUBLE[]"}) {
+                for (String tear : tears) {
+                    for (long applied : appliedRowCounts) {
+                        for (int pending = 1; pending < 3; pending++) {
+                            try {
+                                assertTornLastAuxEntryIsRefused("t" + table++, type, tear, applied, pending);
+                            } catch (AssertionError e) {
+                                notRefused.append(e.getMessage()).append('\n');
+                            }
+                        }
+                    }
+                }
+            }
+            Assert.assertEquals("", notRefused.toString());
+        });
+    }
+
+    private static String insertRows(String tableName, String type, long lo, long count) {
+        final String value = switch (type) {
+            case "DOUBLE[]" -> "ARRAY[x::DOUBLE, 2.5]";
+            case "STRING" -> "('a string value ' || x)::STRING";
+            default -> "'a varchar value too long to inline ' || x";
+        };
+        return "INSERT INTO " + tableName + " SELECT '2022-02-24'::TIMESTAMP + (x + " + lo + ") * 1_000_000, " + value
+                + " FROM long_sequence(" + count + ")";
+    }
+
+    private static long readLong(FileChannel channel, long position) throws IOException {
+        final ByteBuffer buf = ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+        Assert.assertEquals(Long.BYTES, channel.read(buf, position));
+        return buf.getLong(0);
+    }
+
+    // Rewrites the data offset of the last row's aux entry (STRING: the data end after the last row), keeping
+    // the rest of the entry: "zero" as a torn write leaves it, "below" under the previous row's data end, and
+    // "past" beyond the end of the data file.
+    private static void tearLastAuxEntry(String dir, String type, String tear, long rowCount) throws IOException {
+        final long dataLength = Paths.get(dir, "c.d").toFile().length();
+        try (FileChannel aux = FileChannel.open(Paths.get(dir, "c.i"), StandardOpenOption.READ, StandardOpenOption.WRITE)) {
+            final boolean isString = "STRING".equals(type);
+            // VARCHAR keeps the 48-bit offset in the top bytes of the entry's second long, ARRAY in the bottom
+            // bytes of its first long; STRING keeps one long per row boundary.
+            final long position = isString ? rowCount * Long.BYTES : (rowCount - 1) * 16 + ("VARCHAR".equals(type) ? Long.BYTES : 0);
+            final int shift = "VARCHAR".equals(type) ? 16 : 0;
+            final long mask = isString ? -1L : ((1L << 48) - 1) << shift;
+            final long word = readLong(aux, position);
+            final long offset = (word & mask) >>> shift;
+            final long previousEnd = isString ? readLong(aux, position - Long.BYTES) : offset;
+            final long torn = switch (tear) {
+                case "zero" -> 0;
+                case "below" -> previousEnd - 1;
+                default -> dataLength + 1024;
+            };
+            final ByteBuffer buf = ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+            buf.putLong(0, (word & ~mask) | (torn << shift));
+            Assert.assertEquals(Long.BYTES, aux.write(buf, position));
+        }
+    }
+
+    private void assertTornLastAuxEntryIsRefused(String tableName, String type, String tear, long applied, int pending) throws Exception {
+        final String detail = "[type=" + type + ", tear=" + tear + ", applied=" + applied + ", pending=" + pending + ']';
+        execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, c " + type + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        execute(insertRows(tableName, type, 0, applied));
+        drainWalQueue();
+        execute(insertRows(tableName, type, applied, pending));
+        engine.releaseInactive();
+
+        tearLastAuxEntry(Paths.get(root, tableToken.getDirName(), "wal1", "0").toString(), type, tear, applied + pending);
+
+        drainWalQueue();
+        final String error = engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage();
+        Assert.assertTrue("not suspended " + detail, engine.getTableSequencerAPI().isSuspended(tableToken));
+        // Refused by the guard before the mapping, not by an assertion or a later check.
+        Assert.assertTrue("not refused by the guard " + detail + ": " + error, error != null && error.startsWith("WAL segment column"));
+        assertQuery("SELECT count() FROM " + tableName)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + applied + '\n');
     }
 
     private static class ColumnStatCountingFilesFacade extends TestFilesFacadeImpl {

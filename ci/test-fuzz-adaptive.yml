@@ -229,7 +229,7 @@ stages:
           # finish inside the budget.
           # 65, not 50. At 50 the crash-sweep iteration NEVER COMPLETED: the template's own test pass
           # eats 16-23m, leaving ~29m against a crash package that now needs more than that (this branch
-          # added ChecksumArtifacts/MetaChecksum/TxnLogCrcSidecar/PartitionChecksum crash classes), so
+          # added crash classes such as ChecksumArtifacts and MetaChecksum), so
           # every phase-1 soak ended "hit the run budget and was stopped cleanly" -- green, and never a
           # finished sweep. Worse, build 263283 used 23m on the pass and then started NO iteration at
           # all (27m needed, ~27m left), fuzzing nothing while reporting success.
@@ -374,7 +374,7 @@ stages:
               os: Linux
               jdk: "1.25"
               testset: "all"
-              includeTests: "**/cairo/crash/AdaptiveMultiWriterDurableAckCrashFuzzTest.java,**/cairo/crash/AdaptiveQwpDurableAckNoLossCrashTest.java,**/cairo/crash/VarcharPowerLossFuzzTest.java"
+              includeTests: "**/cairo/crash/AdaptiveMultiWriterDurableAckCrashFuzzTest.java,**/cairo/crash/AdaptiveQwpDurableAckNoLossCrashTest.java,**/cairo/crash/VarcharPowerLossFuzzTest.java,**/cairo/crash/AdaptiveParallelCopyPowerLossTest.java"
               excludeTests: ""
               javadoc_step: ""
               javadoc_profile: ""
@@ -1055,11 +1055,11 @@ stages:
               # red every night for something already known and nobody reads it again.
               #
               # rewrite-mat-view is dimension 15, documented in tools/durability/vm/README.md.
-              # It verifies the startup repair for a view refreshed past the base's recovered
-              # RPO frontier. The cell disables durable epochs so they cannot advance Wm through
-              # the pending base txn. A boundary counts only if it captures Wm<C, actually recovers
-              # with F<C, and startup arms and completes a surgical view repair; otherwise the
-              # verifier reports PRECONDITION_NOT_MET. An all-skipped sweep fails as NOT_EVALUATED.
+              # It verifies that a view refreshed past the base's recovered RPO frontier never
+              # reports valid after the crash. The cell disables durable epochs so they cannot
+              # advance Wm through the pending base txn. A boundary counts only if it captures
+              # Wm<C and actually recovers with F<C; otherwise the verifier reports
+              # PRECONDITION_NOT_MET. An all-skipped sweep fails as NOT_EVALUATED.
               #
               # rewrite-mat-view-control runs the same WAL + mat-view workload at adaptive W=0.
               # Every commit is durable before acknowledgement, so Wm==C and no rollback can leave

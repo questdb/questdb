@@ -588,8 +588,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         // Torn-write guard: data offsets are monotonic. A null entry has size=0 and
         // offset=current-data-end (same as the previous end), so null-prefix rows
         // are never flagged. A torn/un-flushed aux entry leaves the offset field
-        // zeroed while the previous row's data end is non-zero → offset < prevEnd.
-        // Do NOT check offset==0: a real array whose offset is 0 is valid when all
+        // zeroed while the previous row's data end is non-zero: offset < prevEnd.
+        // Do not check offset==0: a real array whose offset is 0 is valid when all
         // preceding entries are null (they write no data bytes, so data-end stays 0).
         if (row > 0) {
             final long prevDataEnd = arrayDataEndAtFromFd(ff, auxFd, row - 1);
@@ -604,9 +604,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return offset + size;
     }
 
-    // Reads the data-vector END (offset+size) of one aux entry from the fd.
+    // Reads the data-vector end (offset+size) of one aux entry from the fd.
     // Non-recursive; one entry only. A null entry (size=0) returns its offset,
-    // which equals the previous cumulative end — correct for monotonicity checks.
+    // which equals the previous cumulative end, as monotonicity checks need.
     private static long arrayDataEndAtFromFd(FilesFacade ff, long auxFd, long row) {
         final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
         return (readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX) + readInt(ff, auxFd, auxFileOffset + Long.BYTES);
@@ -743,15 +743,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
-            // Crash-consistency guard (mirrors VarcharTypeDriver). Data offsets are monotonic; the last
-            // row's data start must be >= the previous row's data end. A lower value means the aux tail
-            // was torn/partially flushed - fail loudly instead of placing the cursor inside committed data.
-            //
-            // Read entry[pos-2]'s data end FIRST, while its own page is the one mapped: this aux memory
-            // is paged (MemoryPMARImpl maps ~one segment at a time and unmaps the rest), so reading
-            // getAppendAddress()-WIDTH off entry[pos-1] would dereference the prior, now-unmapped segment
-            // whenever (pos-1)*WIDTH lands on a page boundary - garbage / SIGSEGV, a false positive on
-            // large tables.
+            // Crash-consistency guard, as in VarcharTypeDriver: the last row's data must start at or after
+            // the previous row's data end. A lower start means the aux tail is torn, and the open fails
+            // rather than place the cursor inside committed data.
+            // Read entry[pos-2]'s data end first, while its page is mapped: the paged aux memory
+            // (MemoryPMARImpl) would otherwise touch an unmapped page whenever (pos-1)*WIDTH lands on a
+            // page boundary.
             long prevDataVectorSize = -1;
             if (pos > 1) {
                 auxMem.jumpTo(getAuxVectorOffset(pos - 2));

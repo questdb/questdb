@@ -48,62 +48,26 @@ import org.junit.Test;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
 
 /**
- * Reproduces the VARCHAR power-loss corruption vulnerability and verifies the fix.
- *
- * <h2>The bug</h2>
+ * Proves that a torn last VARCHAR aux entry never lets the next append overwrite committed rows. A split-value
+ * aux entry holds a 4-byte header and, in bytes 8-15, the data offset. A torn entry can zero the offset while the
+ * header stays valid, so the raw size accessor returns {@code 0 + size} instead of the data vector end.
+ * {@link VarcharTypeDriver#setAppendPosition} checks that the last row's data offset is not below the previous
+ * row's data end and throws a {@link CairoException} rather than place the append cursor inside committed data.
  * <p>
- * VARCHAR split-value aux entries (16 bytes) store the data offset in bytes 8-15, written
- * <em>after</em> the row's data. On reopen, {@link VarcharTypeDriver#setAppendPosition} reads
- * that offset to place the append cursor at the end of the data vector. A torn / partially
- * flushed last entry can leave the offset bytes zeroed while the 4-byte header (bytes 0-3) is
- * still valid, so the {@code assert raw != 0} guard passes and the recovery silently computes
- * {@code 0 + size} instead of the true data-vector end. The cursor then lands inside committed
- * data and the next append overwrites live rows - silently, with no error.
- *
- * <h2>The fix</h2>
- *
- * <ol>
- *   <li>{@code VarcharTypeDriver.appendValue} writes the data vector before the aux entry that
- *       points into it (target-before-pointer), matching {@code StringTypeDriver}.</li>
- *   <li>{@code setAppendPosition} validates that the last row's data offset is not below the
- *       previous row's data end (offsets are monotonic), throwing a {@link CairoException}
- *       instead of silently positioning the cursor inside committed data. STRING gets the
- *       same guard.</li>
- *   <li>{@code TableWriter.syncColumns0} documents and preserves the data-before-aux fsync
- *       ordering, so a durable aux entry never points past not-yet-durable data.</li>
- * </ol>
- *
- * <h2>Durability scope (commit.mode=nosync, the default)</h2>
- * <p>
- * The shipped default is {@code cairo.commit.mode=nosync}: no {@code msync}/{@code fsync} is
- * performed for column, aux, {@code _txn}, column-version or index files. Recent commits may be
- * lost or torn on power loss <em>by design</em> - changes (1) and (3) above only affect durability
- * ordering when an {@code msync} enforces it (commit.mode=sync/async), so they are inert under
- * nosync. The recovery guard (2) is mode-independent (it validates on-disk bytes at reopen) and is
- * therefore the only crash protection under nosync. It is an O(1) check that catches a single torn
- * last entry; it cannot catch a whole unflushed aux page (many consecutive zeroed entries), where
- * the comparison degenerates to {@code 0 < 0}. Closing that residual window would require an O(N)
- * recovery scan or fsync; the chosen trade-off is to keep the cheap guard and rely on
- * {@code commit.mode=sync} (or snapshots / WAL replay) when durability is required. The guard's
- * value under nosync is blast-radius containment: tail loss is acceptable, but a torn tail must
- * never silently overwrite older, already-durable rows.
+ * Under nosync, the shipped default, nothing is synced and this check is the only crash protection. It catches a
+ * single torn last entry, not a whole unflushed aux page of zeroed entries, where the comparison reduces to
+ * {@code 0 < 0}; tail loss is acceptable there, a silent overwrite of older rows is not.
  */
 public class VarcharPowerLossCorruptionTest extends AbstractCairoTest {
 
     private static final int SPLIT_STRING_LEN = 20;
     private static final String SPLIT_STRING = "AAAABBBBCCCCDDDDEEEE"; // 20 ASCII chars, forces split mode
 
-    // -----------------------------------------------------------------------------------------
-    // Mechanism: why the recovery guard is necessary
-    // -----------------------------------------------------------------------------------------
-
     /**
-     * Documents the low-level reason the recovery guard exists: with the offset bytes zeroed but
-     * the header intact, {@code getDataVectorSizeAt} silently returns {@code 0 + size} (the length
-     * of one string) rather than the true data-vector end. The header staying non-zero is exactly
-     * why {@code assert raw != 0} does not catch it. The fix lives in {@code setAppendPosition},
-     * which cross-checks neighbouring entries; this raw accessor remains a hot path and keeps no
-     * validation, so it still returns the wrong value here - that is what the guard defends.
+     * With the offset bytes zeroed and the header intact, {@code getDataVectorSizeAt} returns
+     * {@code 0 + size}, the length of one string, instead of the data vector end, and
+     * {@code assert raw != 0} does not catch it because the header is non-zero. This raw accessor is a
+     * hot path with no validation; {@code setAppendPosition} cross-checks neighbouring entries instead.
      */
     @Test
     public void testRawGetDataVectorSizeStaysWrongOnTornOffset() throws Exception {
@@ -136,10 +100,6 @@ public class VarcharPowerLossCorruptionTest extends AbstractCairoTest {
             }
         });
     }
-
-    // -----------------------------------------------------------------------------------------
-    // Recovery guard: setAppendPosition now detects the torn last entry
-    // -----------------------------------------------------------------------------------------
 
     @Test
     public void testVarcharSetAppendPositionDetectsTornOffset() throws Exception {
@@ -211,10 +171,6 @@ public class VarcharPowerLossCorruptionTest extends AbstractCairoTest {
             }
         });
     }
-
-    // -----------------------------------------------------------------------------------------
-    // End-to-end: torn aux on disk + reopen must not overwrite committed data
-    // -----------------------------------------------------------------------------------------
 
     @Test
     public void testVarcharReopenAfterTornAuxDoesNotOverwriteCommittedData() throws Exception {
@@ -317,10 +273,6 @@ public class VarcharPowerLossCorruptionTest extends AbstractCairoTest {
             }
         });
     }
-
-    // -----------------------------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------------------------
 
     private static long readFileBytes(FilesFacade ff, Path path, long len) {
         long fd = ff.openRO(path.$());

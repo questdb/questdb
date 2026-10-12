@@ -474,10 +474,10 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
 
     @Test
     public void testResponseSizeAndWriteResponseWithDurableAckConfirmToken() throws Exception {
-        // The confirm-token overloads must echo ANY caller-supplied token
-        // verbatim -- not just the legacy "enabled" value -- since a later
-        // task drives these with DurabilityTier.responseToken(...) results
-        // ("local" / "replicated").
+        // The confirm-token overloads must echo any caller-supplied token
+        // verbatim, not just the legacy "enabled" value: tier negotiation
+        // passes DurabilityTier.responseToken(...) results ("local" /
+        // "replicated").
         assertMemoryLeak(() -> {
             byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
             Utf8String confirmToken = new Utf8String("local");
@@ -518,10 +518,10 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
 
     @Test
     public void testBooleanDurableAckOverloadReproducesLegacyEnabledBytes() throws Exception {
-        // Backward-compat pin for the confirm-token refactor: the legacy
-        // boolean=true overload must still emit byte-identical
-        // "X-QWP-Durable-Ack: enabled" (NOT the request-side "true" token),
-        // so every caller still on the boolean API sees no wire change.
+        // Backward compatibility: the legacy boolean=true overload emits
+        // exactly "X-QWP-Durable-Ack: enabled" (not the request-side "true"
+        // token), so a caller of the boolean API sees the released wire
+        // format.
         assertMemoryLeak(() -> {
             byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
             int expectedSize = QwpIngressHttpProcessor.responseSize(acceptKey, 1, null, true, null);

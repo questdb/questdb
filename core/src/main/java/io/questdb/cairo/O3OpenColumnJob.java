@@ -181,9 +181,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             TableWriter tableWriter,
             FilesFacade ff,
-            boolean isOom
+            Throwable failure
     ) {
-        tableWriter.o3BumpErrorCount(isOom);
+        tableWriter.o3BumpErrorCount(failure);
         if (columnCounter.decrementAndGet() == 0) {
             O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
             O3Utils.close(ff, srcTimestampFd);
@@ -525,7 +525,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("merge var error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            tableWriter.o3BumpErrorCount(e);
             O3CopyJob.unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -1340,20 +1340,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                 dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
                 dstAuxFileOffset = dstAuxOffset;
-                // Sample the aux file's real length BEFORE mapRW extends it to dstAuxSize. Once mapped,
+                // Sample the aux file's real length before mapRW extends it to dstAuxSize. Once mapped,
                 // the evidence is gone: the region past the old EOF reads back as zeros, which is
-                // indistinguishable from an entry that was written as zeros.
+                // indistinguishable from an entry written as zeros.
                 final long dstAuxFileLen = dstAuxOffset > 0 ? ff.length(Math.abs(activeFixFd)) : 0;
                 dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
 
                 if (dstAuxOffset > 0) {
-                    // The last existing row's aux entry ends exactly at dstAuxOffset, so a file shorter
-                    // than that holds fewer rows than _txn/_cv claim for this partition and column. The
-                    // read below would then take its entry from beyond the old EOF: all zeros, which
-                    // trips an assertion inside the type driver under -ea, and with assertions off
-                    // silently yields data size 0 and resurfaces much later and much further away as
-                    // "Invalid column size" from whichever reader opens the partition next. Neither
-                    // names the column, the partition, or the shortfall. Fail here, where they are known.
+                    // The last existing row's aux entry ends at dstAuxOffset, so a shorter file holds fewer
+                    // rows than _txn and _cv claim for this partition and column. The read below would take
+                    // its entry from past the old EOF, all zeros: an assertion in the type driver under -ea,
+                    // otherwise a data size of 0 that surfaces later as "Invalid column size" in another
+                    // reader, naming neither the column nor the partition. Fail here, where both are known.
                     if (dstAuxFileLen < dstAuxOffset) {
                         throw CairoException.critical(0)
                                 .put("aux vector is shorter than the partition row count [table=")
@@ -1405,7 +1403,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampSize,
                     tableWriter,
                     ff,
-                    CairoException.isCairoOomError(e)
+                    e
             );
             throw e;
         }
@@ -1916,7 +1914,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampSize,
                     tableWriter,
                     ff,
-                    CairoException.isCairoOomError(e)
+                    e
             );
             throw e;
         }
@@ -2032,7 +2030,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -2060,7 +2058,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -2133,7 +2131,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -2240,7 +2238,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("append new partition error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            tableWriter.o3BumpErrorCount(e);
             final FilesFacade ff1 = tableWriter.getFilesFacade();
             O3Utils.unmapAndClose(ff1, dstFixFd, dstFixAddr, dstFixSize);
             O3Utils.unmapAndClose(ff1, dstVarFd, dstVarAddr, dstVarSize);
@@ -2366,7 +2364,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampSize,
                     tableWriter,
                     ff,
-                    CairoException.isCairoOomError(e)
+                    e
             );
             throw e;
         }
@@ -2627,7 +2625,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
             O3Utils.close(ff, dstKFd);
             O3Utils.close(ff, dstVFd);
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            tableWriter.o3BumpErrorCount(e);
             if (columnCounter.decrementAndGet() == 0) {
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 O3Utils.close(ff, srcTimestampFd);
@@ -2904,7 +2902,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -2931,7 +2929,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }
@@ -3001,7 +2999,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         ff,
-                        CairoException.isCairoOomError(e)
+                        e
                 );
                 throw e;
             }

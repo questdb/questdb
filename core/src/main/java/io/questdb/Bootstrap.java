@@ -26,12 +26,8 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.DurabilityEnvironmentCheck;
-import io.questdb.cairo.FastCommitCheck;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.WriteBarrierCheck;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -405,6 +401,11 @@ public class Bootstrap {
         );
     }
 
+    // For a subclass that builds its own engine: the handler must be the engine's from its construction.
+    protected CairoEngine.DurabilityFailureHandler getDurabilityFailureHandler() {
+        return durabilityFailureHandler;
+    }
+
     public void setDurabilityFailureHandler(@NotNull CairoEngine.DurabilityFailureHandler durabilityFailureHandler) {
         this.durabilityFailureHandler = durabilityFailureHandler;
     }
@@ -591,9 +592,6 @@ public class Bootstrap {
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false);
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false);
                 verifyFileOpts(path, cairoConfig);
-                verifyWriteBarriers(cairoConfig);
-                verifyFastCommit(cairoConfig);
-                verifyDurabilityEnvironment(path, cairoConfig);
                 cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
             }
             if (JitUtil.isJitSupported()) {
@@ -661,56 +659,6 @@ public class Bootstrap {
         if (insufficientLimits) {
             log.advisoryW().$("make sure to increase fs.file-max and vm.max_map_count limits:\n" +
                     "https://questdb.io/docs/deployment/capacity-planning/#os-configuration").$();
-        }
-    }
-
-    private void verifyFastCommit(CairoConfiguration cairoConfig) {
-        final CharSequence dbRoot = cairoConfig.getDbRoot();
-        if (dbRoot == null) {
-            return;
-        }
-        try {
-            FastCommitCheck.checkAndReport(log, cairoConfig.getFilesFacade(), dbRoot, cairoConfig.getCommitMode());
-        } catch (Throwable t) {
-            // Detection must never break startup.
-            log.debug().$("fast_commit verify failed [reason=").$(t.getMessage()).$(']').$();
-        }
-    }
-
-    /**
-     * Report environments where SYNC/ADAPTIVE cannot deliver the power-loss durability they promise. Purely
-     * advisory: nothing here changes behaviour, because in two of the three cases there is nothing the
-     * operator can change.
-     */
-    private void verifyDurabilityEnvironment(Path path, CairoConfiguration cairoConfig) {
-        final CharSequence dbRoot = cairoConfig.getDbRoot();
-        if (dbRoot == null) {
-            return;
-        }
-        DurabilityEnvironmentCheck.checkAndReport(log, cairoConfig.getFilesFacade(), path, dbRoot, cairoConfig.getCommitMode());
-    }
-
-    private void verifyWriteBarriers(CairoConfiguration cairoConfig) {
-        // ADAPTIVE as well as SYNC: a nobarrier mount means fsync does not flush the device cache, which
-        // breaks the adaptive WAL commit point and the durable epoch for exactly the same reason it breaks
-        // SYNC, so gating on SYNC alone would leave an adaptive install unwarned. NOSYNC/ASYNC make no
-        // power-loss promise, so they stay silent -- including under the shipped default, which is NOSYNC.
-        final int commitMode = cairoConfig.getCommitMode();
-        if (commitMode != CommitMode.SYNC && commitMode != CommitMode.ADAPTIVE) {
-            return;
-        }
-        final CharSequence dbRoot = cairoConfig.getDbRoot();
-        if (dbRoot == null) {
-            return;
-        }
-        final int result = WriteBarrierCheck.classifyDbRoot(cairoConfig.getFilesFacade(), dbRoot);
-        if (result == WriteBarrierCheck.BARRIERS_DISABLED) {
-            log.advisoryW().$("WARNING: db root filesystem is mounted WITHOUT write barriers (nobarrier/barrier=0)")
-                    .$(": commit mode ").$(CommitMode.toString(commitMode))
-                    .$(" does NOT provide power-loss durability on this mount")
-                    .$((" -- committed data may be LOST on power failure;"))
-                    .$(" remount the filesystem with write barriers enabled (the default)")
-                    .$(" [dbRoot=").$(dbRoot).$(']').$();
         }
     }
 

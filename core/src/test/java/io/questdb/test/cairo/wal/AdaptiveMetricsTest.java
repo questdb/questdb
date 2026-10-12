@@ -41,8 +41,8 @@ public class AdaptiveMetricsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values (0, 1)");
-            execute("insert into x values (1000000, 2)");
-            execute("insert into x values (2000000, 3)");
+            execute("insert into x values (1_000_000, 2)");
+            execute("insert into x values (2_000_000, 3)");
             drainWalQueue();
 
             SeqTxnTracker tracker = engine.getTableSequencerAPI()
@@ -57,15 +57,15 @@ public class AdaptiveMetricsTest extends AbstractCairoTest {
 
     @Test
     public void testLocalDurableSeqTxnGaugeReleasedOnDrop() throws Exception {
-        // Review LOW: an adaptive table that advanced the process-wide durable-ack frontier gauge
-        // (wal_apply_local_durable_seq_txn) must RELEASE its contribution when the table is dropped, or the
-        // gauge leaks the last value forever. notifyOnDrop routes through resetDurableFrontier() so there is
-        // exactly ONE decrement (no double-count).
+        // An adaptive table that advanced the process-wide durable-ack frontier gauge
+        // (wal_apply_local_durable_seq_txn) must release its contribution when the table is dropped, or the
+        // gauge keeps the last value forever. notifyOnDrop routes through resetDurableFrontier() so there is
+        // exactly one decrement.
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into x values (0, 1)");
-            execute("insert into x values (1000000, 2)");
+            execute("insert into x values (1_000_000, 2)");
             drainWalQueue();
 
             final SeqTxnTracker tracker = engine.getTableSequencerAPI()
@@ -80,7 +80,7 @@ public class AdaptiveMetricsTest extends AbstractCairoTest {
             assertEquals("drop releases the table's gauge contribution (no observability leak)",
                     0, TestUtils.getMetricValue(engine, "questdb_wal_apply_local_durable_seq_txn"));
 
-            // Idempotent: a second drop notification on the same tracker must NOT double-decrement the gauge
+            // Idempotent: a second drop notification on the same tracker must not double-decrement the gauge
             // below 0 (the dropped guard + resetDurableFrontier's current>0 guard both prevent it).
             tracker.notifyOnDrop();
             assertEquals("second drop is a no-op — no double-count",

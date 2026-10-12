@@ -53,26 +53,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The durability barriers a commit pays on its WAL event files when a concurrent ALTER TABLE ADD COLUMN is
- * replayed into it (the NO_TXN path), and on every commit after that.
+ * The barriers a commit pays on its WAL event files when a concurrent ALTER TABLE ADD COLUMN is replayed into it
+ * (the NO_TXN path), and on every commit after that.
  * <ul>
- *   <li>ADD COLUMN SYMBOL rewrites the pending record in place. In EVERY mode each of {@code _event},
- *   {@code _event.i} and {@code _event.c} must get a device barrier holding the rewritten record before the
- *   txn is sequenced: once a sequencer record names the txn, no mix of original and rewritten files may be
- *   left for a power loss to expose.</li>
- *   <li>A roll that moves the pending rows into a new segment re-creates the record there. Under ADAPTIVE it
- *   needs the same pre-sequencing barrier that the commit's own sync gave the old segment.</li>
- *   <li>Nothing else changes: the NO_TXN path pays exactly one extra MS_ASYNC plus one barrier per event file
- *   for a rewrite and nothing for a column that is not rewritten, and the commits after the race pay exactly
- *   the per-commit grade of their mode.</li>
+ *   <li>ADD COLUMN SYMBOL rewrites the pending record in place. SYNC and ADAPTIVE give {@code _event} and
+ *   {@code _event.i} a device barrier before the txn is sequenced, so a power loss never exposes a mix of
+ *   original and rewritten files. ASYNC msyncs both files once more with MS_ASYNC; NOSYNC makes no call.</li>
+ *   <li>A roll that moves the pending rows into a new segment re-creates the record there, and ADAPTIVE gives
+ *   it the same pre-sequencing barrier.</li>
+ *   <li>Nothing else is paid: a column that is not rewritten costs nothing, and the commits after the race pay
+ *   exactly the per-commit grade of their mode.</li>
  * </ul>
  */
 @RunWith(Parameterized.class)
 public class WalEventRewriteSyncTest extends AbstractCairoTest {
     private static final String[] EVENT_FILES = {
             WalUtils.EVENT_FILE_NAME,
-            WalUtils.EVENT_INDEX_FILE_NAME,
-            WalUtils.EVENT_CHECKSUM_FILE_NAME
+            WalUtils.EVENT_INDEX_FILE_NAME
     };
     private final String columnType;
     private final String commitMode;
@@ -125,6 +122,8 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
             ff.tracker = tracker;
             final boolean isRewritten = "SYMBOL".equals(columnType);
             final boolean isAdaptive = "adaptive".equals(commitMode);
+            final boolean isMsyncedRewrite = isRewritten && !"nosync".equals(commitMode);
+            final boolean isFlushedRewrite = isRewritten && ("sync".equals(commitMode) || isAdaptive);
             final long seqTxn = isRoll ? 3 : 2;
             try (WalWriter writer = getWalWriter("x")) {
                 if (isRoll) {
@@ -142,9 +141,9 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
                 Assert.assertEquals(isRoll ? 1 : 0, writer.getSegmentId());
 
                 // ADAPTIVE makes every record durable before sequencing it; after a roll that has to happen
-                // again in the new segment. A rewrite needs it in every mode. Other modes pay no barrier.
+                // again in the new segment. A rewrite needs it in SYNC too. Otherwise no barrier.
                 final int recordLength = readRecordLength(eventFile);
-                final boolean needsBarrier = isRewritten || isAdaptive;
+                final boolean needsBarrier = isFlushedRewrite || isAdaptive;
                 for (String file : EVENT_FILES) {
                     Assert.assertEquals(
                             file + " must get a barrier holding the final record before the txn is sequenced: "
@@ -153,15 +152,15 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
                             ff.hasBarrierBeforeSequencing(file, recordLength, seqTxn)
                     );
                 }
-                // The NO_TXN commit: its own per-commit grade, plus MS_ASYNC and a barrier per file for a
-                // rewrite, and nothing more.
-                assertEventBarriers(ff, segmentMarker, isRewritten ? 1 : 0);
+                // The NO_TXN commit: its own per-commit grade, plus MS_ASYNC per file for a rewrite outside
+                // NOSYNC and a barrier per file for a flushed rewrite, and nothing more.
+                assertEventBarriers(ff, segmentMarker, isMsyncedRewrite ? 1 : 0, isFlushedRewrite ? 1 : 0, isRoll);
 
                 for (int i = 2; i < 4; i++) {
                     appendRow(writer, i, i + 1);
                     ff.clearCounters();
                     writer.commit();
-                    assertEventBarriers(ff, segmentMarker, 0);
+                    assertEventBarriers(ff, segmentMarker, 0, 0, false);
                 }
             }
             drainWalQueue();
@@ -193,28 +192,34 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
     }
 
     /**
-     * Exact event-file barriers of one commit: the per-commit grade of the mode, plus
-     * {@code rewriteBarriers} x (MS_ASYNC + fdatasync) per file.
+     * Exact event-file barriers of one commit: the per-commit grade of the mode, plus {@code rewriteMsyncs}
+     * MS_ASYNC and {@code rewriteBarriers} fdatasync per file. ADAPTIVE commits sync the event files with
+     * MS_ASYNC at every window; a record the roll re-created in a new segment is synced by
+     * {@code WalEventWriter.sync(ADAPTIVE)}, which is MS_SYNC at W=0.
      */
-    private void assertEventBarriers(SyncAttributingFilesFacade ff, String segmentMarker, int rewriteBarriers) {
+    private void assertEventBarriers(
+            SyncAttributingFilesFacade ff,
+            String segmentMarker,
+            int rewriteMsyncs,
+            int rewriteBarriers,
+            boolean isRolledRecord
+    ) {
         final boolean isAdaptive = "adaptive".equals(commitMode);
         final int commitMsyncs = "nosync".equals(commitMode) ? 0 : 1;
         final int commitFsyncs = isAdaptive ? 1 : 0;
         final boolean isAdaptiveW0 = isAdaptive && groupWindowUs == 0;
         for (String file : EVENT_FILES) {
             final String path = segmentMarker + file;
-            // The facade matches substrings, and "_event" is a prefix of the other two names.
+            // The facade matches substrings, and "_event" is a prefix of "_event.i".
             final int msyncs = WalUtils.EVENT_FILE_NAME.equals(file)
                     ? ff.msyncCount(path) - ff.msyncCount(path + ".") : ff.msyncCount(path);
             final int syncMsyncs = WalUtils.EVENT_FILE_NAME.equals(file)
                     ? ff.msyncCount(path, false) - ff.msyncCount(path + ".", false) : ff.msyncCount(path, false);
             final int fsyncs = WalUtils.EVENT_FILE_NAME.equals(file)
                     ? ff.fsyncCount(path) - ff.fsyncCount(path + ".") : ff.fsyncCount(path);
-            final boolean isSyncGrade = WalUtils.EVENT_CHECKSUM_FILE_NAME.equals(file)
-                    ? isAdaptiveW0
-                    : "sync".equals(commitMode) || isAdaptiveW0;
+            final boolean isSyncGrade = "sync".equals(commitMode) || (isAdaptiveW0 && isRolledRecord);
             final String what = file + ff.debugDump();
-            Assert.assertEquals(what + " msyncs", commitMsyncs + rewriteBarriers, msyncs);
+            Assert.assertEquals(what + " msyncs", commitMsyncs + rewriteMsyncs, msyncs);
             Assert.assertEquals(what + " MS_SYNC msyncs", isSyncGrade ? commitMsyncs : 0, syncMsyncs);
             Assert.assertEquals(what + " fsyncs", commitFsyncs + rewriteBarriers, fsyncs);
         }

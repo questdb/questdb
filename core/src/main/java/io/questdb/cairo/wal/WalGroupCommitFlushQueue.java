@@ -27,42 +27,35 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Engine-wide registry of {@link WalWriter}s that have a PENDING (not-yet-device-flushed) adaptive
- * group-commit (Deferred 2, {@code cairo.adaptive.commit.group.window} {@code > 0}).
- *
- * <p>The hard durability requirement is that an idle writer's last commit becomes device-durable within
- * {@code <= W} even when commits STOP. A committing thread advances durability on its own subsequent
- * commits (the commit-driven trigger in {@code WalWriter.commit0}); but if commits cease, nothing on the
- * commit path will ever flush the tail. This registry lets a BACKGROUND flusher (driven by
- * {@code WalPurgeJob}) sweep every writer with a pending commit older than {@code W} and force its deferred
- * fdatasync.
- *
- * <p>A {@link WalWriter} adds itself on the transition into a pending state and removes itself once its
- * pending backlog is flushed (or on close). The set is a concurrent, weakly-consistent snapshot: a writer
- * added or removed during a sweep is handled on the next sweep, which is exactly the desired bound (the
- * sweep cadence is {@code <= W}). {@link WalWriter#forceDurableIfPending(long, long)} is itself thread-safe
- * (it synchronizes on the writer), so the flusher never corrupts a writer that is concurrently committing —
- * the two simply contend on the writer's monitor and at most one performs the flush.
+ * Engine-wide set of {@link WalWriter}s whose adaptive group commit is not yet flushed to the device.
+ * <p>
+ * A committing thread flushes on its own later commits, but once commits stop nothing on the commit path flushes
+ * the tail. The background flusher, driven by {@code WalPurgeJob}, sweeps this set and forces the deferred
+ * fdatasync of every writer whose pending commit is older than the group window, so an idle writer's last commit
+ * becomes durable within the window. A writer adds itself when it enters the pending state and removes itself once
+ * its backlog is flushed, or on close; one added or removed during a sweep is handled by the next sweep.
+ * {@link WalWriter#forceDurableIfPending(long, long)} synchronizes on the writer, so at most one of the flusher and
+ * a committing thread flushes it.
  */
 public class WalGroupCommitFlushQueue {
     private static final Log LOG = LogFactory.getLog(WalGroupCommitFlushQueue.class);
-    // Identity set of writers with a pending durable commit. ConcurrentHashMap.newKeySet gives lock-free
-    // add/remove and a weakly-consistent iterator — safe to traverse while writers register/deregister.
+    // Identity set of writers with a pending durable commit. Its iterator is weakly consistent, so a sweep can
+    // traverse it while writers register and deregister.
     private final Set<WalWriter> pending = ConcurrentHashMap.newKeySet();
-    // Count of background flushes that threw (and were dropped). Stays 0 in healthy operation; a non-zero
-    // value flags a writer that became distressed / a table mid-drop / a flush hitting a stale fd. Used by
-    // the concurrency stress test to detect a flusher-vs-segment-roll race, and useful operator telemetry.
+    // A non-zero count flags a distressed writer, a table being dropped, or a flush on a stale fd.
+    @TestOnly
     private final java.util.concurrent.atomic.AtomicLong failedFlushes = new java.util.concurrent.atomic.AtomicLong();
 
     /**
-     * Number of background flushes that failed (threw) and were dropped from the queue. 0 in healthy
-     * operation.
+     * Number of background flushes that threw and dropped their writer from the set. Zero in healthy operation.
      */
+    @TestOnly
     public long getFailedFlushCount() {
         return failedFlushes.get();
     }
@@ -75,15 +68,15 @@ public class WalGroupCommitFlushQueue {
     }
 
     /**
-     * Force the deferred fdatasync of every registered writer whose oldest pending commit is at least
-     * {@code windowUs} old relative to {@code nowMicros}. A writer whose backlog the flush drains (or that
-     * is found to have no pending work) removes itself via {@link #unregister(WalWriter)}.
+     * Forces the deferred fdatasync of every registered writer whose oldest pending commit is at least
+     * {@code windowUs} old at {@code nowMicros}. A writer whose backlog the flush drains, or that has no pending
+     * work, removes itself through {@link #unregister(WalWriter)}.
+     * <p>
+     * A failure other than a data sync failure is logged and drops the writer from the set, so one distressed
+     * writer cannot abort the sweep. A data sync failure is rethrown, because the writer has already stopped the
+     * engine.
      *
-     * <p>Best-effort and non-throwing: a writer that is busy committing (or mid-close) is skipped and
-     * retried on the next sweep — its own committing thread will flush it, or it will still be pending next
-     * time. The flusher must never let one distressed writer abort the whole sweep.
-     *
-     * @return {@code true} if at least one writer was flushed (useful work done)
+     * @return {@code true} if at least one writer was flushed
      */
     public boolean sweep(long nowMicros, long windowUs) {
         if (pending.isEmpty()) {
@@ -97,8 +90,8 @@ public class WalGroupCommitFlushQueue {
                 }
             } catch (Throwable th) {
                 if (CairoException.isDataSyncFailure(th)) {
-                    // Never convert an indeterminate writeback failure into a best-effort retry. The writer
-                    // already poisoned the engine; preserve the fatal signal through worker-loop handling.
+                    // A failed writeback is never retried: the writer has already stopped the engine, and the
+                    // worker loop must see the fatal error.
                     CairoException.rethrowCleanupFailure(th);
                 }
                 // A non-durability failure (e.g. table mid-drop) remains isolated to this writer.

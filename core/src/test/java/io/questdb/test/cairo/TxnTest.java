@@ -143,13 +143,13 @@ public class TxnTest extends AbstractCairoTest {
             fillPattern(addr, BC_RECORD_SIZE, 0x9999);
             long base = bodyChecksum(addr);
 
-            // 1) The seqTxn + lag region [80,116) is excluded: scribbling it must NOT change the checksum.
+            // 1) The seqTxn + lag region [80,116) is excluded: scribbling it must not change the checksum.
             for (long off = TableUtils.TX_OFFSET_SEQ_TXN_64; off < TableUtils.TX_OFFSET_BODY_CHECKSUM_64; off++) {
                 Unsafe.putByte(addr + off, (byte) (Unsafe.getByte(addr + off) ^ 0x37));
             }
             Assert.assertEquals("lag region must be excluded", base, bodyChecksum(addr));
 
-            // 2) The checksum slot + reserved gap [116,128) is excluded.
+            // 2) The checksum slot [116,124) and its stamp [124,128) are excluded.
             Unsafe.putLong(addr + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0xdeadbeefcafef00dL);
             Unsafe.putInt(addr + TableUtils.TX_OFFSET_BODY_CHECKSUM_64 + Long.BYTES, 0x7fffffff);
             Assert.assertEquals("checksum slot + gap must be excluded", base, bodyChecksum(addr));
@@ -185,12 +185,11 @@ public class TxnTest extends AbstractCairoTest {
 
     @Test
     public void testNoFalsePositiveUnderConcurrentSymbolWrites() throws Throwable {
-        // THE KEY REGRESSION. A writer mutates the live committed record IN PLACE - bumping transient
-        // symbol counts (collectValueCount -> writeTransientSymbolCount) and resetting lag - WITHOUT a
-        // version bump, while reader threads loop unsafeLoadAll/safeReadTxn thousands of times. Because the
-        // body checksum covers only commit-immutable bytes, NOT the symbol-count or lag regions, this must
-        // produce ZERO checksum-mismatch throws and ZERO A/B fallbacks. If the checksum covered those
-        // regions, every in-place mutation would stale it and the reader would falsely fall back / throw.
+        // A writer mutates the live committed record in place, bumping transient symbol counts
+        // (collectValueCount -> writeTransientSymbolCount) and resetting lag without a version bump, while
+        // reader threads loop unsafeLoadAll/safeReadTxn thousands of times. The body checksum covers only
+        // commit-immutable bytes, not the symbol-count or lag regions, so the readers must see no checksum
+        // mismatch and no A/B fallback.
         TestUtils.assertMemoryLeak(() -> {
             final String tableName = "noFalsePositive";
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -215,8 +214,8 @@ public class TxnTest extends AbstractCairoTest {
             final AtomicInteger readerFinished = new AtomicInteger();
             final ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
 
-            // Writer thread: lay down ONE stable committed record (symbols + partitions, fresh version +
-            // checksum), then continuously mutate IN PLACE the regions that DON'T bump the version - the
+            // Writer thread: lay down one stable committed record (symbols + partitions, fresh version +
+            // checksum), then continuously mutate in place the regions that do not bump the version: the
             // transient symbol counts (collectValueCount -> writeTransientSymbolCount) and the lag fields
             // (resetLagAppliedRows). It keeps going until the reader has done enough loads.
             Thread writer = new Thread(() -> {
@@ -254,7 +253,7 @@ public class TxnTest extends AbstractCairoTest {
             });
 
             // Reopen on every iteration to exercise initial checksum verification while the writer
-            // mutates excluded fields. Warm reader reloads deliberately do not verify again.
+            // mutates excluded fields. Warm reader reloads do not verify again.
             Thread reader = new Thread(() -> {
                 try (
                         Path path = new Path();
@@ -302,7 +301,7 @@ public class TxnTest extends AbstractCairoTest {
     @Test
     public void testOpenOldFormatTxn_noBodyChecksum() throws Exception {
         // A record whose checksum slot [116,124) is 0 (old format / pre-feature, or freshly created) must
-        // load with the verify SKIPPED (back-compatible, no false rejection, no fallback).
+        // load with the verify skipped (back-compatible, no false rejection, no fallback).
         TestUtils.assertMemoryLeak(() -> {
             final String tableName = "oldFormatTxn";
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -327,10 +326,9 @@ public class TxnTest extends AbstractCairoTest {
                 expectedTxn = txWriter.getTxn();
             }
 
-            // Simulate an "old format" record by zeroing the checksum slot of the current area AND its stamp.
-            // An old-format _txn predates the body checksum entirely, so it carries neither. Leaving the stamp
-            // would describe a record that HAD a checksum and lost it - the torn case, covered by
-            // TxnChecksumStampTest, not the legacy one under test.
+            // Simulate an old-format record by zeroing the checksum slot of the current area and its stamp:
+            // an old-format _txn predates the body checksum, so it carries neither. A record with a stamp and
+            // no checksum is the torn case, which TxnChecksumStampTest covers.
             try (Path path = new Path()) {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
@@ -352,15 +350,13 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     /**
-     * An old-format record must not merely be TOLERATED, it must migrate FORWARD on first write.
+     * An old-format record migrates forward on its first write instead of staying exempt from the guard.
      * <p>
-     * Adaptive is forward-only: a new binary reads what an old one left behind, but an old binary writing
-     * into a new-format record is corruption and is refused. That is only tenable if opening a legacy
-     * table UPGRADES it. Otherwise a table carried across the upgrade keeps its absent checksum for ever,
-     * permanently exempt from the guard it was supposed to gain, and the "absent" sentinel becomes a hole
-     * rather than a migration step. {@code TxWriter.commit} stores the body checksum unconditionally, so
-     * the upgrade lands on the very next commit; this pins that, and pins that the guard is then ARMED
-     * rather than merely stamped.
+     * Adaptive is forward-only: a new binary reads what an old one left behind, but treats an old binary's
+     * write into a new-format record as corruption. Opening a legacy table must therefore upgrade it, or the
+     * table keeps its absent checksum for ever. {@code TxWriter.commit} stores the body checksum
+     * unconditionally, so the upgrade lands on the next commit. The test checks that, and that the guard is
+     * then armed rather than merely stamped.
      */
     @Test
     public void testOldFormatTxnMigratesForwardOnNextCommit() throws Exception {
@@ -385,9 +381,8 @@ public class TxnTest extends AbstractCairoTest {
                 legacyBaseOffset = txWriter.getBaseOffset();
             }
 
-            // Make it look like a record written before the checksum existed: no checksum AND no stamp, which
-            // is what such a record actually looks like. Clearing the stamp is also what makes the migration
-            // real rather than assumed - the commit below has to write a fresh pair.
+            // Make it look like a record written before the checksum existed: no checksum and no stamp.
+            // Clearing the stamp also forces the commit below to write a fresh pair.
             try (Path path = new Path()) {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                 pokeLong(ff, path.$(), legacyBaseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0L);
@@ -424,7 +419,7 @@ public class TxnTest extends AbstractCairoTest {
                 );
             }
 
-            // Migrated means GUARDED, not just stamped: tearing a covered field must now be caught.
+            // Migrated means guarded, not just stamped: the reader must catch a torn covered field.
             TxReader.resetBodyChecksumFallbackCount();
             try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
@@ -442,7 +437,7 @@ public class TxnTest extends AbstractCairoTest {
 
     @Test
     public void testTornTxnBodyBothAreasCorrupt() throws Exception {
-        // Corrupt the covered region of BOTH A and B (a [0,80) scalar) without fixing either checksum.
+        // Corrupt the covered region of both A and B (a [0,80) scalar) without fixing either checksum.
         // The reader must surface a hard CairoException - never a silently wrong value.
         TestUtils.assertMemoryLeak(() -> {
             final String tableName = "tornBothCorrupt";
@@ -454,7 +449,7 @@ public class TxnTest extends AbstractCairoTest {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                 long aOffset = peekInt(ff, path.$(), TableUtils.TX_BASE_OFFSET_A_32);
                 long bOffset = peekInt(ff, path.$(), TableUtils.TX_BASE_OFFSET_B_32);
-                // Corrupt fixedRowCount (a covered [0,80) scalar) in BOTH areas, leaving both checksums stale.
+                // Corrupt fixedRowCount (a covered [0,80) scalar) in both areas, leaving both checksums stale.
                 pokeLong(ff, path.$(), aOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, 0x1111_1111L);
                 pokeLong(ff, path.$(), bOffset + TableUtils.TX_OFFSET_FIXED_ROW_COUNT_64, 0x2222_2222L);
             }
@@ -478,8 +473,8 @@ public class TxnTest extends AbstractCairoTest {
     @Test
     public void testTornTxnBodyDetectedAndRecovered() throws Exception {
         // Two commits => A and B both hold valid, checksummed records (fixedRowCount 100 then 200).
-        // Corrupt ONLY the version-selected area's fixedRowCount, leaving its checksum stale. The reader
-        // must detect the mismatch, fall back to the intact other area, and return the PRIOR correct state.
+        // Corrupt only the version-selected area's fixedRowCount, leaving its checksum stale. The reader
+        // must detect the mismatch, fall back to the intact other area, and return the prior correct state.
         TestUtils.assertMemoryLeak(() -> {
             final String tableName = "tornRecovered";
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -508,7 +503,8 @@ public class TxnTest extends AbstractCairoTest {
                 path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                 txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
                 Assert.assertTrue(txReader.unsafeLoadAll());
-                // Fell back to the OTHER (intact, prior) area: returns the 100 state, NOT the corrupted value.
+                // The reader fell back to the other (intact, prior) area: it returns the 100 state, not the
+                // corrupted value.
                 Assert.assertEquals("must recover prior correct state via A/B fallback", 100L, txReader.getFixedRowCount());
                 Assert.assertEquals("exactly one fallback expected", 1L, TxReader.getBodyChecksumFallbackCount());
             }
@@ -1358,6 +1354,17 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResetLagLeavesEmptyLag() throws Exception {
+        // Checkpoint restore resets a saved lag with resetLagAppliedRows(); conversion to WAL and REBASE WAL with
+        // resetLagValuesUnsafe(). The four-byte lag checksum sits right before the lag transaction count, and the
+        // empty-lag checksum turns negative at txn 73,046, so the txn range covers both signs.
+        TestUtils.assertMemoryLeak(() -> {
+            assertResetLagLeavesEmptyLag("resetLagAppliedRows", false);
+            assertResetLagLeavesEmptyLag("resetLagValuesUnsafe", true);
+        });
+    }
+
+    @Test
     public void testRowCountUpdatePreservesFlagsAndOffset3() throws Exception {
         // A row-count write (updatePartitionSizeByTimestamp on an existing partition) must not be
         // mistaken for a data-version write: it rewrites only the offset-1 size bits, preserving the
@@ -1809,6 +1816,66 @@ public class TxnTest extends AbstractCairoTest {
         });
     }
 
+    private void assertResetLagLeavesEmptyLag(String tableName, boolean unsafe) {
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+        model.timestamp();
+        AbstractCairoTest.create(model);
+        final int timestampType = TableUtils.getTimestampType(model);
+        final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+        final long savedSeqTxn = 5;
+        final long expectedSeqTxn = unsafe ? 0 : savedSeqTxn;
+        int negativeChecksums = 0;
+        try (Path path = new Path(); TxWriter txWriter = new TxWriter(ff, configuration); TxReader txReader = new TxReader(ff)) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TXN_FILE_NAME).$();
+            txWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+            txWriter.updatePartitionSizeByTimestamp(0, 42);
+            txWriter.setMaxTimestamp(Micros.HOUR_MICROS / 2);
+            while (txWriter.getTxn() < 73_040) {
+                txWriter.commit(symbolCounts);
+            }
+            for (int i = 0; i < 10; i++) {
+                // A committed record with a saved lag, as the apply job leaves one.
+                txWriter.setSeqTxn(savedSeqTxn);
+                txWriter.setLagTxnCount(3);
+                txWriter.setLagRowCount(10);
+                txWriter.setLagOrdered(true);
+                txWriter.setLagMinTimestamp(1);
+                txWriter.setLagMaxTimestamp(2);
+                txWriter.commit(symbolCounts);
+                final long txn = txWriter.getTxn();
+                // A fresh writer, as the callers open the file.
+                try (TxWriter resetWriter = new TxWriter(ff, configuration)) {
+                    resetWriter.ofRW(path.$(), timestampType, PartitionBy.HOUR);
+                    if (unsafe) {
+                        resetWriter.resetLagValuesUnsafe();
+                    } else {
+                        resetWriter.resetLagAppliedRows();
+                    }
+                }
+                final int emptyLagChecksum = TableUtils.calculateTxnLagChecksum(txn, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
+                if (emptyLagChecksum < 0) {
+                    negativeChecksums++;
+                }
+                final String where = "txn=" + txn + ", emptyLagChecksum=" + emptyLagChecksum;
+                txReader.ofRO(path.$(), timestampType, PartitionBy.HOUR);
+                Assert.assertTrue(where, txReader.unsafeLoadAll());
+                final long baseOffset = txReader.getBaseOffset();
+                Assert.assertEquals(where, 0, peekInt(ff, path.$(), baseOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32));
+                Assert.assertEquals(where, 0, txReader.getLagTxnCount());
+                Assert.assertTrue(where, txReader.isLagOrdered());
+                Assert.assertEquals(where, 0, txReader.getLagRowCount());
+                Assert.assertEquals(where, Long.MAX_VALUE, txReader.getLagMinTimestamp());
+                Assert.assertEquals(where, Long.MIN_VALUE, txReader.getLagMaxTimestamp());
+                Assert.assertEquals(where, expectedSeqTxn, txReader.getSeqTxn());
+                // The writer resumes the apply after seqTxn + lagTxnCount.
+                Assert.assertEquals(where, expectedSeqTxn, txReader.getSeqTxn() + txReader.getLagTxnCount());
+                txReader.clear();
+            }
+        }
+        Assert.assertTrue("the txn range must cover both checksum signs", negativeChecksums > 0 && negativeChecksums < 10);
+    }
+
     private static long bodyChecksum(long addr) {
         return TableUtils.calculateTxnBodyChecksum(addr, BC_RECORD_SIZE, BC_PARTITION_TABLE_START);
     }
@@ -1831,8 +1898,8 @@ public class TxnTest extends AbstractCairoTest {
         return (int) (peekLong(ff, path, offset) & 0xffffffffL);
     }
 
-    // Positional 8-byte write of the _txn file. Used to corrupt a committed record on disk WITHOUT
-    // recomputing its body checksum and WITHOUT truncating the file (a writable mmap would truncate).
+    // Positional 8-byte write of the _txn file. Corrupts a committed record on disk without recomputing
+    // its body checksum and without truncating the file (a writable mmap would truncate).
     private static void pokeInt(FilesFacade ff, LPSZ path, long offset, int value) {
         RawFileAccess.pokeInt(ff, path, offset, value);
     }

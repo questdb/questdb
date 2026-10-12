@@ -41,7 +41,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
@@ -51,15 +50,51 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * A bare {@code stored == 0} sentinel cannot tell a legacy record (written before the checksum existed)
  * from one whose checksum slot a torn page write zeroed, so a torn {@code _txn} would be served as healthy.
  * The stamp beside the checksum settles it: it names the txn the checksum was computed for, so a slot that
- * names THIS record was written for it and its absence is tearing, while a slot naming another record -- or
+ * names this record was written for it and its absence is tearing, while a slot naming another record -- or
  * none at all -- says nothing about this one.
  * <p>
  * The stamp is what a file-level "guaranteed from here on" watermark cannot be: withdrawable. A binary that
  * predates the checksum overwrites a record's body in place and leaves the previous occupant's stamp
- * behind, which no longer names the new record, so the file still opens. See
- * {@code OlderBinaryWriteCompatTest}.
+ * behind, which no longer names the new record, so the file still opens.
  */
 public class TxnChecksumStampTest extends AbstractCairoTest {
+
+    /**
+     * A released binary never wrote the gap the stamp sits in, and its allocator places an area over the bytes
+     * of older, larger records, so a released record's gap can hold a stale count. A count equal to the
+     * record's own txn must not read as a stamp: the stale bytes beside it would condemn a healthy table.
+     */
+    @Test
+    public void testReleasedRecordWithStaleGapBytesLoadsUnverified() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table txn_released_gap (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into txn_released_gap values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("insert into txn_released_gap values ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                txnPath(path, "txn_released_gap");
+                for (long areaOffsetField : new long[]{TableUtils.TX_BASE_OFFSET_A_32, TableUtils.TX_BASE_OFFSET_B_32}) {
+                    final long areaOffset = RawFileAccess.peekInt(ff, path.$(), areaOffsetField);
+                    final long areaTxn = RawFileAccess.peekLong(ff, path.$(), areaOffset + TableUtils.TX_OFFSET_TXN_64);
+                    RawFileAccess.pokeLong(ff, path.$(), areaOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 42);
+                    RawFileAccess.pokeInt(ff, path.$(), areaOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32, (int) areaTxn);
+                }
+            }
+
+            TxnCorruptionUtils.forceReload(engine, "txn_released_gap");
+            execute("insert into txn_released_gap values ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("txn_released_gap")));
+            assertQuery("select count() from txn_released_gap")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3\n");
+        });
+    }
 
     /**
      * Pins where the stamp lives. It must sit in the record's reserved tail gap, immediately after the
@@ -98,9 +133,9 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
 
     @Test
     public void testLegacyTxnWithoutChecksumStillLoads() throws Exception {
-        // The false-positive control. A _txn written before the capability existed has neither the marker
-        // nor a body checksum, and MUST still load -- this is the failure mode TableUtils.CV_CHECKSUM_MAGIC
-        // warns about for _cv. If this fails, every existing database is being condemned.
+        // The false-positive control. A _txn written before the checksum existed has neither a stamp nor a
+        // body checksum and must still load, or every existing database fails to open. TableUtils.CV_CHECKSUM_MAGIC
+        // warns about the same failure mode for _cv.
         assertMemoryLeak(() -> {
             execute("create table txn_legacy (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into txn_legacy values ('2024-01-01T00:00:00.000000Z', 1)");
@@ -138,7 +173,7 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
                     TxnCorruptionUtils.readLiveAreaChecksumStamp(engine, tableName)
             );
 
-            // Tear the LIVE area's checksum only, leaving its stamp: the other area stays intact so
+            // Tear the live area's checksum only, leaving its stamp: the other area stays intact so
             // unsafeLoadAll() can fall back to it and the reader survives long enough to be diagnosed.
             TxnCorruptionUtils.tearLiveAreaChecksumSlot(engine, tableName);
             Assert.assertEquals(
@@ -157,7 +192,7 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
                 );
             }
 
-            // Same bytes, stamp erased: now it is a legacy record and must NOT be called torn.
+            // Same bytes, stamp erased: a legacy record, which must not be called torn.
             TxnCorruptionUtils.makeAreasLookLegacy(engine, tableName);
             try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
                 txnPath(path, tableName);
@@ -173,13 +208,13 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
 
     @Test
     public void testZeroedChecksumSlotWithALiveStampIsTorn() throws Exception {
-        // THE regression this design exists for. Without the stamp a zeroed checksum slot read as "legacy,
-        // skip the check" and the torn record was served.
+        // The case the stamp exists for: a zeroed checksum slot under a stamp that names the record is a torn
+        // write, not a legacy record, and the reader must not serve it.
         assertMemoryLeak(() -> {
             execute("create table txn_cap (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into txn_cap values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
-            // A second commit so BOTH A/B areas carry a stamped record; otherwise the A/B fallback would
+            // A second commit so both A/B areas carry a stamped record; otherwise the A/B fallback would
             // legitimately land on an unstamped (legacy) record and this would not exercise the torn verdict.
             execute("insert into txn_cap values ('2024-01-02T00:00:00.000000Z', 2)");
             drainWalQueue();
@@ -193,7 +228,7 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
                     0, TxnCorruptionUtils.readChecksumStampB(engine, "txn_cap")
             );
 
-            // Zero BOTH areas' checksum slots, leaving their stamps intact. That is exactly what a partial
+            // Zero both areas' checksum slots, leaving their stamps intact. That is what a partial
             // page write leaves behind: the stamp still names the record whose checksum has gone.
             TxnCorruptionUtils.tearChecksumSlots(engine, "txn_cap");
 
@@ -202,35 +237,6 @@ public class TxnChecksumStampTest extends AbstractCairoTest {
                 Assert.fail("expected a zeroed checksum slot with a live stamp to be rejected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "checksum");
-            }
-        });
-    }
-
-    @Test
-    public void testPreviousChecksumFormatLoadsUnverified() throws Exception {
-        assertMemoryLeak(() -> {
-            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-            final String tableName = "txn_previous_checksum";
-            final int timestampType = createTwoCommitTable(tableName, ff);
-            final long txn = TxnCorruptionUtils.readLiveAreaTxn(engine, tableName);
-            try (Path path = new Path()) {
-                txnPath(path, tableName);
-                try (RandomAccessFile file = new RandomAccessFile(path.toString(), "rw")) {
-                    file.seek((txn & 1) == 0 ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
-                    final int offset = Integer.reverseBytes(file.readInt());
-                    file.seek(offset + TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32);
-                    file.writeInt(Integer.reverseBytes((int) txn));
-                    // The previous development format included structureVersion. Its checksum must not
-                    // be interpreted using the revised coverage, even if an older binary left it stale.
-                    file.seek(offset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64);
-                    file.writeLong(Long.reverseBytes(42));
-                }
-                try (TxWriter writer = new TxWriter(ff, configuration)) {
-                    writer.ofRW(path.$(), timestampType, PartitionBy.HOUR);
-                    Assert.assertEquals(txn, writer.getTxn());
-                    Assert.assertEquals(42, writer.getPartitionSize(0));
-                    writer.commit(new ObjList<>());
-                }
             }
         });
     }

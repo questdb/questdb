@@ -50,9 +50,6 @@ import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
 public class TableConverter {
     private static final Log LOG = LogFactory.getLog(TableConverter.class);
-    // Exists only while a WAL replay before conversion is running. If startup finds it, the previous replay
-    // killed the process, so this time the table converts without a replay instead of crashing again.
-    private static final String REPLAY_FILE_NAME = "_convert.replay";
     private static final String REPLAY_LOCK_REASON = "convertReplay";
 
     public static ObjList<TableToken> convertTables(
@@ -96,11 +93,9 @@ public class TableConverter {
                         if (!walEnabled
                                 && existingToken != null
                                 && existingToken.isWal()
-                                && !tableNameRegistry.isWalTableDropped(dirName)
-                                && isEnrolledAdaptive(ff, path.trimTo(rootLen).concat(dirName))) {
-                            // Startup recovery has just rewound this adaptive table to its last durable
-                            // epoch. Every transaction after the epoch now exists only in the WAL, and the
-                            // conversion below deletes the WAL, so replay it first.
+                                && !tableNameRegistry.isWalTableDropped(dirName)) {
+                            // The conversion below deletes the WAL, so apply it first. A replay that cannot
+                            // finish throws, and the table stays a WAL table.
                             //
                             // The WAL apply code uses the same thread-local Path and sink as this method,
                             // so reset both afterwards, even when the replay throws: the directory scan
@@ -146,36 +141,25 @@ public class TableConverter {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
-                                // Structural one-shot conversion, outside any table writer and outside the
-                                // adaptive epoch's coverage: take the SYNC grade under ADAPTIVE.
+                                // A one-shot structural conversion, outside any table writer and any save
+                                // point: under adaptive it takes the sync grade.
+                                // Boot conversion precedes role installation and keeps the configured grade.
                                 txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
 
-                                // A type conversion RESETS this table's WAL lineage: resetLagValuesUnsafe()
+                                // A type conversion resets the table's WAL lineage: resetLagValuesUnsafe()
                                 // below zeroes _txn.seqTxn, and the WAL branch re-seeds txn_seq from txn 0.
-                                // Every durable-epoch artifact in this directory anchors the lineage that ends
-                                // here, so it must go -- the rule every other rewinding path already obeys
-                                // (TableSnapshotRestore on checkpoint restore, and the REBASE WAL staging
-                                // clone, which excludes the source anchor and publishes its own). Left behind,
-                                // the stale anchor post-dates the reset live _txn and startup recovery refuses
-                                // to bring the instance up.
-                                //
-                                // The order is crash-safe at every point. The restore-enrolment marker goes
-                                // down FIRST: between the removal and the new baseline the table is enrolled
-                                // in _meta with no anchor, which recovery refuses unless that marker tells it
-                                // to re-enrol at the live cut. A crash before the marker leaves the old,
-                                // still-valid anchor with the lineage it describes; a crash after the removal
-                                // leaves a table recovery re-enrols; either way _convert survives and the
-                                // conversion runs again on the next boot.
+                                // The save point files belong to the lineage that ends here, so they go, as on
+                                // every other path that rewinds a table. A stale save point would post-date the
+                                // reset _txn, and startup recovery would refuse to bring the instance up. A crash
+                                // after the removal leaves the table without a save point, so not enrolled, and
+                                // _convert runs the conversion again on the next boot.
                                 path.trimTo(rootLen).concat(dirNameSink);
-                                final int tableRootLen = path.size();
-                                RecoveryCoordinator.markRestoredForEnrolment(ff, path, tableRootLen);
-                                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, tableRootLen);
-
-                                txWriter.resetLagValuesUnsafe();
+                                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, path.size());
 
                                 int convertedTimestampType = ColumnType.TIMESTAMP;
                                 int convertedPartitionBy = PartitionBy.NONE;
                                 if (walEnabled) {
+                                    txWriter.resetLagValuesUnsafe();
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
                                         metadata.reload(metaPath, metaMem);
                                         convertedTimestampType = metadata.getTimestampIndex() < 0
@@ -189,49 +173,38 @@ public class TableConverter {
                                     // resetMetadataVersion, never a raw putLong: the metadataVersion is
                                     // checksummed into the meta-format minor-version field, so rewriting it
                                     // in place otherwise switches off every version-gated tail field and the
-                                    // converted table silently loses its TTL, table format and per-table
-                                    // commit mode.
+                                    // converted table silently loses its TTL and table format.
                                     TableUtils.resetMetadataVersion(metaMem, 0);
                                     path.trimTo(rootLen).concat(dirNameSink);
                                     txWriter.resetStructureVersionUnsafe();
                                 } else {
                                     if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
                                         removeWalPersistence(path, rootLen, ff, dirNameSink);
+                                        // Only once the WAL is gone: a kill before it leaves _txn at the replayed
+                                        // seqTxn, so the next start finds nothing to replay.
+                                        txWriter.resetLagValuesUnsafe();
                                     } else {
                                         LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
                                         continue;
                                     }
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
-                                // Last in-place mutation of _meta on this path, and it lands inside the
-                                // checksummed range -- so the checksum resetMetadataVersion recomputed
-                                // above now describes the PREVIOUS contents. Refresh after the final
-                                // write, not before it.
-                                TableUtils.refreshMetaBodyChecksum(metaMem);
 
-                                // The converted table is a fresh WAL lineage sitting at seqTxn 0, so give it
-                                // its own generation-zero anchor here, the way the REBASE WAL clone does. The
-                                // next boot then validates an anchor instead of refusing an absent one. A
-                                // non-adaptive instance publishes nothing, and must not leave the PREVIOUS
-                                // enrolment record behind either: it would claim lazy state on a table whose
-                                // _txn was just reset, with nothing to rewind to.
+                                // The converted table is a fresh WAL lineage at seqTxn 0, so give it its own
+                                // generation-zero save point here, as the REBASE WAL clone does. A non-adaptive
+                                // instance publishes nothing.
                                 path.trimTo(rootLen).concat(dirNameSink);
+                                // Boot conversion precedes role installation and keeps the configured grade.
                                 if (walEnabled && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-                                    DurableEpochManifest.publishInitialAt(
+                                    final long baselineTxn = DurableEpochManifest.publishInitialAt(
                                             configuration,
                                             token,
                                             path,
                                             convertedTimestampType,
-                                            convertedPartitionBy,
-                                            configuration.getMicrosecondClock().getTicks() / 1000L
+                                            convertedPartitionBy
                                     );
-                                } else {
-                                    DurableEpochManifest.clearEnrollmentRecord(configuration, token, path.trimTo(rootLen).concat(dirNameSink), tableRootLen);
+                                    RecoveryCoordinator.pinPublishedBaseline(engine, token, baselineTxn);
                                 }
-                                // Consume the crash bridge: the anchor above is durable, or this table has no
-                                // lazy state by construction (non-WAL, or a non-adaptive instance).
-                                path.trimTo(rootLen).concat(dirNameSink).concat(RecoveryCoordinator.RESTORE_ENROL_FILE_NAME);
-                                ff.removeQuiet(path.$());
 
                                 convertedTables.add(token);
 
@@ -246,7 +219,8 @@ public class TableConverter {
                             }
                         }
                     } catch (Exception e) {
-                        LOG.error().$("table conversion failed [path=").$(path).$(", e=").$(e).I$();
+                        // _convert stays, so the next start tries again.
+                        LOG.critical().$("table conversion failed, the table keeps its type [path=").$(path).$(", e=").$(e).I$();
                     } finally {
                         if (txWriter != null) {
                             txWriter.close();
@@ -260,9 +234,12 @@ public class TableConverter {
         return convertedTables;
     }
 
-    private static void applyOutstandingWal(CairoEngine engine, TableToken token, long lastSeqTxn) {
-        final CairoConfiguration configuration = engine.getConfiguration();
+    // Returns null once the WAL is applied and flushed. A replay that stops early throws on an adaptive start, where
+    // the table keeps its save point for the next start; on a start outside adaptive the table is flushed and the
+    // refusal returned, for the caller to remove the save point first.
+    private static CairoException applyOutstandingWal(CairoEngine engine, TableToken token, long lastSeqTxn) {
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        CairoException refusal = null;
         try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
             long previousSeqTxn = -1;
             while (true) {
@@ -273,25 +250,37 @@ public class TableConverter {
                 job.applyWalDirect(token, Job.RUNNING_STATUS);
                 try (TableWriter writer = engine.getWriterUnsafe(token, REPLAY_LOCK_REASON)) {
                     final long seqTxn = writer.getSeqTxn();
-                    if (seqTxn < lastSeqTxn && seqTxn != previousSeqTxn && !tracker.isSuspended()) {
-                        previousSeqTxn = seqTxn;
-                        continue;
-                    }
-                    // After the conversion the WAL is gone, so the replayed rows must be on disk first.
-                    // advanceDurableEpoch() flushes the table and then may decline to publish the epoch, for
-                    // example when its pin slot is busy. Only the flush matters here, so check that.
-                    if (writer.getEffectiveCommitMode() == CommitMode.ADAPTIVE && seqTxn > 0 && seqTxn > tracker.getLocalDurableSeqTxn()) {
-                        writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
-                        if (tracker.getLocalDurableSeqTxn() < seqTxn) {
-                            throw CairoException.critical(0)
-                                    .put("could not make replayed WAL durable before conversion [table=").put(token.getTableName())
-                                    .put(", seqTxn=").put(seqTxn)
-                                    .put(']');
+                    if (seqTxn < lastSeqTxn) {
+                        if (seqTxn != previousSeqTxn && !tracker.isSuspended()) {
+                            previousSeqTxn = seqTxn;
+                            continue;
                         }
+                        refusal = CairoException.critical(0)
+                                .put("could not apply the WAL before the conversion to non-WAL, the table stays a WAL table;")
+                                .put(" resume it, let it catch up and restart [table=").put(token.getTableName())
+                                .put(", seqTxn=").put(seqTxn)
+                                .put(", lastSeqTxn=").put(lastSeqTxn)
+                                .put(", suspended=").put(tracker.isSuspended())
+                                .put(']');
+                        // Boot conversion precedes role installation and keeps the configured grade.
+                        if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                            throw refusal;
+                        }
+                    }
+                    // After the conversion the WAL is gone, so the replayed rows must be on disk first. A refused
+                    // conversion outside adaptive loses its save point, so its replayed rows must be on disk too.
+                    try {
+                        writer.fsyncMaterializedState();
+                    } catch (CairoException | CairoError e) {
+                        // No save point on close; the caller stops the engine.
+                        if (CairoException.isDataSyncFailure(e)) {
+                            writer.markDistressed();
+                        }
+                        throw e;
                     }
                     LOG.info().$("replayed WAL before conversion [table=").$(token)
                             .$(", seqTxn=").$(seqTxn)
-                            .$(", lastSeqTxn=").$(lastSeqTxn)
+                            .$(", refused=").$(refusal != null)
                             .I$();
                     break;
                 }
@@ -307,26 +296,11 @@ public class TableConverter {
                     .put(']');
         }
         engine.unlock(AllowAllSecurityContext.INSTANCE, token, null, false);
-    }
-
-    private static boolean isEnrolledAdaptive(FilesFacade ff, Path path) {
-        final int tableRootLen = path.size();
-        try {
-            path.concat(META_FILE_NAME);
-            final long size = ff.length(path.$());
-            if (size <= 0) {
-                return false;
-            }
-            try (MemoryCMR metaMem = Vm.getCMRInstance(ff, path.$(), size, MemoryTag.MMAP_DEFAULT)) {
-                return TableUtils.getEnrolledCommitMode(metaMem) == CommitMode.ADAPTIVE;
-            }
-        } finally {
-            path.trimTo(tableRootLen);
-        }
+        return refusal;
     }
 
     // The seqTxn in the table's _txn file. Returns Long.MAX_VALUE when the file does not load, so that the
-    // caller skips the replay and the table converts as it did before the replay existed.
+    // caller skips the replay and converts the table without it.
     private static long readSeqTxn(FilesFacade ff, Path path, int tableRootLen) {
         path.trimTo(tableRootLen).concat(TXN_FILE_NAME);
         try (TxReader txReader = new TxReader(ff)) {
@@ -339,7 +313,7 @@ public class TableConverter {
         }
     }
 
-    private static boolean readWalEnabled(LPSZ path, FilesFacade ff) {
+    static boolean readWalEnabled(LPSZ path, FilesFacade ff) {
         long fd = -1;
         try {
             fd = ff.openRO(path);
@@ -360,69 +334,57 @@ public class TableConverter {
     }
 
     /**
-     * Applies the table's outstanding WAL before the conversion to non-WAL deletes it.
+     * Applies the table's outstanding WAL before the conversion to non-WAL deletes it, in every mode.
      * <p>
-     * Under ADAPTIVE, startup recovery rewinds a table to its last durable epoch and expects WAL replay to
-     * restore everything after it. The conversion runs before any WAL apply job starts, so without this
-     * replay every row committed after the epoch would be lost. The caller runs it only for tables enrolled
-     * in ADAPTIVE, and this method returns early when {@code _txn} has already caught up with the sequencer,
-     * so every other conversion behaves exactly as before.
+     * A table with a save point leaves adaptive here, as recovery's exit does on a start outside adaptive, which
+     * skips such a table: after the replay the table is flushed, the save point removed and its pin released. A
+     * crash before the removal leaves the save point, so the next start rewinds the table to it and replays again.
      * <p>
-     * The replay is best effort, and the conversion always goes ahead afterwards:
-     * <ul>
-     *   <li>It stops at the first transaction that fails to apply, and the conversion drops that
-     *   transaction and everything after it, as it always dropped unapplied WAL. This keeps
-     *   {@code SET TYPE BYPASS WAL} working as the way to get rid of a transaction that keeps failing.</li>
-     *   <li>Limitation: the WAL apply job applies transactions in batches, and a failure discards its whole
-     *   batch. Good transactions that share a batch with the failing one are therefore lost too. Fixing this
-     *   needs a change to the apply job, which this replay does not attempt.</li>
-     *   <li>If a transaction crashes the process rather than failing, the marker file stays behind. The next
-     *   startup sees it and converts without a replay, so the instance cannot end up in a crash loop.</li>
-     * </ul>
-     * The replay also applies transactions the apply job had not reached before the restart. The conversion
-     * used to drop those, so the converted table can now contain more rows than before this replay existed.
+     * A replay that stops early, at a transaction that fails to apply or after a pass that applied nothing,
+     * throws: the caller keeps {@code _convert} and the WAL, the table stays a WAL table and the next start retries.
+     * An adaptive start keeps the save point, which the next replay starts from. A start outside adaptive flushes
+     * the table and removes its save point and pin first, as on success, so that a transaction skipped with
+     * {@code RESUME WAL FROM TXN} is not replayed again from the save point. A sequencer that cannot be read
+     * refuses the conversion of a table with a save point. A failed flush stops the engine.
      */
     private static void replayWalBeforeConversion(CairoEngine engine, TableToken token) {
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
-        final long lastSeqTxn;
-        try {
-            lastSeqTxn = engine.getTableSequencerAPI().lastTxn(token);
-        } catch (CairoException e) {
-            // No readable sequencer, so no WAL to replay. The conversion already handles a missing sequencer.
-            LOG.info().$("cannot read sequencer, converting without WAL replay [table=").$(token)
-                    .$(", error=").$((Throwable) e)
-                    .I$();
-            return;
-        }
-        try (Path markerPath = new Path()) {
-            markerPath.of(configuration.getDbRoot()).concat(token);
-            final int tableRootLen = markerPath.size();
-            if (readSeqTxn(ff, markerPath, tableRootLen) >= lastSeqTxn) {
-                return;
-            }
-            markerPath.trimTo(tableRootLen).concat(REPLAY_FILE_NAME);
-            if (ff.exists(markerPath.$())) {
-                LOG.critical().$("previous WAL replay before conversion did not finish, converting without replay [table=")
-                        .$(token)
-                        .I$();
-                ff.removeQuiet(markerPath.$());
-                return;
-            }
-            if (!ff.touch(markerPath.$())) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not create WAL replay marker [path=").put(markerPath)
-                        .put(']');
-            }
-            DurableEpochManifest.fsyncDirectory(configuration, markerPath, tableRootLen);
+        try (Path tablePath = new Path()) {
+            tablePath.of(configuration.getDbRoot()).concat(token);
+            final int tableRootLen = tablePath.size();
+            final boolean hasSavePoint = DurableEpochManifest.loadCandidates(ff, tablePath, tableRootLen, -1).length > 0;
+            final long lastSeqTxn;
             try {
-                applyOutstandingWal(engine, token, lastSeqTxn);
-            } finally {
-                // Remove the marker on every outcome that returns here, an exception included. The table then
-                // stays a WAL table, and the next startup retries both the replay and the conversion. Only a
-                // crash leaves the marker behind.
-                markerPath.trimTo(tableRootLen).concat(REPLAY_FILE_NAME);
-                ff.removeQuiet(markerPath.$());
+                lastSeqTxn = engine.getTableSequencerAPI().lastTxn(token);
+            } catch (CairoException e) {
+                // Recovery rewound a table with a save point to it, so its WAL must be replayed: refuse.
+                if (hasSavePoint) {
+                    throw e;
+                }
+                // No readable sequencer, so no WAL to replay. The conversion already handles a missing sequencer.
+                LOG.info().$("cannot read sequencer, converting without WAL replay [table=").$(token)
+                        .$(", error=").$((Throwable) e)
+                        .I$();
+                return;
+            }
+            if (!hasSavePoint && readSeqTxn(ff, tablePath, tableRootLen) >= lastSeqTxn) {
+                return;
+            }
+            try {
+                final CairoException refusal = applyOutstandingWal(engine, token, lastSeqTxn);
+                // On an adaptive instance the replay's writer may also have enrolled a table that had no save point.
+                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, tablePath.trimTo(tableRootLen), tableRootLen);
+                RecoveryCoordinator.unpinEpoch(engine, token);
+                if (refusal != null) {
+                    throw refusal;
+                }
+            } catch (Throwable th) {
+                // In every mode: the conversion removes the WAL, so a replay that may not be on the disk must not go on
+                if (CairoException.isDataSyncFailure(th)) {
+                    engine.handleDataSyncFailureInEveryMode(th);
+                }
+                throw th;
             }
         }
     }

@@ -11,10 +11,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * SP1 Task A3: validates that opening a bitmap index value file shorter than
- * its header-claimed size throws a clean CairoException (not SIGBUS/InternalError).
- * <p>
- * Site 1a: AbstractBitmapIndexReader.of() — the path guarded by the fix.
+ * Checks that opening a bitmap index value file shorter than its header-claimed size throws a clean
+ * CairoException rather than SIGBUS or InternalError. The guarded site is AbstractBitmapIndexReader.of().
  */
 public class MapLengthGuardCrashConsistencyTest extends AbstractCrashConsistencyTest {
 
@@ -45,7 +43,7 @@ public class MapLengthGuardCrashConsistencyTest extends AbstractCrashConsistency
                 Assert.assertTrue("bitmap value file must exist: " + vPath,
                         configuration.getFilesFacade().exists(vPath.$()));
 
-                // Truncate the value file to a tiny size — far below what the header claims
+                // Truncate the value file to a tiny size, far below what the header claims
                 long fd = configuration.getFilesFacade().openRW(vPath.$(), CairoConfiguration.O_NONE);
                 Assert.assertTrue("could not open value file for truncation: " + vPath, fd > -1);
                 try {
@@ -60,9 +58,9 @@ public class MapLengthGuardCrashConsistencyTest extends AbstractCrashConsistency
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            // Run an index-using query that forces the bitmap reader to map the .v file.
-            // Post-fix: expect a clean CairoException with "bitmap index value file too short".
-            // Pre-fix: expect SIGBUS -> InternalError, or silent mis-read.
+            // Run an index-using query that forces the bitmap reader to map the .v file. Expect a clean
+            // CairoException with "bitmap index value file too short", not SIGBUS -> InternalError or a
+            // silent mis-read.
             boolean caughtClean = false;
             String exceptionMessage = null;
             try {
@@ -81,7 +79,7 @@ public class MapLengthGuardCrashConsistencyTest extends AbstractCrashConsistency
                     throw new AssertionError("Got unexpected SqlException: " + e.getMessage(), e);
                 }
             } catch (InternalError e) {
-                // Pre-fix SIGBUS path — causes the test to fail with a clear message
+                // a SIGBUS surfaces as InternalError: fail with a clear message
                 Assert.fail("Got InternalError (SIGBUS) instead of clean CairoException — fix not in place: " + e.getMessage());
             }
 

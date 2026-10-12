@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -41,16 +42,14 @@ import org.jetbrains.annotations.TestOnly;
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private final CairoConfiguration configuration;
-    // When true this memory is strictly append-only, so sync() narrows the current-page msync to the
-    // bytes actually written into that page instead of flushing the whole page window. NARROW-ONLY:
-    // we do not skip msync for PMAR (see sync()), so there is no cross-sync offset state to go stale.
-    // Defaults to false: the non-appendOnly path is byte-identical to the original full-page msync.
+    // When true, this memory is append-only, so sync() narrows the current-page msync to the bytes written
+    // into that page. sync() never skips, so no offset state carries across syncs. Set only on ADAPTIVE WAL
+    // columns and ADAPTIVE table columns, so it also picks the page-release grade.
     private boolean appendOnly = false;
-    // When true this is a TABLE PARTITION column under CommitMode.ADAPTIVE: the page-release / close
-    // path skips its msync so the materialized column stays NON-DURABLE on the apply side (lazy apply;
-    // durability via the durable epoch + recovery roll-forward, Plan 3). Set ONLY by TableWriter for
-    // partition columns under adaptive; never for WAL segment columns (explicit per-commit fdatasync)
-    // nor under any other mode, so all those paths are byte-identical. Default false.
+    // When true, this is a table partition column under CommitMode.ADAPTIVE: page release and close skip
+    // the msync, because the column is a rebuildable cache of the durable WAL, made durable by the save
+    // point and recovery. TableWriter sets it only for partition columns under ADAPTIVE, never for WAL
+    // segment columns, which fdatasync on each commit.
     private boolean applyLazy = false;
     // The commit mode threaded in by the opening caller (TableWriter.configureColumn), mirroring
     // applyLazy. CommitMode.UNSET (default) => never threaded, so read the instance-global
@@ -75,11 +74,10 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     public final void close(boolean truncate, byte truncateMode) {
         long sz = truncate ? getAppendOffset() : -1L;
-        // releaseCurrentPage() carries a durability barrier (msync) under any non-NOSYNC commit mode, so it
-        // can fail -- on a simulated crash, or a genuine EIO. Its own finallys already unmap the page, but the
-        // rest of this close must still complete: without it `fd` stays set on an object the caller has
-        // already detached, so the descriptor is either leaked outright or closed a second time by a later
-        // cleanup path. Fail-stop is preserved -- the fault is rethrown -- but only after the frees are done.
+        // releaseCurrentPage() msyncs under every mode but NOSYNC, so it can fail (a simulated crash, or EIO).
+        // It unmaps the page itself, but the rest of close must still run: otherwise `fd` stays set on an
+        // object the caller has detached, and the descriptor leaks or a later cleanup closes it twice. The
+        // fault is rethrown after the frees.
         Throwable closeError = null;
         try {
             releaseCurrentPage();
@@ -100,15 +98,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
                 closeError = th;
             }
         }
-        if (closeError != null) {
-            if (closeError instanceof Error) {
-                throw (Error) closeError;
-            }
-            if (closeError instanceof RuntimeException) {
-                throw (RuntimeException) closeError;
-            }
-            throw new CairoException().put("could not close memory [msg=").put(closeError.getMessage()).put(']');
-        }
+        CairoException.rethrowCleanupFailure(closeError);
     }
 
     @Override
@@ -198,14 +188,11 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     public void sync(boolean async) {
         if (pageAddress != 0) {
             if (appendOnly) {
-                // NARROW: flush only the bytes written into the currently mapped page, not the whole
-                // page window. The append cursor is always within the mapped page (jumpTo remaps to
-                // the target page), so the in-page written length is appendOffset - pageStart, clamped
-                // to [0, pageSize]. This is the main win: the active partition's partial last page is
-                // synced on every commit, and most of it is unwritten/clean. We recompute the length
-                // from the live append offset each call, so prior jumpTo/rollback cannot make it stale
-                // (NARROW-ONLY: no msync skip for PMAR). The page-flip release() still msyncs the full
-                // page it releases, so completed pages are fully flushed.
+                // Flush only the bytes written into the mapped page: the active partition's partial last page
+                // is synced on every commit, and most of it is clean. The length comes from the live append
+                // offset on each call (see inPageWritten()), so a jumpTo or rollback cannot make it stale. The
+                // page-flip release() msyncs the whole page it releases (MS_ASYNC for an ADAPTIVE WAL column on
+                // Linux, whose commit fdatasyncs the file).
                 final long inPageWritten = inPageWritten();
                 if (inPageWritten > 0) {
                     ff.msync(pageAddress, inPageWritten, async);
@@ -217,52 +204,32 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void syncFlushKick() {
-        // Batched SYNC stage 1: msync(MS_ASYNC) the dirty bytes of the currently mapped page into the page
-        // cache so the following sync_file_range can see them. Mirrors sync()'s range selection (append-only
-        // narrows to the in-page written length; else the full page) but is always ASYNC and issues NO
-        // fdatasync.
-        if (pageAddress != 0) {
-            if (appendOnly) {
-                final long inPageWritten = inPageWritten();
-                if (inPageWritten > 0) {
-                    ff.msync(pageAddress, inPageWritten, true);
-                }
-            } else {
-                ff.msync(pageAddress, getPageSize(), true);
-            }
-        }
-    }
-
-    @Override
     public void syncFlushDrain() {
-        // Batched SYNC stage 2: sync_file_range(WRITE | WAIT_AFTER) writes the page-cache-dirty bytes of the
-        // current page back to the device cache and WAITS. NO device flush, NO watermark mutation. PMAR maps
-        // a single page at file offset pageOffset(mappedPage), so the fd-relative dirty range is
-        // [pageStart, pageStart + dirtyLen). WAIT_AFTER is mandatory for durability (see CMARW).
-        if (pageAddress != 0) {
-            final long pageStart = pageOffset(mappedPage);
-            final long dirtyLen = appendOnly ? inPageWritten() : getPageSize();
-            if (dirtyLen > 0) {
-                ff.syncFileRange(fd, pageStart, dirtyLen, Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER);
-            }
+        // Batched flush, stage 2: sync_file_range(WRITE | WAIT_AFTER) waits for the writeback stage 1 started
+        // and writes back anything it left; no device flush. Waiting reports a writeback error, as in
+        // MemoryCMARWImpl.
+        if (syncFlushRange(Files.SYNC_FILE_RANGE_WRITE | Files.SYNC_FILE_RANGE_WAIT_AFTER) != 0) {
+            throw CairoException.dataSyncFailureOfFd(ff, fd, ff.errno(), "sync_file_range", "could not sync_file_range");
         }
     }
 
     @Override
     public void syncFlushFinishIfExtended() {
-        // Batched SYNC stage 3: a genuine NO-OP for PMAR. The caller (TableWriter.syncColumnsBatchedSync)
-        // has already issued ONE syncfs(fd) over this table's filesystem, journaling the new i_size +
-        // extent conversions and flushing the device once, so a per-file fdatasync here would be a
-        // redundant second flush.
-        //
-        // Unlike MemoryCMARWImpl there is deliberately NO watermark to advance: PMAR's sync() is
-        // NARROW-ONLY (it recomputes the dirty range from the live append offset on every call and never
-        // SKIPS), so it has no extend/skip check that a watermark could feed. An earlier revision kept a
-        // `lastSyncedSize` field here; it was written by of()/switchTo()/truncate()/this method and read
-        // by nothing that affected durability, so it was removed rather than left as misleading state.
-        // If PMAR ever gains a skip fast path, reintroduce the watermark HERE (never in syncFlushKick /
-        // syncFlushDrain — advancing it there would let this method wrongly conclude "no extend").
+        // Batched flush, stage 3: nothing to do. The caller (TableWriter.syncColumnsBatchedSync) has already
+        // issued one syncfs over the table's filesystem, which journaled the new size and extent conversions
+        // in one device flush. Unlike MemoryCMARWImpl there is no watermark to advance: sync() recomputes the
+        // dirty range from the live append offset and never skips. A skip fast path would need a watermark
+        // advanced here, never in syncFlushKick() or syncFlushDrain().
+    }
+
+    @Override
+    public void syncFlushKick() {
+        // Batched flush, stage 1: sync_file_range(WRITE) starts writeback of the current page's dirty bytes and
+        // returns, so every file's writeback runs at once before stage 2 waits. No device flush. A transient
+        // failure is left to stage 2 and the caller's flush, as in MemoryCMARWImpl; any other is a flush failure.
+        if (syncFlushRange(Files.SYNC_FILE_RANGE_WRITE) != 0) {
+            Vm.checkWritebackKick(ff, fd, ff.errno());
+        }
     }
 
     @Override
@@ -288,7 +255,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     /**
      * Bytes written into the currently mapped page, clamped to [0, pageSize]. The append cursor is always
      * within the mapped page (jumpTo remaps to the target page), so this is appendOffset - pageStart.
-     * Recomputed from the live append offset on every call (NARROW-ONLY: no cross-call state to go stale).
+     * Recomputed from the live append offset on every call, so it cannot go stale.
      */
     private long inPageWritten() {
         long inPageWritten = getAppendOffset() - pageOffset(mappedPage);
@@ -299,25 +266,39 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         return inPageWritten > pageSize ? pageSize : inPageWritten;
     }
 
+    // The page sits at file offset pageOffset(mappedPage), so the range is [pageStart, pageStart + dirtyLen),
+    // the bytes sync() selects.
+    private int syncFlushRange(int flags) {
+        if (pageAddress != 0) {
+            final long pageStart = pageOffset(mappedPage);
+            final long dirtyLen = appendOnly ? inPageWritten() : getPageSize();
+            if (dirtyLen > 0) {
+                return ff.syncFileRange(fd, pageStart, dirtyLen, flags);
+            }
+        }
+        return 0;
+    }
+
     @Override
     protected void release(long address) {
         if (address != 0) {
-            // The munmap MUST run even if the page-release msync throws (a genuine disk fault, or a power loss
-            // the crash harness simulates by throwing on msync): memory reclamation cannot depend on the
-            // durability sync succeeding. Doing the msync inside a try/finally-munmap mirrors
-            // MemoryCMARWImpl.close (which unmaps before its fd sync); without it a sync fault here strands the
-            // mapped page until process exit (the MMAP_TABLE_WAL_WRITER leak a crash mid drop-close produced).
+            // The munmap must run even if the page-release msync throws (a disk fault, or a simulated power
+            // loss): reclaiming memory cannot depend on the sync. MemoryCMARWImpl.close likewise unmaps before
+            // its fd sync. Otherwise a sync fault strands the mapped page until the process exits.
             try {
-                // Prefer the mode threaded in via setCommitMode(); fall back to the instance-global mode
-                // only when it was never set (UNSET), so untouched memories stay byte-identical.
+                // The mode set through setCommitMode(), or the instance-global mode when it is UNSET.
                 int commitMode = this.commitMode != CommitMode.UNSET
                         ? this.commitMode
                         : (configuration != null ? configuration.getCommitMode() : CommitMode.NOSYNC);
-                // applyLazy (adaptive table partition column) skips the page-release msync — the column is
-                // a rebuildable cache of the durable WAL, made durable only by the epoch + recovery. WAL
-                // segment columns never set applyLazy, so their explicit per-commit fdatasync is unaffected.
+                // applyLazy (an adaptive table partition column) skips the page-release msync: the column is a
+                // rebuildable cache of the durable WAL, made durable by the save point and recovery. WAL
+                // segment columns never set it. An ADAPTIVE WAL column (appendOnly) releases with MS_ASYNC on
+                // Linux: the page stays dirty in the page cache, and the commit's fdatasync of this file writes
+                // it back before the commit is sequenced. Elsewhere that fdatasync is not known to cover a page
+                // after it is unmapped.
                 if (commitMode != CommitMode.NOSYNC && !applyLazy) {
-                    ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
+                    ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC
+                            || (appendOnly && commitMode == CommitMode.ADAPTIVE && Os.isLinux()));
                 }
             } finally {
                 ff.munmap(address, getPageSize(), memoryTag);

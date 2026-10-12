@@ -40,33 +40,32 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * The TRIPWIRE for the routing of {@code io.questdb.test.cairo.crash} across CI suites.
+ * Checks the routing of {@code io.questdb.test.cairo.crash} across CI suites.
  *
- * <p>Tests in this package reach CI through two disjoint doors. Deterministic ones run on PRs via the
+ * <p>Tests in this package reach CI through two disjoint routes. Deterministic ones run on PRs via the
  * {@code **&#47;cairo/crash/**} leg of {@code ci/test-pipeline.yml}. The long sweeps and power-loss fuzzes
- * opt OUT of that leg with a fast assumption on {@code -Dquestdb.fuzz.nightly=true}, and are named ONE BY
- * ONE in the nightly job of {@code ci/test-fuzz-adaptive.yml}.
+ * opt out of that leg with a fast assumption on {@code -Dquestdb.fuzz.nightly=true}, and the nightly job of
+ * {@code ci/test-fuzz-adaptive.yml} names them one by one.
  *
- * <p>That hand-maintained list is the hazard. A new sweep subclass is skipped by PR CI (the assumption)
- * AND absent from the nightly list, so it runs in NO pipeline — exactly the hole that once swallowed this
- * whole package. The reverse drifts too: surefire is invoked with {@code -DfailIfNoTests=false} and
- * {@code -Dsurefire.failIfNoSpecifiedTests=false}, so a renamed class leaves an entry matching nothing and
- * the shard goes GREEN having run less than it claims.
+ * <p>That list is maintained by hand and can drift both ways. A new sweep subclass missing from it is
+ * skipped by PR CI and runs in no pipeline. A renamed class leaves an entry that matches nothing, and since
+ * surefire runs with {@code -DfailIfNoTests=false} and {@code -Dsurefire.failIfNoSpecifiedTests=false},
+ * the shard passes having run less than it claims.
  *
- * <p>So this asserts both directions, and asserts the scan itself found classes — a scan that silently
- * matches nothing would pass against any pipeline at all.
+ * <p>The test asserts both directions, and asserts that the scan itself found classes: a scan that matches
+ * nothing would pass against any pipeline.
  */
 public class NightlyCrashTestSchedulingTest {
     private static final String ADAPTIVE_PIPELINE = "ci/test-fuzz-adaptive.yml";
     private static final String CRASH_PACKAGE = "core/src/test/java/io/questdb/test/cairo/crash";
-    // The nightly-gated sweeps that existed when this tripwire was written. A LOWER bound only: it
-    // proves the scan below reached real source, so a broken scan cannot pass vacuously.
+    // A lower bound on the nightly-gated sweeps: it proves the scan below reached real source, so a
+    // broken scan cannot pass vacuously.
     private static final int MIN_EXPECTED_GATED = 10;
     private static final String NIGHTLY_PROPERTY = "questdb.fuzz.nightly";
     private static final Pattern SCHEDULED_CLASS = Pattern.compile("\\*\\*/cairo/crash/(\\w+)\\.java");
-    // This scanner has to spell out the constructs it hunts for, so its own source matches them and it
-    // would classify ITSELF as a nightly sweep. Excluded by name, explicitly, rather than by relying on
-    // some incidental difference in how it happens to be written.
+    // This scanner spells out the constructs it hunts for, so its own source matches them and it would
+    // classify itself as a nightly sweep. It is excluded by name rather than by an incidental difference
+    // in how it is written.
     private static final String SELF = NightlyCrashTestSchedulingTest.class.getSimpleName();
 
     /**
@@ -103,7 +102,7 @@ public class NightlyCrashTestSchedulingTest {
     }
 
     /**
-     * Every class that opts out of PR CI must be named in the nightly job — else it runs nowhere.
+     * Every class that opts out of PR CI must be named in the nightly job, or it runs nowhere.
      */
     @Test
     public void testEveryNightlyGatedCrashTestIsScheduled() throws IOException {
@@ -151,8 +150,8 @@ public class NightlyCrashTestSchedulingTest {
      * Abstract helpers and the facades are not tests.
      *
      * <p>Classification runs with comments stripped, so a javadoc paragraph about the nightly flag does not
-     * route a test into the nightly. String literals are deliberately KEPT: the gate itself is a literal,
-     * and erasing literals would erase the very signal being looked for.
+     * route a test into the nightly. String literals stay: the gate itself is a literal, and erasing
+     * literals would erase the signal being looked for.
      */
     private static boolean isNightlyGatedTest(String source, String className) {
         String code = stripComments(source);

@@ -53,22 +53,19 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Randomized adaptive crash-fuzz (SP-D increment D2). Builds on {@link AbstractAdaptiveCrashSweepTest}'s
- * exhaustive per-op sweep driver with a randomized/fuzzed workload harness (see
- * {@link io.questdb.test.cairo.fuzz.FuzzRunner} / {@link io.questdb.test.fuzz.FuzzTransaction}) — this
- * task (1 of 7) establishes only the base class and the two primitives every later task in this file
- * relies on: a canonical committed-state {@link #fingerprint} and a seqTxn-bound membership check
- * over recorded committed-state history.
+ * Randomized adaptive crash fuzz: {@link AbstractAdaptiveCrashSweepTest}'s per-op sweep driver over randomized
+ * workloads from the fuzz harness ({@link io.questdb.test.cairo.fuzz.FuzzRunner},
+ * {@link io.questdb.test.fuzz.FuzzTransaction}). The oracle is a canonical committed-state {@link #fingerprint}
+ * and a seqTxn-bound membership check against the recorded committed-state history: every recovery lands on a
+ * state that really existed.
  */
 public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepTest {
 
     private final FuzzRunner fuzzer = new FuzzRunner();
 
-    // testFullLibraryW0 sweeps the full op library — N=768 durability ops and 3m51s for the legacy fixed seed,
-    // measured on the soak agent 2026-08-05. Soak-only, on a longer ceiling than the 20-min default: one
-    // fresh seed per run, and the soak pipeline re-runs the class back-to-back for continuous coverage.
-    // (Earlier revisions of this comment claimed "N≈648 ... ~85 min/seed" and that CI ran a lean
-    // testLeanLibraryW0 — no such test exists; PR CI covers this family via testConvertPartitionCrashSafeW0.)
+    // testFullLibraryW0 sweeps the full op library and runs on the soak pipeline, with one fresh seed per run and the
+    // class re-run back to back, on a longer ceiling than the 20-minute default. PR CI covers this family via
+    // testConvertPartitionCrashSafeW0.
     private static final String NIGHTLY_PROP = "questdb.fuzz.nightly";
 
     @Rule
@@ -88,13 +85,12 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         fuzzer.after();
     }
 
-    // Default = full destructive op library; the machinery self-check (Task 3) flips this to run a
-    // minimal insert/O3 profile. Field lives here; Task 3 only toggles it.
+    // Default: the full destructive op library. The machinery self-check sets this to run a minimal insert/O3
+    // profile.
     private boolean fuzzOverrideMinimal = false;
 
-    // Inserts + column RENAME only. Isolates the structural path whose segment _meta publish must follow the
-    // file rename (see testRenameColumnCrashSafeW0); the full library reaches it too, but only for seeds that
-    // happen to emit a rename, which is exactly how it stayed hidden behind the old hard-coded seed.
+    // Inserts and column RENAME only. Isolates the structural path whose segment _meta publish must follow the file
+    // rename (see testRenameColumnCrashSafeW0); the full library reaches it only for seeds that emit a rename.
     private boolean fuzzOverrideRenameOnly = false;
 
     // Canonical committed-state fingerprint: full ordered dump to a String.
@@ -137,9 +133,9 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return engine.getTableSequencerAPI().getTxnTracker(token).getWriterTxn();
     }
 
-    // Uses the 22-arg overload (FuzzRunner.java:757) — the ONLY one that enables partitionToParquet
-    // (12th), partitionToNative (13th), setParquetEncoding (20th), and addCoveringIndex (22nd). The
-    // 16-arg overload silently leaves those at 0, so parquet/covering-index would NOT be exercised.
+    // Uses the 22-arg overload, the only one that enables partitionToParquet (12th), partitionToNative (13th),
+    // setParquetEncoding (20th) and addCoveringIndex (22nd). The 16-arg overload leaves those at 0, so Parquet and
+    // covering indexes would not be exercised.
     private void configureFuzz() {
         if (fuzzOverrideMinimal) {
             //   cancel notSet null  rollbk cAdd cRem cRen cTyp  data eqTs pDrop pPq  pNat trunc tDrop ttl  repl symV qry  pEnc tFmt cIdx
@@ -155,17 +151,14 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                     0.1, 0.05, 0.05, 0.05,      // colAdd, colRemove, colRename, colTypeChange
                     0.5, 0.0, 0.05, 0.03,       // dataAdd, equalTsRows(=0: canonical dump), partitionDrop, partitionToParquet
                     0.03, 0.05, 0.0, 0.05,      // partitionToNative, truncate, tableDrop(=0), setTtl
-                    // replaceInsert(dedup) = 0: INCOMPATIBLE with partitionToParquet below. QuestDB does not
-                    // support replace-range commits over Parquet partitions, so once a partition is
-                    // converted, any later replace over it is unappliable BY CONSTRUCTION -- in-order WAL
-                    // replay always hits "commit replace mode is not supported for Parquet partitions" and
-                    // suspends the table. An uncrashed run usually hides this: ApplyWal2TableJob's skip
-                    // optimisation elides the replace when a LATER txn supersedes it (observed
-                    // skipTxnCount=4 at seqTxn=19 with the full WAL visible). After a crash the sequencer
-                    // log is legitimately shorter, nothing supersedes it, the replace is applied for real
-                    // and the table suspends -- indistinguishable from a durability defect, and it cost two
-                    // full investigations. Re-enable only once the generator refuses to emit a replace
-                    // range overlapping a partition it has converted.
+                    // replaceInsert(dedup) = 0: incompatible with partitionToParquet below. QuestDB does not support
+                    // replace-range commits over Parquet partitions, so once a partition is converted, a later replace
+                    // over it cannot be applied: in-order WAL replay hits "commit replace mode is not supported for
+                    // Parquet partitions" and suspends the table. An uncrashed run usually hides this, because
+                    // ApplyWal2TableJob skips a replace that a later txn supersedes. After a crash the sequencer log is
+                    // shorter, nothing supersedes it, the replace is applied and the table suspends, which looks like a
+                    // durability defect. Re-enable once the generator refuses to emit a replace range overlapping a
+                    // partition it converted.
                     0.0, 0.0, 0.0, 0.02,        // replaceInsert(dedup), symbolAccessValidation, query, setParquetEncoding
                     0.0, 0.03);                 // setTableFormat(=0), addCoveringIndex
         }
@@ -181,12 +174,11 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
     private ObjList<CommittedState> buildTwinFingerprints(String twinName, ObjList<FuzzTransaction> txns, Rnd applyRnd) throws Exception {
         fuzzer.createInitialTableWal(twinName, 0);
-        // createInitialTableWal queues its unconditional "column top" ALTERs via WAL but never drains them,
-        // so an undrained fp[0] would show the PRE-alter (fewer-column) schema -- a state no crash recovery
-        // can ever land on, since those structural commits are already durable (markDurableBaseline runs
-        // AFTER setup(), i.e. after this point) well before the swept transaction's own crash point. Drain
-        // once here so fp[0] reflects the fully-materialized schema with 0 data rows, matching the
-        // legitimate committed state a crash during the FIRST transaction's own commit recovers to.
+        // createInitialTableWal queues its unconditional "column top" ALTERs via WAL but never drains them, so an
+        // undrained fp[0] would show the pre-alter (fewer-column) schema, a state no crash recovery can land on: those
+        // structural commits are durable (markDurableBaseline runs after setup()) before the swept transaction's crash
+        // point. Drain once here so fp[0] is the fully materialized schema with 0 data rows, the committed state a
+        // crash during the first transaction's own commit recovers to.
         drainWalQueue();
         ObjList<CommittedState> history = new ObjList<>();
         history.add(new CommittedState(tableSeqTxn(twinName), fingerprint(twinName))); // empty, schema materialized
@@ -224,20 +216,18 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         @Override
         public TableToken[] setup(int iteration) throws Exception {
             execute("drop table if exists " + WAL_TABLE);
-            // Every crash point recreates cf_wal with a new physical token. Purge the dropped token now so
-            // the crash facade does not retain and re-snapshot hundreds of obsolete, preallocated column
-            // files on every later syncfs (quadratic work and multi-GB heap growth in the nightly sweep).
+            // Every crash point recreates cf_wal with a new physical token. Purge the dropped token now, so the crash
+            // facade does not keep and re-snapshot hundreds of obsolete, preallocated column files on every later
+            // syncfs (quadratic work and multi-GB heap growth in the nightly sweep).
             forceWalPurge();
             txns = generateTxns(new Rnd(s0, s1), WAL_TABLE);          // recreates cf_wal (0 rows), same txns
             walToken = engine.verifyTableName(WAL_TABLE);
-            // createInitialTableWal QUEUES its unconditional "column top" ALTERs in cf_wal's WAL but does not
-            // drain them, so without this drain they remain part of commit()'s crashable WAL. A crash then
-            // rolls the table back to the PRE-alter base schema (a valid empty table, but one the twin never
-            // snapshots — the twin drains these ALTERs before fp[0], Task 2/3), yielding a spurious
-            // membershipP=-1 and a suspend on the torn ALTER segment. Draining here (before the driver's
-            // markDurableBaseline, which runs after setup) makes the durable baseline the fully-materialized
-            // 14-col empty state == fp[0], symmetric with the twin, so the sweep crashes ONLY the fuzz
-            // workload and every recovery lands on a real fp[] snapshot.
+            // createInitialTableWal queues its unconditional "column top" ALTERs in cf_wal's WAL without draining them,
+            // so without this drain they stay part of commit()'s crashable WAL. A crash then rolls the table back to
+            // the pre-alter base schema, an empty table the twin never snapshots (the twin drains these ALTERs before
+            // fp[0]), giving a spurious membershipP=-1 and a suspend on the torn ALTER segment. Draining before the
+            // driver's markDurableBaseline makes the durable baseline the fully materialized empty state, equal to
+            // fp[0], so the sweep crashes only the fuzz workload and every recovery lands on a real fp[] snapshot.
             drainWalQueue();
             if (fp == null) {
                 fp = buildTwinFingerprints(TWIN_TABLE, txns, new Rnd(s0, s1)); // once; drops the twin
@@ -254,8 +244,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public int oracle(int k, int n) throws Exception {
-            // bar 2 — name the barrier and the sequencer's own reason; "suspended at k=661" alone says
-            // nothing about which op failed to roll forward or why.
+            // Bar 2: name the barrier and the sequencer's own reason; a crash point index alone says nothing about
+            // which op failed to roll forward or why.
             Assert.assertFalse("table left suspended after recovery at k=" + k
                     + " [op=" + phaseDurabilityOp(k) + "] " + suspendReason(walToken), anyTableSuspended(walToken));
             String recovered = fingerprint(WAL_TABLE);
@@ -269,9 +259,9 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * Force a WAL broad sweep independently of the engine clock. The W&gt;0 tests deliberately pin that clock
-     * below the normal purge interval, where TestUtils.drainPurgeJob() only sweeps the group-commit queue and
-     * never enters WalPurgeJob.broadSweep(). Two increasing ticks cross the cadence gate deterministically.
+     * Forces a WAL broad sweep independently of the engine clock. The W&gt;0 tests pin that clock below the normal
+     * purge interval, where TestUtils.drainPurgeJob() only sweeps the group-commit queue and never enters
+     * WalPurgeJob.broadSweep(). Two increasing ticks cross the cadence gate deterministically.
      */
     private void forceWalPurge() {
         engine.releaseAllReaders();
@@ -302,12 +292,11 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * Sweep one seed, sizing the cap to the workload actually drawn.
+     * Sweeps one seed, sizing the cap to the workload drawn.
      * <p>
-     * assertW0Bars requires an UNTRUNCATED sweep, so a fixed cap silently converts "this seed generated more
-     * work than the last one" into a durability-looking failure. Probe N first, then sweep at
-     * {@code max(capFloor, N)}. Returns {@code null} if N exceeds {@code hardLimit} — the caller redraws
-     * rather than letting one pathological workload eat the nightly's budget.
+     * assertW0Bars requires an untruncated sweep, so a fixed cap turns "this seed generated more work than the
+     * last one" into a failure that looks like a durability defect. Count N first, then sweep at
+     * {@code max(capFloor, N)}. Returns {@code null} if N exceeds {@code hardLimit}, and the caller redraws.
      */
     private SweepResult runSeedSweepAutoCap(long s0, long s1, int windowUs, int capFloor, int hardLimit) throws Exception {
         applySweepConfig(windowUs);
@@ -317,7 +306,6 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             if (n > hardLimit) {
                 LOG.info().$("[seed] REJECTED seed ").$(s0).$("L, ").$(s1)
                         .$("L: N=").$(n).$(" > hard limit ").$(hardLimit).$(" — redrawing").I$();
-                System.out.printf("[seed] REJECTED %dL, %dL: N=%d > hardLimit=%d — redrawing%n", s0, s1, n, hardLimit);
                 return null;
             }
             final int cap = Math.max(capFloor, n);
@@ -343,16 +331,16 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
     private void applySweepConfig(int windowUs) {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        // 1h >> any test commit() duration: fresh-table lastEpochTs==0 fires exactly one deterministic
-        // epoch on batch 1 and nothing can reach 1h to fire a second -- see Budget & runtime / Mechanism
-        // in the plan. A small interval is wall-clock-timing-flaky against the sweep's `fired` guard.
+        // One hour is far beyond any test commit() duration: on a fresh table lastEpochTs==0 fires exactly one
+        // deterministic epoch on batch 1, and nothing reaches an hour to fire a second. A small interval would make the
+        // sweep's `fired` guard depend on wall-clock timing.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, windowUs);
         if (windowUs == 0) {
-            // Pin beyond the one-hour threshold: the first batch deterministically advances one epoch while
-            // the fixed clock makes ApplyWal2TableJob's time quota deterministic across every crash point.
-            // With the real clock, load jitter changed batch boundaries and therefore changed durability-op
-            // identity between adjacent k values, invalidating the W=0 monotone-staircase oracle.
+            // Pin beyond the one-hour threshold: the first batch advances one epoch, and the fixed clock makes
+            // ApplyWal2TableJob's time quota the same at every crash point. With the real clock, load jitter moves
+            // batch boundaries and with them the durability-op identity between adjacent k values, which breaks the
+            // W=0 monotone-staircase oracle.
             setCurrentMicros(3_600_001_000L);
         }
     }
@@ -378,7 +366,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
     @Test
     public void testForceWalPurgeRemovesDroppedTableSnapshots() throws Exception {
-        // Match the W>0 nightly clock: it is intentionally below the normal WAL-purge cadence gate.
+        // Match the W>0 nightly clock, which sits below the normal WAL-purge cadence gate.
         setCurrentMicros(1_000_000L);
         try {
             runWithCrashFacade(() -> {
@@ -419,10 +407,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                 drainWalQueue();
                 history.add(new CommittedState(tableSeqTxn("fp"), fingerprint("fp"))); // states 1..3
             }
-            // the current (full) state must match the last snapshot
+            // The current (full) state matches the last snapshot.
             CommittedState full = history.getQuick(3);
             Assert.assertEquals(3, matchingState(history, full.seqTxn, fingerprint("fp")));
-            // an intermediate snapshot is found only with both its seqTxn and fingerprint
+            // An intermediate snapshot is found only with both its seqTxn and fingerprint.
             CommittedState intermediate = history.getQuick(1);
             Assert.assertEquals(1, matchingState(history, intermediate.seqTxn, intermediate.fingerprint));
             Assert.assertEquals(-1, matchingState(history, intermediate.seqTxn, "not a real dump"));
@@ -461,24 +449,19 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * Regression pin: the in-segment ALTER COLUMN TYPE path must create a converted column's files BEFORE it
-     * publishes the segment {@code _meta} that names them.
+     * The in-segment ALTER COLUMN TYPE path creates a converted column's files before it publishes the segment
+     * {@code _meta} that names them.
      * <p>
-     * Converting FIXED -> VAR-SIZE makes apply demand an aux (.i) vector that only {@code openColumnFiles}
-     * creates, so publishing first left a window where durable segment metadata described a VARCHAR column
-     * whose {@code .i} file did not exist. A crash inside it (the {@code _meta.swp} barrier) made the segment
-     * permanently unappliable -- "WAL segment column too short for committed row range [... actual=-1]",
-     * actual=-1 being a MISSING file -- and suspended the table for good while the sequencer ran ahead.
-     * The sibling addColumn and renameColumn paths were fixed earlier; this one was missed.
+     * Converting fixed-size to var-size makes apply demand an aux (.i) vector that only {@code openColumnFiles}
+     * creates. Publishing first opens a window where durable segment metadata describes a VARCHAR column whose
+     * {@code .i} file does not exist; a crash inside it (the {@code _meta.swp} barrier) makes the segment
+     * unappliable ("WAL segment column too short for committed row range [... actual=-1]", actual=-1 being a
+     * missing file) and suspends the table while the sequencer runs ahead.
      * <p>
-     * This seed is the control. It reproduces deterministically at k=542 on the exact durability op
-     * {@code msync <table>/_meta.swp}, and it is pinned rather than unit-tested because the branch needs
-     * {@code !rollSegmentOnNextRow && segmentRowCount == 0} -- a WalWriter state a direct unit test does not
-     * reach (an attempt to build one recorded no ops at all: the switch is deferred to the next row write).
-     * Reverting the reorder in {@code WalWriter.changeColumnType} turns this red.
-     * <p>
-     * Found by the continuous soak on two independent seeds (ADO #259841 W0, #259886 WN); it PREDATES the
-     * durable-epoch work -- it reproduces with both the epoch guard and the recovery cross-check disabled.
+     * This seed reproduces it at the durability op {@code msync <table>/_meta.swp}. It is a pinned seed rather than a
+     * unit test because the branch needs {@code !rollSegmentOnNextRow && segmentRowCount == 0}, a WalWriter state a
+     * direct unit test does not reach (the switch is deferred to the next row write). It fails if
+     * {@code WalWriter.changeColumnType} publishes the segment {@code _meta} before it creates the files.
      */
     @Test
     public void testChangeColumnTypeSegmentPublishOrderCrashSafeW0() throws Exception {
@@ -487,9 +470,9 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         runWithCrashFacade(() -> runSeedSweep(-6969352248487674537L, -4282943605332762306L, 0, 600));
     }
 
-    // NIGHTLY-only: even the minimal (inserts + O3) profile writes the full ~14-column fuzz schema. Sweep a
-    // large prefix to validate the machinery and W=0 monotonicity without duplicating the full-history bar
-    // covered by testFullLibraryW0. CI validates the machinery with testConvertPartitionCrashSafeW0 instead.
+    // Nightly only: even the minimal (inserts + O3) profile writes the full ~14-column fuzz schema. Sweeps a large
+    // prefix to validate the machinery and W=0 monotonicity, without repeating testFullLibraryW0's full-history
+    // bar. CI validates the machinery with testConvertPartitionCrashSafeW0 instead.
     @Test
     public void testSelfCheckW0MinimalProfile() throws Exception {
         Assume.assumeTrue("minimal-profile crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
@@ -509,30 +492,27 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     private static final long[] FIXED_SEEDS0 = {1234L, 22L, 8080L};
     private static final long[] FIXED_SEEDS1 = {5678L, 33L, 9090L};
 
-    // ONE fresh seed per run. A hard-coded pair replays one workload forever: once green it stays green, so
-    // the sweep stops being a fuzzer and becomes a (very expensive) regression test. It also under-covers the
-    // op library — one 20-txn workload cannot emit all 13 enabled op types, and the historical pair
-    // (1234,5678) emits 7: never ADD COLUMN (p=0.10, the structural op that commits _cv), never a column type
-    // change, covering index, symbol-capacity change, TTL, or parquet encoding.
+    // One fresh seed per run. A fixed pair replays one workload forever, so the sweep stops being a fuzzer, and
+    // one 20-txn workload cannot emit all 13 enabled op types.
     //
-    // Coverage accumulates across RUNS, not within one: the soak pipeline re-runs this class back-to-back, so
-    // a new workload every invocation is what makes continuous fuzzing worth the agent time. Sweeping several
-    // seeds inside one invocation would only make each run longer and each failure slower to surface.
+    // Coverage accumulates across runs: the soak pipeline re-runs this class back to back, so a new workload per
+    // invocation is what makes continuous fuzzing worth it. Several seeds inside one invocation would only make each
+    // run longer and each failure slower to surface.
     //
-    // PR CI and local runs keep the fixed pair — a randomized failure there would not be reproducible from the
-    // PR alone. Replay a soak failure with -Dquestdb.fuzz.seed=<s0>,<s1>; the pair is printed by
-    // TestUtils.generateRandom, echoed per run below, and named in the failure message.
+    // PR CI and local runs keep the fixed pair, so a failure there is reproducible from the PR alone. Replay a soak
+    // failure with -Dquestdb.fuzz.seed=<s0>,<s1>; TestUtils.generateRandom prints the pair, it is echoed per run
+    // below, and the failure message names it.
     private static final String SEED_PROP = "questdb.fuzz.seed";
-    // A drawn workload's N varies, and assertW0Bars needs cap >= N. Floor keeps the historical cap so a small
-    // seed sweeps at least as much as before; the hard limit rejects an outlier that would stretch one soak
-    // iteration far past the others (a redraw costs one count pass; a 3000-point sweep costs ~15 minutes).
+    // A drawn workload's N varies, and assertW0Bars needs cap >= N. The floor keeps every seed sweeping at least
+    // this many points; the hard limit rejects an outlier that would stretch one soak iteration far past the others
+    // (a redraw costs one count pass).
     private static final int SWEEP_CAP_FLOOR = 900;
     private static final int SWEEP_CAP_HARD_LIMIT = 2000;
     private static final int SEED_DRAW_ATTEMPTS = 8;
 
     /**
-     * The seed for THIS run: the replay override if set, else the fixed pair when the soak flag is off, else
-     * a freshly drawn pair.
+     * The seed for this run: the replay override if set, else the fixed pair when the soak flag is off, else a
+     * freshly drawn pair.
      */
     private long[] drawSeed(Rnd redraw) {
         final String replay = System.getProperty(SEED_PROP);
@@ -551,8 +531,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * Run {@code body} on one seed, redrawing if the drawn workload exceeds the hard limit, and naming the
-     * seed on failure — a soak red whose workload cannot be reproduced is barely more useful than no failure.
+     * Runs {@code body} on one seed, redrawing if the drawn workload exceeds the hard limit, and naming the seed on
+     * failure, since a soak failure whose workload cannot be reproduced is of little use.
      */
     private void withSweepSeed(SeedSweep body) throws Exception {
         final boolean randomized = System.getProperty(SEED_PROP) == null && Boolean.getBoolean(NIGHTLY_PROP);
@@ -568,12 +548,12 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             try {
                 r = body.run(seed[0], seed[1]);
             } catch (WorkloadNotCrashTestableException notTestable) {
-                // The drawn workload suspends with NO fault injected -- a property of the generator (e.g. a
-                // replace-range insert over a Parquet partition, which is unsupported), not a durability
-                // defect. Redraw rather than sweeping it: every crash point would otherwise "fail" on a
-                // pre-existing condition, and on the soak that is a false alert per run. Logged, never
-                // silent, so a generator that starts producing these constantly is visible.
-                System.out.printf("[seed] REJECTED %dL, %dL: %s%n", seed[0], seed[1], notTestable.getMessage());
+                // The drawn workload suspends with no fault injected, a property of the generator (such as a
+                // replace-range insert over a Parquet partition, which is unsupported), not a durability defect.
+                // Redraw rather than sweep it: every crash point would fail on that condition. Logged, so a generator
+                // that starts producing these constantly is visible.
+                final String reason = notTestable.getMessage();
+                LOG.info().$("[seed] REJECTED seed ").$(seed[0]).$("L, ").$(seed[1]).$("L: ").$(reason).I$();
                 Assert.assertNotNull("a PINNED seed produced a workload that cannot be crash-tested; fix the "
                                 + "seed or the fuzz probabilities rather than redrawing: " + notTestable.getMessage(),
                         redraw);
@@ -586,8 +566,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         }
         Assert.assertNotNull("no seed under the N<=" + SWEEP_CAP_HARD_LIMIT + " hard limit after "
                 + SEED_DRAW_ATTEMPTS + " draws — the op library got much heavier; re-check the limit", r);
-        System.out.printf("[seed] PASSED with seeds %dL, %dL (N=%d, swept=%d)%n",
-                seed[0], seed[1], r.n, r.sweptPoints);
+        LOG.info().$("[seed] PASSED with seeds ").$(seed[0]).$("L, ").$(seed[1]).$("L (N=").$(r.n)
+                .$(", swept=").$(r.sweptPoints).I$();
     }
 
     @FunctionalInterface
@@ -595,16 +575,13 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         SweepResult run(long s0, long s1) throws Exception;
     }
 
-    // NIGHTLY-only (run with -Dquestdb.fuzz.nightly=true). assertW0Bars requires a FULL untruncated sweep
-    // (cap≥N), so the cap is sized to the seed actually drawn rather than pinned to one workload's N.
-    // Measured 2026-08-05 on the soak agent: N=768 for the legacy fixed pair, swept in 3m51s — the "~85 min"
-    // this comment used to claim was never re-measured after the driver got faster.
-    // ONE fresh seed per run; PR CI keeps the fixed pair (see drawSeed).
+    // Nightly only (-Dquestdb.fuzz.nightly=true). assertW0Bars requires a full untruncated sweep (cap >= N), so
+    // the cap is sized to the seed drawn rather than pinned to one workload's N. One fresh seed per run; PR CI
+    // keeps the fixed pair (see drawSeed).
     @Test
     public void testFullLibraryW0() throws Exception {
-        // Redundant with AbstractAdaptiveCrashSweepTest#assumeNightlySweep, which already gates every method
-        // in this family. Kept deliberately: it is the gate that survives if the class-level one is relaxed
-        // to run the cheap sweeps more often.
+        // Redundant with AbstractAdaptiveCrashSweepTest#assumeNightlySweep, which gates every method in this family;
+        // it keeps this sweep nightly-only if the class-level gate is relaxed to run the cheap sweeps more often.
         Assume.assumeTrue("full-library crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
         runWithCrashFacade(() -> withSweepSeed((s0, s1) -> {
@@ -617,30 +594,22 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * DATA BEFORE POINTER for a WAL segment column RENAME.
+     * Data before pointer for a WAL segment column RENAME.
      * <p>
-     * {@code metadata.switchTo} publishes a segment {@code _meta} that names the column by its NEW name, and
-     * apply resolves that name to a file. Publishing before {@code renameColumnFiles} left a window where the
-     * durable metadata named {@code new_col_N.d} while the file on disk was still under its old name; a crash
-     * on the {@code _meta.swp} barrier made the segment permanently unappliable and recovery suspended the
-     * table with {@code "WAL segment column too short for committed row range [... actual=-1]"} — actual=-1
-     * being a MISSING file, not a short one.
+     * {@code metadata.switchTo} publishes a segment {@code _meta} that names the column by its new name, and apply
+     * resolves that name to a file. Publishing before {@code renameColumnFiles} opens a window where the durable
+     * metadata names {@code new_col_N.d} while the file on disk is still under its old name; a crash on the
+     * {@code _meta.swp} barrier makes the segment unappliable and recovery suspends the table with
+     * {@code "WAL segment column too short for committed row range [... actual=-1]"}, actual=-1 being a missing
+     * file.
      * <p>
-     * The sweep's own oracle is the bar: at EVERY crash point the table must come back unsuspended (bar 2)
-     * on a committed state that really existed (bar 1). Add+rename profile so the sweep concentrates on this
-     * path rather than depending on a seed that happens to emit a rename — which is how it hid behind the old
-     * hard-coded seed for the life of the soak.
+     * The sweep's oracle is the bar: at every crash point the table comes back unsuspended (bar 2) on a committed
+     * state that really existed (bar 1). The add+rename profile concentrates the sweep on this path instead of
+     * depending on a seed that emits a rename.
      * <p>
-     * COVERAGE, NOT A REGRESSION PIN — read this before trusting it. Reverting the ordering fix leaves this
-     * test GREEN: at 981 swept crash points neither the rename-only nor the add+rename profile reproduces
-     * the defect on this seed. So it does not discriminate, and it must not be cited as proof the fix works.
-     * The only known reproducer is the full-library seed
-     * {@code -Dquestdb.fuzz.seed=-5599363307717330847,-4230914800796809183}, which cannot serve as a control
-     * either because it still fails afterwards for an unrelated reason (the renamed column's CONTENTS are
-     * not durable when the pointer commits: {@code required=128, actual=0}). What the ordering fix IS backed
-     * by is that it moved that seed's symptom from {@code actual=-1} (missing file) to {@code actual=0}
-     * (file present, empty) and advanced the sweep past the crash point — isolated, since the two earlier
-     * add-column attempts changed neither. Turn this into a real pin once a discriminating workload is found.
+     * This is coverage, not a regression pin: it also passes on this seed when the publish precedes the rename. So
+     * does the full-library seed {@code -Dquestdb.fuzz.seed=-5599363307717330847,-4230914800796809183}, which crashes
+     * on a rename's {@code _meta.swp} barrier and recovers there with either order.
      */
     @Test
     public void testRenameColumnCrashSafeW0() throws Exception {
@@ -656,10 +625,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         });
     }
 
-    // CI-fast regression guard for the applyNonStructural events-before-sequencer ordering fix. Deterministic
-    // and tiny (2-column, 2-partition table + one CONVERT PARTITION), so N is small and the FULL untruncated
-    // crash-point sweep runs in seconds. Before the fix a crash between the convert's sequencer msync and its
-    // events.sync suspended the table (bar 2); after it, every crash point recovers the committed data cleanly.
+    // CI-fast guard for the events-before-sequencer order in applyNonStructural. Deterministic and tiny (2-column,
+    // 2-partition table and one CONVERT PARTITION), so N is small and the full untruncated sweep runs in seconds.
+    // A crash between the convert's sequencer msync and its events.sync must not suspend the table (bar 2); every
+    // crash point recovers the committed data.
     @Test
     public void testConvertPartitionCrashSafeW0() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -667,44 +636,40 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
         runWithCrashFacade(() -> {
             SweepResult r = forEachAdaptiveCrashPoint(new ConvertPartitionWorkload());
-            Assert.assertEquals("W=0 convert atomic boundary drifted", 13, r.atomicCommitDurabilityOpCount);
+            Assert.assertTrue("W=0 convert sweep must stop before the best-effort tail", r.stoppedAtDeclaredBoundary);
             Assert.assertFalse("convert-partition sweep truncated (atomic ops > cap) — raise the cap", r.truncated);
         });
     }
 
-    // Group-commit window for the W>0 (WN) crash tests: 50ms — matches the RPO knob a deployment trades for
-    // throughput. Under W>0 a crash mid-window rolls back the un-flushed tail (RPO <= W), so the W=0
-    // zero-loss tighteners (assertW0Bars) do NOT apply; the per-crash-point oracle (membership + no-suspend)
-    // still must hold at EVERY point = the "clean rollback, no corruption" guarantee. The complementary
-    // durable-ack RPO bar (an ACK'd txn always survives) is proven by AdaptiveGroupCommitCrashTest.
+    // Group-commit window for the W>0 (WN) crash tests: 50ms, a typical RPO setting. Under W>0 a crash mid-window
+    // rolls back the unflushed tail (RPO <= W), so the W=0 zero-loss bars (assertW0Bars) do not apply; the
+    // per-crash-point oracle (membership, no suspend) still holds at every point: clean rollback, no corruption. The
+    // durable-ack bar (an acknowledged txn always survives) is covered by DurableFrontierTest.
     private static final int GROUP_WINDOW_WN_US = 50_000;
 
-    // CI-fast W>0 regression guard: the group-commit (W=50ms) counterpart of testConvertPartitionCrashSafeW0.
-    // The convert is data-preserving, so whether a crash lands BEFORE the batch fdatasync (convert lost ->
-    // pre-convert rows) or AFTER (convert applied), recovery must land on the SAME logical rows with no
-    // corruption/suspend. Exercises the crash sweep + oracle through the DEFERRED group-commit flush path.
+    // CI-fast W>0 guard: the group-commit (W=50ms) counterpart of testConvertPartitionCrashSafeW0. The convert
+    // preserves data, so whether a crash lands before the batch fdatasync (convert lost, pre-convert rows) or after
+    // it (convert applied), recovery lands on the same logical rows with no corruption or suspend. Exercises the
+    // sweep and oracle through the deferred group-commit flush path.
     //
     // Under W>0 a swept crash can fire on the deferred close-time fdatasync (flushPendingDurable inside
-    // WalWriter.cleanupBeforeClose), which distresses the WAL WRITER but not the sequencer — so the sweep's
-    // recoverAfterCrash reclaims the resulting owned/distressed pool orphan (releaseCrashOrphanedWalWriters,
-    // else "left behind on pool shutdown") AND reboots the table sequencer (resetForReboot, else the
-    // still-open sequencer's stale in-memory lastTxn wedges recovery's apply in an infinite re-notify loop).
-    // The W>0 durable-ack crash GUARANTEE itself is separately covered by AdaptiveGroupCommitCrashTest.
+    // WalWriter.cleanupBeforeClose), which distresses the WAL writer but not the sequencer, so the sweep's
+    // recoverAfterCrash reclaims the distressed pool orphan (releaseCrashOrphanedWalWriters, else "left behind on
+    // pool shutdown") and reboots the table sequencer (resetForReboot, else the open sequencer's stale in-memory
+    // lastTxn makes recovery's apply re-notify forever).
     @Test
     public void testConvertPartitionCrashSafeWN() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, GROUP_WINDOW_WN_US);
-        // Pin the microsecond clock. Under W>0 BOTH the group-commit deferral trigger
-        // (WalWriter.recordPendingDurable) and the WAL-apply time quota (ApplyWal2TableJob's per-batch
-        // timeLimit) read the engine's microsecond clock, so with the REAL clock a heavy-load run's wall-clock
-        // jitter makes the deferred-flush crash point and recovery's apply batching non-deterministic —
-        // intermittently wedging recovery's drainWalQueue. A fixed clock keeps every commit inside the window
-        // (deterministic deferral, still exercising the close-time flush crash path) and the apply quota
-        // effectively unbounded (single-pass apply), independent of load. This mirrors how the sibling W>0
-        // oracle AdaptiveGroupCommitCrashTest drives its window off a controlled clock. Restore the real clock
-        // in the finally so a fixed clock never leaks into a later test (currentMicros is a static not reset
-        // by the harness between tests).
+        // Pin the microsecond clock. Under W>0 both the group-commit deferral trigger
+        // (WalWriter.recordPendingDurable) and the WAL-apply time quota (ApplyWal2TableJob's per-batch timeLimit)
+        // read the engine clock, so with the real clock load jitter makes the deferred-flush crash point and
+        // recovery's apply batching non-deterministic and can wedge recovery's drainWalQueue. A fixed clock keeps
+        // every commit inside the window (deterministic deferral, still exercising the close-time flush crash path)
+        // and the apply quota effectively unbounded (single-pass apply). DurableFrontierTest drives its window off a
+        // controlled clock the same way. The finally restores the real clock, since currentMicros is a static the
+        // harness does not reset between tests.
         setCurrentMicros(1_000_000L);
         try {
             runWithCrashFacade(() -> {
@@ -716,23 +681,22 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         }
     }
 
-    // NIGHTLY-only: group-commit (W=50ms) counterpart of testFullLibraryW0 — the randomized full-op-library
-    // crash-fuzz under W>0. A crash mid-window may lose the un-flushed tail (loss permitted, RPO <= W), so the
-    // W=0 staircase/full-at-N bars are intentionally NOT applied. runSeedSweep asserts the per-crash-point
-    // oracle at EVERY point: recovery lands on a CONSISTENT committed prefix (membership) with no
-    // corruption/suspend — the broad "clean rollback under group commit" guarantee across the whole op library.
+    // Nightly only: the group-commit (W=50ms) counterpart of testFullLibraryW0, the randomized full-op-library
+    // crash fuzz under W>0. A crash mid-window may lose the unflushed tail (RPO <= W), so the W=0 staircase and
+    // full-at-N bars do not apply. runSeedSweep asserts the per-crash-point oracle at every point: recovery lands
+    // on a consistent committed prefix (membership) with no corruption or suspend.
     @Test
     public void testFullLibraryWN() throws Exception {
         Assume.assumeTrue("full-library WN crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
-        // Pin the microsecond clock for load-independent W>0 determinism (see testConvertPartitionCrashSafeWN):
-        // the group-commit deferral trigger and the WAL-apply time quota both read the engine clock, so the
-        // real clock makes this nightly-scale sweep intermittently wedge under load. Restore in the finally.
+        // Pin the microsecond clock for load-independent W>0 determinism (see testConvertPartitionCrashSafeWN): the
+        // group-commit deferral trigger and the WAL-apply time quota both read the engine clock, so the real clock can
+        // wedge this sweep under load. Restored in the finally.
         setCurrentMicros(1_000_000L);
         try {
-            // Fresh seeds per nightly run, same as W0. Truncation stays TOLERATED here (the W>0 oracle is
-            // per-crash-point, not a full-history bar), so the cap stays a fixed 700 and a heavier seed simply
-            // sweeps its first 700 points — no auto-sizing needed, and the truncation is logged by the driver.
+            // Fresh seeds per nightly run, as in W0. Truncation is tolerated here (the W>0 oracle is per crash
+            // point, not a full-history bar), so the cap stays a fixed 700, a heavier seed sweeps its first 700
+            // points, and the driver logs the truncation.
             runWithCrashFacade(() -> withSweepSeed((s0, s1) -> {
                 SweepResult r = runSeedSweep(s0, s1, GROUP_WINDOW_WN_US, 700);
                 Assert.assertTrue("sweep must exercise >= 1 crash point under W>0", r.sweptPoints >= 1);
@@ -745,10 +709,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
     private static final String CVT_TABLE = "cf_cvt";
 
-    // Deterministic non-structural-SQL crash workload: seed a 2-partition table, then CONVERT PARTITION TO
-    // PARQUET — a non-structural WAL command routed through WalWriter.applyNonStructural. The convert preserves
-    // the logical rows, so EVERY crash-recovered state must equal the seeded data and the table must never be
-    // suspended: exactly the bar the applyNonStructural events-before-sequencer ordering fix restores.
+    // Deterministic non-structural SQL crash workload: seed a 2-partition table, then CONVERT PARTITION TO PARQUET,
+    // a non-structural WAL command routed through WalWriter.applyNonStructural. The convert preserves the logical
+    // rows, so every crash-recovered state equals the seeded data and the table is never suspended; the
+    // events-before-sequencer order in applyNonStructural guarantees this.
     private final class ConvertPartitionWorkload implements AdaptiveCrashWorkload {
         private String fp;           // the single valid post-commit fingerprint (convert is data-preserving)
         private TableToken token;
@@ -772,36 +736,47 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public int atomicCommitDurabilityOpCount(int countedOps) {
-            // Both W=0 and the safe W>0 fallback have N=28: ops 1-6 the WAL event msync/fdatasync pairs,
-            // 7-8 the V1 sequencer CRC sidecar (_txnlog.c msync + fdatasync), 9-10 the sequencer txn-log
-            // entry (msync + fdatasync) -- where the transaction becomes DURABLE -- 11-13 parquet
-            // production (data.parquet, _pm, the partition dir), 14-15 the apply's async column-flush
-            // kicks, then 16-28 the epoch tail (syncfs, _cv, _txn, the three .epoch copies, the
-            // manifest, the table-dir fsync, _snapshot).
-            // Everything from op 11 on is MATERIALIZATION, re-derivable from the WAL that op 10 made
-            // durable; ops 1-13 must nevertheless fail loudly, so the boundary is the last
-            // parquet-production op. Op 14 starts the explicitly best-effort tail: a fault there is allowed to be consumed because
-            // the conversion transaction and logical rows are already durable, and the oracle still verifies
-            // no suspension or data change after reboot.
-            // Drift history: N was 26, then 27 when metadata-bound epochs added a third writeEpochCopy to the
-            // tail, and 26 again once commit pointers started honouring the table's EFFECTIVE mode -- under
-            // ADAPTIVE the apply's _txn commit is lazy and the epoch covers it, so its msync, which used to
-            // sit between parquet production and the tail, is correctly gone. The boundary moved with it
-            // (12 -> 11): one fewer op before the tail, the same op SET.
-            // Then 26 -> 28 when the V1 sequencer gained its per-record CRC sidecar: recordCrcBeforePublish
-            // makes _txnlog.c durable BEFORE the header advertises the txn, so its msync + fdatasync sit
-            // at 7-8 and shift everything after them by two. The boundary moved 11 -> 13 for the same
-            // reason -- the added ops are ordered ahead of the durable-transaction pair, so the
-            // fail-loud region grew by exactly those two ops rather than changing shape. Verified
-            // against the printed op log, not inferred: 77/78 are the sidecar, 79/80 the header.
-            // This equality is a drift tripwire, not the load-bearing bound. The message prints the phase's
-            // ops so the next drift says WHICH barrier moved instead of just a number.
-            Assert.assertEquals(
-                    "unexpected convert durability-op count; this phase's ops were:\n" + phaseDurabilityOps(),
-                    28,
-                    countedOps
+            // The phase runs the WAL event barriers (_event, _event.i), the sequencer txn-log entry (where the
+            // transaction becomes durable), then Parquet production (data.parquet, _pm, the new partition
+            // directory), then the apply's async column-flush kicks and the epoch tail (syncfs, _cv, _txn, the
+            // save point file twice, the table directory).
+            // Everything after the txn-log entry is materialization, re-derivable from the WAL; Parquet production
+            // still fails visibly, so the boundary is its last op, the partition directory fsync. A fault after it may
+            // be consumed, because the conversion transaction and logical rows are already durable, and the oracle
+            // still checks for no suspension or data change after reboot. The boundary is found by operation kind, so a
+            // barrier added to or removed from either side does not move it; the assertion fails, printing the phase's
+            // ops, only if the order it relies on changes.
+            final String ops = phaseDurabilityOps();
+            final String[] lines = ops.split("\n");
+            int lastWalOp = -1;
+            int txnLogOp = -1;
+            int parquetDataOp = -1;
+            int parquetMetaOp = -1;
+            int partitionDirOp = -1;
+            for (int i = 0; i < lines.length; i++) {
+                // <global op number> <kind> <db-root-relative path>
+                final String[] op = lines[i].split(" ");
+                final String path = op[2];
+                if (path.contains("/wal") || path.contains("/txn_seq/")) {
+                    lastWalOp = i + 1;
+                    if (path.endsWith("/_txnlog")) {
+                        txnLogOp = i + 1;
+                    }
+                } else if (path.endsWith("/data.parquet")) {
+                    parquetDataOp = i + 1;
+                } else if (path.endsWith("/_pm")) {
+                    parquetMetaOp = i + 1;
+                } else if (partitionDirOp < 0 && parquetMetaOp > 0 && op[1].endsWith("-dir") && path.contains("/2024-01-01.")) {
+                    partitionDirOp = i + 1;
+                }
+            }
+            Assert.assertEquals(ops, countedOps, lines.length);
+            Assert.assertTrue(
+                    "convert durability ops out of the expected order; this phase's ops were:\n" + ops,
+                    txnLogOp > 0 && txnLogOp == lastWalOp && txnLogOp < parquetDataOp
+                            && parquetDataOp < parquetMetaOp && parquetMetaOp < partitionDirOp
             );
-            return 13;
+            return partitionDirOp;
         }
 
         @Override
@@ -822,16 +797,14 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         }
     }
 
-    // Deterministic REBASE-WAL crash workload: seed a table, then ALTER TABLE ... REBASE WAL. The rebase mints
-    // a new table dir, renames it into place, drops the old table from the registry and re-points the name to
-    // the new token, and only THEN calls WalWriter.commitRebaseSeed() to write two empty seed txns. So by the
-    // time the seeds are written the new table is ALREADY the live table. commitRebaseSeed loops
-    // appendData -> getSequencerTxn with NO events.sync between (unlike its sibling truncateSoft), so under
-    // ADAPTIVE W=0 a crash between the seed's sequencer msync and its (absent) events flush leaves the live
-    // rebased table with a durable sequencer pointing past a non-durable _event -> recovery SUSPENDS it.
-    // Rebase is data-preserving (partitions are hard-linked into the new dir), so every crash-recovered state
-    // must expose the seeded rows and never be suspended: the bar the commitRebaseSeed events-before-sequencer
-    // ordering fix restores.
+    // Deterministic REBASE WAL crash workload: seed a table, then ALTER TABLE ... REBASE WAL. The rebase mints a
+    // new table dir, renames it into place, drops the old table from the registry, re-points the name to the new
+    // token, and only then calls WalWriter.commitRebaseSeed() to write two empty seed txns, so the new table is
+    // already the live table when the seeds are written. commitRebaseSeed loops appendData -> getSequencerTxn;
+    // unlike its sibling truncateSoft it must sync events before the sequencer, or under adaptive W=0 a crash
+    // between the seed's sequencer msync and its events flush leaves the live table with a durable sequencer
+    // pointing past a non-durable _event, and recovery suspends it. Rebase preserves data (partitions are
+    // hard-linked into the new dir), so every crash-recovered state exposes the seeded rows and is never suspended.
     @Test
     public void testRebaseWalCrashSafeW0() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -842,14 +815,13 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         runWithCrashFacade(() -> {
             SweepResult r = forEachAdaptiveCrashPoint(new RebaseWalWorkload());
             Assert.assertFalse("rebase-wal sweep truncated (N > cap) — raise the cap", r.truncated);
-            // A swept crash can fire INSIDE a TableWriter.close()/commit (the facade throws to simulate power
-            // loss). The pooled WRITER it orphans is force-reclaimed per cycle by the base (releaseEngineHandles
-            // -> WriterPool.releaseCrashOrphanedWriters), and the honest cross-table-leak guard runs per cycle
-            // in RebaseWalWorkload.teardown() (assertNoForeignOwnedWriters). The same interruption can also
-            // leave CACHED fds open under a cf_rbs_* dir (clone copy / interrupted close); every cf_rbs table is
-            // dropped by now, so reclaim those dangling fds here — path-scoped, so it can never touch a live
-            // engine-root fd (tables.d etc.) — before assertMemoryLeak's open-fd check. Process death reclaims
-            // all of this on a real power loss; the live JVM cannot.
+            // A swept crash can fire inside a TableWriter.close()/commit (the facade throws to simulate power loss).
+            // The base force-reclaims the pooled writer it orphans per cycle (releaseEngineHandles ->
+            // WriterPool.releaseCrashOrphanedWriters), and RebaseWalWorkload.teardown() runs the cross-table leak guard
+            // per cycle (assertNoForeignOwnedWriters). The same interruption can leave cached fds open under a cf_rbs_*
+            // dir (clone copy, interrupted close); every cf_rbs table is dropped by now, so reclaim those fds here,
+            // path-scoped so it never touches a live engine-root fd (tables.d and others), before assertMemoryLeak's
+            // open-fd check. Process death reclaims all of this on a real power loss; the live JVM cannot.
             crashFf.reclaimCachedFdsUnder(RBS_TABLE);
         });
     }
@@ -857,17 +829,16 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     private static final String RBS_TABLE = "cf_rbs";
 
     /**
-     * Honest cross-table-leak guard for the rebase sweep — the meaningful half of "assert dropped-tail
-     * instead of {@code busy writers == 0}", kept in the workload (the base's releaseEngineHandles() does the
-     * actual reclaim via {@link WriterPool#releaseCrashOrphanedWriters}).
+     * Cross-table leak guard for the rebase sweep, kept in the workload; the base's releaseEngineHandles() does the
+     * reclaim via {@link WriterPool#releaseCrashOrphanedWriters}.
      * <p>
-     * A swept crash can fire INSIDE a {@link TableWriter#close()}/commit (the facade throws to simulate power
-     * loss), leaving the pool entry owned. {@code CairoEngine.rebaseWalTable0} is proven real-leak-free (every
-     * acquire is finally/try-with guarded), so any writer this single-threaded sweep leaves owned MUST belong
-     * to one of OUR {@code cf_rbs_*} tables — an owned writer on any other table would be a real leak. A crash
-     * mid-close leaves either a still-checked-out writer (table token available) or a locked entry whose writer
-     * {@code lock()} already nulled (fall back to the pool map key, the dir name); a {@code cf_rbs_*} table name
-     * and a {@code cf_rbs_*~<id>} dir name both start with {@link #RBS_TABLE}. Checked before the base reclaims.
+     * A swept crash can fire inside a {@link TableWriter#close()}/commit (the facade throws to simulate power loss),
+     * leaving the pool entry owned. Every acquire in {@code CairoEngine.rebaseWalTable0} is finally/try-with
+     * guarded, so any writer this single-threaded sweep leaves owned belongs to one of its {@code cf_rbs_*} tables;
+     * an owned writer on any other table is a real leak. A crash mid-close leaves either a checked-out writer (table
+     * token available) or a locked entry whose writer {@code lock()} already nulled (fall back to the pool map key,
+     * the dir name); a {@code cf_rbs_*} table name and a {@code cf_rbs_*~<id>} dir name both start with
+     * {@link #RBS_TABLE}. Checked before the base reclaims.
      */
     private void assertNoForeignOwnedWriters() {
         final long mainThread = Thread.currentThread().threadId();
@@ -890,14 +861,14 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public TableToken[] setup(int iteration) throws Exception {
-            // Each crash point gets a FRESH table name (cf_rbs_<iteration>). REBASE mints a new durable table dir
-            // every run, and on a crash BEFORE the swap the old table wins so the new dir leaks as an unadopted
-            // orphan; with a fixed name those orphans — and dropped-but-not-yet-purged dirs — collide with a later
-            // create's reused tableId ("name is reserved"). Distinct names give each iteration its own dirs, so
-            // recoveries are independent and collisions are impossible by construction.
+            // Each crash point gets a fresh table name (cf_rbs_<iteration>). REBASE mints a new durable table dir every
+            // run, and on a crash before the swap the old table wins and the new dir stays as an unadopted orphan; with
+            // a fixed name those orphans, and dropped but not yet purged dirs, collide with a later create's reused
+            // tableId ("name is reserved"). Distinct names give each iteration its own dirs, so recoveries are
+            // independent.
             tableName = RBS_TABLE + '_' + iteration;
-            // Model a fresh restart's name-registry reload: rebuild the in-memory maps from tables.d so a prior
-            // iteration's crashed rebase leaves no stale in-memory entries behind (a real reboot does this).
+            // Model a fresh restart's name-registry reload: rebuild the in-memory maps from tables.d, so an earlier
+            // iteration's crashed rebase leaves no stale in-memory entries behind.
             engine.getTableNameRegistry().reload();
             execute("create table " + tableName + " (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into " + tableName + " values" +
@@ -910,9 +881,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             if (fp == null) {
                 fp = fingerprint(tableName);                   // data-preserving + name-independent -> constant across iterations
             }
-            // REBASE WAL is a recovery op — permitted only on a suspended table. Suspend it here (dev-mode
-            // gated) so the swept commit can rebase. Suspend is data-preserving; the seeded rows stay the only
-            // valid recovered state.
+            // REBASE WAL is a recovery op, permitted only on a suspended table. Suspend it here (dev-mode gated) so the
+            // swept commit can rebase. Suspend preserves data; the seeded rows stay the only valid recovered state.
             execute("alter table " + tableName + " suspend wal");
             return new TableToken[]{token};
         }
@@ -926,19 +896,18 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public int oracle(int k, int n) throws Exception {
-            // The registry swap is crash-atomic (CairoEngine.rebaseWalTable0 -> swapTable -> logSwapTable), so
-            // recovery never needs orphan-adoption: the live name resolves either to the old table (crash before
-            // the swap) or to the new one (crash after), consistently in memory and on disk — no reload() here,
-            // which would mask the atomicity by falling back to reloadFromRootDirectory. Resolve by name (the
-            // rebase mints the new token in commit(), unknown at setup()) and re-publish it, since recoverAfterCrash
-            // only re-published the pre-rebase token and any suspend we hunt lives on the live one.
+            // The registry swap is crash-atomic (CairoEngine.rebaseWalTable0 -> swapTable -> logSwapTable), so recovery
+            // never needs orphan adoption: the live name resolves to the old table (crash before the swap) or the new
+            // one (crash after), consistently in memory and on disk. No reload() here, which would mask the atomicity
+            // by falling back to reloadFromRootDirectory. Resolve by name (the rebase mints the new token in commit(),
+            // unknown at setup()) and re-publish it, since recoverAfterCrash re-published only the pre-rebase token.
             TableToken live = engine.getTableTokenIfExists(tableName);
             Assert.assertNotNull("rebased table vanished after crash at k=" + k, live);
-            // recoverAfterCrash clears the apply job's transient catch(Throwable) suspend only for the PRE-rebase
-            // token; the rebase mints a NEW token (resolved above) that a crash during the seed's apply can leave
-            // transiently suspended. Model the fresh restart for it too — then the re-publish + re-apply below
-            // exercises the DURABLE state: were the WAL/sequencer actually torn, the re-apply re-suspends (bar 2)
-            // or the data check fails, so this clears only the live-JVM artifact, never a real durability suspend.
+            // recoverAfterCrash clears the apply job's transient suspend only for the pre-rebase token; the rebase
+            // mints a new token (resolved above) that a crash during the seed's apply can leave transiently suspended.
+            // Model the fresh restart for it too. The re-publish and re-apply below then exercise the durable state: a
+            // torn WAL or sequencer re-suspends (bar 2) or fails the data check, so this clears only the live-JVM
+            // artifact.
             if (engine.getTableSequencerAPI().isSuspended(live)) {
                 engine.getTableSequencerAPI().getTxnTracker(live).setUnsuspended();
             }
@@ -953,15 +922,13 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public void teardown() throws Exception {
-            // Honest cross-table-leak guard, BEFORE the base's releaseEngineHandles() reclaims this cycle's
-            // close()-time writer orphan (if any): whatever is left owned must be one of OUR cf_rbs_* tables.
+            // Cross-table leak guard, before the base's releaseEngineHandles() reclaims this cycle's close()-time
+            // writer orphan: whatever is left owned must be one of this sweep's cf_rbs_* tables.
             assertNoForeignOwnedWriters();
-            // Per-iteration hygiene: drop THIS iteration's table right after its oracle so each crash point is
-            // independent (bounds registry/recovery/dir churn to one table). This does NOT reclaim a writer a
-            // crash orphaned mid-close() — that entry is owned, and a plain drop cannot release it; the sweep's
-            // close()-time writer orphans are force-reclaimed per cycle by the base (WriterPool
-            // .releaseCrashOrphanedWriters). Unregistered crash-before-swap orphan dirs hold no writer and are
-            // the accepted (dir-only) leak.
+            // Drop this iteration's table right after its oracle so each crash point is independent. A plain drop
+            // cannot release a writer a crash orphaned mid-close(); the base force-reclaims those per cycle
+            // (WriterPool.releaseCrashOrphanedWriters). Unregistered crash-before-swap orphan dirs hold no writer and
+            // are an accepted directory-only leak.
             try {
                 execute("drop table if exists " + tableName);
                 drainWalQueue();

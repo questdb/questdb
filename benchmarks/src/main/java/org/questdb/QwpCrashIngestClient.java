@@ -74,10 +74,6 @@ public class QwpCrashIngestClient {
     static final int BATCH = Integer.getInteger("qwp.batch", 1_000);
     static final long MAX_ROWS = Long.getLong("max.rows", 50_000_000L);
     static final String TABLE_NAME = CrashIngestWriter.TABLE_NAME;
-    /**
-     * Upper bound on waiting for one batch's ack before giving up on it (and NOT claiming it).
-     */
-    static final long ACK_TIMEOUT_MS = Long.getLong("qwp.ack.timeout.ms", 30_000L);
 
     public static void main(String[] args) throws Exception {
         final String dbRoot = args[0];

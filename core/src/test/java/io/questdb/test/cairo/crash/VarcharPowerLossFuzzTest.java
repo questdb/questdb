@@ -53,29 +53,28 @@ import java.util.List;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
 
 /**
- * Stress tests for the VARCHAR/STRING power-loss corruption fix
- * (see {@link VarcharPowerLossCorruptionTest} for the focused cases).
+ * Randomized power-loss tests for VARCHAR and STRING columns ({@link VarcharPowerLossCorruptionTest} has
+ * the focused cases).
  *
- * <p>Two properties are hammered with randomized inputs:
+ * <p>Two properties are checked with randomized inputs:
  * <ol>
- *   <li><b>No silent overwrite under a torn aux tail.</b> For many random table shapes we commit
- *       rows, snapshot the data file, zero the offset bytes of the last committed aux entry
- *       (the realistic "aux tail did not reach disk, data did" shape), reopen and append. The
- *       fix must either detect the damage (the append throws) and/or leave every committed data
- *       byte untouched - never silently overwrite live rows.</li>
- *   <li><b>No regression / no false positives on healthy data.</b> Random mixes of inline, split,
- *       empty and null values must round-trip correctly across a clean close + reopen, proving the
- *       appendValue reorder preserves the on-disk format and the recovery guard never fires on
- *       valid data.</li>
+ *   <li><b>No silent overwrite under a torn aux tail.</b> For many random table shapes the test commits
+ *       rows, snapshots the data file, zeroes the offset bytes of the last committed aux entry
+ *       (the realistic "aux tail did not reach disk, data did" shape), reopens and appends. The
+ *       writer must detect the damage (the append throws) and leave every committed data byte
+ *       untouched, never silently overwriting live rows.</li>
+ *   <li><b>No false positives on healthy data.</b> Random mixes of inline, split, empty and null
+ *       values must round-trip correctly across a clean close + reopen, proving that appendValue keeps
+ *       the on-disk format and the recovery guard never fires on valid data.</li>
  * </ol>
  */
 public class VarcharPowerLossFuzzTest extends AbstractCairoTest {
 
     private static final int ITERATIONS = 60;
 
-    // Randomized power-loss fuzz: belongs in the fuzz/soak pipeline, not the regular unit suite (which now
-    // also selects io.questdb.test.cairo.crash). Gate behind -Dquestdb.fuzz.nightly=true so PR CI skips it
-    // and the soak runs it. Deterministic cases live in VarcharPowerLossCorruptionTest (ungated, regular).
+    // Randomized power-loss fuzz runs in the nightly pipeline only: PR CI skips it unless
+    // -Dquestdb.fuzz.nightly=true is set. The deterministic cases in VarcharPowerLossCorruptionTest run on
+    // every PR.
     @Before
     public void assumeNightlyFuzz() {
         Assume.assumeTrue(
@@ -95,7 +94,7 @@ public class VarcharPowerLossFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Healthy-data regression: random inline/split/empty/null values must survive a clean
+     * Healthy data: random inline/split/empty/null values must survive a clean
      * close + reopen unchanged, and the recovery guard must never fire.
      */
     @Test
@@ -277,10 +276,6 @@ public class VarcharPowerLossFuzzTest extends AbstractCairoTest {
             }
         });
     }
-
-    // -----------------------------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------------------------
 
     /**
      * Random SQL-safe value covering inline (&lt;=9), split (&gt;9), empty and null shapes.

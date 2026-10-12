@@ -48,58 +48,19 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
- * SP-D Task W5: the ADAPTIVE <b>multi-partition</b> lazy-gap crash sweep — closes the one Important gap
- * the SP-D D1 whole-branch review found: W0-W4 (base O3, the O3/indexed-symbol/multi-table/mat-view
- * lazy-gap sweeps) all accidentally confined every row to a SINGLE {@code partition by day} bucket, so
- * partition-rollover-under-crash and cross-partition epoch consistency were never exercised. This sweep
- * drives rows across MULTIPLE day partitions — including brand-new partition DIRECTORIES created by
- * LAZY (non-durable) applies — through the same proven {@link AbstractAdaptiveCrashSweepTest#forEachAdaptiveCrashPoint}
- * driver.
- *
- * <h3>Why plain schema, forward-only appends (no O3, no symbols, no mat-view)</h3>
- * W1/W1-INV already isolate the O3-merge-path variable, W2 the indexed-symbol variable, W3 the
- * simultaneous-multi-table variable and W4 the mat-view variable — each against a SINGLE partition.
- * Conflating any of those with the multi-partition variable this task targets would make a future RED
- * result ambiguous. This workload therefore uses the simplest possible schema —
- * {@code (ts timestamp, v long)} with {@code v} = commit order and {@code ts} STRICTLY increasing (a pure
- * tail append every commit, never revisiting an earlier partition) — so any bug found here is
- * unambiguously about PARTITION ROLLOVER, not O3 merge, symbol dictionaries, or view refresh.
- *
- * <h3>The layout (mirrors the task's own worked example exactly)</h3>
- * {@code v} is commit order 0..{@link #ROWS}-1. {@link #DAY}{@code [v]} is the day-of-month (October
- * 2024) each row lands on:
- * <ul>
- *   <li><b>K = {@value #LAZY_K} durable-epoch prefix rows</b> (v=0..3): 2 rows on 2024-10-01, 2 rows on
- *       2024-10-02 — the durable epoch (interval=0 fires on this first applied batch) is therefore taken
- *       at a cut that SPANS 2 partitions, not 1.</li>
- *   <li><b>M = {@value #LAZY_M} lazily-applied rows</b> (v=4..8), epoch DISABLED: EACH lands on its OWN
- *       brand-new day (2024-10-03, -04, -05, -06, -07) — every one of the 5 lazy applies creates a
- *       brand-new partition DIRECTORY that is non-durable until recovery re-derives it.</li>
- * </ul>
- * The full committed set therefore spans <b>7 distinct day partitions</b> (days 1..7) — confirmed,
- * fault-free, by {@link #testWorkloadLayoutSpansSevenDistinctPartitions()}.
- *
- * <h3>What this answers that no single-partition sweep could</h3>
- * Recovery must rewind the TABLE-level {@code _txn}/{@code _cv} to an epoch cut spanning 2 partitions,
- * then re-derive the NEW per-partition directories (2024-10-03.. as far as the frontier reached) from
- * the durable WAL. Two distinct multi-partition-specific failure modes are in scope:
- * <ol>
- *   <li>an ORPHANED partition directory left behind after the rewind — physically present on disk
- *       (e.g. a lazily mkdir'd-but-never-synced new-partition directory the crash model does not delete,
- *       only truncates its files to zero — see {@code CrashFaultFilesFacade#crash}) but referencing data
- *       the epoch cut rewound away;</li>
- *   <li>a MISSING partition for a surviving row, or a table-level row count that silently disagrees with
- *       what a clean per-partition scan actually finds (a whole partition quietly dropped without a loud
- *       error) — the specific loophole {@link #oracle} closes beyond the base single-table identity-prefix
- *       check (see its javadoc).</li>
- * </ol>
- *
- * <h3>Relationship to the sibling lazy-gap sweeps</h3>
- * Structurally mirrors {@link AdaptiveO3LazyGapCrashSweepTest} (W1-INV), {@link
- * AdaptiveIndexedSymbolLazyGapCrashSweepTest} (W2) and {@link AdaptiveMultiTableLazyGapCrashSweepTest}
- * (W3): K durable-epoch rows -&gt; disable epoch -&gt; M more rows applied LAZILY -&gt; sweep a crash
- * across every durability op of the M-phase via the validated driver. The ONLY new variable is that the
- * K/M rows are spread across 7 partitions instead of confined to 1.
+ * ADAPTIVE lazy-gap crash sweep across partition rollover. A durable epoch is taken over rows that span two
+ * day partitions, further epochs are disabled, and five more rows are applied lazily, each creating a new
+ * day partition directory. {@link AbstractAdaptiveCrashSweepTest#forEachAdaptiveCrashPoint} crashes at every
+ * durability op of the lazy phase. At each point recovery must rewind {@code _txn}/{@code _cv} to the
+ * two-partition cut and re-derive the new partitions from the durable WAL, leaving no orphaned partition
+ * directory (the crash model truncates the files of an unsynced new directory but does not delete it, see
+ * {@code CrashFaultFilesFacade#crash}) and no missing partition for a surviving row.
+ * <p>
+ * The schema is plain {@code (ts timestamp, v long)} with {@code ts} strictly increasing, so every apply is
+ * a tail append or a new partition, never an O3 merge, and a failure points at partition rollover alone.
+ * {@link AdaptiveO3LazyGapCrashSweepTest}, {@link AdaptiveIndexedSymbolLazyGapCrashSweepTest} and
+ * {@link AdaptiveMultiTableLazyGapCrashSweepTest} cover the O3, indexed-symbol and multi-table variables with
+ * the same structure against a single partition.
  */
 public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
@@ -108,7 +69,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
      */
     private static final int LAZY_K = 4;
     /**
-     * Post-epoch rows applied LAZILY (epoch disabled) — the sustained lazy gap this sweep crashes into.
+     * Post-epoch rows applied lazily (epochs disabled): the lazy gap this sweep crashes into.
      */
     private static final int LAZY_M = 5;
     /**
@@ -117,11 +78,10 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     private static final int ROWS = LAZY_K + LAZY_M; // 9
 
     /**
-     * Day-of-month (October 2024), indexed by {@code v} (commit order 0..8). v=0..3 (the durable K-prefix)
-     * span EXACTLY 2 partitions (days 1,1,2,2); v=4..8 (the lazy M-batch) each land on their OWN brand-new
-     * day (3,4,5,6,7) — 5 more partitions, one created per lazy apply. Strictly non-decreasing: {@code ts}
-     * only ever moves FORWARD, so every apply is a plain tail append/new-partition-create, never an O3
-     * merge — the multi-partition variable is isolated from the O3 variable W1/W1-INV already cover.
+     * Day of month (October 2024), indexed by {@code v} (commit order 0..8). The durable K-prefix v=0..3 spans
+     * two partitions (days 1, 1, 2, 2); each lazy M-row v=4..8 lands on a new day (3 to 7), so every lazy
+     * apply creates a partition. The days never decrease, so every apply is a tail append or a new partition,
+     * never an O3 merge.
      */
     private static final int[] DAY = {1, 1, 2, 2, 3, 4, 5, 6, 7};
     /**
@@ -133,16 +93,14 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
      */
     private static final Set<Integer> ALL_DAYS = new TreeSet<>(Arrays.asList(1, 2, 3, 4, 5, 6, 7));
     /**
-     * A day never used by any K/M row — the follow-up write's "yet another new partition".
+     * A day no K/M row uses: the follow-up write creates one more new partition.
      */
     private static final int FOLLOWUP_DAY = 20;
 
     /**
-     * Dedicated, CRASH-FREE confirmation that the fixed {@link #DAY}/{@link #HOUR} mapping genuinely
-     * produces the claimed layout before any fault-injection runs against it: the durable K-prefix spans
-     * EXACTLY 2 day-partitions and each of the 5 lazily-applied M rows lands on its OWN brand-new day —
-     * 7 distinct partitions in total, with per-partition row counts 2,2,1,1,1,1,1 summing to {@link #ROWS}.
-     * Logged verbatim (distinct-partition count + the day set + per-day row counts) for the SP-D W5 report.
+     * Fault-free check that the {@link #DAY}/{@link #HOUR} mapping produces the intended layout: the durable
+     * K-prefix spans two day partitions and each lazy M-row lands on its own new day, seven partitions in
+     * total with row counts 2, 2, 1, 1, 1, 1, 1 summing to {@link #ROWS}.
      */
     @Test
     public void testWorkloadLayoutSpansSevenDistinctPartitions() throws Exception {
@@ -186,24 +144,20 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     }
 
     /**
-     * THE HEADLINE multi-partition lazy-gap sweep. Builds a durable epoch at seqTxn=LAZY_K spanning 2
-     * partitions, disables further epochs, then sweeps a crash across EVERY durability op of the 5
-     * lazily-applied M rows — each of which creates a brand-new partition directory — running the full
-     * recovery triple and oracle at each. Asserts, at every crash point k:
+     * Builds a durable epoch at seqTxn=LAZY_K spanning two partitions, disables further epochs, then sweeps
+     * a crash across every durability op of the five lazy M-rows, each of which creates a new partition
+     * directory, running the recovery triple and the oracle at each. Asserts, at every crash point k:
      * <ol>
-     *   <li>the table is NOT suspended after recovery;</li>
-     *   <li>no silent corruption — surviving rows ordered by {@code v} are an exact identity prefix
-     *       {@code {0..m-1}} (a loud torn read tolerated; a wrong/absent value is a FAILURE);</li>
-     *   <li>[multi-partition-specific — see {@link #oracle}] the set of partitions physically present
-     *       corresponds EXACTLY to the surviving rows, and a CLEAN read shows EXACTLY the committed count
-     *       (no silently-dropped trailing partition);</li>
-     *   <li>a follow-up write+read succeeds on the recovered table, landing in YET ANOTHER brand-new
+     *   <li>the table is not suspended after recovery;</li>
+     *   <li>no silent corruption: surviving rows ordered by {@code v} are an exact identity prefix
+     *       {@code {0..m-1}} (a loud torn read is tolerated, a wrong or absent value fails);</li>
+     *   <li>the partitions present match the surviving rows exactly, and a clean read returns exactly the
+     *       committed count (see {@link LazyGapMultiPartitionWorkload#oracle});</li>
+     *   <li>a follow-up write and read succeed on the recovered table, landing in another new
      *       partition;</li>
-     *   <li>the recovered count is monotonic non-decreasing in k, reaching ALL {@link #ROWS} rows across
-     *       ALL 7 partitions at k=N.</li>
+     *   <li>the recovered count never decreases with k and reaches all {@link #ROWS} rows across all seven
+     *       partitions at k=N.</li>
      * </ol>
-     * A suspended table, a zero-fill/gap, an orphaned partition directory, or a silently-dropped partition
-     * would be a real adaptive multi-partition rollover recovery bug — a candidate GA-blocker.
      */
     @Test
     public void testMultiPartitionLazyGapSweepRecoversCleanlyAtEveryCrashPoint() throws Exception {
@@ -219,7 +173,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
             Assert.assertEquals("default cap must not truncate this small workload", r.n, r.sweptPoints);
             Assert.assertFalse("small workload must not be truncated", r.truncated);
 
-            // Oracle clause 4 (Bar-2 durable-survival FLOOR): recovered counts non-decreasing in k.
+            // Recovered counts never decrease with k.
             for (int k = 2; k <= r.sweptPoints; k++) {
                 Assert.assertTrue(
                         "recovered counts must be non-decreasing at k=" + k + " ("
@@ -239,8 +193,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                     r.recoveredByK()[1] >= LAZY_K
             );
 
-            // Oracle clause 3: at the LAST crash point k=N, recovery restores ALL committed rows across
-            // ALL 7 partitions.
+            // At the last crash point k=N, recovery restores all committed rows across all seven partitions.
             Assert.assertEquals(
                     "k=N must recover ALL committed rows across all 7 partitions",
                     ROWS, r.recoveredByK()[r.sweptPoints]
@@ -249,56 +202,47 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     }
 
     /**
-     * A representative REWINDING crash point within the lazily-applied M-batch, picked from this class's
-     * own sweep staircase (see the logged {@code recoveredByK} in
-     * {@link #testMultiPartitionLazyGapSweepRecoversCleanlyAtEveryCrashPoint}) so the recovery-enabled arm
-     * lands on a genuine, non-degenerate PARTIAL result (strictly more than {@link #LAZY_K}, strictly
-     * fewer than {@link #ROWS}) — chosen the same way the sibling lazy-gap sweeps chose theirs ({@code
-     * AdaptiveO3LazyGapCrashSweepTest.SCOREBOARD_REWIND_CRASH_K}, {@code
-     * AdaptiveIndexedSymbolLazyGapCrashSweepTest.REPRESENTATIVE_REWIND_CRASH_K}, {@code
-     * AdaptiveMultiTableLazyGapCrashSweepTest.REPRESENTATIVE_REWIND_CRASH_K}).
+     * The rewinding crash point, chosen by phase rather than by op count: this many lazy rows are applied,
+     * each as its own txn on a new partition, and the crash fires on the first durability op of the next
+     * lazy row's commit, before that row's WAL is durable. Recovery rewinds to the {@link #LAZY_K}
+     * durable-epoch cut and replays the applied rows, re-creating their partitions: a partial result
+     * ({@code [0..6]}, days 1 to 5) whatever the number of ops per commit.
      */
-    private static final int REPRESENTATIVE_REWIND_CRASH_K = 40;
+    private static final int REWIND_APPLIED_LAZY_ROWS = 3;
 
     /**
-     * DATA BEFORE POINTER, across a partition rollover.
-     *
-     * <p>This was a negative control asserting that disabling {@code RecoveryCoordinator.recover()} could
-     * not reproduce the correct result. It could not, until {@code _txn}/{@code _cv}/the index files
-     * stopped making their per-commit flush decision on the INSTANCE-GLOBAL {@code cairo.commit.mode}
-     * ({@code != NOSYNC}) and started using the table's EFFECTIVE mode. Under ADAPTIVE that eager msync was
-     * publishing a commit pointer over column data that was still only lazily durable, and recovery's epoch
-     * rewind was what repaired it. With the pointer as lazy as the data it describes the torn-forward
-     * window is gone, and both arms land on the same correct result — at every crash point, not just this
-     * one. See {@link AdaptiveIndexedSymbolLazyGapCrashSweepTest} for the measured single-variable A/B.
-     *
-     * <p>What is asserted instead is the invariant that replaced it, and that fails loudly if the gate ever
-     * regresses: <b>after the crash and before any recovery, {@code _txn} must not claim a seqTxn beyond
-     * the durable epoch cut.</b> Roll-forward's own value is proved by {@link
-     * AdaptiveRecoveryRollForwardCrashTest}.
+     * Data before pointer, across a partition rollover. {@code _txn}, {@code _cv} and the index files make
+     * their per-commit flush decision on the table's effective commit mode, so under ADAPTIVE the commit
+     * pointer is as lazily durable as the column data it describes. After a crash in the lazy phase, and
+     * before any recovery runs, {@code _txn} must therefore not claim a seqTxn beyond the durable epoch cut.
+     * The same crash runs with and without {@code RecoveryCoordinator.recover()}; both arms must keep the
+     * pointer at or below the cut and land on the same valid identity prefix and partition layout.
+     * {@link AdaptiveRecoveryRollForwardCrashTest} covers roll-forward itself.
      */
     @Test
     public void testCommitPointerNeverPublishedAheadOfDataAcrossPartitionRollover() throws Exception {
-        final PartitionRows withRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, true);
-        final PartitionRows withoutRecovery = runLazyGapCrashScenario(REPRESENTATIVE_REWIND_CRASH_K, false);
+        final PartitionRows withRecovery = runLazyGapCrashScenario(REWIND_APPLIED_LAZY_ROWS, true);
+        final PartitionRows withoutRecovery = runLazyGapCrashScenario(REWIND_APPLIED_LAZY_ROWS, false);
 
-        LOG.info().$("[multi-partition lazy-gap negative control] k=").$(REPRESENTATIVE_REWIND_CRASH_K)
+        LOG.info().$("[multi-partition lazy-gap negative control] appliedLazyRows=").$(REWIND_APPLIED_LAZY_ROWS)
                 .$(" withRecovery=").$(withRecovery.toString())
                 .$(" withoutRecovery=").$(withoutRecovery.toString()).$();
 
-        // WITH recovery (the supported/default configuration): must be a fully valid, correct identity
-        // prefix — a failure here would be a bug in the ENABLED-recovery path itself, not merely a
-        // negative-control finding.
+        // With recovery (the default configuration) the result must be a valid identity prefix; a failure
+        // here is a bug in the recovery path itself.
         assertValidIdentityPrefix("withRecovery", withRecovery.rows);
         Assert.assertTrue(
-                "k=" + REPRESENTATIVE_REWIND_CRASH_K + " (recovery enabled) must land on a non-degenerate "
+                "the crash (recovery enabled) must land on a non-degenerate "
                         + "PARTIAL result for this comparison to be meaningful (withRecovery=" + withRecovery.rows + ")",
                 withRecovery.rows.size() > LAZY_K && withRecovery.rows.size() < ROWS
         );
+        Assert.assertEquals(
+                "the crash must land after " + REWIND_APPLIED_LAZY_ROWS + " lazy applies and before the next "
+                        + "lazy row's WAL is durable (withRecovery=" + withRecovery.rows + ")",
+                LAZY_K + REWIND_APPLIED_LAZY_ROWS, withRecovery.rows.size()
+        );
 
-        // WITHOUT recovery: disabled-recovery must not show MORE surviving rows than recovery-enabled at
-        // the identical crash point (a sanity bound; more rows without recovery would be a different,
-        // stranger anomaly, not ordinary data loss).
+        // Sanity bound: without recovery, no more rows survive than with recovery at the same crash point.
         Assert.assertTrue(
                 "recovery-disabled must not show MORE surviving rows than recovery-enabled at the same "
                         + "crash point (withoutRecovery=" + withoutRecovery.rows
@@ -306,9 +250,9 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 withoutRecovery.rows.size() <= withRecovery.rows.size()
         );
 
-        // THE INVARIANT (data before pointer), asserted BEFORE the row check below so a regression reports
-        // its CAUSE rather than its symptom. The crash left _txn at or below the durable epoch cut in both
-        // arms, so no reader can be shown a row -- or a partition directory -- whose data was never flushed.
+        // Data before pointer, asserted before the row check below so a regression reports its cause rather
+        // than its symptom: with _txn at or below the durable epoch cut in both arms, no reader sees a row or
+        // a partition directory whose data is not durable.
         for (PartitionRows arm : new PartitionRows[]{withRecovery, withoutRecovery}) {
             Assert.assertTrue(
                     "the crash must not leave _txn claiming past the durable epoch cut: the commit pointer "
@@ -318,8 +262,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
             );
         }
 
-        // And the consequence: the recovery-DISABLED arm is not merely "tolerable" here, it is correct --
-        // rows AND partition layout. Held to the same bar.
+        // As a consequence the arm without recovery is correct too, in rows and in partition layout.
         assertValidIdentityPrefix("withoutRecovery", withoutRecovery.rows);
         Assert.assertEquals(
                 "recovery-disabled must land on the same partition layout as recovery-enabled",
@@ -338,7 +281,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     }
 
     /**
-     * Paired recovered-rows + partition-day-set snapshot for the negative-control comparison.
+     * Recovered rows and partition day set of one arm of the with/without-recovery comparison.
      */
     private static final class PartitionRows {
         final List<Long> rows;
@@ -360,15 +303,15 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     }
 
     /**
-     * Runs the LAZY_K/LAZY_M multi-partition lazy-gap scenario once, standalone (not through the sweep
-     * driver): LAZY_K rows spanning 2 partitions -&gt; durable epoch -&gt; epoch disabled -&gt; LAZY_M more
-     * rows, each on its own brand-new partition, applied LAZILY -&gt; a crash armed at durability op
-     * {@code k} -&gt; the recovery triple with {@code RecoveryCoordinator.recover()} included or skipped
-     * per {@code recoveryOn}. Returns the recovered {@code v} list (tolerant of a loud torn read) paired
-     * with the physically-present partition day set. Leak-safe: drops the table + reclaims per-cycle fds
-     * before returning, mirroring the sweep driver.
+     * Runs the multi-partition lazy-gap scenario once, outside the sweep driver: LAZY_K rows spanning two
+     * partitions -&gt; durable epoch -&gt; epochs disabled -&gt; LAZY_M rows, each on a new partition, applied
+     * lazily -&gt; a crash on the first durability op of the commit of lazy row {@code appliedLazyRows}
+     * (counted from 0) -&gt; the recovery triple, with {@code RecoveryCoordinator.recover()} run or skipped
+     * per {@code recoveryOn}. Returns the recovered {@code v} list (tolerating a loud torn read), the
+     * partition day set and the pre-recovery {@code _txn} seqTxn. Drops the table and closes per-cycle fds
+     * before returning, as the sweep driver does.
      */
-    private PartitionRows runLazyGapCrashScenario(int k, boolean recoveryOn) throws Exception {
+    private PartitionRows runLazyGapCrashScenario(int appliedLazyRows, boolean recoveryOn) throws Exception {
         final PartitionRows[] resultBox = new PartitionRows[1];
         final long[] preRecoverySeqTxn = {-1};
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
@@ -393,9 +336,14 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 final Set<Long> fdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
                 markDurableBaseline();
                 final int base = crashFf.durabilityOpCount();
-                crashFf.armCrashAt(base + k);
+                int crashOp = -1;
                 try {
                     for (int i = LAZY_K; i < ROWS; i++) {
+                        if (i == LAZY_K + appliedLazyRows) {
+                            // the first durability op of this row's commit
+                            crashOp = crashFf.durabilityOpCount() + 1;
+                            crashFf.armCrashAt(crashOp);
+                        }
                         insertRow(table, i);
                         drainWalQueue();
                         if (anyTableSuspended(tt)) {
@@ -405,8 +353,16 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 } catch (CrashSimulationError propagated) {
                     // expected: the armed crash fired during the WAL-commit fsync path
                 }
+                Assert.assertTrue(
+                        "the lazy batch must reach row " + (LAZY_K + appliedLazyRows) + " to arm the crash",
+                        crashOp > 0
+                );
+                Assert.assertFalse("the armed crash must fire", crashFf.isCrashArmed());
+                final String crashedOp = crashFf.durabilityOpLog().get(crashOp - 1);
+                LOG.info().$("[multi-partition lazy-gap negative control] recovery=").$(recoveryOn)
+                        .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
-                // Driver-faithful recovery EXCEPT the recovery-enabled flag is the toggled variable.
+                // The sweep driver's recovery steps, except that recover() runs only when recoveryOn is set.
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 engine.releaseAllWalWriters();
@@ -415,7 +371,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                     engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
                 }
                 engine.getTxnScoreboardPool().remove(tt); // fresh-restart model (see the driver's javadoc)
-                // The commit pointer as the crash left it, BEFORE anything gets a chance to repair it.
+                // The commit pointer as the crash left it, before anything gets a chance to repair it.
                 preRecoverySeqTxn[0] = readOnDiskTxnSeqTxn(tt, PartitionBy.DAY);
                 if (recoveryOn) {
                     new RecoveryCoordinator(engine).recover();
@@ -458,7 +414,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);        // setup re-affirms/flips per phase
-        // Recovery roll-forward left at its default (enabled) — we WANT it to run and prove it recovers.
+        // Recovery roll-forward stays at its default (enabled), so the sweep exercises it.
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
             body.run();
@@ -482,7 +438,7 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     }
 
     /**
-     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     * count(*): the committed row count from table metadata (reliable even if a column read would tear).
      */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
@@ -509,11 +465,10 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     }
 
     /**
-     * Read {@code select v ... order by v}, returning the identity values gathered so far AND whether the
-     * read teared. A loud torn read (CairoException/CairoError/SIGBUS-InternalError on a truncated column)
-     * is an acceptable crash outcome — the (possibly partial) result read before the tear is returned
-     * rather than rethrown, with {@code torn=true} so the caller can apply the stricter CLEAN-read-only
-     * exact-count check (see {@link #oracle}).
+     * Reads {@code select v ... order by v} and returns the identity values gathered and whether the read
+     * tore. A loud torn read (CairoException/CairoError/SIGBUS-InternalError on a truncated column) is an
+     * acceptable crash outcome: the partial result read before the tear is returned with {@code torn=true},
+     * so the caller applies the exact-count check to clean reads only.
      */
     private ReadResult readVOrderedByVTracked(String table) {
         final List<Long> out = new ArrayList<>();
@@ -550,13 +505,11 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     }
 
     /**
-     * The SQL-level partition-metadata view ({@code table_partitions('t')} — {@code name}, e.g.
-     * "2024-10-03", and {@code numRows}), reduced to the set of distinct day-of-month values physically
-     * present and each day's total row count. A loud error reading partition metadata is tolerated the same
-     * way a torn column read is (returns an empty/partial result with {@code torn=true}); this reflects
-     * exactly what {@code _txn}'s CURRENT (post-recovery) partition list contains, so an orphaned partition
-     * still referenced by a stale {@code _txn} entry whose directory recovery actually removed would show
-     * up as a loud error here rather than silently vanishing.
+     * Reads {@code table_partitions('t')} ({@code name}, e.g. "2024-10-03", and {@code numRows}) and reduces it
+     * to the set of day-of-month values present and each day's row count. A loud error reading partition
+     * metadata is tolerated like a torn column read and returns a partial result with {@code torn=true}. The
+     * result reflects the post-recovery {@code _txn} partition list, so a stale {@code _txn} entry whose
+     * directory recovery removed shows up as a loud error here rather than silently vanishing.
      */
     private PartitionScan readPartitionDays(String table) {
         final Set<Integer> days = new TreeSet<>();
@@ -592,11 +545,10 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
     }
 
     /**
-     * W5 — the multi-partition lazy-gap workload. {@code setup} builds the durable epoch prefix (LAZY_K
-     * rows spanning 2 partitions with the epoch enabled, then the epoch DISABLED), so the driver's swept
-     * {@code commit} phase is the LAZY_M rows — each landing on its own brand-new partition, applied
-     * LAZILY. Uses ONE reused table name (drop+recreate at the head of each setup); the driver supplies
-     * the per-cycle isolation.
+     * The multi-partition lazy-gap workload. {@code setup} builds the durable epoch prefix (LAZY_K rows
+     * spanning two partitions with epochs enabled, then disables epochs), so the driver's swept
+     * {@code commit} phase is the LAZY_M rows, each on its own new partition, applied lazily. Each setup
+     * drops and recreates the same table name; the driver supplies the per-cycle isolation.
      */
     private final class LazyGapMultiPartitionWorkload implements AdaptiveCrashWorkload {
         private String table;
@@ -605,23 +557,22 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
         @Override
         public TableToken[] setup(int iteration) throws Exception {
             table = "mp_lazygap";
-            // Epoch ENABLED for the LAZY_K-row prefix so a durable cut is taken at seqTxn=LAZY_K.
+            // Epochs enabled for the LAZY_K-row prefix, so a durable cut is taken at seqTxn=LAZY_K.
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
             execute("drop table if exists " + table);
             drainWalQueue();
             execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
             tt = engine.verifyTableName(table);
 
-            // LAZY_K rows spanning 2 partitions (days 1,1,2,2) -> apply -> durable epoch at seqTxn=LAZY_K,
-            // a cut that SPANS both partitions.
+            // LAZY_K rows spanning two partitions (days 1, 1, 2, 2) -> apply -> durable epoch at seqTxn=LAZY_K,
+            // a cut that spans both partitions.
             for (int i = 0; i < LAZY_K; i++) {
                 insertRow(table, i);
             }
             drainWalQueue();
 
-            // DISABLE further epochs: the driver's swept commit() phase (the LAZY_M rows, each its own new
-            // partition) is applied LAZILY, building the sustained gap between the durable cut and the
-            // frontier.
+            // Disable further epochs: the driver's swept commit() phase (the LAZY_M rows, each its own new
+            // partition) is applied lazily, building the gap between the durable cut and the frontier.
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
             return new TableToken[]{tt};
         }
@@ -629,14 +580,14 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
         @Override
         public void commit() throws Exception {
             for (int i = LAZY_K; i < ROWS; i++) {
-                // v=i lands on DAY[i], a BRAND-NEW day never used by any earlier row -> this apply creates
-                // a brand-new partition DIRECTORY, non-durable until recovery re-derives it from the WAL.
+                // v=i lands on DAY[i], a day no earlier row uses, so this apply creates a new partition
+                // directory, not durable until recovery re-derives it from the WAL.
                 insertRow(table, i);
-                // ADAPTIVE lazy apply (no epoch) -> _txn msync only. An armed crash here is swallowed by
-                // ApplyWal2TableJob's catch(Throwable) into a table SUSPEND (no throw).
+                // ADAPTIVE lazy apply with no epoch: the table files are not synced. An armed crash here is
+                // swallowed by ApplyWal2TableJob's catch(Throwable) and suspends the table (no throw).
                 drainWalQueue();
                 if (anyTableSuspended(tt)) {
-                    return; // stop as a real power loss would, so we don't durably mask the injection point
+                    return; // stop as a real power loss would, so the injection point is not durably masked
                 }
             }
         }
@@ -649,8 +600,8 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                     engine.getTableSequencerAPI().isSuspended(tt)
             );
 
-            // (2) No silent corruption: surviving rows ORDERED BY v are an exact identity PREFIX {0..m-1}.
-            // A loud torn read is tolerated; a wrong/absent value — including a zero-fill — is a FAILURE.
+            // (2) No silent corruption: surviving rows ordered by v are an exact identity prefix {0..m-1}.
+            // A loud torn read is tolerated; a wrong or absent value, including a zero-fill, fails.
             final ReadResult rr = readVOrderedByVTracked(table);
             final List<Long> rows = rr.rows;
             for (int i = 0; i < rows.size(); i++) {
@@ -676,12 +627,9 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                             + "partitions (recovered=" + recovered + ")",
                     recovered >= LAZY_K
             );
-            // MULTI-PARTITION HOLE #1: a CLEAN (non-torn) read must show EXACTLY the committed row count.
-            // The base "<=" tolerance above exists for a genuinely torn (loud-exception) read; it would
-            // ALSO silently accept a read that returns FEWER rows than committed with NO exception at all —
-            // e.g. a reader that quietly skips a silently-dropped/orphaned trailing partition without
-            // erroring. That specific silent-shortfall shape is exactly what a whole-partition rollover bug
-            // could look like, and it is what this closes.
+            // A clean (non-torn) read must return exactly the committed row count. The "<=" bound above
+            // allows for a loud torn read, but would also accept a read that silently skips a dropped or
+            // orphaned trailing partition, which is how a partition rollover bug would show.
             if (!rr.torn) {
                 Assert.assertEquals(
                         "k=" + k + ": a CLEAN (non-torn) read must return EXACTLY the committed row count — "
@@ -691,11 +639,10 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 );
             }
 
-            // MULTI-PARTITION HOLE #2: the set of partitions PHYSICALLY present (table_partitions()) must
-            // correspond EXACTLY to what the committed row count implies (expectedDaysForPrefix(recovered)).
-            // An EXTRA day is an ORPHANED partition directory referencing rewound-away data; a MISSING day
-            // is a partition silently dropped for a surviving row. A loud error reading partition metadata
-            // is tolerated (same philosophy as the identity-prefix read); silent disagreement is not.
+            // The partitions present in table_partitions() must match what the committed row count implies
+            // (expectedDaysForPrefix(recovered)). An extra day is an orphaned partition directory referencing
+            // rewound data; a missing day is a partition dropped for a surviving row. A loud error reading
+            // partition metadata is tolerated, as for the identity-prefix read; silent disagreement is not.
             final PartitionScan scan = readPartitionDays(table);
             if (!scan.torn) {
                 final Set<Integer> expectedDays = expectedDaysForPrefix(recovered);
@@ -707,8 +654,8 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                         expectedDays, scan.days
                 );
                 // Per-partition scan consistency: numRows summed across table_partitions() must equal the
-                // table-level committed count (catches a partition whose OWN row count silently disagrees
-                // with the table total even when its mere presence/absence looks right).
+                // table-level committed count (catches a partition whose own row count disagrees with the
+                // table total even when its presence or absence looks right).
                 long summedRows = 0;
                 for (long v : scan.rowsByDay.values()) {
                     summedRows += v;
@@ -728,8 +675,8 @@ public class AdaptiveMultiPartitionLazyGapCrashSweepTest extends AbstractAdaptiv
                 );
             }
 
-            // (3) Clean reopen: a follow-up write + read must succeed on the recovered table, landing in
-            // YET ANOTHER brand-new partition (FOLLOWUP_DAY=20 — never used by any K/M row).
+            // (3) A follow-up write and read succeed on the recovered table, landing in another new partition
+            // (FOLLOWUP_DAY, which no K/M row uses).
             execute("insert into " + table + " values ('2024-10-" + FOLLOWUP_DAY + "T00:00:00.000000Z', 999)");
             drainWalQueue();
             Assert.assertEquals(

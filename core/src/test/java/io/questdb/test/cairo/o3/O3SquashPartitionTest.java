@@ -88,10 +88,11 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         // one, and that queued removal is itself epoch-protected -- so the superseded directory
         // legitimately outlives the squash.
         //
-        // This pins that it does not outlive the EPOCH: once the epoch moves (writer close flushes it)
-        // and O3PartitionPurgeJob runs, the day is back to a single directory. Without it, the extra
-        // version directories the copy route produces would be a silent on-disk leak that no row-count
-        // or SQL assertion can see -- repeated split+squash rounds would just accumulate.
+        // This pins that it does not outlive the EPOCH: once both save points move past it (recovery
+        // falls back to the older one) and O3PartitionPurgeJob runs, the day is back to a single
+        // directory. Without it, the extra version directories the copy route produces would be a
+        // silent on-disk leak that no row-count or SQL assertion can see -- repeated split+squash rounds
+        // would just accumulate.
         assertMemoryLeak(() -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -100,7 +101,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp(
                     "create table osq as (" +
                             "select cast(x as int) i," +
-                            " timestamp_sequence('2024-02-01T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " timestamp_sequence('2024-02-01T00', 60 * 1_000_000L)::#TIMESTAMP ts" +
                             " from long_sequence(600)" +
                             ") timestamp (ts) partition by DAY WAL",
                     timestampType.getTypeName()
@@ -109,7 +110,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             // A later day, so the squash target is never the last partition.
             executeWithRewriteTimestamp(
                     "insert into osq select cast(x as int) i," +
-                            " timestamp_sequence('2024-02-02T00', 60 * 1000000L)::#TIMESTAMP ts" +
+                            " timestamp_sequence('2024-02-02T00', 60 * 1_000_000L)::#TIMESTAMP ts" +
                             " from long_sequence(60)",
                     timestampType.getTypeName()
             );
@@ -119,7 +120,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             for (int round = 0; round < 3; round++) {
                 executeWithRewriteTimestamp(
                         "insert into osq select cast(9000 + x as int) i," +
-                                " timestamp_sequence('2024-02-01T05:00', 1000000L)::#TIMESTAMP ts" +
+                                " timestamp_sequence('2024-02-01T05:00', 1_000_000L)::#TIMESTAMP ts" +
                                 " from long_sequence(50)",
                         timestampType.getTypeName()
                 );
@@ -129,10 +130,14 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             final long rows = countRows("osq");
             Assert.assertEquals(810L, rows);
 
-            // Close the writer (flushes the durable epoch, moving the pin off the superseded versions)
-            // and let the purge job discover them from the directory listing.
+            // Close the writer (flushes the durable epoch, moving the newest pin off the superseded versions),
+            // take one more save point, so the older save point, which recovery falls back to, moves past
+            // them too, and let the purge job discover them from the directory listing.
             engine.releaseAllReaders();
             engine.releaseAllWriters();
+            try (TableWriter writer = getWriter("osq")) {
+                writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+            }
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
                 while (purgeJob.run()) {
                     Os.pause();

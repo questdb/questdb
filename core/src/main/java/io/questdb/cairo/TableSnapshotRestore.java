@@ -40,7 +40,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
-import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -351,12 +351,13 @@ public class TableSnapshotRestore implements QuietCloseable {
                     openSmallFile(ff, dstPath, dstSeqLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
                     long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
                     if (newMaxTxn < oldMaxTxn) {
-                        memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
-                        // Keep V1's sidecar tail copy in step, or the next open would read this rollback
-                        // as a foreign append and drop CRC coverage of the records it keeps.
-                        if (memFile.getInt(0) == WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1
-                                && memFile.getLong(TableTransactionLogV1.CRC_TAIL_OFFSET_64) == oldMaxTxn) {
-                            memFile.putLong(TableTransactionLogV1.CRC_TAIL_OFFSET_64, newMaxTxn);
+                        if (memFile.getInt(0L) == WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V2) {
+                            // The flushed-through field and the slot next to it go down with the max txn, in the
+                            // same sector, so the records an older binary appends afterwards are trusted.
+                            TableTransactionLogV2.lowerMaxTxn(memFile, newMaxTxn);
+                        } else {
+                            // A V1 log clamps its hint to the max txn at its next open.
+                            memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
                         }
                         LOG.info()
                                 .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
@@ -554,13 +555,11 @@ public class TableSnapshotRestore implements QuietCloseable {
         if (isView) {
             copyViewMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
         } else {
-            // Clear any stale adaptive durable-epoch anchor at the destination BEFORE laying down the
-            // restored _txn/_cv. A checkpoint/PITR restore-over-existing rewrites _txn/_cv, but a checkpoint
-            // does NOT capture the epoch trio (_snapshot/_txn.epoch/_cv.epoch), so the destination's own
-            // pre-restore anchor would survive. Left in place, RecoveryCoordinator (which runs next in
-            // CairoEngine.completeInit and does NOT lineage-check the epoch) could rewind the freshly-restored
-            // _txn/_cv back to that stale cut. Symmetric to BackupRestoreAgent.removeStaleMetadataFiles (#23).
-            // Only tables and mat-views reach this branch (regular views have no _cv/epoch and no data).
+            // Remove any adaptive save point at the destination before laying down the restored _txn and _cv.
+            // A checkpoint does not capture the save point files (_epoch.manifest.0/1), so the destination's
+            // own save point would survive the restore, and RecoveryCoordinator, which runs next in
+            // CairoEngine.completeInit, could rewind the restored _txn and _cv to it. Only tables and mat
+            // views reach this branch; plain views have no _cv and no data.
             RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, dstPath, dstPathLen);
 
             // Copy metadata files from source to the destination table location

@@ -8,7 +8,7 @@
 #     failure   = the verdict line plus the DETAIL lines already captured in $OUTDIR
 #
 # NO_COMMIT and PRECONDITION_NOT_MET map to <skipped>, not to passes. The first cut landed before
-# anything was committed; the second did not reach a completed mat-view startup repair. Counting
+# anything was committed; the second did not reach an RPO rollback for the mat-view check. Counting
 # either as a pass would let a sweep that measured nothing report as
 # a wall of green.
 #
@@ -75,7 +75,7 @@ junit_case() {
             if [ "$verdict" = "NO_COMMIT" ]; then
                 skipped_message="NO_COMMIT — the cut landed before anything was committed; this boundary measured nothing"
             else
-                skipped_message="PRECONDITION_NOT_MET — this boundary did not reach a completed mat-view startup repair across an RPO rollback"
+                skipped_message="PRECONDITION_NOT_MET — this boundary did not reach an RPO rollback for the mat-view check"
             fi
             printf '>\n      <skipped message="%s"/>\n    </testcase>\n' \
                 "$(junit_escape "$skipped_message")"

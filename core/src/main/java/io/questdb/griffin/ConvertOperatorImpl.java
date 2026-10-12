@@ -87,6 +87,9 @@ public class ConvertOperatorImpl implements Closeable {
     private final TableWriter tableWriter;
     private final Clock timer;
     private CharSequence columnName;
+    private volatile int dataSyncFailureErrno;
+    // Non-null once a conversion task fails a data-sync barrier.
+    private volatile String dataSyncFailureOperation;
     private long fixedFd;
     private int partitionUpdated;
     private SymbolMapReaderImpl symbolMapReader;
@@ -181,9 +184,14 @@ public class ConvertOperatorImpl implements Closeable {
             }
         }
 
-        if (checkStatus && asyncProcessingErrorCount.get() > 0) {
-            throw CairoException.critical(0)
-                    .put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken())
+        // A task's failed data-sync barrier is rethrown even when the caller has its own error to rethrow,
+        // so that the caller stops the engine
+        if ((checkStatus || dataSyncFailureOperation != null) && asyncProcessingErrorCount.get() > 0) {
+            final String dataSyncOperation = dataSyncFailureOperation;
+            final CairoException ex = dataSyncOperation != null
+                    ? CairoException.dataSyncFailureCarry(dataSyncFailureErrno, dataSyncOperation)
+                    : CairoException.critical(0);
+            throw ex.put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken())
                     .put(", tableDir=").put(tableWriter.getTableToken().getDirName())
                     .put(", column=").put(columnName)
                     .put(']');
@@ -220,6 +228,7 @@ public class ConvertOperatorImpl implements Closeable {
             int queueCount = 0;
             countDownLatch.reset();
             asyncProcessingErrorCount.set(0);
+            dataSyncFailureOperation = null;
             long start = timer.getTicks();
             long totalRows = 0;
 
@@ -238,7 +247,7 @@ public class ConvertOperatorImpl implements Closeable {
             // with the new type anyway.
             //
             // Each per-partition convert is performed without committing. The batch is published
-            // by the ALTER's final commit together with the new _meta: it must NOT get its own
+            // by the ALTER's final commit together with the new _meta: it must not get its own
             // _txn write, because the writer already carries the ALTER's seqTxn and an
             // intermediate _txn would bind it to the old column type. If any partition throws
             // midway, the loop exits and the writer becomes distressed, so the in-memory updates
@@ -352,6 +361,11 @@ public class ConvertOperatorImpl implements Closeable {
                                     openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
+                                    if (tableWriter.getEffectiveCommitMode() == CommitMode.SYNC) {
+                                        // Make the new column files' names durable; the conversion task
+                                        // fsyncs their data. Both precede the ALTER's commit.
+                                        TableUtils.fsyncDirDurable(ff, path.trimTo(pathTrimToLen).$());
+                                    }
 
                                     LOG.info().$("converting column [at=").$safe(path.trimTo(pathTrimToLen))
                                             .$(", column=").$safe(columnName)
@@ -463,7 +477,7 @@ public class ConvertOperatorImpl implements Closeable {
                             .$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
-                } else if (tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC) {
+                } else if (CommitMode.isPowerLossDurable(tableWriter.getFlushCommitMode())) {
                     // fsync converted column files before closeFds (data before aux)
                     if (dstVarFd != -1) {
                         ff.fsync(dstVarFd);
@@ -474,6 +488,15 @@ public class ConvertOperatorImpl implements Closeable {
                 }
             }
         } catch (Throwable th) {
+            // The task may run on another thread: keep what the engine's fail-stop needs for the converting
+            // thread to rethrow
+            for (Throwable cursor = th; cursor != null; cursor = cursor.getCause()) {
+                if (cursor instanceof CairoException e && e.isDataSyncFailure()) {
+                    dataSyncFailureErrno = e.getErrno();
+                    dataSyncFailureOperation = e.getDataSyncOperation();
+                    break;
+                }
+            }
             asyncProcessingErrorCount.incrementAndGet();
             LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=")
                     .$(tableWriter.getTableToken())

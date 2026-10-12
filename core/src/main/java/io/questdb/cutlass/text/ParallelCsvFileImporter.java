@@ -30,6 +30,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DatabaseCheckpointAgent;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MapWriter;
@@ -45,6 +48,7 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.text.types.BadDateAdapter;
 import io.questdb.cutlass.text.types.BadTimestampAdapter;
 import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
@@ -661,8 +665,19 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     phaseBuildSymbolIndex();
                     movePartitions();
                     attachPartitions();
+                    flushImportedTable();
                     updateImportStatus(CopyImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
                 } catch (Throwable t) {
+                    // A failed flush in SYNC and ADAPTIVE stopped the engine where it failed (a server halts
+                    // there), so there is no clean-up: what is left is what a crash during the import leaves.
+                    if (cairoEngine.isDataSyncFailureFatal(t)) {
+                        if (writer != null) {
+                            // The close in the finally must not commit on a fenced engine: a distressed writer
+                            // closes without a commit, so the work directory is removed below.
+                            writer.markDistressed();
+                        }
+                        throw cairoEngine.poisonOnDataSyncFailure(t);
+                    }
                     cleanUp();
                     throw t;
                 } finally {
@@ -716,6 +731,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void attachPartitions() throws TextImportException {
         phasePrologue(CopyImportTask.PHASE_ATTACH_PARTITIONS);
+        flushPartitionsToAttach();
 
         // Go descending, attaching last partition is more expensive than others
         for (int i = partitions.size() - 1; i > -1; i--) {
@@ -729,9 +745,37 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, metadata.getTimestampType(), partitionBy);
                 writer.attachPartition(timestamp, partition.importedRows);
             } catch (CairoException e) {
+                if (cairoEngine.isDataSyncFailureFatal(e)) {
+                    // A failed flush in the attach: the caller stops the engine.
+                    throw e;
+                }
                 throw TextImportException.instance(CopyImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
                         .put(partitionDirName).put("', msg=")
                         .put('[').put(e.getErrno()).put("] ").put(e.getFlyweightMessage()).put(']');
+            }
+        }
+        // The attaches consumed the imported partition directories, so one durable epoch covers them all, in the
+        // newer generation. Nothing in the WAL redoes an import, so a start that fell back to the older generation
+        // would lose it: both generations must cover the attaches, which takes a second epoch even when the
+        // first left no older pin behind. An epoch that is skipped or fails leaves the import to be undone
+        // by the next fallback, so COPY fails instead of reporting it done; cleanUp() then truncates the target,
+        // which was empty. Outside an enrolled adaptive table the epochs are no-ops, and so is the check.
+        writer.advanceDurableEpochAfter("attach partition");
+        if (writer.getEffectiveCommitMode() == CommitMode.ADAPTIVE
+                && tableToken.isWal()
+                && writer.getMetadata().isWalEnabled()
+                && cairoEngine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+            final SeqTxnTracker tracker = cairoEngine.getTableSequencerAPI().getTxnTracker(tableToken);
+            final long attachTxn = writer.getTxn();
+            if (tracker.getPinnedEpochTxn() >= attachTxn && tracker.getOtherPinnedEpochTxn() < attachTxn) {
+                writer.advanceDurableEpochAfter("attach partition, second generation");
+            }
+            if (tracker.getPinnedEpochTxn() < attachTxn || tracker.getOtherPinnedEpochTxn() < attachTxn) {
+                throw TextImportException.instance(
+                        CopyImportTask.PHASE_ATTACH_PARTITIONS,
+                        "import is not durable against a save point fallback: a save point after the attach was skipped or failed (see the log), "
+                                + "so a start that falls back to the older save point would lose the import; the target table, which was empty, is truncated, run COPY again [table="
+                ).put(tableName).put(']');
             }
         }
 
@@ -833,6 +877,45 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         createdWorkDir = true;
         LOG.info().$("temporary import directory [path='").$(workDirPath).I$();
+    }
+
+    private void flushImportedTable() {
+        // The import writes its partitions and symbol files outside a commit, so in SYNC, and in ADAPTIVE for a WAL
+        // table this import created, they must be durable before COPY reports it done; a failed flush drops a
+        // created table and truncates an existing one. The writer of a created table holds a non-WAL token, so it
+        // takes no save point; an existing WAL table in ADAPTIVE is flushed by the writer's save point after the
+        // attach. Where syncfs is filesystem-wide one sync of the filesystem that holds the table does: a created
+        // table is never in a volume, so that sync also covers its entry in the database root and the registry.
+        if (isImportFlushed()) {
+            if (ff.isSyncfsFileSystemWide()) {
+                DatabaseCheckpointAgent.syncRestoredState(ff, tmpPath.of(configuration.getDbRoot()).concat(tableToken), false);
+            } else {
+                DurableEpochManifest.fsyncTableFiles(configuration, tableToken, metadata.getTimestampType(), partitionBy);
+            }
+        }
+    }
+
+    private void flushPartitionsToAttach() {
+        // An attach names its partition in _txn, which a power loss may bring back before the files the import wrote
+        // (in SYNC the writer flushes _txn at each attach), so the moved partitions and the merged symbol files in
+        // the table root are flushed before the first attach. The flush after the attach covers _txn and the renames.
+        if (isImportFlushed()) {
+            final Path path = tmpPath.of(configuration.getDbRoot()).concat(tableToken);
+            if (ff.isSyncfsFileSystemWide()) {
+                DatabaseCheckpointAgent.syncRestoredState(ff, path, false);
+            } else {
+                // _txn does not name these partitions yet, so DurableEpochManifest.fsyncTableFiles would miss them.
+                final int rootLen = path.size();
+                for (int i = 0, n = partitions.size(); i < n; i++) {
+                    final PartitionInfo partition = partitions.getQuick(i);
+                    if (partition.importedRows > 0) {
+                        path.trimTo(rootLen).concat(partition.name).put(configuration.getAttachPartitionSuffix());
+                        DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size());
+                    }
+                }
+                DurableEpochManifest.fsyncTableRoot(configuration, path, rootLen);
+            }
+        }
     }
 
     private long getCurrentTimeMs() {
@@ -944,6 +1027,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 symbolCapacities.set(i, symbolWriter.getSymbolCapacity());
             }
         }
+    }
+
+    private boolean isImportFlushed() {
+        final int commitMode = configuration.getCommitMode();
+        return commitMode == CommitMode.SYNC || (commitMode == CommitMode.ADAPTIVE && targetTableCreated && writer.getMetadata().isWalEnabled());
     }
 
     private boolean isOneOfMainDirectories(CharSequence p) {

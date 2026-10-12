@@ -262,11 +262,10 @@ public class FuzzRunner {
             for (int i = 0; i < transactionSize; i++) {
                 if (writer == null) {
                     // A prior transaction's IO-failure recovery could not re-acquire the writer: a re-armed
-                    // one-shot fault fired DURING that recovery's getWriter(), and the catch below handles
-                    // only the drop/recreate case, so writer was left null. Re-acquire here (the one-shot
-                    // fault has since cleared) so no operation dereferences a null writer — the source of a
-                    // rare timing-dependent NPE in FuzzChangeColumnTypeOperation.apply(). A genuinely
-                    // persistent failure rethrows loudly from here rather than surfacing as a stale NPE later.
+                    // one-shot fault fired during that recovery's getWriter(), and the catch below handles
+                    // only the drop/recreate case, so writer is null. Re-acquire it here, once the one-shot
+                    // fault has cleared, so no operation dereferences a null writer. A persistent failure
+                    // throws from here.
                     writer = TestUtils.getWriter(engine, tableName);
                 }
                 if (ioFailureCreatedCount < ioFailureCount && failuresObserved == ff.failureGenerated()) {
@@ -379,7 +378,7 @@ public class FuzzRunner {
     }
 
     public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
-        // Acquisition AND use are inside the try so a mid-loop Error/Exception (e.g. a fault-injected crash
+        // Acquisition and use are inside the try so a mid-loop Error/Exception (e.g. a fault-injected crash
         // propagating synchronously out of writer.commit() under W=0) still returns every checked-out
         // WalWriter to the pool via the finally below, instead of leaking it (a leaked writer later fails a
         // pool's releaseAll() with "table left behind on pool shutdown").

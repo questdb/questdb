@@ -374,8 +374,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
 
     /**
      * The commit mode is instance-wide ({@code cairo.commit.mode}) and fixed for the life of the process.
-     * {@code SET PARAM commit_mode} was never released and is rejected like any other unknown parameter,
-     * so no ALTER can change a table's durability grade at runtime.
+     * {@code SET PARAM commit_mode} is rejected like any other unknown parameter, so no ALTER can change a
+     * table's durability grade at runtime.
      */
     @Test
     public void setCommitModeParameterIsRejected() throws Exception {

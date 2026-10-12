@@ -30,9 +30,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * S5: the LocalDurabilityPolicy seam that lets Enterprise make the adaptive apply-side durable
- * epoch role-aware (skip on a replica). This tests only the seam; the gate behavior is in
- * AdaptiveReplicaEpochSkipTest and the role wiring is in the Enterprise suite.
+ * The LocalDurabilityPolicy seam that lets Enterprise make the adaptive apply-side durable epoch
+ * role-aware (skip on a replica). This tests only the seam; AdaptiveReplicaEpochSkipTest covers the
+ * gate and the Enterprise suite covers the role wiring.
  */
 public class LocalDurabilityPolicyTest extends AbstractCairoTest {
 
@@ -58,8 +58,8 @@ public class LocalDurabilityPolicyTest extends AbstractCairoTest {
             Assert.assertSame(LocalDurabilityPolicy.REPLICA_SKIP, engine.getLocalDurabilityPolicy());
             Assert.assertFalse(engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled());
         } finally {
-            // engine is a static shared across the suite — restore the fail-safe default so this
-            // test cannot leak REPLICA_SKIP into a sibling test.
+            // engine is a static shared across the suite: restore the fail-safe default, so this test
+            // cannot leak REPLICA_SKIP into a sibling test.
             engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
         }
     }

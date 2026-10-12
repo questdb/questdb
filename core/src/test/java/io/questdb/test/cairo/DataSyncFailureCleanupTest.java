@@ -136,7 +136,7 @@ public class DataSyncFailureCleanupTest extends AbstractCairoTest {
                 failureCount++;
                 // FilesFacadeImpl closes the fd before it throws. So must this fake, or the leak is its own.
                 super.close(fd);
-                throw CairoException.dataSyncFailure(5, "fsyncAndClose").put("injected fsync failure");
+                throw CairoException.dataSyncFailure(this, 5, "fsyncAndClose", "injected fsync failure");
             }
             super.fsyncAndClose(fd);
         }

@@ -44,35 +44,30 @@ public interface MemoryMA extends MemoryM, MemoryA {
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, int opts);
 
     /**
-     * Marks this memory as strictly append-only so that {@link #sync(boolean)} may narrow the
-     * msync to the written range (and skip when nothing new was appended) instead of flushing the
-     * full mapped extent. Only safe for memories whose writes are exclusively appends
-     * ({@code put*(value)} / {@code jumpTo} / {@code truncate}); memories that perform in-place
-     * {@code put*(offset, value)} updates below the high-water mark must stay full-extent (default).
-     * Default is a no-op so implementations that always full-sync are unaffected.
+     * Marks this memory as append-only, so {@link #sync(boolean)} may narrow the msync to the written range,
+     * and skip it when nothing was appended, instead of flushing the full mapped extent. Only safe for
+     * memories written exclusively by appends ({@code put*(value)}, {@code jumpTo}, {@code truncate});
+     * memories that update in place with {@code put*(offset, value)} below the cursor must keep the
+     * default. The default implementation does nothing.
      */
     default void setAppendOnly(boolean appendOnly) {
     }
 
     /**
-     * Marks this append memory as an ADAPTIVE LAZY-APPLY column: its page-release / close path skips
-     * the per-page {@code msync} that would otherwise make the column durable on the apply side. Used
-     * ONLY for TABLE PARTITION columns under {@link io.questdb.cairo.CommitMode#ADAPTIVE}, where the
-     * materialized column is a rebuildable cache of the durable WAL (durability comes from the epoch +
-     * recovery roll-forward, Plan 3). It is NOT set for WAL segment columns (whose durability is an
-     * explicit per-commit fdatasync) nor under any other commit mode, so those paths are unaffected.
-     * Default is a no-op so implementations that do not flush on release are unaffected.
+     * Marks this append memory as an adaptive lazy-apply column: page release and close skip the per-page
+     * {@code msync}. Used only for table partition columns under
+     * {@link io.questdb.cairo.CommitMode#ADAPTIVE}, where the column is a rebuildable cache of the durable
+     * WAL, made durable by the save point and recovery. WAL segment columns, which fdatasync on each commit,
+     * and other commit modes never set it. The default implementation does nothing.
      */
     default void setApplyLazy(boolean applyLazy) {
     }
 
     /**
-     * Threads the owning writer's commit mode ({@link io.questdb.cairo.CommitMode}) into this memory so the
-     * page-release / close durability decision matches the grade that writer commits under. A table that is
-     * not yet enrolled in adaptive runs at SYNC while the instance runs ADAPTIVE, and its completed pages
-     * must be msync'd on release accordingly. {@link io.questdb.cairo.CommitMode#UNSET} (the default) means
-     * "never threaded", so the memory falls back to the instance-global mode. Mirrors
-     * {@link #setApplyLazy(boolean)}.
+     * Passes the owning writer's commit mode ({@link io.questdb.cairo.CommitMode}) to this memory, so the
+     * page-release and close flush match the grade that writer commits under: a table not yet enrolled in
+     * adaptive runs at SYNC while the instance runs ADAPTIVE. {@link io.questdb.cairo.CommitMode#UNSET}, the
+     * default, makes the memory use the instance-global mode.
      */
     default void setCommitMode(int commitMode) {
     }
@@ -86,50 +81,45 @@ public interface MemoryMA extends MemoryM, MemoryA {
     void sync(boolean async);
 
     /**
-     * Phase 1 of the batched SYNC-mode flush (Linux only). Pushes this memory's dirty mmap pages to the
-     * page cache via {@code msync(MS_ASYNC)} over the written range so that a subsequent
-     * {@link #syncFlushDrain()} ({@code sync_file_range}) can see them. Does NOT issue a device flush and
-     * MUST NOT advance any {@code lastSynced*} watermark (that is reserved for
-     * {@link #syncFlushFinishIfExtended()}): advancing it here would let the extend check there wrongly skip
-     * the {@code fdatasync} that journals the inode size, silently losing the extend on a crash.
+     * Stage 2 of the batched flush (Linux only): waits, with {@code sync_file_range(WRITE | WAIT_AFTER)}, for
+     * the writeback {@link #syncFlushKick()} started, and writes back what it left. Issues no device flush: the
+     * caller's later {@code syncfs} or per-file {@code fdatasync} makes the content durable. Must not advance a
+     * {@code lastSynced*} watermark, as in {@link #syncFlushKick()}. A writeback error is thrown as a data-sync
+     * failure: Linux reports it once per open file, and this wait consumes it, so a later {@code fdatasync}
+     * would not see it.
      * <p>
-     * Default keeps current behavior: a no-op. The full content durability is then provided entirely by the
-     * fallback {@code sync(false)} in {@link #syncFlushFinishIfExtended()}, so memories that do not override
-     * the 3-phase API remain byte-identical to the original per-file {@code sync(false)}.
-     */
-    default void syncFlushKick() {
-    }
-
-    /**
-     * Phase 2 of the batched SYNC-mode flush (Linux only). Writes this memory's (already page-cache-dirty,
-     * see {@link #syncFlushKick()}) pages back to the device's write cache via
-     * {@code sync_file_range(WRITE | WAIT_AFTER)} and WAITS for that writeback to complete. Issues NO device
-     * flush — the content sits in the device cache until a later device flush (the {@code _cv} commit's
-     * {@code msync(MS_SYNC)}) makes it (and everything else in the device cache) durable. MUST NOT advance
-     * any {@code lastSynced*} watermark, for the same reason as {@link #syncFlushKick()}.
-     * <p>
-     * Default keeps current behavior: a no-op (see {@link #syncFlushKick()}).
+     * The default does nothing (see {@link #syncFlushKick()}).
      */
     default void syncFlushDrain() {
     }
 
     /**
-     * Phase 3 of the batched SYNC-mode flush, run AFTER the caller's single {@code syncfs(fd)} (see
-     * {@code TableWriter.syncColumnsBatchedSync}). For memories that participated in
-     * {@link #syncFlushKick()}/{@link #syncFlushDrain()}, that {@code syncfs} has already written back their
-     * data and journaled the whole filesystem's metadata — including this inode's new size and any ext4
-     * unwritten-&gt;written extent conversions — in one device flush. So those implementations issue NO
-     * per-file {@code fdatasync} here (it would be a redundant second device flush); they only ADVANCE their
-     * {@code lastSynced*} watermark to match the now-durable size, so a subsequent {@link #sync(boolean)}
-     * correctly sees no further extend.
+     * Stage 3 of the batched flush, run after the caller's single {@code syncfs} (see
+     * {@code TableWriter.syncColumnsBatchedSync}). For a memory that took part in {@link #syncFlushKick()} and
+     * {@link #syncFlushDrain()}, that {@code syncfs} has already written back its data and journaled its new
+     * size and extent conversions in one device flush, so an implementation issues no per-file
+     * {@code fdatasync} here and only advances its {@code lastSynced*} watermark to the durable size.
      * <p>
-     * Default keeps the conservative behavior: a full {@link #sync(boolean) sync(false)} ({@code msync(MS_SYNC)}
-     * + fdatasync-on-extend). This is the fallback for memories that did NOT push their content to the page
-     * cache via {@link #syncFlushKick()}/{@link #syncFlushDrain()} (both no-ops by default) and are therefore
-     * NOT covered by the batch's {@code syncfs} — they must still self-flush to be durable.
+     * The default runs a full {@link #sync(boolean) sync(false)}: a memory that does not implement the first
+     * two stages is not covered by the batch's {@code syncfs} and must flush itself.
      */
     default void syncFlushFinishIfExtended() {
         sync(false);
+    }
+
+    /**
+     * Stage 1 of the batched flush (Linux only): starts writeback of this memory's written range with
+     * {@code sync_file_range(WRITE)} and returns without waiting, so the caller can start every file of the
+     * batch before {@link #syncFlushDrain()} waits on any, and the writebacks overlap. Pages dirtied through the
+     * mapping need no {@code msync} first: Linux tracks them as dirty. A speed aid: it issues no device flush and
+     * must not advance a {@code lastSynced*} watermark; only {@link #syncFlushFinishIfExtended()}, which runs once
+     * the data is durable, may do that. A transient failure is ignored ({@link #syncFlushDrain()} and the caller's
+     * flush report any error); any other is thrown as a flush failure (see
+     * {@link Vm#checkWritebackKick(FilesFacade, long, int)}).
+     * <p>
+     * The default does nothing; {@link #syncFlushFinishIfExtended()} then falls back to {@code sync(false)}.
+     */
+    default void syncFlushKick() {
     }
 
     default void toTop() {

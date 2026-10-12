@@ -36,19 +36,18 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class TxnScoreboardV2 implements TxnScoreboard {
     private static final long UNLOCKED = -1;
-    // Number of VIRTUAL pin ids that sit AHEAD of the real reader slots in the entries array.
-    // Each virtual id (CHECKPOINT_ID=-1, EPOCH_ID_A=-2, EPOCH_ID_B=-3) gets its own dedicated slot so
-    // independent subsystems (checkpoint, adaptive durable epoch ping-pong) can pin overlapping txns
-    // without clobbering one another. toInternalId(id)=id+VIRTUAL_ID_COUNT maps:
+    // Number of virtual pin ids that sit ahead of the reader slots in the entries array. Each virtual id
+    // (CHECKPOINT_ID=-1, EPOCH_ID_A=-2, EPOCH_ID_B=-3) has its own slot, so the checkpoint and the two save
+    // point pins can hold overlapping txns without clobbering one another. toInternalId(id)=id+VIRTUAL_ID_COUNT maps:
     //   EPOCH_ID_B(-3)    -> internal slot 0
     //   EPOCH_ID_A(-2)    -> internal slot 1
     //   CHECKPOINT_ID(-1) -> internal slot 2
     //   reader id k>=0    -> internal slot k + VIRTUAL_ID_COUNT
-    // Bumping this from 1->3 added the two ping-pong EPOCH slots; the +3 below still covers the two
-    // header longs (active reader count, max) plus one slot of slack after the scanned region.
+    // The +3 in RESERVED_ID_COUNT covers the two header longs (active reader count, max) plus one slot of
+    // slack after the scanned region.
     private static final int VIRTUAL_ID_COUNT = 3;
-    // Derived from the map above, NOT hard-coded independently of it: if a virtual id is ever added
-    // or reordered these follow, and scanRangeHolders keeps classifying the right two as epoch pins.
+    // Derived from the map above, so adding or reordering a virtual id moves them too, and scanRangeHolders
+    // still classifies the right two slots as save point pins.
     private static final int EPOCH_A_INTERNAL_ID = TxnScoreboard.EPOCH_ID_A + VIRTUAL_ID_COUNT;
     private static final int EPOCH_B_INTERNAL_ID = TxnScoreboard.EPOCH_ID_B + VIRTUAL_ID_COUNT;
     private static final int RESERVED_ID_COUNT = VIRTUAL_ID_COUNT + 3;
@@ -340,11 +339,8 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         this.tableToken = tableToken;
     }
 
-    // Maps a public id to its internal entries-array slot. The VIRTUAL_ID_COUNT negative virtual
-    // ids occupy the leading slots (EPOCH_ID_B=-3 -> 0, EPOCH_ID_A=-2 -> 1, CHECKPOINT_ID=-1 -> 2),
-    // then real reader ids (>=0) follow. Distinct ids therefore always land in distinct slots, so an
-    // epoch pin (either ping-pong slot) and a checkpoint pin on the same txn never overwrite each
-    // other.
+    // Maps a public id to its slot in the entries array (the map is at VIRTUAL_ID_COUNT). Distinct ids land in
+    // distinct slots, so a save point pin and a checkpoint pin on the same txn never overwrite each other.
     private static int toInternalId(int id) {
         return id + VIRTUAL_ID_COUNT;
     }

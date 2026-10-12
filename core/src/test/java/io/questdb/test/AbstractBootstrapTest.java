@@ -235,7 +235,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(MEMORY_USAGE_LOG_ENABLED + "=false");
             // The suite's commit mode, so the end-to-end suites exercise the same path as everything else.
             // These classes extend AbstractTest rather than AbstractCairoTest, so they never pass through
-            // Overrides and would otherwise silently follow whatever the shipped default happens to be.
+            // Overrides and would otherwise follow the shipped default.
             // A caller that wants a different mode passes it in `extra`, which is written after this and
             // wins on a repeated key.
             writer.println(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath() + "=" + Overrides.TEST_COMMIT_MODE);

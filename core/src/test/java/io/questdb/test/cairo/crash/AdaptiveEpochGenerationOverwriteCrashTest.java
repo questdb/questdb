@@ -26,12 +26,14 @@ package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -39,34 +41,15 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A durable epoch generation is overwritten IN PLACE while its own marker record is still a live recovery
- * candidate. This proves that a crash part-way through that overwrite cannot be adopted.
+ * A durable epoch generation is overwritten IN PLACE while it is still the older valid save point. This proves
+ * that a crash part-way through that overwrite cannot be adopted.
  * <p>
- * The generations ping-pong, so the cut after next targets the generation the PREVIOUS marker slot still
- * names, and {@code fsyncMaterializedState} rewrites its {@code _meta}/{@code _cv}/{@code _txn} payloads one
- * file at a time. {@link io.questdb.cairo.SnapshotMarker#loadCandidates()} returns BOTH slots, so that
- * generation remains selectable throughout. A crash between the payload writes therefore leaves it holding a
- * MIXTURE of two different cuts, and the marker record naming it is the older one -- which still matches the
- * older {@code _txn} that survived, so the seqTxn/txn identity checks all pass.
+ * The generations ping-pong, so the cut after next targets the older generation. Its file is truncated, the new
+ * sections are written and synced, and only then the header. A crash before the header lands leaves the new
+ * sections behind no valid header, so the generation is never selected.
  * <p>
- * The window is nevertheless CLOSED, by THREE independent checks in {@code epochCopiesValid}. Measured by
- * disabling them one at a time:
- * <ol>
- *   <li>the {@code _txn.epoch} vs {@code _meta.epoch} metadataVersion comparison -- the one that actually
- *       fires. It is exact for this case: a mixture only differs from a consistent cut when {@code _meta}
- *       changed between the two cuts, and any such change bumps metadataVersion;</li>
- *   <li>with that disabled, the symbol-column cross-check catches it
- *       ("disagree on symbol columns [txnSymbolColumns=1, metaSymbolColumns=2]");</li>
- *   <li>the manifest is written AFTER the payloads, so a half-overwritten generation still carries the one
- *       from two cuts ago, describing the files being replaced.</li>
- * </ol>
- * This is why arming a "retire the marker slot before overwriting its payloads" guard measurably changed
- * NOTHING when it was tried: it closes a window that is already shut three times over. It was not shipped.
- * <p>
- * The test pins the OUTCOME, not any one of those mechanisms: with both generations unusable, recovery must
- * refuse to open rather than adopt the mixture or fall back to live state. It therefore stays green if one
- * layer is removed and goes red only if the last one is -- which is the correct sensitivity for a
- * defence-in-depth property.
+ * The test pins the OUTCOME: with both generations unusable, recovery must refuse to open rather than adopt
+ * the half-written generation or fall back to live state.
  */
 public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest {
 
@@ -111,9 +94,9 @@ public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest
                 final int genB = activeGeneration(tt);
                 Assert.assertNotEquals("the two cuts must land in different generations", genA, genB);
 
-                // Cut 3 targets generation A again. Die after its _meta.epoch has been rewritten but before
-                // its _cv/_txn are -- exactly a crash inside the in-place overwrite.
-                ff.failOn("_cv" + TableUtils.EPOCH_COPY_SUFFIX);
+                // Cut 3 targets generation A again. Die after its sections have been rewritten but before its
+                // header is -- exactly a crash inside the in-place overwrite.
+                ff.failHeaderWrite();
                 try (TableWriter w = getWriter(tt)) {
                     w.advanceDurableEpoch(3L);
                 } catch (Throwable expected) {
@@ -121,14 +104,14 @@ public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest
                 } finally {
                     ff.disarm();
                 }
-                Assert.assertTrue("the injected copy failure never fired, so no mixture was created and this "
-                        + "test proves nothing", ff.failures > 0);
-                Assert.assertEquals("the marker must still select the intact generation; the failed cut "
+                Assert.assertTrue("the injected header failure never fired, so no half-written generation was "
+                        + "created and this test proves nothing", ff.failures > 0);
+                Assert.assertEquals("the intact generation must still be current; the failed cut "
                         + "publishes nothing", genB, activeGeneration(tt));
 
-                // Force recovery to CONSIDER the half-overwritten generation by making the intact one
-                // unusable. Without this the fallback path is never entered.
-                corruptTxnEpoch(tt, genB);
+                // Force recovery to CONSIDER the half-overwritten generation by damaging the intact one's
+                // sections. Without this the fallback path is never entered.
+                corruptGeneration(tt, genB);
 
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
@@ -140,11 +123,7 @@ public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest
                 try {
                     new RecoveryCoordinator(engine).recover();
                     Assert.fail("recovery ACCEPTED a generation that a later cut had half-overwritten: its "
-                            + "_meta came from the new cut while its _cv/_txn are the previous one's. The "
-                            + "marker cannot catch this -- the record naming that generation is the OLD one "
-                            + "and matches the OLD _txn that survived, so every seqTxn/txn identity check "
-                            + "passes. Only the manifest can refuse it, because it is written AFTER the "
-                            + "payloads and therefore still describes the files being replaced.");
+                            + "sections came from the new cut while no header for them landed.");
                 } catch (io.questdb.cairo.CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "no trustworthy adaptive epoch generation");
                 }
@@ -155,60 +134,124 @@ public class AdaptiveEpochGenerationOverwriteCrashTest extends AbstractCairoTest
         }
     }
 
-    private int activeGeneration(TableToken tt) {
-        try (Path p = new Path()) {
-            p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.SNAPSHOT_FILE_NAME);
-            final io.questdb.cairo.SnapshotMarker marker =
-                    new io.questdb.cairo.SnapshotMarker(engine.getConfiguration());
-            try {
-                marker.of(p.$());
-                Assert.assertTrue("the epoch marker must load", marker.tryLoad());
-                return marker.getGeneration();
-            } finally {
-                marker.close();
-            }
+    @Test
+    public void testSavePointAfterFallbackSparesTheRecoveredGeneration() throws Exception {
+        // Two generations of one cut, generation 0 listed first; generation 0 is damaged, so a start falls back
+        // to generation 1, the only intact one. The next save point must write into generation 0: a crash inside
+        // a write into generation 1 would leave no trustworthy generation, from a state the design calls
+        // supported. Reads from the recovered table are not under test here, only which file the write hits.
+        final FailCopyFacade ff = new FailCopyFacade();
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        try {
+            assertMemoryLeak(ff, () -> {
+                execute("create table t (ts timestamp, sym symbol, v long) timestamp(ts) partition by day wal");
+                for (int i = 0; i < K; i++) {
+                    execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', 's" + i + "', " + i + ")");
+                }
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("t");
+                try (TableWriter w = getWriter(tt)) {
+                    // Generation 1, then generation 0 at the same cut, as the idle save point does.
+                    w.advanceDurableEpoch(1L);
+                    w.advanceDurableEpoch(2L);
+                }
+                Assert.assertEquals("on a tie generation 0 is listed first", 0, activeGeneration(tt));
+                corruptGeneration(tt, 0);
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                new RecoveryCoordinator(engine).recover();
+
+                // The next save point dies at its header write: the generation it targets is left unpublished.
+                ff.failHeaderWrite();
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(3L);
+                } catch (Throwable expected) {
+                    // best-effort cut, dies at the injected failure
+                } finally {
+                    ff.disarm();
+                }
+                Assert.assertTrue("the injected header failure never fired, so this test proves nothing", ff.failures > 0);
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+
+                // The write went into the damaged generation, so the recovered one is still there: the start succeeds.
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertEquals("the start must stand on the generation the fallback selected", 1, activeGeneration(tt));
+                assertQuery("SELECT count() FROM t").noRandomAccess().expectSize().returns("count\n" + K + "\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
         }
     }
 
-    private void corruptTxnEpoch(TableToken tt, int generation) {
+    private int activeGeneration(TableToken tt) {
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+            final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(
+                    engine.getConfiguration().getFilesFacade(), p, p.size(), tt.getTableId());
+            Assert.assertTrue("a save point must exist", saved.length > 0);
+            return saved[0].generation;
+        }
+    }
+
+    private void corruptGeneration(TableToken tt, int generation) {
         try (Path p = new Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt)
-                    .concat(TableUtils.TXN_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(generation);
+                    .concat(DurableEpochManifest.FILE_NAME).put('.').put(generation);
             final io.questdb.std.FilesFacade ff = engine.getConfiguration().getFilesFacade();
             final long fd = ff.openRW(p.$(), engine.getConfiguration().getWriterFileOpenOpts());
-            Assert.assertTrue("must open the intact generation's _txn.epoch", fd > 0);
+            Assert.assertTrue("must open the intact generation's save point file", fd > 0);
+            final long buf = io.questdb.std.Unsafe.malloc(1, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
             try {
-                Assert.assertTrue("truncate it so this generation is rejected", ff.truncate(fd, 0));
+                // Flip the first byte of the _txn section: the header stays valid, the section checksum fails.
+                Assert.assertEquals(1, ff.read(fd, buf, 1, DurableEpochManifest.FILE_SIZE));
+                io.questdb.std.Unsafe.getUnsafe().putByte(buf, (byte) ~io.questdb.std.Unsafe.getUnsafe().getByte(buf));
+                Assert.assertEquals(1, ff.write(fd, buf, 1, DurableEpochManifest.FILE_SIZE));
             } finally {
+                io.questdb.std.Unsafe.free(buf, 1, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
             }
         }
     }
 
     private static final class FailCopyFacade extends TestFilesFacadeImpl {
+        private final LongHashSet manifestFds = new LongHashSet();
         int failures;
-        private String failSubstring;
+        private boolean isArmed;
 
-        void disarm() {
-            failSubstring = null;
-        }
-
-        void failOn(String substring) {
-            failSubstring = substring;
-            failures = 0;
+        @Override
+        public boolean close(long fd) {
+            manifestFds.remove(fd);
+            return super.close(fd);
         }
 
         @Override
         public long openRW(LPSZ name, int opts) {
-            if (failSubstring != null) {
-                final String path = io.questdb.std.str.Utf8String.newInstance(name).toString();
-                final int nul = path.indexOf('\0');
-                if ((nul > -1 ? path.substring(0, nul) : path).contains(failSubstring)) {
-                    failures++;
-                    return -1; // ENOENT-ish: the copy cannot be created, the cut aborts here
-                }
+            final long fd = super.openRW(name, opts);
+            if (fd > -1 && Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
+                manifestFds.add(fd);
             }
-            return super.openRW(name, opts);
+            return fd;
+        }
+
+        @Override
+        public long write(long fd, long address, long len, long offset) {
+            if (isArmed && offset == 0 && len == DurableEpochManifest.FILE_SIZE && manifestFds.contains(fd)) {
+                failures++;
+                return -1; // the header never lands; the cut aborts here
+            }
+            return super.write(fd, address, len, offset);
+        }
+
+        void disarm() {
+            isArmed = false;
+        }
+
+        void failHeaderWrite() {
+            isArmed = true;
+            failures = 0;
         }
     }
 }

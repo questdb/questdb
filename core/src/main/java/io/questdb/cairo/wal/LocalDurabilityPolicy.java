@@ -27,51 +27,47 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CommitMode;
 
 /**
- * Governs whether this node forces materialized WAL-apply state locally durable under
- * {@link io.questdb.cairo.CommitMode#ADAPTIVE}. Installed on {@link io.questdb.cairo.CairoEngine}
- * and consulted once per apply batch in
- * {@code ApplyWal2TableJob.maybeAdvanceDurableEpoch}, by the WAL purge floor, and by every place that
- * publishes or reconciles a table's durable-epoch anchor.
+ * Decides whether this node makes materialized WAL-apply state locally durable under
+ * {@link io.questdb.cairo.CommitMode#ADAPTIVE}. {@link io.questdb.cairo.CairoEngine} holds it, and
+ * {@code ApplyWal2TableJob.maybeAdvanceDurableEpoch} consults it once per apply batch, as do the WAL purge floor
+ * and every place that publishes or reconciles a table's save point.
  *
- * <p>Fail-safe polarity: the OSS default is {@link #ALWAYS_ON}. Only a definitively-live Enterprise
- * replica installs {@link #REPLICA_SKIP}; every other state (single-node, primary, transitional) is
- * always-on, so a node is never accidentally under-durable.
+ * <p>Fail-safe polarity: the default is {@link #ALWAYS_ON}. Only a live Enterprise replica installs
+ * {@link #REPLICA_SKIP}; every other state (single node, primary, transitional) is always on, so a node is
+ * never under-durable by accident.
  */
 @FunctionalInterface
 public interface LocalDurabilityPolicy {
 
     /**
-     * OSS default and primary / single-node behavior: always fire the adaptive durable epoch. The
-     * local disk holds not-yet-uploaded truth, so it must be forced durable.
+     * The default, for a primary or a single node: take the adaptive save point. The local disk may hold the
+     * only copy of the data, so it must be made durable.
      */
     LocalDurabilityPolicy ALWAYS_ON = () -> true;
 
     /**
-     * Installed by Enterprise while a node is a replica: skip the adaptive durable epoch, the per-batch
-     * {@code fsyncMaterializedState} + durable epoch copies. A replica keeps its applied columns at
-     * {@link CommitMode#NOSYNC} grade; the object store holds the durable copy.
+     * Installed by Enterprise while a node is a replica: skip the adaptive save point and the per-batch
+     * {@code fsyncMaterializedState}. A replica keeps its applied columns at {@link CommitMode#NOSYNC} grade;
+     * the object store holds the durable copy.
      * <p>
-     * Nothing downloads WAL again after a crash: the downloader resumes from the local {@code _txnlog}. So
-     * a replica must not keep an anchor that startup would rewind the table to, because the WAL purge job
-     * keeps no epoch floor here and replay would need WAL it has deleted. The replica keeps each adaptive
-     * table enrolled, with the restore-enrolment marker instead of an anchor, and startup re-baselines it
-     * at the live cut. See {@code TableWriter.reconcileDurableEpochAnchor} and
-     * {@code RecoveryCoordinator.replaceAnchorWithEnrolmentMarker}.
+     * Nothing downloads WAL again after a crash: the downloader resumes from the local {@code _txnlog}. A
+     * replica therefore keeps no save point that startup would rewind the table to, because the WAL purge job
+     * keeps no floor here and the replay would need WAL it has deleted; startup leaves each table at its live
+     * cut. A table is made durable before its save point is removed, since nothing restores its lazily applied
+     * state afterwards. See {@code TableWriter.reconcileDurableEpochAnchor}.
      */
     LocalDurabilityPolicy REPLICA_SKIP = () -> false;
 
     /**
-     * @return true iff this node should fire the adaptive apply-side durable epoch.
+     * @return true if this node takes adaptive save points when it applies WAL
      */
     boolean isLocalDurabilityEnabled();
 
     /**
-     * Resolve the effective commit mode for a durability decision under {@code policy}. Under
-     * {@link CommitMode#ADAPTIVE}, when local durability is disabled (a replica), downgrade to
-     * {@link CommitMode#NOSYNC}: the replica keeps its local state at NOSYNC grade, and the object store
-     * holds the durable copy. An explicitly-declared {@code SYNC}/{@code ASYNC} mode is preserved
-     * unchanged (only {@code ADAPTIVE} is policy-sensitive), mirroring the epoch gate's
-     * {@code getEffectiveCommitMode() != ADAPTIVE} precondition.
+     * Resolves the effective commit mode for a durability decision under {@code policy}:
+     * {@link CommitMode#ADAPTIVE} becomes {@link CommitMode#NOSYNC} when local durability is disabled (a
+     * replica, whose object store holds the durable copy). Every other mode is returned unchanged, matching
+     * the save point gate's {@code getEffectiveCommitMode() != ADAPTIVE} precondition.
      */
     static int resolveCommitMode(int commitMode, LocalDurabilityPolicy policy) {
         return commitMode == CommitMode.ADAPTIVE && !policy.isLocalDurabilityEnabled()

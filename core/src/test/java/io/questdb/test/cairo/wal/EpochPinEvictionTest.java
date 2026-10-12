@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
@@ -90,12 +91,13 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
     private static final long MINUTE_MICROS = 60_000_000L;
 
     @Test
-    public void testCloseEpochThenLateRowUnderDefaultCadence() throws Exception {
-        // Pure defaults (60 s interval, 5M rows), no injection. The idle tick closes the writer, whose
+    public void testCloseEpochThenLateRowUnderShippedCadence() throws Exception {
+        // Pin the shipped 60 s interval (the harness uses 1 s). The idle tick closes the writer, whose
         // close-time epoch covers an un-epoched tail and restarts the cadence clock, then frees the board.
         // A late row 10 s later is inside the interval, so its batch publishes no epoch and the window stays
         // open until the next write.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60_000);
         final long t0 = 1_790_000_000_000_000L;
         assertMemoryLeak(() -> {
             try {
@@ -322,17 +324,17 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1000000L) ts from long_sequence(600)");
+            execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1_000_000L) ts from long_sequence(600)");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("x");
             final String epochRows = snapshot();
             evictIdleScoreboard(tt);
 
-            execute("insert into x select cast(9000 + x as int) i, timestamp_sequence('2024-02-01T05:00', 1000000L) ts from long_sequence(50)");
+            execute("insert into x select cast(9000 + x as int) i, timestamp_sequence('2024-02-01T05:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();
-            execute("insert into x select cast(8000 + x as int) i, timestamp_sequence('2024-02-01T07:00', 1000000L) ts from long_sequence(50)");
+            execute("insert into x select cast(8000 + x as int) i, timestamp_sequence('2024-02-01T07:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();
-            execute("insert into x select cast(7000 + x as int) i, timestamp_sequence('2024-02-02T00:00', 1000000L) ts from long_sequence(5)");
+            execute("insert into x select cast(7000 + x as int) i, timestamp_sequence('2024-02-02T00:00', 1_000_000L) ts from long_sequence(5)");
             drainWalQueue();
             assertPartitionDirExists(tt, "2024-02-01");
             final String liveRows = snapshot();
@@ -354,17 +356,17 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1000000L) ts from long_sequence(600)");
+            execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1_000_000L) ts from long_sequence(600)");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("x");
             final String epochRows = snapshot();
             dropEpochPinFromScoreboard(tt);
 
-            execute("insert into x select cast(9000 + x as int) i, timestamp_sequence('2024-02-01T05:00', 1000000L) ts from long_sequence(50)");
+            execute("insert into x select cast(9000 + x as int) i, timestamp_sequence('2024-02-01T05:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();
             final long versionBeforeSquash = liveNameTxn(tt, FEB_1);
             // Splits the day again, and the squash that follows folds the split back into the day.
-            execute("insert into x select cast(8000 + x as int) i, timestamp_sequence('2024-02-01T07:00', 1000000L) ts from long_sequence(50)");
+            execute("insert into x select cast(8000 + x as int) i, timestamp_sequence('2024-02-01T07:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();
             Assert.assertNotEquals(
                     "the squash must copy into a new version of the day, not append into the existing one",
@@ -565,19 +567,11 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         engine.releaseAllReaders();
     }
 
-    // Fails every durable-epoch copy write while armed. The epoch writes its copies into the inactive
-    // generation before the marker switches, so a failed copy leaves the marker on the previous epoch, the
-    // same state as a kill before the marker.
+    // Fails every save point file write while armed. The epoch writes the inactive generation's file before
+    // the marker switches, so a failed write leaves the marker on the previous epoch, the same state as a kill
+    // before the marker.
     private static class EpochCopyFailingFacade extends TestFilesFacadeImpl {
         private volatile boolean isFailingEpochCopies;
-
-        @Override
-        public int copy(LPSZ from, LPSZ to) {
-            if (isFailingEpochCopies && isEpochCopy(to)) {
-                return -1;
-            }
-            return super.copy(from, to);
-        }
 
         @Override
         public long openRW(LPSZ name, int opts) {
@@ -588,7 +582,7 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
         }
 
         private static boolean isEpochCopy(LPSZ name) {
-            return Utf8s.containsAscii(name, TableUtils.EPOCH_COPY_SUFFIX + '.');
+            return Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME + '.');
         }
     }
 }

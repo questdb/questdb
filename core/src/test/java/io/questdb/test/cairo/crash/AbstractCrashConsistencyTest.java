@@ -5,6 +5,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
@@ -20,8 +21,8 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
     protected CrashFaultFilesFacade crashFf;
 
     /**
-     * The harness simulates power loss by reading and rewriting files UNDER a live engine that still
-     * holds them open, mapped and locked. Both halves of that are POSIX-only:
+     * Skips the test on Windows. The harness simulates power loss by reading and rewriting files under
+     * a live engine that still holds them open, mapped and locked, and both halves of that are POSIX-only:
      * <ul>
      *   <li>{@code markDurableBaseline()} reads every file; QuestDB's Windows lock is
      *       {@code LockFile(h, 0, 0, 1, 0)}, an exclusive lock on byte 0, so ReadFile fails with
@@ -29,12 +30,11 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
      *   <li>{@code crash()} truncates files back to their durable prefix; Windows refuses to resize a
      *       file with a user-mapped section open.</li>
      * </ul>
-     * Neither is a property of the code under test, and neither can be worked around without closing
-     * the mappings first -- which would destroy the very thing the harness models. Gate to POSIX; the
-     * durability logic itself stays covered by the Linux and macOS legs.
+     * Neither is a property of the code under test, and closing the mappings first would remove the
+     * state the harness models.
      * <p>
-     * Every test that calls {@code markDurableBaseline()}/{@code crash()} must pass this gate -- also
-     * the ones that install their own {@link CrashFaultFilesFacade} subclass instead of going through
+     * Every test that calls {@code markDurableBaseline()} or {@code crash()} must pass this gate, including
+     * tests that install their own {@link CrashFaultFilesFacade} subclass instead of using
      * {@link #runWithCrashFacade}.
      */
     protected static void assumeCrashHarnessSupported() {
@@ -53,7 +53,17 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
         // Scope process-death fd reclamation to per-table files; engine-root files (tables.d, the table-id
         // generator, config) are owned by long-lived singletons that outlive releaseEngineHandles().
         crashFf.setDbRoot(root);
-        assertMemoryLeak(crashFf, body);
+        try {
+            assertMemoryLeak(crashFf, body);
+        } finally {
+            // A test that trips the facade's stale-handle fence fails loudly with the writer's close half done,
+            // which leaves the writer owned in its pool; the next test's CREATE TABLE would then spin on its lock
+            // for the whole timeout. Drop the fence (the facade is no longer the engine's) and reclaim what the
+            // failed close left behind, as after a simulated crash. No-op on a healthy engine.
+            crashFf.reset();
+            engine.releaseCrashOrphanedWalWriters();
+            engine.releaseCrashOrphanedWriters();
+        }
     }
 
     /**
@@ -65,24 +75,44 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
     }
 
     /**
-     * Simulate power loss: release handles (clean close never fsyncs) then roll files back.
+     * Simulate power loss: mark it, release handles (their close-time flushes come after the power loss and do not
+     * count), then roll files back.
      */
     protected void crashAndReopen() {
         if (crashFf == null) throw new IllegalStateException("call runWithCrashFacade(...) first");
+        crashFf.powerLoss();
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+        // A freshly booted engine's WAL-writer pool is empty: a pooled WAL writer released after the rollback would
+        // truncate its segment files against the rolled-back state.
+        engine.releaseCrashOrphanedWalWriters();
+        engine.releaseAllWalWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
     }
 
     /**
-     * Bar 1 (containment): the rows that read back are correct, OR a CairoException/CairoError is thrown.
-     * Returning FEWER rows (tail truncated / commit rolled back) is an acceptable crash outcome —
-     * full durability is Bar 2 (assertSyncDurable). What is never acceptable is a silently WRONG row value.
+     * The power loss at the instant the writers' batches are still pending: marks it, then drops every writer's
+     * pending without a flush. The writers are closed after this and before {@link CrashFaultFilesFacade#crash}
+     * rolls the files back: the mark keeps their close-time flushes out of the durable state, and the rollback's
+     * stale-handle fence refuses a mutation through a handle that survived it.
+     */
+    protected void powerLossDroppingPending(WalWriter... writers) {
+        if (crashFf == null) throw new IllegalStateException("call runWithCrashFacade(...) first");
+        crashFf.powerLoss();
+        for (WalWriter writer : writers) {
+            writer.simulatePowerLossDropPending();
+        }
+    }
+
+    /**
+     * Asserts containment: the rows that read back are correct, or a CairoException or CairoError is thrown.
+     * Fewer rows (a truncated tail or a rolled-back commit) is an acceptable crash outcome; full durability
+     * is {@link #assertSyncDurable}. A silently wrong row value is never acceptable.
      */
     protected void assertNoSilentCorruption(String tableName, String column, List<String> expected) {
         try {
             List<String> actual = readColumn(tableName, column);
-            // fewer rows is OK here (rollback); we only assert the surviving rows are not silently wrong
+            // fewer rows is OK here (rollback); the surviving rows must not be silently wrong
             int n = Math.min(actual.size(), expected.size());
             for (int i = 0; i < n; i++) {
                 Assert.assertEquals("row " + i + " silently wrong", expected.get(i), actual.get(i));
@@ -100,7 +130,7 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
     }
 
     /**
-     * Bar 2: every committed row present and correct after crash.
+     * Asserts full durability: every committed row is present and correct after the crash.
      */
     protected void assertSyncDurable(String tableName, String column, List<String> expected) {
         List<String> actual = readColumn(tableName, column);

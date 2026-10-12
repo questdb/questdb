@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.SnapshotMarker;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
@@ -67,6 +67,10 @@ import java.io.Closeable;
 import java.util.concurrent.TimeUnit;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
+    // At most this many idle save point requests per purge pass, about four per apply worker at the default
+    // worker count: a burst (every table that went idle before a restart) spreads over passes instead of queueing
+    // ahead of the applies notified after it. A table not asked in one pass is asked in a later one.
+    public static final int IDLE_SAVE_POINT_REQUESTS_PER_PASS = 16;
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
     private final Path anchorPath = new Path();
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
@@ -87,8 +91,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final WalLocker walLocker;
     private final DirectUtf8StringZ walName = new DirectUtf8StringZ();
-    // FILE_SIZE bytes for reading an anchor marker, allocated on first use (only a replica needs it).
+    // DurableEpochManifest.FILE_SIZE bytes for reading the save point files, allocated on first use.
     private long anchorScratch;
+    private int idleSavePointNextStart;
+    private int idleSavePointRequests;
+    private int idleSavePointStart;
+    private int idleSweepIndex;
     private long last = 0;
     private TableToken tableToken;
 
@@ -122,7 +130,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         path.close();
         anchorPath.close();
         if (anchorScratch != 0) {
-            anchorScratch = Unsafe.free(anchorScratch, SnapshotMarker.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            anchorScratch = Unsafe.free(anchorScratch, DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -168,6 +176,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return true;
     }
 
+    // True when a timestamp in ms is set (not 0) and less than one interval before now. A backward clock step
+    // counts as elapsed.
+    private static boolean isWithinInterval(long ts, long nowMs, long intervalMs) {
+        return ts > 0 && nowMs >= ts && nowMs - ts < intervalMs;
+    }
+
     /**
      * Perform a broad sweep that searches for all tables that have closed
      * WAL segments across the database and deletes any which are no longer needed.
@@ -187,10 +201,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * By locking first, we ensure the sequencer returns a consistent "safe to delete" view.
      */
     private void broadSweep() {
+        idleSavePointRequests = 0;
+        idleSavePointStart = idleSavePointNextStart;
+        idleSavePointNextStart = 0;
+        idleSweepIndex = -1;
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, broadSweepRef);
     }
 
     private void broadSweep(int tableId, final TableToken tableToken, long lastTxn) {
+        idleSweepIndex++;
         if (engine.isClosing()) {
             // The engine is tearing down its sequencer/metadata mappings. Stop sweeping rather than
             // racing the teardown into an evicted file descriptor. The next purge pass (if any) is a
@@ -299,6 +318,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     // Ping ApplyWal2TableJob to clean up the table files
                     engine.notifyWalTxnCommitted(tableToken);
                 }
+            } else if (lastTxn > -1) {
+                requestIdleSavePoint();
             }
         } catch (CairoException ce) {
             LOG.error().$("broad sweep failed [table=").$(tableToken)
@@ -334,21 +355,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             try {
                                 final long partNo = Numbers.parseLong(walName);
                                 logic.trackSeqPart(partNo);
-                                // A part file EXISTING is not pending work -- it is just where the V2
-                                // txnlog stores its records. Only a part something still holds is.
-                                //
-                                // Reporting mere existence blocked the dropped-table path outright:
-                                // hasPendingTasks feeds exactly one decision (the "table is dropped,
-                                // but has WALs containing segments with pending tasks" branch), and a
-                                // V2 table always has at least part 0, so no V2 table could ever be
-                                // fully dropped and its txn_seq leaked on every DROP. V1 has no part
-                                // files at all, which is why this only surfaced when V2 became the
-                                // default. The genuine sequencer signal -- the .pending marker -- is
-                                // already folded in by discoverWalSegments via sequencerHasPendingTasks().
-                                hasPendingTasks |= walDirectoryPolicy.isSeqPartInUse(
-                                        seqDirPathTl(tableToken),
-                                        partNo
-                                );
+                                hasPendingTasks = true;
                             } catch (NumericException ne) {
                                 // Non-Part file directory, ignore.
                             }
@@ -579,27 +586,24 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
             }
         }
-        // Under ADAPTIVE commit mode, WAL segments must be retained back to the last durable epoch
-        // so that adaptive crash-recovery can re-apply from that seqTxn.  The durableEpochSeqTxn
-        // defaults to 0 (retain everything) for a fresh adaptive table; the epoch job advances it
-        // as epochs are confirmed durable.  For non-adaptive modes this check is skipped entirely
-        // so existing behaviour is completely unchanged.
-        // On a replica (LocalDurabilityPolicy.REPLICA_SKIP) no epoch advances, so the tracker floor would
-        // pin the WAL at the last primary-tenure epoch, or at 0, and WAL would accumulate unboundedly.
-        // resolveCommitMode downgrades ADAPTIVE->NOSYNC in exactly that case, mirroring the epoch
-        // producer's own policy gate in ApplyWal2TableJob.maybeAdvanceDurableEpoch. A replica keeps its
-        // tables without an anchor (TableWriter.reconcileDurableEpochAnchor), which makes startup
-        // re-baseline at the live cut and needs no WAL. The floor still has to cover an anchor that is on
-        // disk: one the demote clear could not delete, one an in-flight epoch wrote after it, and every
-        // anchor between the demote and its table's next apply batch. Startup rewinds such a table to its
-        // anchor and replays the WAL from there, and nothing downloads WAL again, so keep that WAL for as
-        // long as the anchor exists. The marker is read AFTER _txn: an anchor published after the read
-        // names a cut at or above the seqTxn read, so it never needs WAL this sweep deletes.
-        final int commitMode = engine.getConfiguration().getCommitMode();
-        final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(commitMode, engine.getLocalDurabilityPolicy());
-        if (purgeFloorMode == CommitMode.ADAPTIVE) {
-            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-            safeToPurgeTxn = Math.min(safeToPurgeTxn, tracker.getDurableEpochSeqTxn());
+        // Under adaptive, the WAL is kept back to the table's save point, so recovery can replay from it (a fresh
+        // table's durableEpochSeqTxn is 0, which keeps all of it). Recovery falls back to the older generation
+        // when the newest one is damaged, so the floor is the lowest save point on disk: the WAL kept reaches back
+        // one save point interval further than the newest one.
+        // A replica (LocalDurabilityPolicy.REPLICA_SKIP) takes no save points, so its tracker floor would hold the
+        // WAL forever; resolveCommitMode turns adaptive into nosync here, as maybeAdvanceDurableEpoch does. Its
+        // floor still covers a save point left on disk after a demote: startup rewinds to it and nothing downloads
+        // WAL again. The save point files are read after _txn, so one published later needs no WAL this pass deletes.
+        // In any mode, a table that holds a save point pin keeps the WAL from its save point: on a start outside
+        // adaptive that is a refused conversion to non-WAL, which keeps its save point for the next start.
+        // Configured lifecycle grade: even a replica must retain WAL for an anchor still on disk.
+        final int commitMode = configuration.getCommitMode();
+        final int purgeFloorMode = engine.getResolvedCommitMode();
+        final SeqTxnTracker tracker = purgeFloorMode == CommitMode.ADAPTIVE
+                ? engine.getTableSequencerAPI().getTxnTracker(tableToken)
+                : engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+        if (tracker != null && (purgeFloorMode == CommitMode.ADAPTIVE || tracker.getPinnedEpochTxn() > -1)) {
+            safeToPurgeTxn = Math.min(safeToPurgeTxn, Math.min(tracker.getDurableEpochSeqTxn(), readAnchorFloorSeqTxn()));
         } else if (commitMode == CommitMode.ADAPTIVE && !tableToken.isView()) {
             // Views are skipped, as recovery skips them.
             safeToPurgeTxn = Math.min(safeToPurgeTxn, readAnchorFloorSeqTxn());
@@ -698,19 +702,31 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return safeToPurgeTxn;
     }
 
+    // A live view's idle save point is taken by its refresh worker, which skips a stub, dropped or invalid view.
+    // Such a view would never consume the request and would take a slot of the per-pass cap every interval. A stub
+    // and an invalid view stay so until DROP, which removes what they hold.
+    private boolean isLiveViewRefreshable() {
+        if (!configuration.isLiveViewRefreshEnabled()) {
+            return false;
+        }
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
+        return instance != null && !instance.isStub() && !instance.isDropped() && !instance.isInvalid();
+    }
+
     /**
-     * The oldest cut recovery could rewind this table to from the anchor on disk, or {@link Long#MAX_VALUE}
-     * when there is no anchor. Read from the marker file itself rather than from the tracker: this covers anchors
-     * that no epoch of this process published, such as one left by a demote clear that failed.
+     * The oldest cut recovery could rewind this table to from the save points on disk, or {@link Long#MAX_VALUE}
+     * when there is none: the lowest seqTxn a valid generation header names. Read from the files rather than from
+     * the tracker: this covers save points no epoch of this process published, such as one left by a demote clear
+     * that failed.
      */
     private long readAnchorFloorSeqTxn() {
         if (anchorScratch == 0) {
-            anchorScratch = Unsafe.malloc(SnapshotMarker.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            anchorScratch = Unsafe.malloc(DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
-        anchorPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
-        final long floor = SnapshotMarker.readLowestEpochSeqTxn(ff, anchorPath.$(), anchorScratch);
+        anchorPath.of(configuration.getDbRoot()).concat(tableToken);
+        final long floor = DurableEpochManifest.readLowestSeqTxn(ff, anchorPath, anchorPath.size(), tableToken.getTableId(), anchorScratch);
         if (floor != Long.MAX_VALUE) {
-            LOG.debug().$("keeping WAL from the adaptive anchor while local durability is disabled [table=").$(tableToken)
+            LOG.debug().$("keeping WAL from the lowest adaptive save point [table=").$(tableToken)
                     .$(", anchorSeqTxn=").$(floor)
                     .I$();
         }
@@ -723,6 +739,59 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$("could not delete directory [path=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
+        }
+    }
+
+    // An adaptive table keeps the WAL and the partition and column versions its older save point names. On a table
+    // that gets no further write, nothing else replaces that save point, so once the table has taken no save point
+    // for one interval, ask the apply job for one more at the current state: both generations then stand on it and
+    // the queued purges free the rest. Equal pins mean equal save points, since every _txn write moves the txn. A
+    // table whose save points both name its current state (its applied seqTxn and the txn its writer last
+    // committed, WAL transaction or not) asks nothing, so an idle table asks once per idle spell (twice when its
+    // last write left a tail with no save point). The time gate repeats in the apply job.
+    //
+    // A pass asks at most IDLE_SAVE_POINT_REQUESTS_PER_PASS tables. The sweep visits tables in the same order at
+    // every pass, so a pass that reaches the cap makes the next one start after the last table it asked, and a
+    // pass that ends below the cap makes the next one start at the head again. Each eligible table is then asked
+    // within about two rounds of tables / cap passes, however many tables keep going idle.
+    private void requestIdleSavePoint() {
+        final long intervalMs = configuration.getAdaptiveEpochIntervalMs();
+        if (intervalMs < 0
+                || idleSavePointRequests >= IDLE_SAVE_POINT_REQUESTS_PER_PASS
+                || idleSweepIndex < idleSavePointStart
+                || tableToken.isView()
+                || engine.getResolvedCommitMode() != CommitMode.ADAPTIVE
+                || engine.isWalApplySuspended(tableToken)) {
+            return;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+        if (tracker == null || tracker.isSuspended() || tracker.isDurableFrontierFenced()) {
+            return;
+        }
+        final long pinnedEpochTxn = tracker.getPinnedEpochTxn();
+        final long otherPinnedEpochTxn = tracker.getOtherPinnedEpochTxn();
+        if (pinnedEpochTxn < 0
+                || ((otherPinnedEpochTxn < 0 || otherPinnedEpochTxn == pinnedEpochTxn)
+                && tracker.getDurableEpochSeqTxn() >= tracker.getWriterTxn()
+                && tracker.getCommittedTxn() <= pinnedEpochTxn)) {
+            return;
+        }
+        if (tableToken.isLiveView() && !isLiveViewRefreshable()) {
+            return;
+        }
+        final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000L;
+        if (isWithinInterval(tracker.getLastEpochTs(), nowMs, intervalMs)
+                || isWithinInterval(tracker.getIdleEpochRequestTs(), nowMs, intervalMs)) {
+            return;
+        }
+        tracker.requestIdleEpoch(nowMs);
+        if (++idleSavePointRequests == IDLE_SAVE_POINT_REQUESTS_PER_PASS) {
+            idleSavePointNextStart = idleSweepIndex + 1;
+        }
+        // A live view's refresh worker owns its writer and takes the save point when it sees the request; the
+        // apply job drops a live view's notifications.
+        if (!tableToken.isLiveView()) {
+            engine.notifyWalTxnCommitted(tableToken);
         }
     }
 
@@ -740,15 +809,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private Path setSegmentPath(TableToken tableName, int walId, int segmentId) {
         return path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
-    }
-
-    /**
-     * The sequencer directory, on a THREAD-LOCAL path: the discovery loop holds {@link #path} pinned at
-     * the parts directory while it iterates, so probing must not disturb it.
-     */
-    private Path seqDirPathTl(TableToken tableName) {
-        return Path.getThreadLocal(configuration.getDbRoot())
-                .concat(tableName).concat(WalUtils.SEQ_DIR);
     }
 
     private Path setSeqPartPath(TableToken tableName) {
@@ -800,11 +860,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             return false;
         }
         final long t = clock.getTicks();
-        // Deferred 2 (adaptive group commit): sweep the pending-flush registry on EVERY pass (the sweep has
-        // an empty-set fast path, so it is ~free when W=0 / nothing is pending). The age gate lives in
-        // WalWriter.forceDurableIfPending (flush only when the oldest pending commit is >= W old), so this
-        // makes an IDLE writer's last commit durable within ~W of the window elapsing even though commits
-        // stopped — the hard requirement. Independent of the (much slower) WAL-purge broad-sweep cadence.
+        // Sweep the adaptive group commit's pending-flush registry on every pass, independent of the slower
+        // purge cadence. WalWriter.forceDurableIfPending flushes only when the oldest pending commit is at least
+        // one group window old, so an idle writer's last commit becomes durable about one window after it, with
+        // no further commit to trigger the flush. The sweep is cheap when nothing is pending.
         boolean busy = false;
         final long groupWindowUs = configuration.getAdaptiveCommitGroupWindowUs();
         if (groupWindowUs > 0) {

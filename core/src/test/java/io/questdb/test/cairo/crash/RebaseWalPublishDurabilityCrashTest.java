@@ -39,30 +39,29 @@ import java.nio.file.Paths;
 import java.util.List;
 
 /**
- * DATA-BEFORE-POINTER for {@code ALTER TABLE ... REBASE WAL}.
+ * Data before pointer for {@code ALTER TABLE ... REBASE WAL}.
  * <p>
  * The rebase builds the new table in a hidden {@code .rebase/} staging dir, makes that whole tree durable
- * (contents AND the staging dentries), then publishes it with an atomic {@code rename} into the db root and
- * immediately records the registry swap — drop old + add new — as one durable {@code tables.d} sync.
+ * (contents and the staging dentries), publishes it with an atomic {@code rename} into the db root, and then
+ * records the registry swap, drop old and add new, as one durable {@code tables.d} sync.
  * <p>
- * The rename alone does NOT make the published dentry durable: on POSIX a newly created directory entry
- * survives a power loss only once its PARENT directory is fsynced — the very rule
- * {@code WalUtils.syncStagingTreeDurable} already applies inside the staging tree. The registry sync, by
- * contrast, is unconditional in every commit mode ({@code GrowOnlyTableNameRegistryStore.logSwapTable}). So
- * without a db-root fsync between the two, a power loss in that window leaves a DURABLE pointer to a
- * directory that is gone: the name resolves to nothing, while the pre-rebase dir survives unregistered and
- * invisible. Under ADAPTIVE the same state aborts engine boot — {@code RecoveryCoordinator.recover()} reads
- * {@code _meta} for every registered WAL table and refuses to expose an adaptive table it cannot read
- * ({@code [-105] table does not exist}).
+ * The rename alone does not make the published dentry durable: on POSIX a new directory entry survives a power
+ * loss only once its parent directory is fsynced, the rule {@code WalUtils.syncStagingTreeDurable} applies inside
+ * the staging tree. The registry sync runs in every commit mode
+ * ({@code GrowOnlyTableNameRegistryStore.logSwapTable}). Without a db-root fsync between the two, a power loss in
+ * that window leaves a durable pointer to a directory that is gone: the name resolves to nothing, and the
+ * pre-rebase dir survives unregistered. Under ADAPTIVE the same state aborts engine start:
+ * {@code RecoveryCoordinator.recover()} reads {@code _meta} for every registered WAL table and refuses to expose
+ * an adaptive table it cannot read ({@code [-105] table does not exist}).
  * <p>
- * Today the window closes only by accident: the first fs-wide flush after the rebase (an adaptive epoch's
- * {@code syncfs}) publishes every pending dentry, which is why a COMPLETED rebase survives a crash and only
- * a crash INSIDE the window loses the table.
+ * The first fs-wide flush after the rebase (an adaptive epoch's {@code syncfs}) publishes every pending dentry,
+ * so a completed rebase survives a crash with or without the db-root fsync; only a crash inside the window
+ * shows the difference.
  */
 public class RebaseWalPublishDurabilityCrashTest extends AbstractCrashConsistencyTest {
 
     /**
-     * Bar 1 (ordering): the db root is fsynced after the publish rename and before any post-publish work,
+     * Ordering: the db root is fsynced after the publish rename and before any post-publish work,
      * so the dentry is durable no later than the registry entry that points at it.
      */
     @Test
@@ -110,9 +109,9 @@ public class RebaseWalPublishDurabilityCrashTest extends AbstractCrashConsistenc
     }
 
     /**
-     * Bar 2 (crash state): a power loss on the first durability op after the publish rename must leave the
-     * published table dir — with a readable {@code _meta} — on disk. That op is the registry swap's own
-     * {@code tables.d} sync, i.e. the first instant a durable pointer can name the new dir.
+     * Crash state: a power loss on the first durability op after the publish rename must leave the
+     * published table dir, with a readable {@code _meta}, on disk. That op is the registry swap's own
+     * {@code tables.d} sync, the first point at which a durable pointer can name the new dir.
      */
     @Test
     public void testCrashOnTheFirstOpAfterThePublishRenameKeepsTheTableDir() throws Exception {
@@ -129,12 +128,11 @@ public class RebaseWalPublishDurabilityCrashTest extends AbstractCrashConsistenc
                 final int rc = super.rename(from, to);
                 if (rc == io.questdb.std.Files.FILES_RENAME_OK && publish && renameOp[0] < 0) {
                     renameOp[0] = durabilityOpCount();
-                    // Power loss the instant the registry swap is durable — the first moment a durable pointer
-                    // can name the new dir. With the publish barrier in place the two ops after the rename are
+                    // Power loss as the registry swap becomes durable, the first point at which a durable
+                    // pointer can name the new dir. With the publish barrier the two ops after the rename are
                     // [+1] the db-root fsync and [+2] the swap's tables.d sync; without it [+1] is the swap
-                    // itself and [+2] the new sequencer's id-generator msync, which is still past the swap. So
-                    // +2 is post-swap either way. The swap-happened assertion below fails loudly (rather than
-                    // passing vacuously) should that op accounting ever drift.
+                    // itself and [+2] the new sequencer's id-generator msync. Either way +2 is past the swap,
+                    // and the swap-happened assertion below fails if that op accounting drifts.
                     armCrashAt(renameOp[0] + 2);
                 }
                 return rc;
@@ -173,14 +171,14 @@ public class RebaseWalPublishDurabilityCrashTest extends AbstractCrashConsistenc
     }
 
     /**
-     * Bar 3 (self-consistency): the dir the rename publishes carries its OWN generation-zero epoch anchor.
+     * Self-consistency: the dir the rename publishes carries its own generation-zero save point.
      * <p>
-     * A crash BEFORE the registry swap leaves the published dir on disk, unregistered, holding the same table
-     * name — the accepted dir-only leak. Startup's root-directory scan adopts such a dir once the name is
-     * free ({@code TableNameRegistryStore.reloadFromRootDirectory}), so the clone must be recoverable on its
-     * own terms. It is not if it inherits the SOURCE table's {@code .epoch} payloads: the clone resets
-     * {@code _txn}/{@code _meta}, so every inherited candidate fails validation and recovery aborts startup
-     * with "no trustworthy adaptive epoch generation" rather than exposing unverified live state.
+     * A crash before the registry swap leaves the published dir on disk, unregistered, holding the same table
+     * name: the accepted dir-only leak. Startup's root-directory scan adopts such a dir once the name is free
+     * ({@code TableNameRegistryStore.reloadFromRootDirectory}), so the clone must be recoverable on its own. A
+     * clone that inherited the source table's save point generations ({@code _epoch.manifest.0/1}) would fail:
+     * the clone resets {@code _txn} and {@code _meta}, so every inherited generation fails validation and
+     * recovery aborts startup with "no trustworthy adaptive epoch generation" rather than expose unverified state.
      */
     @Test
     public void testAdoptedPublishOrphanCarriesItsOwnValidEpochAnchor() throws Exception {
@@ -197,7 +195,7 @@ public class RebaseWalPublishDurabilityCrashTest extends AbstractCrashConsistenc
                 if (rc == io.questdb.std.Files.FILES_RENAME_OK && publish && renameOp[0] < 0) {
                     renameOp[0] = durabilityOpCount();
                     // Crash on the publish barrier itself: past the rename, before the registry swap. The
-                    // dir is durable (bar 1) but never became the live table.
+                    // dir is durable (see the ordering test) but never became the live table.
                     armCrashAt(renameOp[0] + 1);
                 }
                 return rc;
@@ -251,7 +249,7 @@ public class RebaseWalPublishDurabilityCrashTest extends AbstractCrashConsistenc
     }
 
     /**
-     * A crash unwound inside {@code TableWriter}/{@code WalWriter} construction on a LIVE JVM leaves pool
+     * A crash unwound inside {@code TableWriter}/{@code WalWriter} construction in a live JVM leaves pool
      * entries owned and fds open; a real power loss's process death reclaims both.
      */
     private void releaseCrashOrphans() {

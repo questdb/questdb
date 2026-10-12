@@ -42,7 +42,7 @@ public class ChecksumTrailerTest extends AbstractCairoTest {
         try {
             Unsafe.getUnsafe().setMemory(addr, size, (byte) 7);
             long good = TableUtils.calculateCvAreaChecksum(addr, size);
-            // Garbage where the magic should be = legacy trailing bytes, NOT corruption.
+            // Garbage where the magic should be = legacy trailing bytes, not corruption.
             Assert.assertEquals(
                     ChecksumTrailer.ABSENT,
                     ChecksumTrailer.classify(0xDEADBEEFL, good, addr, size, MAGIC)

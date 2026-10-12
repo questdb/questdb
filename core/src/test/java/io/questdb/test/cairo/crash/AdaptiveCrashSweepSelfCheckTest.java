@@ -30,6 +30,9 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -38,37 +41,41 @@ import io.questdb.griffin.SqlException;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * The SELF-CHECK for the adaptive exhaustive crash-point sweep driver
- * ({@link AbstractAdaptiveCrashSweepTest#forEachAdaptiveCrashPoint}, SP-D increment D1.a) — the
- * driver's own gate, mirroring {@code CrashModelSelfCheckTest}'s role for the fault model.
+ * Self-check of the adaptive crash-point sweep driver
+ * ({@link AbstractAdaptiveCrashSweepTest#forEachAdaptiveCrashPoint}), as {@code CrashModelSelfCheckTest}
+ * is for the fault model.
  *
- * <p>It drives the anchor W0 workload (adaptive {@code (ts, v long)}, identity {@code v = 0..ROWS-1},
- * one row per commit, {@code W = 0} synchronous, epoch every batch) through the sweep and PROVES the
- * driver:
+ * <p>It drives the W0 workload (adaptive {@code (ts, v long)}, identity {@code v = 0..ROWS-1}, one row per
+ * commit, {@code W = 0} synchronous, epoch every batch) through the sweep and checks that the driver:
  * <ol>
- *   <li>injects at N DISTINCT durability ops (the per-k recovered-row counts are non-decreasing in k and
- *       rise from a short prefix to the full set) — a fresh, count-stable baseline per k;</li>
- *   <li>recovers cleanly at EVERY crash point (D1.b): the surviving rows are an exact identity PREFIX
- *       {@code {0..m-1}} (never a gap, never a silently-wrong value; a loud torn read is tolerated), the
- *       table is NOT left suspended, and a follow-up write+read succeeds;</li>
- *   <li>restores ALL committed rows at the last crash point k=N (W=0 full durability);</li>
- *   <li>caps + LOGS truncation when cap &lt; N (never a silent cap).</li>
+ *   <li>injects at N distinct durability ops (the per-k recovered-row counts are non-decreasing in k and
+ *       rise from a short prefix to the full set), with a fresh, count-stable baseline per k;</li>
+ *   <li>recovers cleanly at every crash point: the surviving rows are an exact identity prefix
+ *       {@code {0..m-1}} (never a gap, never a silently wrong value; a loud torn read is tolerated), the
+ *       table is not left suspended, and a follow-up write and read succeed;</li>
+ *   <li>restores all committed rows at the last crash point k=N (W=0 full durability);</li>
+ *   <li>caps and logs truncation when cap &lt; N, never capping silently.</li>
  * </ol>
- * A recovered state that violated the identity-prefix oracle would be a REAL adaptive durability bug.
+ * A recovered state that violates the identity-prefix oracle is an adaptive durability bug.
  */
 public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepTest {
 
+    private static final long FIRST_TS = 1_727_740_800_000_000L; // 2024-10-01T00:00:00Z
+    // Rows per commit of the paged sweep: 6,400 bytes of WAL timestamp (16 bytes a row) and 3,200 of v, so
+    // with one-OS-page column pages every commit releases pages before it syncs.
+    private static final int PAGED_ROWS_PER_COMMIT = 400;
     private static final int ROWS = 6; // identity sequence v = 0,1,2,3,4,5
+    private static final int TIMESTAMP_COLUMN_ROW_SIZE = 16;
 
     /**
-     * The headline self-check: sweep W0 across every commit-phase durability op and assert the driver
-     * hit N distinct injection points, each recovering cleanly to an identity prefix, reaching the full
-     * set by k=N.
+     * Sweeps W0 across every commit-phase durability op and asserts the driver hit N distinct injection
+     * points, each recovering cleanly to an identity prefix, reaching the full set by k=N.
      */
     @Test
     public void testSweepInjectsAtEveryDurabilityOpAndRecoversCleanly() throws Exception {
@@ -91,7 +98,7 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
             Assert.assertFalse("small workload must not be truncated", r.truncated);
 
             // Distinct injection points: the per-k recovered committed-row count is non-decreasing in k
-            // (arming at op k keeps ops 1..k durable — durable state only grows) ...
+            // (arming at op k keeps ops 1..k durable, so durable state only grows) ...
             for (int k = 2; k <= r.sweptPoints; k++) {
                 Assert.assertTrue(
                         "recovered counts must be non-decreasing at k=" + k + " ("
@@ -99,8 +106,8 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
                         r.recoveredByK()[k] >= r.recoveredByK()[k - 1]
                 );
             }
-            // ... and it is a GENUINE rise, not a degenerate all-full sweep: the earliest crash point
-            // recovers strictly fewer than the full set, proving the injection points do distinct work.
+            // ... and it is a real rise, not a degenerate all-full sweep: the earliest crash point
+            // recovers strictly fewer than the full set, so the injection points do distinct work.
             Assert.assertTrue(
                     "sweep must show a genuine rise (earliest crash point < full set)",
                     r.recoveredByK()[1] < ROWS
@@ -114,9 +121,64 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
         }));
     }
 
+    @Test
+    public void testNeuteredSweepRejectsMissingFlushClass() throws Exception {
+        withAdaptiveW0(() -> runWithCrashFacade(() -> {
+            for (int commits : new int[]{0, ROWS}) {
+                final AssertionError error = Assert.assertThrows(AssertionError.class, () ->
+                        assertSweepGoesRedWithNeuteredFlushes(
+                                new IdentityWorkload(commits, 1, false),
+                                "a class that performs no flush",
+                                frame -> false
+                        )
+                );
+                Assert.assertTrue(error.getMessage(), error.getMessage().contains("nothing to control"));
+            }
+        }));
+    }
+
     /**
-     * A cap below N must TRUNCATE the sweep to exactly cap points and flag it (the driver also LOGs it) —
-     * never a silent cap.
+     * The negative control of the control: with the WAL writer's own flushes removed, the W0 sweep must go red.
+     * The sweeps crash at every durability op, so a removed flush shrinks N instead of failing anything;
+     * {@link #assertSweepGoesRedWithNeuteredFlushes} is what makes a removed flush visible, and this is the one
+     * case that proves it can. Reverting the facade hook makes the sweep pass vacuously, which the inverted verdict
+     * reports.
+     */
+    @Test
+    public void testNeuteredWalWriterFlushTurnsTheSweepRed() throws Exception {
+        withAdaptiveW0(() -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
+            assertSweepGoesRedWithNeuteredFlushes(
+                    new IdentityWorkload(),
+                    "the WAL writer's flushes",
+                    frame -> frame.getClassName().startsWith("io.questdb.cairo.wal.WalWriter")
+            );
+        }));
+    }
+
+    /**
+     * The same sweep over WAL ingest that releases column pages before its commit and rolls a segment:
+     * one-OS-page WAL column pages, three commits of {@link #PAGED_ROWS_PER_COMMIT} rows, a segment roll after
+     * the second. At every crash point every row the durable frontier covered when the power failed must read
+     * back, with its value; at window 0 the frontier moves inside the commit.
+     */
+    @Test
+    public void testSweepAcrossWalPagesAndSegmentRollW0() throws Exception {
+        assertSweepAcrossWalPagesAndSegmentRoll(0);
+    }
+
+    /**
+     * {@link #testSweepAcrossWalPagesAndSegmentRollW0()} at the default group-commit window, 50 ms: the commit
+     * defers the sequencer flush, which runs when the insert hands its writer back.
+     */
+    @Test
+    public void testSweepAcrossWalPagesAndSegmentRollDefaultWindow() throws Exception {
+        assertSweepAcrossWalPagesAndSegmentRoll(50_000);
+    }
+
+    /**
+     * A cap below N must truncate the sweep to exactly cap points and flag it (the driver also logs it),
+     * never capping silently.
      */
     @Test
     public void testCapBelowNTruncatesAndLogs() throws Exception {
@@ -162,6 +224,35 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
         });
     }
 
+    private void assertSweepAcrossWalPagesAndSegmentRoll(long windowUs) throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2 * PAGED_ROWS_PER_COMMIT);
+        withAdaptive(windowUs, () -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
+            Assert.assertEquals(Files.PAGE_SIZE, engine.getConfiguration().getWalDataAppendPageSize());
+            Assert.assertEquals(windowUs, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
+
+            final IdentityWorkload workload = new IdentityWorkload(3, PAGED_ROWS_PER_COMMIT, false);
+            final SweepResult r = forEachAdaptiveCrashPoint(workload);
+
+            LOG.info().$("[self-check] paged W=").$(windowUs).$("us, N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
+                    .$(", recoveredByK=").$(Arrays.toString(r.recoveredByK())).$();
+            Assert.assertTrue("the ingest must release column pages before a commit and roll a segment",
+                    workload.isPagedAndRolled);
+            Assert.assertEquals(
+                    "default cap must sweep every durability op of the ingest",
+                    r.atomicCommitDurabilityOpCount,
+                    r.sweptPoints
+            );
+            Assert.assertFalse("the ingest sweep must not be truncated", r.truncated);
+            Assert.assertTrue(
+                    "sweep must show a genuine rise (earliest crash point < full set)",
+                    r.recoveredByK()[1] < workload.totalRows()
+            );
+            Assert.assertEquals("last point must recover ALL committed rows", workload.totalRows(), r.recoveredByK()[r.sweptPoints]);
+        }));
+    }
+
     private void assertInvalidBoundary(int declaredOps) {
         final AssertionError error = Assert.assertThrows(
                 AssertionError.class,
@@ -173,9 +264,9 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
         );
     }
 
-    private void withAdaptiveW0(RunnableEx body) throws Exception {
+    private void withAdaptive(long windowUs, RunnableEx body) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0"); // W = 0 (synchronous)
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(windowUs));
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);        // durable epoch every batch
         try {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
@@ -187,14 +278,18 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
         }
     }
 
+    private void withAdaptiveW0(RunnableEx body) throws Exception {
+        withAdaptive(0, body); // W = 0 (synchronous)
+    }
+
     private interface RunnableEx {
         void run() throws Exception;
     }
 
     /**
-     * Three deterministic file fsyncs. The second deliberately consumes and swallows the injected fault,
-     * modelling a genuine post-commit best-effort operation. A negative declaration uses the interface
-     * default, so the self-check can prove that an undeclared swallowed fault fails closed.
+     * Three deterministic file fsyncs. The second consumes and swallows the injected fault, modelling a
+     * post-commit best-effort operation. A negative declaration uses the interface default, so the
+     * self-check can show that an undeclared swallowed fault fails closed.
      */
     private final class SwallowedFaultWorkload implements AdaptiveCrashWorkload {
         private final int declaredOps;
@@ -250,18 +345,42 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * W0 — the anchor workload: an ADAPTIVE {@code (ts timestamp, v long)} WAL table, identity
+     * The W0 workload: an ADAPTIVE {@code (ts timestamp, v long)} WAL table, identity
      * {@code v = 0..ROWS-1}, one row per commit followed by a synchronous {@code drainWalQueue()}.
      */
     private final class IdentityWorkload implements AdaptiveCrashWorkload {
+        private final int commits;
+        private final boolean isApplyingEachCommit;
+        private final int rowsPerCommit;
         private int atomicCommitOps;
+        // Rows the durable frontier (localDurableSeqTxn) covered when the commit phase stopped: at a crash,
+        // the rows acknowledged durable when the power failed.
+        private long durableRowsAtCrash;
+        private boolean isPagedAndRolled;
         private String table;
         private TableToken tt;
+
+        private IdentityWorkload() {
+            this(ROWS, 1, true);
+        }
+
+        /**
+         * @param isApplyingEachCommit drain the WAL queue (apply and durable epoch) after every commit; when
+         *                             false the phase is WAL ingest only and recovery applies it
+         */
+        private IdentityWorkload(int commits, int rowsPerCommit, boolean isApplyingEachCommit) {
+            this.commits = commits;
+            this.rowsPerCommit = rowsPerCommit;
+            this.isApplyingEachCommit = isApplyingEachCommit;
+        }
 
         @Override
         public int atomicCommitDurabilityOpCount(int countedOps) {
             Assert.assertTrue("identity workload must record at least one atomic commit op", atomicCommitOps > 0);
-            Assert.assertTrue("identity workload must retain a post-commit apply tail", atomicCommitOps < countedOps);
+            Assert.assertTrue(
+                    "identity workload must retain a post-commit apply tail",
+                    !isApplyingEachCommit || atomicCommitOps < countedOps
+            );
             return atomicCommitOps;
         }
 
@@ -278,23 +397,40 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
         @Override
         public void commit() throws Exception {
             final int opsBeforeAtomicCommits = crashFf.durabilityOpCount();
-            for (int i = 0; i < ROWS; i++) {
-                // W=0: the WAL commit fdatasyncs synchronously here -> an armed crash on that op
-                // propagates a CrashSimulationError out of execute().
-                execute("insert into " + table + " values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
-                if (i == ROWS - 1) {
-                    // Every W=0 WAL commit has now returned durably. Only the final materialized apply/epoch
-                    // tail remains, so no later atomic commit is excluded by this explicit boundary.
-                    atomicCommitOps = crashFf.durabilityOpCount() - opsBeforeAtomicCommits;
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            try {
+                for (int i = 0; i < commits; i++) {
+                    // W=0: the WAL commit fdatasyncs synchronously here -> an armed crash on that op
+                    // propagates a CrashSimulationError out of execute().
+                    if (rowsPerCommit == 1) {
+                        execute("insert into " + table + " values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
+                    } else {
+                        final long first = (long) i * rowsPerCommit;
+                        execute("insert into " + table + " select timestamp_sequence(" + (FIRST_TS + first * 1_000_000L)
+                                + ", 1_000_000), x - 1 + " + first + " from long_sequence(" + rowsPerCommit + ")");
+                    }
+                    if (i == commits - 1) {
+                        // Every WAL commit has returned durably at this point (W=0 in the commit, W>0 when the
+                        // insert handed its writer back). Only the final materialized apply/epoch tail remains, so
+                        // no later atomic commit is excluded by this explicit boundary.
+                        atomicCommitOps = crashFf.durabilityOpCount() - opsBeforeAtomicCommits;
+                        isPagedAndRolled = rowsPerCommit * TIMESTAMP_COLUMN_ROW_SIZE > Files.PAGE_SIZE
+                                && new File(engine.getConfiguration().getDbRoot() + File.separator + tt.getDirName()
+                                + File.separator + WalUtils.WAL_NAME_BASE + 1 + File.separator + 1).isDirectory();
+                    }
+                    if (isApplyingEachCommit) {
+                        // ADAPTIVE apply + durable epoch -> more durability ops. An armed crash here is swallowed
+                        // by ApplyWal2TableJob's catch(Throwable) into a table suspend (no throw).
+                        drainWalQueue();
+                        // Stop as soon as the crash has fired (as a real power loss would): if it manifested as a
+                        // suspend, further inserts would durably extend the WAL and mask this injection point.
+                        if (anyTableSuspended(tt)) {
+                            return;
+                        }
+                    }
                 }
-                // ADAPTIVE apply + durable epoch -> more durability ops. An armed crash here is swallowed
-                // by ApplyWal2TableJob's catch(Throwable) into a table SUSPEND (no throw).
-                drainWalQueue();
-                // Stop as soon as the crash has fired (as a real power loss would): if it manifested as a
-                // suspend, further inserts would durably extend the WAL and mask this injection point.
-                if (anyTableSuspended(tt)) {
-                    return;
-                }
+            } finally {
+                durableRowsAtCrash = tracker.getLocalDurableSeqTxn() * rowsPerCommit;
             }
         }
 
@@ -306,15 +442,19 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
                     engine.getTableSequencerAPI().isSuspended(tt)
             );
 
-            // No silent corruption (D1.b bar 1): the rows that read back are an exact identity PREFIX
-            // {0..m-1}. A loud torn read is tolerated (returns the prefix read so far); a wrong/absent
-            // value inside the prefix is a FAILURE.
-            final List<Long> rows = readIdentityPrefixAllowTorn(table);
+            // No silent corruption: the rows that read back are an exact identity prefix {0..m-1}, each
+            // with its inserted timestamp. A loud torn read is tolerated (returns the prefix read so far);
+            // a wrong or absent value inside the prefix fails the test.
+            final List<long[]> rows = readIdentityPrefixAllowTorn(table);
+            final long tsStep = rowsPerCommit == 1 ? 3_600_000_000L : 1_000_000L;
             for (int i = 0; i < rows.size(); i++) {
-                Assert.assertNotNull("k=" + k + " row " + i + " read back NULL (corruption)", rows.get(i));
                 Assert.assertEquals(
                         "k=" + k + " row " + i + " silently WRONG (not an identity prefix)",
-                        (long) i, (long) rows.get(i)
+                        i, rows.get(i)[0]
+                );
+                Assert.assertEquals(
+                        "k=" + k + " row " + i + " has a silently WRONG timestamp",
+                        FIRST_TS + i * tsStep, rows.get(i)[1]
                 );
             }
 
@@ -325,12 +465,20 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
                     rows.size() <= recovered
             );
 
+            // Nothing acknowledged is lost: every row the durable frontier covered at the crash reads back,
+            // with its value.
+            Assert.assertTrue(
+                    "k=" + k + " (" + phaseDurabilityOp(k) + "): a row the durable frontier covered was lost [frontierRows="
+                            + durableRowsAtCrash + ", readBack=" + rows.size() + ", recovered=" + recovered + ']',
+                    rows.size() >= durableRowsAtCrash
+            );
+
             if (k == atomicCommitOps) {
-                Assert.assertEquals("last atomic op: recovery must restore ALL committed rows", ROWS, recovered);
-                Assert.assertEquals("last atomic op: the full identity set must read back clean", ROWS, rows.size());
+                Assert.assertEquals("last atomic op: recovery must restore ALL committed rows", totalRows(), recovered);
+                Assert.assertEquals("last atomic op: the full identity set must read back clean", totalRows(), rows.size());
             }
 
-            // Clean reopen: a follow-up write + read must succeed on the recovered table.
+            // Clean reopen: a follow-up write and read must succeed on the recovered table.
             execute("insert into " + table + " values ('2024-10-09T00:00:00.000000Z', 999)");
             drainWalQueue();
             Assert.assertEquals(
@@ -340,11 +488,15 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
             return recovered;
         }
 
+        private int totalRows() {
+            return commits * rowsPerCommit;
+        }
+
         @Override
         public void teardown() throws Exception {
-            // Cleanup is done at the START of the next setup (drop if exists), so a single reused table
-            // name keeps exactly one table alive at a time — bounding on-disk state AND engine-registry
-            // churn across the whole sweep. Best-effort final drop so the last iteration leaves nothing.
+            // The next setup drops the table first, so a single reused table name keeps exactly one table
+            // alive at a time, bounding on-disk state and engine-registry churn across the whole sweep.
+            // Best-effort final drop so the last iteration leaves nothing.
             try {
                 execute("drop table if exists " + table);
                 drainWalQueue();
@@ -355,7 +507,7 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * count(*) — the committed row count from table metadata (reliable even if a column read would tear).
+     * count(*): the committed row count from table metadata, reliable even if a column read would tear.
      */
     private long rowCount(String table) {
         try (RecordCursorFactory f = select("select count() from " + table)) {
@@ -369,17 +521,17 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * Read {@code select v ... order by ts}, returning the identity-prefix values gathered so far. A loud
-     * torn read (CairoException/CairoError/SIGBUS-InternalError on a truncated column) is an acceptable
-     * crash outcome — the prefix read before it is returned rather than rethrown.
+     * Reads {@code select v, ts ... order by ts}, returning the identity-prefix rows {v, ts} gathered so far.
+     * A loud torn read (CairoException, CairoError, or a SIGBUS InternalError on a truncated column) is an
+     * acceptable crash outcome: the prefix read before it is returned rather than rethrown.
      */
-    private List<Long> readIdentityPrefixAllowTorn(String table) {
-        final List<Long> out = new ArrayList<>();
-        try (RecordCursorFactory f = select("select v from " + table + " order by ts")) {
+    private List<long[]> readIdentityPrefixAllowTorn(String table) {
+        final List<long[]> out = new ArrayList<>();
+        try (RecordCursorFactory f = select("select v, ts from " + table + " order by ts")) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
                 final Record r = c.getRecord();
                 while (c.hasNext()) {
-                    out.add(r.getLong(0));
+                    out.add(new long[]{r.getLong(0), r.getTimestamp(1)});
                 }
             }
         } catch (CairoException | CairoError | InternalError torn) {

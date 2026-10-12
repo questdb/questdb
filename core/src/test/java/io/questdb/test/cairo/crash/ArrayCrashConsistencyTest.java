@@ -34,16 +34,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Proves the harness reproduces the ARRAY torn-aux bug: zeroing the last aux
- * entry's data-offset bytes (first 8 bytes of the 16-byte entry) via tornTail
- * and reopening must NOT silently overwrite committed rows.
+ * Checks that a torn last array aux entry is detected rather than applied: zeroing the
+ * data-offset bytes of the last aux entry with tornTail and reopening must not silently
+ * overwrite committed rows.
  * <p>
- * ARRAY aux entries are 16 bytes (ARRAY_AUX_WIDTH_BYTES=4*Integer.BYTES=16).
- * The data-offset is the first 8 bytes of each entry; zeroing it simulates a
- * torn partial write of the offset word.
- * <p>
- * Red on unguarded HEAD (setAppendPosition silently places cursor inside committed data).
- * Green after adding the crash-consistency guard (mirrors VarcharTypeDriver).
+ * Array aux entries are 16 bytes (ARRAY_AUX_WIDTH_BYTES = 4 * Integer.BYTES) and the data
+ * offset is the first 8 bytes of each entry, so zeroing it simulates a torn write of the
+ * offset word. Without the setAppendPosition guard, which mirrors VarcharTypeDriver, the
+ * writer would place its cursor inside committed data.
  */
 public class ArrayCrashConsistencyTest extends AbstractCrashConsistencyTest {
 
@@ -75,8 +73,8 @@ public class ArrayCrashConsistencyTest extends AbstractCrashConsistencyTest {
 
             crashAndReopen();
 
-            // Attempt to append after crash: setAppendPosition should detect the torn offset
-            // and throw loudly instead of silently placing the write cursor inside committed data.
+            // Append after the crash: setAppendPosition should detect the torn offset and throw
+            // instead of silently placing the write cursor inside committed data.
             boolean detected = false;
             try {
                 execute("insert into a values (" + (rows * 1_000_000L) + ", ARRAY[9.0,9.0,9.0])");
@@ -85,10 +83,9 @@ public class ArrayCrashConsistencyTest extends AbstractCrashConsistencyTest {
             }
             engine.releaseAllWriters();
 
-            // Secondary check (no-silent-corruption): either row 0 reads back correctly,
-            // or a loud CairoException/CairoError is thrown (both are acceptable outcomes).
-            // Arrays are not readable via getStrA/getVarcharA; we use assertQuery which renders
-            // them via their text representation (e.g. "[1.0,2.0,3.0]").
+            // Secondary check (no silent corruption): either row 0 reads back correctly, or a
+            // CairoException or CairoError is thrown. Arrays are not readable via getStrA/getVarcharA,
+            // so assertQuery compares their text form (e.g. "[1.0,2.0,3.0]").
             try {
                 assertQuery("select arr from a where ts = 0")
                         .noLeakCheck()

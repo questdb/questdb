@@ -518,8 +518,10 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testAddColumnActualDirectoryFsyncFailurePoisonsEngine() throws Exception {
         // TableWriter takes no table-directory fsync on Windows (there are no directory handles to
         // fsync), so the fault this facade arms is never reached there and addColumn succeeds.
-        // POSIX-only by the shape of the product code; covered by the Linux and macOS legs.
+        // The test is POSIX-only by the shape of the product code.
         org.junit.Assume.assumeFalse("table directory fsync seam is POSIX-only", Os.isWindows());
+        // The engine decides the stop from the instance's mode, so pin it too, not only the writer's.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         try {
             assertMemoryLeak(() -> {
                 populateTable();
@@ -536,8 +538,7 @@ public class TableWriterTest extends AbstractCairoTest {
                             if (isArmed) {
                                 isArmed = false;
                                 super.close(fd);
-                                throw CairoException.dataSyncFailure(5, "fsyncAndClose")
-                                        .put("injected metadata directory fsync failure");
+                                throw CairoException.dataSyncFailure(this, 5, "fsyncAndClose", "injected metadata directory fsync failure");
                             }
                         }
                         super.fsyncAndClose(fd);
@@ -1978,13 +1979,16 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testFrequentCommit() throws Exception {
         assertMemoryLeak(() -> {
             int N = 100000;
+            // SYNC flushes about 20 files on each commit, some 30 ms on a local disk: 100,000 commits would run
+            // for most of an hour, past the test timeout
+            final int commits = configuration.getCommitMode() == CommitMode.SYNC ? 1_000 : N;
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
                 long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 Rnd rnd = new Rnd();
-                for (int i = 0; i < N; i++) {
+                for (int i = 0; i < commits; i++) {
                     ts = populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
                     writer.commit();
                 }
@@ -3146,14 +3150,20 @@ public class TableWriterTest extends AbstractCairoTest {
             TableToken token = engine.getTableTokenIfExists("product");
             engine.releaseAllWriters();
             engine.getTableSequencerAPI().releaseAll();
+            // Two whole structural records, which the open keeps, for changes the sequencer never saved.
             try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
                 path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(SEQ_DIR);
                 openSmallFile(FF, path, path.size(), mem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
                 mem.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, 2);
                 mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
-                mem.putLong(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET, 2);
+                for (int structureVersion = 1; structureVersion <= 2; structureVersion++) {
+                    mem.putLong(structureVersion);
+                    mem.putInt(TableTransactionLogFile.STRUCTURAL_CHANGE_WAL_ID);
+                    mem.putInt(-1);
+                    mem.putInt(-1);
+                    mem.putLong(1_759_000_000_000_000L + structureVersion);
+                }
                 mem.sync(false);
-                mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
             }
             assertException("alter table " + PRODUCT + " add column abc INT;", 12, "expected to read table structure changes but there is none saved in the sequencer");
         });
@@ -3711,6 +3721,42 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 Assert.assertEquals("TableWriter{name=product}", writer.toString());
             }
+        });
+    }
+
+    @Test
+    public void testTornTxnLogTailIsDroppedOnOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table product (ts TIMESTAMP, i INT) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            TableToken token = engine.getTableTokenIfExists("product");
+            engine.releaseAllWriters();
+            engine.getTableSequencerAPI().releaseAll();
+            // The header publishes two txns whose records never reached the disk: record 1 is zeros, record 2
+            // holds only its structure version and the file ends inside it.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(SEQ_DIR);
+                openSmallFile(FF, path, path.size(), mem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                mem.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, 2);
+                mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
+                mem.putLong(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET, 2);
+                mem.sync(false);
+                mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
+            }
+            // The open drops the torn tail, so the ALTER and the insert take txns 1 and 2.
+            execute("alter table product add column abc INT");
+            execute("insert into product values ('2024-01-01T00:00:00.000000Z', 1, 2)");
+            drainWalQueue();
+            Assert.assertEquals(2, engine.getTableSequencerAPI().lastTxn(token));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT * FROM product")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ti\tabc
+                            2024-01-01T00:00:00.000000Z\t1\t2
+                            """);
         });
     }
 

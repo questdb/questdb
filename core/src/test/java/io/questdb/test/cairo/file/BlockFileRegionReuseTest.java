@@ -37,22 +37,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Establishes why {@link io.questdb.cairo.file.BlockFileReader} must keep FAILING on a checksum mismatch
- * instead of silently falling back to the previous region.
- * <p>
- * A fallback looks attractive -- the previous region is usually still intact on disk, so why refuse the whole
- * file? Because the WRITER has no part in that decision. It reads the header's version word and derives the
- * next write offset from THAT version's region, so it would keep treating the version the reader rejected as
- * current. The two would disagree about which region is live, and this test measures the consequence: the
- * next commit lands exactly on the region a fallback reader would have been relying on.
- * <p>
- * So a reader-side fallback would convert one bad commit into silent destruction of the last good one -- the
- * newest data is refused, the fallback serves the older region, and the very next write overwrites it. The
- * durable fix belongs on the write side, where it now is: {@code BlockFileWriter.commit()} makes the region
- * durable BEFORE the version word names it, so a durable version word implies durable region bytes and a
- * mismatch means real corruption rather than a torn commit. Failing loudly on real corruption is correct.
- * <p>
- * See {@link BlockFilePublishOrderTest} for the barrier that makes that guarantee.
+ * Shows why {@link io.questdb.cairo.file.BlockFileReader} fails on a checksum mismatch instead of falling back to
+ * the previous region. The writer derives the next write offset from the header's version word, so it keeps
+ * treating the rejected version as current, and its next commit lands on the region a fallback reader would rely
+ * on: a fallback would turn one bad commit into the loss of the last good one. A mismatch means real corruption,
+ * not a torn commit, because {@code BlockFileWriter.commit()} makes the region durable before the version word
+ * names it ({@link BlockFilePublishOrderTest} covers that barrier).
  */
 public class BlockFileRegionReuseTest extends AbstractCairoTest {
 
@@ -73,8 +63,8 @@ public class BlockFileRegionReuseTest extends AbstractCairoTest {
                 Assert.assertNotEquals("the A/B scheme must place consecutive regions in different areas",
                         v1Offset, v2Offset);
 
-                // The third commit is where a reader/writer disagreement would bite. The writer derives its
-                // target from the version word, which still says 2.
+                // The third commit is where a reader/writer disagreement matters. The writer derives its
+                // target from the version word, which says 2.
                 commitRegion(path, 64);
                 final long v3Offset = regionOffsetOf(path, 3);
 

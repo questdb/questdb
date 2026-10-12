@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CommitMode;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -31,21 +33,12 @@ import org.junit.Assume;
 import org.junit.Test;
 
 /**
- * The suite must run one commit mode, chosen in one place.
- * <p>
- * There are three ways a test ends up with a configuration -- {@link Overrides} for anything extending
- * {@code AbstractCairoTest}, {@link DefaultTestCairoConfiguration} for direct instantiation, and the
- * generated {@code server.conf} for the {@code AbstractBootstrapTest} suites that run a real server. They
- * used to disagree: the last of those set nothing at all, so 74 end-to-end classes silently followed
- * whatever the shipped default happened to be, and changing that default moved their coverage without
- * failing anything.
- * <p>
- * This fails if one of the three paths drifts. It cannot detect a fourth path that forgets the switch:
- * nothing enumerates the ways a test acquires a configuration, so a new one must be added here by hand.
- * <p>
- * Paths 1 and 2 are asserted here. Path 3 is asserted by {@link BootstrapCommitModeTest}, which this class
- * cannot reach: it extends {@code AbstractCairoTest}, while {@code createDummyConfiguration} lives on
- * {@code AbstractBootstrapTest}.
+ * The suite runs one commit mode, chosen in one place. A test gets its configuration through {@link Overrides}
+ * ({@code AbstractCairoTest}), {@link DefaultTestCairoConfiguration} (direct instantiation) or the generated
+ * {@code server.conf} ({@code AbstractBootstrapTest}); a path that sets no mode follows the shipped default, so
+ * changing that default would move its coverage without failing anything. This class asserts the first two
+ * paths and {@link BootstrapCommitModeTest} the third. Nothing enumerates these paths, so a new one must be
+ * added here by hand.
  */
 public class TestCommitModeSwitchTest extends AbstractCairoTest {
 
@@ -74,22 +67,48 @@ public class TestCommitModeSwitchTest extends AbstractCairoTest {
     }
 
     /**
-     * The suite's mode is deliberately NOT the shipped one, so that the durable path is exercised
-     * everywhere while users keep the cheaper default. If these two ever coincide it should be because
-     * someone moved {@link CommitMode#DEFAULT} on purpose, having run the benchmark -- not by accident.
+     * The same two paths for the adaptive settings: the interface defaults ({@code DefaultTestCairoConfiguration})
+     * and the shipped ones ({@code PropServerConfiguration}) differ for the epoch interval (1 s against 60 s), and
+     * which one a test gets is decided by whether it set any property at all. Every adaptive getter must agree on
+     * both paths, so a test's save point cadence does not depend on an unrelated property.
+     */
+    @Test
+    public void testEveryConfigurationPathAgreesOnTheAdaptiveSettings() {
+        // Any override that differs from its default puts this test on the properties path (an override equal to
+        // the default is dropped); a pool capacity moves nothing the assertions read.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 17);
+        final CairoConfiguration viaProperties = engine.getConfiguration();
+        final CairoConfiguration viaDefaults = new DefaultTestCairoConfiguration(root);
+        Assert.assertTrue(
+                "the override must have switched this test to the properties path",
+                node1.getConfigurationOverrides().isPropertySet(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY)
+        );
+        Assert.assertEquals("adaptive epoch interval", viaDefaults.getAdaptiveEpochIntervalMs(), viaProperties.getAdaptiveEpochIntervalMs());
+        Assert.assertEquals("adaptive epoch max rows", viaDefaults.getAdaptiveEpochMaxRows(), viaProperties.getAdaptiveEpochMaxRows());
+        Assert.assertEquals("adaptive commit group window", viaDefaults.getAdaptiveCommitGroupWindowUs(), viaProperties.getAdaptiveCommitGroupWindowUs());
+        Assert.assertEquals("adaptive recovery roll forward", viaDefaults.isAdaptiveRecoveryRollForwardEnabled(), viaProperties.isAdaptiveRecoveryRollForwardEnabled());
+        Assert.assertEquals("adaptive epoch flush on close", viaDefaults.isAdaptiveEpochFlushOnClose(), viaProperties.isAdaptiveEpochFlushOnClose());
+        Assert.assertEquals("adaptive epoch column sync batched", viaDefaults.isAdaptiveEpochColumnSyncBatched(), viaProperties.isAdaptiveEpochColumnSyncBatched());
+        Assert.assertEquals("commit mode", viaDefaults.getCommitMode(), viaProperties.getCommitMode());
+    }
+
+    /**
+     * The suite's mode differs from the shipped one, so that the durable path is exercised everywhere while
+     * users keep the cheaper default. The two may coincide only when someone moves {@link CommitMode#DEFAULT}
+     * on purpose.
      */
     @Test
     public void testShippedDefaultIsSeparateFromTheSuiteDefault() {
-        // The shipped default is asserted UNCONDITIONALLY: no sweep flag may move CommitMode.DEFAULT.
+        // The shipped default is asserted unconditionally: no sweep flag may move CommitMode.DEFAULT.
         Assert.assertEquals(
                 "the shipped default is nosync until an ingest benchmark justifies moving it",
                 CommitMode.NOSYNC,
                 CommitMode.DEFAULT
         );
-        // The SUITE default is asserted only when nobody asked for something else. An explicit
-        // -Dquestdb.test.commit.mode=X is a deliberate sweep, not a regression in the default, so it skips
-        // this half rather than failing it -- otherwise the sweep documented on Overrides.TEST_COMMIT_MODE
-        // cannot run at all. Skip, not early return: a skip is counted, a return would be a false green.
+        // The suite default is asserted only when nobody asked for something else. An explicit
+        // -Dquestdb.test.commit.mode=X is a deliberate sweep, so this half is skipped rather than failed;
+        // otherwise the sweep documented on Overrides.TEST_COMMIT_MODE cannot run. A skip is counted, where
+        // an early return would report a pass.
         Assume.assumeFalse(
                 "explicit -Dquestdb.test.commit.mode=" + Overrides.TEST_COMMIT_MODE
                         + ": sweeping, so the adaptive-default pin does not apply",
