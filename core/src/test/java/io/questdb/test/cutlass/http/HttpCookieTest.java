@@ -41,6 +41,18 @@ public class HttpCookieTest extends BaseHttpCookieTest {
     }
 
     @Test
+    public void testRefusedRequestDoesNotExtendSession() throws Exception {
+        final AtomicLong currentMicros = new AtomicLong(1760743438000000L);
+        final Bootstrap bootstrap = getBootstrapWithMockClock(currentMicros);
+        testRefusedRequestDoesNotExtendSession(() -> new ServerMain(bootstrap), HttpClientFactory::newPlainTextInstance, currentMicros);
+    }
+
+    @Test
+    public void testRejectedCredentialEndsSession() throws Exception {
+        testRejectedCredentialEndsSession(() -> new ServerMain(getServerMainArgs()), HttpClientFactory::newPlainTextInstance);
+    }
+
+    @Test
     public void testRotatedSessionDestroyedWithNewSessionId() throws Exception {
         testRotatedSessionDestroyed(true);
     }

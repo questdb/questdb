@@ -12,6 +12,7 @@ import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
@@ -50,12 +51,24 @@ import static io.questdb.cutlass.http.HttpConstants.SESSION_ID_PREFIX;
  * <p><b>Note:</b> {@code SessionInfo.rotateAt} stores when the <i>next</i> rotation should occur,
  * not when the last rotation happened. To calculate when to evict old IDs, the code works backwards:
  * {@code nextRotationTime - gracePeriod}.
+ *
+ * <h2>Credentials</h2>
+ * <p>A session never outlives the credentials that authenticated it. It keeps the credential it was
+ * opened with, and the one it was last authenticated with, and {@link #verifySessionId} destroys the
+ * session once either of them has been revoked.
+ *
+ * <p>A request carrying both a session cookie and an Authorization header can use the session only if
+ * the session verified the same credential within {@code credentialRevalidationInterval}. Otherwise, the
+ * credential is verified again, and if it is rejected, the session is destroyed: a client can never fall
+ * back to its session after presenting a credential the server refuses. A revalidation interval of 0
+ * verifies the credential of every such request.
  */
 public class HttpSessionStoreImpl implements HttpSessionStore {
     private static final Log LOG = LogFactory.getLog(HttpSessionStoreImpl.class);
     private static final int MAX_GENERATION_ATTEMPTS = 5;
     private static final int SESSION_ID_SIZE_BYTES = 32;
     protected final ConcurrentHashMap<ReadOnlyObjList<CharSequence>> groupsByEntity = new ConcurrentHashMap<>();
+    private final long credentialRevalidationInterval;
     private final long evictionCheckInterval;
     private final MicrosecondClock microsClock;
     private final long rotatedSessionEvictionTime;
@@ -66,21 +79,40 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     private TokenGenerator tokenGenerator = new TokenGeneratorImpl(SESSION_ID_PREFIX, SESSION_ID_SIZE_BYTES);
 
     public HttpSessionStoreImpl(ServerConfiguration serverConfiguration) {
+        this(serverConfiguration, 0L);
+    }
+
+    /**
+     * @param serverConfiguration            server configuration
+     * @param credentialRevalidationInterval how long, in microseconds, a credential verified for a session
+     *                                       stays verified for the requests of the session carrying it again
+     */
+    public HttpSessionStoreImpl(ServerConfiguration serverConfiguration, long credentialRevalidationInterval) {
         microsClock = serverConfiguration.getCairoConfiguration().getMicrosecondClock();
         sessionTimeout = serverConfiguration.getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout();
         rotationPeriod = sessionTimeout / 2;
         rotatedSessionEvictionTime = rotationPeriod / 2;
         evictionCheckInterval = sessionTimeout / 10;
         nextEvictionCheckAt = microsClock.getTicks() + evictionCheckInterval;
+        this.credentialRevalidationInterval = Math.max(0L, credentialRevalidationInterval);
     }
 
     @Override
-    public void createSession(@NotNull PrincipalContext principalContext, @NotNull HttpConnectionContext httpContext) {
+    public void createSession(
+            @NotNull PrincipalContext principalContext,
+            @Nullable HttpSessionCredential credential,
+            byte @Nullable [] credentialFingerprint,
+            @NotNull HttpConnectionContext httpContext
+    ) {
         // if multiple queries are fired from the client parallel,
         // we can end up creating more sessions for the same client.
         // however, the inactive ones will time out eventually, and will be closed
         final String sessionId = generateSessionId();
-        final SessionInfo session = newSession(principalContext, sessionId);
+        final SessionInfo session = newSession(principalContext, sessionId, credential);
+        if (credentialFingerprint != null) {
+            // the credential the session was opened with needs no verification for it until the interval passes
+            session.setVerifiedCredential(credential, credentialFingerprint, microsClock.getTicks());
+        }
         sessionsById.put(session.getSessionId(), session);
         LOG.info().$("session registered [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
 
@@ -98,16 +130,92 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
         }
     }
 
+    @Override
+    public synchronized void destroySessions(@NotNull CharSequence principal) {
+        int destroyed = 0;
+        final Iterator<Map.Entry<CharSequence, SessionInfo>> iterator = sessionsById.entrySet().iterator();
+        while (iterator.hasNext()) {
+            final SessionInfo session = iterator.next().getValue();
+            if (Chars.equals(principal, session.getPrincipal())) {
+                // a rotated session is mapped under more than one id, every mapping is removed;
+                // invalidating the session also rejects an id rotated in concurrently
+                iterator.remove();
+                session.invalidate();
+                destroyed++;
+            }
+        }
+        if (destroyed > 0) {
+            LOG.info().$("sessions destroyed [principal=").$(principal).$(", ids=").$(destroyed).$(']').$();
+        }
+    }
+
+    @Override
+    public void extendSession(@NotNull SessionInfo session, @NotNull HttpConnectionContext httpContext) {
+        if (session.isInvalid()) {
+            // a concurrent request destroyed the session since this request looked it up,
+            // do not map a new id to it
+            return;
+        }
+        final long currentMicros = microsClock.getTicks();
+        session.setExpiresAt(currentMicros + sessionTimeout);
+        if (session.getRotateAt() < currentMicros) {
+            // if multiple threads detected that the session id should be rotated,
+            // tryLock() makes sure that only one thread will rotate
+            if (session.tryLock()) {
+                try {
+                    // check again if we need to rotate
+                    // maybe another thread just rotated the session id, and released the lock
+                    // after we checked 'rotateAt', but before we acquired the lock
+                    if (session.getRotateAt() < currentMicros) {
+                        final String newSessionId = generateSessionId();
+                        final long nextRotationAt = currentMicros + rotationPeriod;
+                        session.rotate(newSessionId, nextRotationAt);
+                        sessionsById.put(newSessionId, session);
+                        LOG.info().$("session rotated [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
+
+                        final StringSink sessionIdSink = httpContext.getSessionIdSink();
+                        sessionIdSink.clear();
+                        sessionIdSink.put(newSessionId);
+                    }
+                } finally {
+                    session.unlock();
+                }
+            }
+        }
+    }
+
+    @Override
+    public long getCredentialRevalidationInterval() {
+        return credentialRevalidationInterval;
+    }
+
     @TestOnly
     @Override
     public SessionInfo getSession(@NotNull CharSequence sessionId) {
         return sessionsById.get(sessionId);
     }
 
+    @Override
+    public boolean isCredentialVerified(@NotNull SessionInfo session, byte @NotNull [] credentialFingerprint) {
+        return credentialRevalidationInterval > 0
+                && session.isCredentialVerified(credentialFingerprint, microsClock.getTicks() - credentialRevalidationInterval);
+    }
+
     @TestOnly
     @Override
     public void setTokenGenerator(TokenGenerator tokenGenerator) {
         this.tokenGenerator = tokenGenerator;
+    }
+
+    @Override
+    public void setVerifiedCredential(
+            @NotNull SessionInfo session,
+            @Nullable HttpSessionCredential credential,
+            byte @Nullable [] credentialFingerprint
+    ) {
+        if (credential != null || credentialFingerprint != null) {
+            session.setVerifiedCredential(credential, credentialFingerprint, microsClock.getTicks());
+        }
     }
 
     @TestOnly
@@ -151,34 +259,13 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
             // multiple threads can enter here, destroySession() is threadsafe
             destroySession(sessionId, httpContext);
             return null;
-        } else {
-            // extend the lifetime of the session
-            final long expiresAt = currentMicros + sessionTimeout;
-            sessionInfo.setExpiresAt(expiresAt);
         }
-        if (sessionInfo.getRotateAt() < currentMicros) {
-            // if multiple threads detected that the session id should be rotated,
-            // tryLock() makes sure that only one thread will rotate
-            if (sessionInfo.tryLock()) {
-                try {
-                    // check again if we need to rotate
-                    // maybe another thread just rotated the session id, and released the lock
-                    // after we checked 'rotateAt', but before we acquired the lock
-                    if (sessionInfo.getRotateAt() < currentMicros) {
-                        final String newSessionId = generateSessionId();
-                        final long nextRotationAt = currentMicros + rotationPeriod;
-                        sessionInfo.rotate(newSessionId, nextRotationAt);
-                        sessionsById.put(newSessionId, sessionInfo);
-                        LOG.info().$("session rotated [fd=").$(httpContext.getFd()).$(", principal=").$(sessionInfo.getPrincipal()).$(']').$();
-
-                        final StringSink sessionIdSink = httpContext.getSessionIdSink();
-                        sessionIdSink.clear();
-                        sessionIdSink.put(newSessionId);
-                    }
-                } finally {
-                    sessionInfo.unlock();
-                }
-            }
+        if (sessionInfo.isCredentialRevoked()) {
+            // the password or token the session was authenticated with has been changed or dropped,
+            // or the user has been disabled or dropped
+            LOG.info().$("session credential revoked [fd=").$(httpContext.getFd()).$(", principal=").$(sessionInfo.getPrincipal()).$(']').$();
+            destroySession(sessionId, httpContext);
+            return null;
         }
         if (nextEvictionCheckAt < currentMicros) {
             // evict expired sessions periodically
@@ -247,7 +334,11 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
         throw CairoException.nonCritical().put("session id collision occurred, try one more time");
     }
 
-    private SessionInfo newSession(@NotNull PrincipalContext principalContext, @NotNull String sessionId) {
+    private SessionInfo newSession(
+            @NotNull PrincipalContext principalContext,
+            @NotNull String sessionId,
+            @Nullable HttpSessionCredential credential
+    ) {
         final long currentMicros = microsClock.getTicks();
         return new SessionInfo(
                 sessionId,
@@ -255,7 +346,8 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
                 groupsByEntity,
                 principalContext.getAuthType(),
                 currentMicros + sessionTimeout,
-                currentMicros + rotationPeriod
+                currentMicros + rotationPeriod,
+                credential
         );
     }
 }

@@ -3,6 +3,7 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class EmptyHttpSessionStore implements HttpSessionStore {
     public static final EmptyHttpSessionStore INSTANCE = new EmptyHttpSessionStore();
@@ -11,11 +12,42 @@ public class EmptyHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public void createSession(@NotNull PrincipalContext principalContext, @NotNull HttpConnectionContext httpContext) {
+    public void createSession(
+            @NotNull PrincipalContext principalContext,
+            @Nullable HttpSessionCredential credential,
+            byte @Nullable [] credentialFingerprint,
+            @NotNull HttpConnectionContext httpContext
+    ) {
     }
 
     @Override
     public void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+    }
+
+    @Override
+    public void destroySessions(@NotNull CharSequence principal) {
+    }
+
+    @Override
+    public void extendSession(@NotNull SessionInfo session, @NotNull HttpConnectionContext httpContext) {
+    }
+
+    @Override
+    public long getCredentialRevalidationInterval() {
+        return 0;
+    }
+
+    @Override
+    public boolean isCredentialVerified(@NotNull SessionInfo session, byte @NotNull [] credentialFingerprint) {
+        return false;
+    }
+
+    @Override
+    public void setVerifiedCredential(
+            @NotNull SessionInfo session,
+            @Nullable HttpSessionCredential credential,
+            byte @Nullable [] credentialFingerprint
+    ) {
     }
 
     @Override

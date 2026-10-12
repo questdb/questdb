@@ -186,6 +186,98 @@ public abstract class BaseHttpCookieTest extends AbstractBootstrapTest {
         });
     }
 
+    protected void testRefusedRequestDoesNotExtendSession(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier, AtomicLong currentMicros) throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain questdb = serverMainSupplier.get()) {
+                questdb.start();
+
+                final HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+                final long sessionTimeout = questdb.getConfiguration().getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout();
+
+                final String sessionId;
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT 1", USER, PASSWORD, "true");
+                    awaitStatusCode(responseHeaders, "200");
+                    sessionId = assertSessionCookie(responseHeaders, isSecure());
+                    assertChunkedBody(responseHeaders, "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
+                }
+
+                final HttpSessionStore.SessionInfo session = assertSession(sessionStore, sessionId, currentMicros.get(), sessionTimeout);
+                final long expiresAt = session.getExpiresAt();
+
+                // move the clock past the rotation time, so that both an extension and a rotation would show
+                currentMicros.addAndGet(sessionTimeout / 2 + 1_000_000L);
+
+                // the session authenticates the request, but the server refuses it: /exec does not take PUT
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    final HttpClient.Request request = httpClient.newRequest("127.0.0.1", HTTP_PORT)
+                            .PUT()
+                            .url("/exec")
+                            .query("query", "SELECT 1")
+                            .setCookie(SESSION_COOKIE_NAME, sessionId);
+                    request.withContent().putAscii("x");
+                    HttpClient.ResponseHeaders responseHeaders = request.send();
+                    awaitStatusCode(responseHeaders, "405");
+                    assertNoSessionCookie(responseHeaders);
+                    assertChunkedBody(responseHeaders, "Method PUT not supported\r\n");
+                }
+
+                // the refused request has neither extended nor rotated the session
+                assertEquals(expiresAt, session.getExpiresAt());
+                assertEquals(sessionId, session.getSessionId());
+
+                // a request served from the session does both
+                final String newSessionId;
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT 1", null, null, null, SESSION_COOKIE_NAME, sessionId);
+                    awaitStatusCode(responseHeaders, "200");
+                    newSessionId = assertSessionCookie(responseHeaders, isSecure());
+                    assertChunkedBody(responseHeaders, "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
+                }
+                assertEquals(currentMicros.get() + sessionTimeout, session.getExpiresAt());
+                assertNotEquals(sessionId, newSessionId);
+                assertEquals(newSessionId, session.getSessionId());
+            }
+        });
+    }
+
+    protected void testRejectedCredentialEndsSession(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier) throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain questdb = serverMainSupplier.get()) {
+                questdb.start();
+
+                final HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+
+                final String sessionId;
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT 1", USER, PASSWORD, "true");
+                    awaitStatusCode(responseHeaders, "200");
+                    sessionId = assertSessionCookie(responseHeaders, isSecure());
+                    assertChunkedBody(responseHeaders, "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
+                }
+                final HttpSessionStore.SessionInfo session = sessionStore.getSession(sessionId);
+                assertNotNull(session);
+
+                // the request carries the session cookie, and a credential the server rejects;
+                // it must not fall back to the session, the client has to learn that its credential is wrong
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT 1", USER, PASSWORD + "x", null, SESSION_COOKIE_NAME, sessionId);
+                    awaitStatusCode(responseHeaders, "401");
+                    assertChunkedBody(responseHeaders, "Unauthorized\r\n");
+                }
+
+                // and the session does not outlive the rejected credential
+                assertTrue(session.isInvalid());
+                assertNull(sessionStore.getSession(sessionId));
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT 1", null, null, null, SESSION_COOKIE_NAME, sessionId);
+                    awaitStatusCode(responseHeaders, "401");
+                    assertChunkedBody(responseHeaders, "Unauthorized\r\n");
+                }
+            }
+        });
+    }
+
     protected void testRotatedSessionDestroyed(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier, AtomicLong currentMicros, boolean closeWithNewSessionId) throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain questdb = serverMainSupplier.get()) {

@@ -75,6 +75,7 @@ import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
@@ -98,6 +99,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final ChunkedContentParser chunkedContentParser = new ChunkedContentParser();
     private final HttpServerConfiguration configuration;
     private final HttpCookieHandler cookieHandler;
+    private final HttpCredentialFingerprint credentialFingerprint = new HttpCredentialFingerprint();
     private final ObjectPool<DirectUtf8String> csPool;
     private final boolean dumpNetworkTraffic;
     private final int forceFragmentationReceiveChunkSize;
@@ -138,6 +140,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private int recvBufferReadSize;
     private int recvBufferSize;
     private long recvPos;
+    // true when the authenticator has just verified the Authorization header of the request
+    private boolean requestCredentialVerified;
+    // the session sent with the request, null if there was none, or it expired or has been revoked
+    private HttpSessionStore.SessionInfo requestSession;
+    // the id of the session sent with the request, null if the request had no session cookie
+    private CharSequence requestSessionId;
+    // true when the session of the request is to be opened, closed or extended once the request is authorized
+    private boolean requestSessionPending;
     private int resumeHandlerId = NO_RESUME_PROCESSOR;
     private SecurityContext securityContext;
     private long totalBytesSent;
@@ -539,6 +549,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             this.securityContext = DenyAllSecurityContext.INSTANCE;
         }
         this.sessionIdSink.clear();
+        clearRequestSession();
         this.authenticator.clear();
         this.totalReceived = 0;
         this.chunkedContentParser.clear();
@@ -719,6 +730,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return processor;
     }
 
+    private void clearRequestSession() {
+        requestSessionPending = false;
+        requestSession = null;
+        requestSessionId = null;
+        requestCredentialVerified = false;
+        credentialFingerprint.clear();
+    }
+
     private void completeRequest(
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
@@ -742,8 +761,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             final Clock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
             final long authenticationStart = clock.getTicks();
 
-            final CharSequence sessionId;
-            HttpSessionStore.SessionInfo sessionInfo = null;
             final PrincipalContext principalContext;
             if (isQwpCredentialOffered) {
                 // Credential-bearing browser upgrades never fall back to a cookie
@@ -752,7 +769,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return false;
                 }
                 principalContext = authenticator;
-                sessionId = null;
             } else if (isQwpCrossOriginUpgrade) {
                 // A browser attaches the session cookie and cached Basic credentials
                 // to a WebSocket opened by a same-site page on another origin, so a
@@ -764,49 +780,45 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return failQwpBrowserAuthentication(QWP_CROSS_ORIGIN_WITHOUT_CREDENTIAL);
                 }
                 principalContext = authenticator;
-                sessionId = null;
             } else {
-                sessionId = cookieHandler.processSessionCookie(this);
-                if (sessionId != null) {
-                    sessionInfo = sessionStore.verifySessionId(sessionId, this);
-                }
-                if (authenticator.authenticate(headerParser)) {
+                final CharSequence sessionId = cookieHandler.processSessionCookie(this);
+                final HttpSessionStore.SessionInfo sessionInfo = sessionId != null ? sessionStore.verifySessionId(sessionId, this) : null;
+                final DirectUtf8Sequence authorization = headerParser.getHeader(HEADER_AUTHORIZATION);
+                final byte[] fingerprint = sessionInfo != null ? getCredentialFingerprint(authorization) : null;
+                boolean credentialVerified = false;
+                if (sessionInfo != null && fingerprint != null && sessionStore.isCredentialVerified(sessionInfo, fingerprint)) {
+                    // the session has verified this very credential recently,
+                    // it does not need verifying again until the revalidation interval passes
+                    principalContext = sessionInfo;
+                } else if (authenticator.authenticate(headerParser)) {
                     principalContext = authenticator;
-                } else if (sessionInfo != null) {
+                    credentialVerified = authorization != null;
+                } else if (authorization == null && sessionInfo != null) {
                     principalContext = sessionInfo;
                 } else {
+                    if (sessionInfo != null) {
+                        // The credential sent along with the session cookie has been rejected. Falling back
+                        // to the session would serve the request as if the credential was still valid, and
+                        // the client would never learn that it has been revoked. The session cannot outlive
+                        // the credential, it is closed.
+                        sessionStore.destroySession(sessionId, this);
+                    }
                     // authenticationNanos stays 0, when it fails this value is irrelevant
                     return false;
+                }
+                if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
+                    // The session is opened, closed or extended only after the request has been authorized,
+                    // see updateSession(). A refused request must not keep the session alive.
+                    requestSessionPending = true;
+                    requestSessionId = sessionId;
+                    requestSession = sessionInfo;
+                    requestCredentialVerified = credentialVerified;
                 }
             }
 
             // auth successful, create security context from auth info
             final SecurityContextFactory scf = configuration.getFactoryProvider().getSecurityContextFactory();
             securityContext = scf.getInstance(principalContext, SecurityContextFactory.HTTP);
-
-            if (!isQwpCredentialOffered && !isQwpCrossOriginUpgrade && configuration.getHttpContextConfiguration().areCookiesEnabled()) {
-                // the client can request a session by sending 'session=true',
-                // and close the session by sending 'session=false'
-                // we do not create a session for clients by default to avoid excessive session creating
-                // for clients which do not support/care about cookies, such as apps using the REST API
-                final DirectUtf8Sequence sessionParam = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
-
-                // create session if
-                // - we do not have one yet and the client requested one with 'session=true' or
-                // - the client sent an expired/evicted session id or
-                // - changed credentials without sending logout
-                if (
-                        (Utf8s.equalsNcAscii(TRUE, sessionParam) && sessionId == null)
-                                || (sessionId != null && sessionInfo == null)
-                                || (sessionInfo != null && !Chars.equals(sessionInfo.getPrincipal(), securityContext.getSessionPrincipal()))
-                ) {
-                    sessionStore.createSession(authenticator, this);
-                } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null) {
-                    // close session if client requested it
-                    // note that this request is still going to be processed
-                    sessionStore.destroySession(sessionInfo.getSessionId(), this);
-                }
-            }
             authenticationNanos = clock.getTicks() - authenticationStart;
         }
         return true;
@@ -1149,6 +1161,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return false;
     }
 
+    // The fingerprint of the Authorization header, to tell whether a request carries the credential its session
+    // verified last. Null if the request has no such header, or the session store does not reuse verified
+    // credentials, so that requests which cannot use it skip hashing the header.
+    private byte @Nullable [] getCredentialFingerprint(@Nullable DirectUtf8Sequence authorization) {
+        return authorization != null && sessionStore.getCredentialRevalidationInterval() > 0
+                ? credentialFingerprint.of(authorization)
+                : null;
+    }
+
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         final HttpRequestProcessor processor = selector.select(headerParser);
         this.currentHandlerId = selector.getLastSelectedHandlerId();
@@ -1221,6 +1242,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         processor = rejectProcessor;
                     }
 
+                    // a request that failed half-way could leave the session state of the previous
+                    // request on this connection behind
+                    clearRequestSession();
                     try {
                         if (processor.requiresAuthentication()
                                 && !configureSecurityContext(processor, isQwpCredentialOffered, isQwpCrossOriginUpgrade)) {
@@ -1246,6 +1270,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
                 if (!connectionCounted && !processor.ignoreConnectionLimitCheck()) {
                     processor = checkConnectionLimit(processor);
+                }
+
+                if (requestSessionPending) {
+                    // once per request: a request receiving its content in more than one call
+                    // gets here again, with newRequest false
+                    requestSessionPending = false;
+                    if (processor != rejectProcessor) {
+                        try {
+                            updateSession();
+                        } catch (CairoException e) {
+                            processor = rejectProcessor.reject(HTTP_INTERNAL_ERROR, e.getFlyweightMessage());
+                        }
+                    }
                 }
 
                 final long contentLength = headerParser.getContentLength();
@@ -1418,6 +1455,52 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = receivedBytes;
         Vect.memmove(recvBuffer, start, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
+    }
+
+    // Opens, closes or extends the session of the request. Called only once the request has been
+    // authenticated and authorized: a refused request neither opens a session, nor extends or rotates one.
+    private void updateSession() {
+        final CharSequence sessionId = requestSessionId;
+        final HttpSessionStore.SessionInfo sessionInfo = requestSession;
+        // the client can request a session by sending 'session=true',
+        // and close the session by sending 'session=false'
+        // we do not create a session for clients by default to avoid excessive session creating
+        // for clients which do not support/care about cookies, such as apps using the REST API
+        final DirectUtf8Sequence sessionParam = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
+
+        // create session if
+        // - we do not have one yet and the client requested one with 'session=true' or
+        // - the client sent an expired/evicted/revoked session id or
+        // - changed credentials without sending logout
+        // in all these cases the authenticator has authenticated the request
+        if (
+                (Utf8s.equalsNcAscii(TRUE, sessionParam) && sessionId == null)
+                        || (sessionId != null && sessionInfo == null)
+                        || (sessionInfo != null && !Chars.equals(sessionInfo.getPrincipal(), securityContext.getSessionPrincipal()))
+        ) {
+            sessionStore.createSession(
+                    authenticator,
+                    authenticator.getSessionCredential(),
+                    getCredentialFingerprint(headerParser.getHeader(HEADER_AUTHORIZATION)),
+                    this
+            );
+        } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null) {
+            // close session if client requested it
+            // note that this request is still going to be processed
+            sessionStore.destroySession(sessionInfo.getSessionId(), this);
+        } else if (sessionInfo != null) {
+            if (requestCredentialVerified) {
+                // the credential has just authenticated the principal of the session (again),
+                // the session does not need to verify it until the revalidation interval passes,
+                // and ends when it is revoked
+                sessionStore.setVerifiedCredential(
+                        sessionInfo,
+                        authenticator.getSessionCredential(),
+                        getCredentialFingerprint(headerParser.getHeader(HEADER_AUTHORIZATION))
+                );
+            }
+            sessionStore.extendSession(sessionInfo, this);
+        }
     }
 
     @Override
