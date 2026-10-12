@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectLongList;
 import org.jetbrains.annotations.NotNull;
@@ -35,6 +34,7 @@ import org.jetbrains.annotations.NotNull;
 final class LatestByFrameScanner {
     private final PageFrameAddressCache addressCache;
     private final Function filter;
+    private final Function javaFilter;
     private final PageFrameMemoryPool memoryPool;
     private long batchHi;
     private long batchLo;
@@ -45,20 +45,25 @@ final class LatestByFrameScanner {
 
     LatestByFrameScanner(@NotNull Function filter, @NotNull PageFrameMemoryPool memoryPool, @NotNull PageFrameAddressCache addressCache) {
         this.filter = filter;
+        this.javaFilter = filter instanceof LatestByCompiledFilter jit ? jit.getArg() : filter;
         this.memoryPool = memoryPool;
         this.addressCache = addressCache;
     }
 
-    long getRow(long index) {
-        return matches != null ? matches.get(index) + batchLo : index;
+    long getBatchLo() {
+        return batchLo;
+    }
+
+    Function getJavaFilter() {
+        return javaFilter;
+    }
+
+    DirectLongList getMatches() {
+        return matches;
     }
 
     long getRowCount() {
         return rowCount;
-    }
-
-    boolean isMatch(Record record) {
-        return matches != null || filter.getBool(record);
     }
 
     boolean nextBatch(SqlExecutionCircuitBreaker circuitBreaker) {

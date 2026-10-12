@@ -234,7 +234,7 @@ public class DirectLongHashSetTest {
     @Test
     public void testLazyOpenAndReuseWithAllLongValues() throws Exception {
         assertMemoryLeak(() -> {
-            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT, 32, false)) {
+            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT, 32, 0, false)) {
                 Assert.assertEquals(0, set.capacity());
                 for (int execution = 0; execution < 3; execution++) {
                     set.reopen();
@@ -332,7 +332,7 @@ public class DirectLongHashSetTest {
     @Test
     public void testResizeLimit() throws Exception {
         assertMemoryLeak(() -> {
-            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT, 1, true)) {
+            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.5, MemoryTag.NATIVE_DEFAULT, 1, 0, true)) {
                 final int capacity = set.capacity();
                 long value = 1;
                 while (set.capacity() == capacity) {

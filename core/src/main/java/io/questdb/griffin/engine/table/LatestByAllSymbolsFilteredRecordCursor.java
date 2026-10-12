@@ -39,6 +39,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -64,12 +65,17 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
         final int keyCount = partitionByColumnIndexes.size();
         final double loadFactor = configuration.getSqlFastMapLoadFactor();
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
+        final int maxResizes = configuration.getSqlMapMaxResizes();
+        final int unchargedKeyCapacity = (int) Math.min(
+                Integer.MAX_VALUE,
+                configuration.getSqlSmallMapPageSize() / Bytes.align8b((long) keyCount * Integer.BYTES)
+        );
         if (keyCount == 2) {
-            pairKeys = new DirectLongHashSet(keyCapacity, loadFactor, MemoryTag.NATIVE_UNORDERED_MAP, configuration.getSqlMapMaxResizes(), false);
+            pairKeys = new DirectLongHashSet(keyCapacity, loadFactor, MemoryTag.NATIVE_UNORDERED_MAP, maxResizes, unchargedKeyCapacity, false);
             symbolKeys = null;
         } else {
             pairKeys = null;
-            symbolKeys = new DirectMultiIntHashSet(keyCount, keyCapacity, loadFactor, configuration.getSqlMapMaxResizes());
+            symbolKeys = new DirectMultiIntHashSet(keyCount, keyCapacity, loadFactor, maxResizes, unchargedKeyCapacity);
         }
         this.filter = filter != null ? filter : NO_OP_FILTER;
         this.scanner = new LatestByFrameScanner(this.filter, frameMemoryPool, frameAddressCache);
@@ -151,6 +157,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             possibleCombinations = countSymbolCombinations();
         }
 
+        final Function javaFilter = scanner.getJavaFilter();
         PageFrame frame;
         OUTER:
         while ((frame = frameCursor.next()) != null) {
@@ -160,12 +167,20 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             frameMemoryPool.navigateTo(frameCount++, recordA);
             scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
             while (scanner.nextBatch(circuitBreaker)) {
-                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
-                    final long row = scanner.getRow(i);
-                    recordA.setRowIndex(row);
-                    if (scanner.isMatch(recordA) && addKey(recordA)) {
-                        rows.add(Rows.toRowID(frameIndex, row));
-                        if (rows.size() == possibleCombinations) {
+                final DirectLongList matches = scanner.getMatches();
+                if (matches == null) {
+                    for (long row = scanner.getRowCount() - 1; row >= 0; row--) {
+                        recordA.setRowIndex(row);
+                        if (javaFilter.getBool(recordA) && addRow(frameIndex, row)) {
+                            break OUTER;
+                        }
+                    }
+                } else {
+                    final long batchLo = scanner.getBatchLo();
+                    for (long i = matches.size() - 1; i >= 0; i--) {
+                        final long row = matches.get(i) + batchLo;
+                        recordA.setRowIndex(row);
+                        if (addRow(frameIndex, row)) {
                             break OUTER;
                         }
                     }
@@ -185,5 +200,13 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             Unsafe.putInt(keyAddress + (long) i * Integer.BYTES, record.getInt(partitionByColumnIndexes.getQuick(i)));
         }
         return symbolKeys.add();
+    }
+
+    private boolean addRow(int frameIndex, long row) {
+        if (addKey(recordA)) {
+            rows.add(Rows.toRowID(frameIndex, row));
+            return rows.size() == possibleCombinations;
+        }
+        return false;
     }
 }

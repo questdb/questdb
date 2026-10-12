@@ -37,6 +37,7 @@ public class DirectMultiIntHashSet implements Mutable, QuietCloseable, Reopenabl
     private final long keySize;
     private final double loadFactor;
     private final int maxResizes;
+    private final int unchargedKeyCapacity;
     private int capacity;
     private long keyAddress;
     private long memStart;
@@ -45,8 +46,8 @@ public class DirectMultiIntHashSet implements Mutable, QuietCloseable, Reopenabl
     private int size;
     private int sizeLimit;
 
-    public DirectMultiIntHashSet(int keyColumnCount, int keyCapacity, double loadFactor, int maxResizes) {
-        if (keyColumnCount < 1 || keyCapacity < 0 || !(loadFactor > 0 && loadFactor < 1) || maxResizes < 0) {
+    public DirectMultiIntHashSet(int keyColumnCount, int keyCapacity, double loadFactor, int maxResizes, int unchargedKeyCapacity) {
+        if (keyColumnCount < 1 || keyCapacity < 0 || !(loadFactor > 0 && loadFactor < 1) || maxResizes < 0 || unchargedKeyCapacity < 0) {
             throw new IllegalArgumentException("invalid integer set configuration");
         }
         double slots = Math.max(16, Math.ceil(keyCapacity / loadFactor));
@@ -57,6 +58,7 @@ public class DirectMultiIntHashSet implements Mutable, QuietCloseable, Reopenabl
         this.keySize = (long) keyColumnCount * Integer.BYTES;
         this.loadFactor = loadFactor;
         this.maxResizes = maxResizes;
+        this.unchargedKeyCapacity = unchargedKeyCapacity;
     }
 
     public boolean add() {
@@ -156,7 +158,8 @@ public class DirectMultiIntHashSet implements Mutable, QuietCloseable, Reopenabl
     }
 
     private void rehash() {
-        if (resizeCount == maxResizes) {
+        final boolean isCharged = size >= unchargedKeyCapacity;
+        if (isCharged && resizeCount == maxResizes) {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in integer set");
         }
         if (capacity >= Numbers.MAX_SAFE_INT_POW_2) {
@@ -178,6 +181,8 @@ public class DirectMultiIntHashSet implements Mutable, QuietCloseable, Reopenabl
         keyAddress = newKeyAddress;
         capacity = newCapacity;
         sizeLimit = Math.max(1, (int) (capacity * loadFactor));
-        resizeCount++;
+        if (isCharged) {
+            resizeCount++;
+        }
     }
 }

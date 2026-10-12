@@ -175,6 +175,14 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         currentRow = (int) rowIds.size();
     }
 
+    private boolean addRow(int frameIndex, long row, int key, int count) {
+        if (foundKeys.add(key)) {
+            rowIds.add(Rows.toRowID(frameIndex, row));
+            return ++foundSize == count;
+        }
+        return false;
+    }
+
     private void findAllNoFilter(int distinctCount, boolean isNullIncluded) {
         assert filter == null;
         PageFrame frame;
@@ -202,6 +210,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void findAllWithFilter(int distinctCount, boolean isNullIncluded) {
         assert filter != null;
+        final Function javaFilter = scanner.getJavaFilter();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
@@ -210,13 +219,22 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             frameMemoryPool.navigateTo(frameCount++, recordA);
             scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
             while (scanner.nextBatch(circuitBreaker)) {
-                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
-                    final long row = scanner.getRow(i);
-                    recordA.setRowIndex(row);
-                    final int key = recordA.getInt(columnIndex);
-                    if (scanner.isMatch(recordA) && (isNullIncluded || key != SymbolTable.VALUE_IS_NULL) && foundKeys.add(key)) {
-                        rowIds.add(Rows.toRowID(frameIndex, row));
-                        if (++foundSize == distinctCount) {
+                final DirectLongList matches = scanner.getMatches();
+                if (matches == null) {
+                    for (long row = scanner.getRowCount() - 1; row >= 0; row--) {
+                        recordA.setRowIndex(row);
+                        final int key = recordA.getInt(columnIndex);
+                        if (javaFilter.getBool(recordA) && (isNullIncluded || key != SymbolTable.VALUE_IS_NULL) && addRow(frameIndex, row, key, distinctCount)) {
+                            return;
+                        }
+                    }
+                } else {
+                    final long batchLo = scanner.getBatchLo();
+                    for (long i = matches.size() - 1; i >= 0; i--) {
+                        final long row = matches.get(i) + batchLo;
+                        recordA.setRowIndex(row);
+                        final int key = recordA.getInt(columnIndex);
+                        if ((isNullIncluded || key != SymbolTable.VALUE_IS_NULL) && addRow(frameIndex, row, key, distinctCount)) {
                             return;
                         }
                     }
@@ -292,6 +310,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void findRestrictedExcludedOnlyWithFilter(int distinctCount) {
         assert filter != null;
+        final Function javaFilter = scanner.getJavaFilter();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
@@ -300,13 +319,22 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             frameMemoryPool.navigateTo(frameCount++, recordA);
             scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
             while (scanner.nextBatch(circuitBreaker)) {
-                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
-                    final long row = scanner.getRow(i);
-                    recordA.setRowIndex(row);
-                    final int key = recordA.getInt(columnIndex);
-                    if (scanner.isMatch(recordA) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                        rowIds.add(Rows.toRowID(frameIndex, row));
-                        if (++foundSize == distinctCount) {
+                final DirectLongList matches = scanner.getMatches();
+                if (matches == null) {
+                    for (long row = scanner.getRowCount() - 1; row >= 0; row--) {
+                        recordA.setRowIndex(row);
+                        final int key = recordA.getInt(columnIndex);
+                        if (javaFilter.getBool(recordA) && excludedSymbolKeys.excludes(key) && addRow(frameIndex, row, key, distinctCount)) {
+                            return;
+                        }
+                    }
+                } else {
+                    final long batchLo = scanner.getBatchLo();
+                    for (long i = matches.size() - 1; i >= 0; i--) {
+                        final long row = matches.get(i) + batchLo;
+                        recordA.setRowIndex(row);
+                        final int key = recordA.getInt(columnIndex);
+                        if (excludedSymbolKeys.excludes(key) && addRow(frameIndex, row, key, distinctCount)) {
                             return;
                         }
                     }
@@ -343,6 +371,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void findRestrictedWithFilter() {
         assert filter != null;
+        final Function javaFilter = scanner.getJavaFilter();
         final int searchSize = includedSymbolKeys.size();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
@@ -352,13 +381,22 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             frameMemoryPool.navigateTo(frameCount++, recordA);
             scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
             while (scanner.nextBatch(circuitBreaker)) {
-                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
-                    final long row = scanner.getRow(i);
-                    recordA.setRowIndex(row);
-                    final int key = recordA.getInt(columnIndex);
-                    if (scanner.isMatch(recordA) && includedSymbolKeys.contains(key) && foundKeys.add(key)) {
-                        rowIds.add(Rows.toRowID(frameIndex, row));
-                        if (++foundSize == searchSize) {
+                final DirectLongList matches = scanner.getMatches();
+                if (matches == null) {
+                    for (long row = scanner.getRowCount() - 1; row >= 0; row--) {
+                        recordA.setRowIndex(row);
+                        final int key = recordA.getInt(columnIndex);
+                        if (javaFilter.getBool(recordA) && includedSymbolKeys.contains(key) && addRow(frameIndex, row, key, searchSize)) {
+                            return;
+                        }
+                    }
+                } else {
+                    final long batchLo = scanner.getBatchLo();
+                    for (long i = matches.size() - 1; i >= 0; i--) {
+                        final long row = matches.get(i) + batchLo;
+                        recordA.setRowIndex(row);
+                        final int key = recordA.getInt(columnIndex);
+                        if (includedSymbolKeys.contains(key) && addRow(frameIndex, row, key, searchSize)) {
                             return;
                         }
                     }

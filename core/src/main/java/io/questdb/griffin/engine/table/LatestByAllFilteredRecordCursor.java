@@ -87,6 +87,7 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
 
     @Override
     protected void buildTreeMap() {
+        final Function javaFilter = scanner.getJavaFilter();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
@@ -95,19 +96,32 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
             frameMemoryPool.navigateTo(frameCount++, recordA);
             scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
             while (scanner.nextBatch(circuitBreaker)) {
-                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
-                    final long row = scanner.getRow(i);
-                    recordA.setRowIndex(row);
-                    if (scanner.isMatch(recordA)) {
-                        MapKey key = map.withKey();
-                        key.put(recordA, recordSink);
-                        if (key.create()) {
-                            rows.add(Rows.toRowID(frameIndex, row));
+                final DirectLongList matches = scanner.getMatches();
+                if (matches == null) {
+                    for (long row = scanner.getRowCount() - 1; row >= 0; row--) {
+                        recordA.setRowIndex(row);
+                        if (javaFilter.getBool(recordA)) {
+                            addRow(frameIndex, row);
                         }
+                    }
+                } else {
+                    final long batchLo = scanner.getBatchLo();
+                    for (long i = matches.size() - 1; i >= 0; i--) {
+                        final long row = matches.get(i) + batchLo;
+                        recordA.setRowIndex(row);
+                        addRow(frameIndex, row);
                     }
                 }
             }
         }
         map.clear();
+    }
+
+    private void addRow(int frameIndex, long row) {
+        MapKey key = map.withKey();
+        key.put(recordA, recordSink);
+        if (key.create()) {
+            rows.add(Rows.toRowID(frameIndex, row));
+        }
     }
 }

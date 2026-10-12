@@ -99,11 +99,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return filter instanceof LatestByCompiledFilter;
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -115,6 +110,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         sink.child("Subquery", recordCursorFactory);
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
     }
 
     // Holds the LATEST BY key sub-query in a private field and does not expose it through

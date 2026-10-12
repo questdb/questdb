@@ -100,11 +100,6 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return filter instanceof LatestByCompiledFilter;
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -117,6 +112,11 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         sink.optAttr("includedSymbols", includedSymbolFuncs);
         sink.optAttr("excludedSymbols", excludedSymbolFuncs);
         sink.child(partitionFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
     }
 
     private static @Nullable IntList newSymbolKeyCache(@Nullable ObjList<Function> functions) {

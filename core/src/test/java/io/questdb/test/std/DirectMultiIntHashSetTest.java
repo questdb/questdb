@@ -43,7 +43,7 @@ public class DirectMultiIntHashSetTest {
     @Test
     public void testFailedGrowthPreservesKeys() throws Exception {
         assertMemoryLeak(() -> {
-            try (DirectMultiIntHashSet set = new DirectMultiIntHashSet(3, 4, 0.5, 32)) {
+            try (DirectMultiIntHashSet set = new DirectMultiIntHashSet(3, 4, 0.5, 32, 0)) {
                 set.reopen();
                 for (int i = 0; i < 8; i++) {
                     writeKey(set, i, 0, Integer.MIN_VALUE);
@@ -75,7 +75,7 @@ public class DirectMultiIntHashSetTest {
     public void testLazyAllocationAndTrackerAcrossReuse() throws Exception {
         assertMemoryLeak(() -> {
             try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
-                 DirectMultiIntHashSet set = new DirectMultiIntHashSet(3, 4, 0.5, 32)) {
+                 DirectMultiIntHashSet set = new DirectMultiIntHashSet(3, 4, 0.5, 32, 0)) {
                 Assert.assertEquals(0, set.getKeyAddress());
                 for (int execution = 0; execution < 3; execution++) {
                     set.setMemoryTracker(tracker);
@@ -96,7 +96,7 @@ public class DirectMultiIntHashSetTest {
     @Test
     public void testResizeLimit() throws Exception {
         assertMemoryLeak(() -> {
-            try (DirectMultiIntHashSet set = new DirectMultiIntHashSet(3, 4, 0.5, 0)) {
+            try (DirectMultiIntHashSet set = new DirectMultiIntHashSet(3, 4, 0.5, 0, 0)) {
                 set.reopen();
                 for (int i = 0; i < 8; i++) {
                     writeKey(set, i, 0, 0);
@@ -113,7 +113,7 @@ public class DirectMultiIntHashSetTest {
     public void testTupleIdentityAndGrowth() throws Exception {
         assertMemoryLeak(() -> {
             for (int width : new int[]{3, 4, 8}) {
-                try (DirectMultiIntHashSet set = new DirectMultiIntHashSet(width, 4, 0.6, 32)) {
+                try (DirectMultiIntHashSet set = new DirectMultiIntHashSet(width, 4, 0.6, 32, 0)) {
                     Rnd rnd = new Rnd();
                     int[] key = new int[width];
                     Set<String> expected = new HashSet<>();

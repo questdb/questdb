@@ -1502,15 +1502,17 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByMultipleSymbolsResizeLimit() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, 0);
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE symbol_groups AS (SELECT ('a' || (x % 100))::SYMBOL s, ('b' || (x / 100))::SYMBOL t,"
                     + " 'c'::SYMBOL u, x v, (x * 1_000_000L)::" + timestampType.getTypeName() + " ts"
                     + " FROM long_sequence(10_000)) TIMESTAMP(ts) PARTITION BY DAY");
             for (String keys : new String[]{"s, t", "s, t, u"}) {
-                assertQuery("SELECT count() FROM (SELECT v FROM symbol_groups WHERE v <= 80 LATEST ON ts PARTITION BY " + keys + ")")
+                assertQuery("SELECT count() FROM (SELECT v FROM symbol_groups WHERE v <= 2_000 LATEST ON ts PARTITION BY " + keys + ")")
                         .noRandomAccess()
                         .expectSize()
-                        .returns("count\n80\n");
+                        .returns("count\n2000\n");
                 assertQuery("SELECT v FROM symbol_groups LATEST ON ts PARTITION BY " + keys)
                         .failsWith("limit of 0 resizes exceeded");
             }

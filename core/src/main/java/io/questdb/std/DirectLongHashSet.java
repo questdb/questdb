@@ -59,6 +59,7 @@ public class DirectLongHashSet implements Closeable, Mutable, Reopenable, Sinkab
     private final double loadFactor;
     private final int maxResizes;
     private final int memoryTag;
+    private final int unchargedKeyCapacity;
     private int capacity;
     private int free;
     private boolean hasZero;
@@ -78,11 +79,11 @@ public class DirectLongHashSet implements Closeable, Mutable, Reopenable, Sinkab
     }
 
     public DirectLongHashSet(int capacity, double loadFactor, int memoryTag) {
-        this(capacity, loadFactor, memoryTag, Integer.MAX_VALUE, true);
+        this(capacity, loadFactor, memoryTag, Integer.MAX_VALUE, 0, true);
     }
 
-    public DirectLongHashSet(int capacity, double loadFactor, int memoryTag, int maxResizes, boolean openOnInit) {
-        if (!(loadFactor > 0 && loadFactor < 1) || capacity < 0 || maxResizes < 0) {
+    public DirectLongHashSet(int capacity, double loadFactor, int memoryTag, int maxResizes, int unchargedKeyCapacity, boolean openOnInit) {
+        if (!(loadFactor > 0 && loadFactor < 1) || capacity < 0 || maxResizes < 0 || unchargedKeyCapacity < 0) {
             throw new IllegalArgumentException("invalid long set configuration");
         }
         double slots = Math.max(MIN_CAPACITY, Math.ceil(capacity / loadFactor));
@@ -93,6 +94,7 @@ public class DirectLongHashSet implements Closeable, Mutable, Reopenable, Sinkab
         this.loadFactor = loadFactor;
         this.memoryTag = memoryTag;
         this.maxResizes = maxResizes;
+        this.unchargedKeyCapacity = unchargedKeyCapacity;
         if (openOnInit) {
             reopen();
         }
@@ -247,7 +249,8 @@ public class DirectLongHashSet implements Closeable, Mutable, Reopenable, Sinkab
     }
 
     private void rehash() {
-        if (resizeCount == maxResizes) {
+        final boolean isCharged = size >= unchargedKeyCapacity;
+        if (isCharged && resizeCount == maxResizes) {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in long set");
         }
         if (capacity >= Numbers.MAX_SAFE_INT_POW_2) {
@@ -282,6 +285,8 @@ public class DirectLongHashSet implements Closeable, Mutable, Reopenable, Sinkab
         capacity = newCapacity;
         mask = newMask;
         free = Math.max(1, (int) (capacity * loadFactor) - size);
-        resizeCount++;
+        if (isCharged) {
+            resizeCount++;
+        }
     }
 }

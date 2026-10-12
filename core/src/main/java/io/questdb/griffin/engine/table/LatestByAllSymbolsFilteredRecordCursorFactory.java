@@ -67,11 +67,6 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return filter instanceof LatestByCompiledFilter;
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -83,6 +78,11 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
         sink.optAttr("filter", ((LatestByAllSymbolsFilteredRecordCursor) cursor).getFilter());
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
     }
 
     @Override

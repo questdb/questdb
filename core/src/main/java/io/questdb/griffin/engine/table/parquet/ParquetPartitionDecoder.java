@@ -25,15 +25,15 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
-import io.questdb.std.Vect;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 /**
  * Parquet partition decoder that decode row-groups from `data.parquet`

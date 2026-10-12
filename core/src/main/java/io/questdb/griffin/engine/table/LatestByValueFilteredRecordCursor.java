@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCursor {
@@ -113,6 +114,7 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         if (symbolKey == SymbolTable.VALUE_IS_NULL && !frameCursor.getSymbolTable(columnIndex).containsNullValue()) {
             return;
         }
+        final Function javaFilter = scanner.getJavaFilter();
         PageFrame frame;
         OUT:
         while ((frame = frameCursor.next()) != null) {
@@ -122,11 +124,23 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
             frameMemoryPool.navigateTo(frameCount++, recordA);
             scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
             while (scanner.nextBatch(circuitBreaker)) {
-                for (long i = scanner.getRowCount() - 1; i >= 0; i--) {
-                    recordA.setRowIndex(scanner.getRow(i));
-                    if (scanner.isMatch(recordA) && recordA.getInt(columnIndex) == symbolKey) {
-                        isRecordFound = true;
-                        break OUT;
+                final DirectLongList matches = scanner.getMatches();
+                if (matches == null) {
+                    for (long row = scanner.getRowCount() - 1; row >= 0; row--) {
+                        recordA.setRowIndex(row);
+                        if (javaFilter.getBool(recordA) && recordA.getInt(columnIndex) == symbolKey) {
+                            isRecordFound = true;
+                            break OUT;
+                        }
+                    }
+                } else {
+                    final long batchLo = scanner.getBatchLo();
+                    for (long i = matches.size() - 1; i >= 0; i--) {
+                        recordA.setRowIndex(matches.get(i) + batchLo);
+                        if (recordA.getInt(columnIndex) == symbolKey) {
+                            isRecordFound = true;
+                            break OUT;
+                        }
                     }
                 }
             }
