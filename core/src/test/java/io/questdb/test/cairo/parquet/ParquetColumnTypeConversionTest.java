@@ -1866,6 +1866,86 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * After a VARCHAR -> STRING -> VARCHAR round trip leaves the parquet file untouched,
+     * an ADD COLUMN forces the next O3 merge to rewrite with a target schema. That rewrite
+     * raw-copies untouched row groups with a null column for {@code c}, while the writer
+     * column order differs from the file order. The bloom filter on {@code b} must stay
+     * attached to {@code b}. The following O3 merge updates the rewritten file in place.
+     */
+    @Test
+    public void testO3AfterStringVarcharRoundTripAndAddColumnWithBloomFilter() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> runO3AfterStringVarcharRoundTrip(
+                "a VARCHAR, b VARCHAR, ts TIMESTAMP",
+                "",
+                12,
+                " WITH (bloom_filter_columns = 'b')",
+                "ADD COLUMN c INT",
+                O3Batch.rewrite("(a, b, c, ts) VALUES ('aX', 'bX', 1, '2024-01-01T04:30:00.000000Z')"),
+                O3Batch.inPlace("(a, b, c, ts) VALUES ('aY', 'bY', 2, '2024-01-01T09:30:00.000000Z')")
+        ));
+    }
+
+    /**
+     * An O3 batch that lands in the gaps between and after the existing row groups goes
+     * through {@code insert_row_group} rather than {@code replace_row_group}, which must
+     * also match the permuted columns to the file by field id.
+     */
+    @Test
+    public void testO3AfterStringVarcharRoundTripInsertsNewRowGroups() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> runO3AfterStringVarcharRoundTrip(
+                "a VARCHAR, b VARCHAR, ts TIMESTAMP",
+                "",
+                12,
+                "",
+                null,
+                O3Batch.inPlace("""
+                        (a, b, ts) VALUES
+                        ('aG', 'bG', '2024-01-01T03:30:00.000000Z'),
+                        ('aT1', 'bT1', '2024-01-01T12:00:00.000000Z'), ('aT2', 'bT2', '2024-01-01T13:00:00.000000Z'),
+                        ('aT3', 'bT3', '2024-01-01T14:00:00.000000Z'), ('aT4', 'bT4', '2024-01-01T15:00:00.000000Z'),
+                        ('aT5', 'bT5', '2024-01-01T16:00:00.000000Z')""")
+        ));
+    }
+
+    /**
+     * A single-row-group parquet partition always rewrites on O3 merge. With no schema
+     * change, the rewrite runs without a target schema and keeps the file's column order,
+     * so the merged row group must still be aligned to the file by field id.
+     */
+    @Test
+    public void testO3AfterStringVarcharRoundTripRewritesSingleRowGroup() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> runO3AfterStringVarcharRoundTrip(
+                "ts TIMESTAMP, a VARCHAR, b VARCHAR",
+                "",
+                4,
+                "",
+                null,
+                O3Batch.rewrite("(a, b, ts) VALUES ('aX', 'bX', '2024-01-01T01:30:00.000000Z')")
+        ));
+    }
+
+    /**
+     * A deduplicating O3 merge after a VARCHAR -> STRING -> VARCHAR round trip must both
+     * replace the matching row and keep column values in the right columns.
+     */
+    @Test
+    public void testO3AfterStringVarcharRoundTripWithDedup() throws Exception {
+        setO3InPlaceProperties();
+        assertMemoryLeak(() -> runO3AfterStringVarcharRoundTrip(
+                "a VARCHAR, b VARCHAR, ts TIMESTAMP",
+                " DEDUP UPSERT KEYS(ts)",
+                12,
+                "",
+                null,
+                O3Batch.inPlace("(a, b, ts) VALUES ('aD', 'bD', '2024-01-01T05:00:00.000000Z'), ('aX', 'bX', '2024-01-01T05:30:00.000000Z')"),
+                O3Batch.inPlace("(a, b, ts) VALUES ('aE', 'bE', '2024-01-01T09:00:00.000000Z')")
+        ));
+    }
+
+    /**
      * C1 repro (fixed->var dedup key, ALTER before DEDUP): like
      * {@link #testO3DedupKeyConversionFixedToVar} but the column becomes a dedup key only AFTER the
      * crossing ALTER, so no pre-pass materialises the parquet partition. The O3 merge then SIGSEGVs
@@ -4625,38 +4705,17 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * merged columns to the file's columns by id, not by position.
      */
     private void assertO3InPlaceAfterStringVarcharRoundTrip(String columns) throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        setO3InPlaceProperties();
         assertMemoryLeak(() -> {
-            for (String table : new String[]{"nt", "pt"}) {
-                execute("CREATE TABLE " + table + " (" + columns + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute("INSERT INTO " + table + " (a, b, ts) SELECT 'a' || x, 'b' || x, '2024-01-01'::timestamp + (x - 1) * 3_600_000_000L FROM long_sequence(12)");
-                execute("INSERT INTO " + table + " (a, b, ts) VALUES ('a99', 'b99', '2024-01-02T00:00:00.000000Z')");
-            }
-            drainWalQueue();
-            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-            drainWalQueue();
-            for (String table : new String[]{"nt", "pt"}) {
-                execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE STRING");
-                execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE VARCHAR");
-            }
-            drainWalQueue();
-
-            final long nameTxn = getPartitionNameTxn("pt");
-            for (String table : new String[]{"nt", "pt"}) {
-                execute("INSERT INTO " + table + " (a, b, ts) VALUES ('aX', 'bX', '2024-01-01T04:30:00.000000Z')");
-            }
-            drainWalQueue();
-            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
-
-            for (String table : new String[]{"nt", "pt"}) {
-                execute("INSERT INTO " + table + " (a, b, ts) VALUES ('aY', 'bY', '2024-01-01T09:30:00.000000Z')");
-            }
-            drainWalQueue();
-            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
-
-            assertSqlCursors("SELECT a, b, ts FROM nt", "SELECT a, b, ts FROM pt");
+            runO3AfterStringVarcharRoundTrip(
+                    columns,
+                    "",
+                    12,
+                    "",
+                    null,
+                    O3Batch.inPlace("(a, b, ts) VALUES ('aX', 'bX', '2024-01-01T04:30:00.000000Z')"),
+                    O3Batch.inPlace("(a, b, ts) VALUES ('aY', 'bY', '2024-01-01T09:30:00.000000Z')")
+            );
             assertQuery("SELECT a, b, ts FROM pt WHERE ts BETWEEN '2024-01-01T04:00:00.000000Z' AND '2024-01-01T05:00:00.000000Z'")
                     .noLeakCheck()
                     .timestamp("ts")
@@ -4789,10 +4848,87 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Builds a native twin {@code nt} and a parquet table {@code pt} with columns
+     * {@code a}, {@code b} and {@code ts}, converts {@code pt}'s first partition to parquet
+     * and round-trips {@code a} through VARCHAR -> STRING -> VARCHAR on both. That
+     * conversion is storage-compatible, so the parquet file keeps its column order while
+     * the table writer moves {@code a} to the end. Each O3 batch must then update the file
+     * in place or rewrite it as declared, and {@code pt} must match {@code nt} both as
+     * parquet and after converting back to native.
+     */
+    private void runO3AfterStringVarcharRoundTrip(
+            String columns,
+            String tableOptions,
+            int rowCount,
+            String convertOptions,
+            String alterAfterRoundTrip,
+            O3Batch... batches
+    ) throws Exception {
+        final String[] tables = {"nt", "pt"};
+        for (String table : tables) {
+            execute("CREATE TABLE " + table + " (" + columns + ") TIMESTAMP(ts) PARTITION BY DAY WAL" + tableOptions);
+            execute("INSERT INTO " + table + " (a, b, ts) SELECT 'a' || x, 'b' || x, '2024-01-01'::timestamp + (x - 1) * 3_600_000_000L FROM long_sequence(" + rowCount + ")");
+            execute("INSERT INTO " + table + " (a, b, ts) VALUES ('a99', 'b99', '2024-01-02T00:00:00.000000Z')");
+        }
+        drainWalQueue();
+        execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'" + convertOptions);
+        drainWalQueue();
+        for (String table : tables) {
+            execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE STRING");
+            execute("ALTER TABLE " + table + " ALTER COLUMN a TYPE VARCHAR");
+            if (alterAfterRoundTrip != null) {
+                execute("ALTER TABLE " + table + " " + alterAfterRoundTrip);
+            }
+        }
+        drainWalQueue();
+
+        for (O3Batch batch : batches) {
+            final long nameTxn = getPartitionNameTxn("pt");
+            for (String table : tables) {
+                execute("INSERT INTO " + table + " " + batch.insert());
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+            if (batch.isInPlace()) {
+                Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+            } else {
+                Assert.assertNotEquals("O3 merge must rewrite the parquet partition", nameTxn, getPartitionNameTxn("pt"));
+            }
+        }
+
+        for (int pass = 0; pass < 2; pass++) {
+            assertSqlCursors("SELECT * FROM nt", "SELECT * FROM pt");
+            assertSqlCursors("SELECT * FROM nt WHERE b = 'b5'", "SELECT * FROM pt WHERE b = 'b5'");
+            assertSqlCursors("SELECT * FROM nt WHERE b = 'bX'", "SELECT * FROM pt WHERE b = 'bX'");
+            assertSqlCursors("SELECT * FROM nt WHERE a = 'a5'", "SELECT * FROM pt WHERE a = 'a5'");
+            if (pass == 0) {
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+            }
+        }
+    }
+
+    private void setO3InPlaceProperties() {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+    }
+
     private void tryDrop(String tableName) {
         try {
             execute("DROP TABLE " + tableName);
         } catch (Exception ignored) {
+        }
+    }
+
+    private record O3Batch(String insert, boolean isInPlace) {
+        static O3Batch inPlace(String insert) {
+            return new O3Batch(insert, true);
+        }
+
+        static O3Batch rewrite(String insert) {
+            return new O3Batch(insert, false);
         }
     }
 }
