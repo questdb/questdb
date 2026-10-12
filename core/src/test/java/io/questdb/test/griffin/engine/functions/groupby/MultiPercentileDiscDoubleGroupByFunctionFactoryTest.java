@@ -224,7 +224,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
             //   50th: ceil(2*0.50)-1 = 0 → 5.0
             //   75th: ceil(2*0.75)-1 = 1 → 11.0
             assertQuery("SELECT cat1, cat2, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) " +
-                            "FROM test GROUP BY cat1, cat2 ORDER BY cat1, cat2")
+                    "FROM test GROUP BY cat1, cat2 ORDER BY cat1, cat2")
                     .noLeakCheck()
                     .returnsOnce("""
                             cat1\tcat2\tpercentile_disc
@@ -353,10 +353,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) value FROM long_sequence(10))");
             // Test with 20 percentiles
             assertQuery("SELECT count(*) FROM (" +
-                            "SELECT value, percentile_disc(value, ARRAY[" +
-                            "0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, " +
-                            "0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0" +
-                            "]) OVER () FROM test)")
+                    "SELECT value, percentile_disc(value, ARRAY[" +
+                    "0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, " +
+                    "0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0" +
+                    "]) OVER () FROM test)")
                     .noLeakCheck()
                     .returnsOnce("""
                             count

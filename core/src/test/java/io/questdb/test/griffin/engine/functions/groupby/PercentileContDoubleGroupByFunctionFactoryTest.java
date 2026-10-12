@@ -25,10 +25,13 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -408,6 +411,31 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             assertQuery("SELECT percentile_cont(x, $1) FROM test")
                     .noLeakCheck()
                     .returnsOnce("percentile_cont\n5.0\n");
+        });
+    }
+
+    @Test
+    public void testPercentileWithUntypedBindVariable() throws Exception {
+        // An untyped percentile bind variable matches the DOUBLE and DOUBLE[] overloads
+        // at the same distance. function_list.txt pins the DOUBLE overload first, so the
+        // compiler types the bind variable as DOUBLE rather than DOUBLE[].
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(10))");
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = select("SELECT percentile_cont(x, $1), quantile_cont(x, $2) FROM test")) {
+                Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
+                Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(1).getType());
+                bindVariableService.setDouble(0, 0.5);
+                bindVariableService.setDouble(1, 0.25);
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                percentile_cont\tquantile_cont
+                                5.5\t3.25
+                                """);
+            }
         });
     }
 
