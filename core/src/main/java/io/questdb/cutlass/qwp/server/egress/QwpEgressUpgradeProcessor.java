@@ -1717,8 +1717,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long batchSeq,
             QwpResultBatchBuffer batchBuffer,
             boolean isFirstBatch,
-            int rowsToShip,
-            boolean isPartialEmit
+            int rowsToShip
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Asserts the caller bumped streamingBatchSeq (via state.onStreamingBatchSent)
         // BEFORE reaching the socket. See QwpEgressProcessorState.consumeBatchSeqCommit.
@@ -1804,9 +1803,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // committed bytes are queued for resumeResponseSend. The bytes always
         // reach the wire, so bookkeeping must always advance.
         state.consumeStreamingCredit(qwpSize);
-        if (isPartialEmit) {
-            batchBuffer.advanceDeltaStart();
-        }
         batchBuffer.advanceStartRow(rowsToShip);
         metrics.markBatchSent(qwpSize, rowsToShip);
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
@@ -1947,19 +1943,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         rawSocket.send(frame1Size + ws2HeaderSize + qwp2Size);
     }
 
-    private void sendResultBatchPrefix(
-            HttpConnectionContext context,
-            QwpEgressProcessorState state,
-            long requestId,
-            long batchSeq,
-            QwpResultBatchBuffer batchBuffer,
-            boolean isFirstBatch,
-            int rowsToShip
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        sendResultBatch(context, state, requestId, batchSeq, batchBuffer,
-                isFirstBatch, rowsToShip, true);
-    }
-
     private void sendResultEnd(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
@@ -2036,6 +2019,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         .$(", batchSeq=").$(state.getStreamingBatchSeq())
                         .$(", rowsEmitted=").$(state.getStreamingRowsEmitted())
                         .I$();
+                // Drop a suffix left by a partial emit; otherwise the next query
+                // skips beginBatch and ships these rows as its own.
+                batchBuffer.rollbackCurrentBatch();
                 state.endStreaming();
                 metrics.markQueryCancelled();
                 sendQueryError(context, state, requestId, QwpConstants.STATUS_CANCELLED, "cancelled by client");
@@ -2197,14 +2183,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         batchBuffer, isFirstBatch, totalRows, rowsToShip);
                 return;
             }
-            if (isPartialEmit) {
-                sendResultBatchPrefix(context, state, requestId, currentSeq, batchBuffer,
-                        isFirstBatch, rowsToShip);
-            } else {
-                sendResultBatch(context, state, requestId, currentSeq, batchBuffer,
-                        isFirstBatch, rowsToShip, false);
-            }
-            // Credit debit, metric update, advanceStartRow, advanceDeltaStart
+            sendResultBatch(context, state, requestId, currentSeq, batchBuffer,
+                    isFirstBatch, rowsToShip);
+            // Credit debit, metric update and advanceStartRow
             // all live inside the send functions so they commit before any
             // PeerIsSlowToReadException thrown by sendFrame.
         }
