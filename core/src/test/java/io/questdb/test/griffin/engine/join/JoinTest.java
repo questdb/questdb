@@ -15010,6 +15010,189 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRightJoinAfterInnerOverMixedTypeUnionDerivesKeyFilter() throws Exception {
+        // The union widens INT and LONG to LONG, whose NULL record fails u.k = 5, so the filter drops every row
+        // that RIGHT or FULL JOIN dq NULL-extends, and addTransitiveFilters() can filter bl by the key below the
+        // join. When getQueryColumnType() gave up on branches of different types, bl lost the filter and the
+        // INNER join hashed and matched every bl row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ui (k INT, v LONG)");
+            execute("INSERT INTO ui VALUES (5, 1), (6, 2), (null, 3)");
+            execute("CREATE TABLE ul (k LONG, v LONG)");
+            execute("INSERT INTO ul VALUES (5, 10), (7, 20), (null, 30)");
+            execute("CREATE TABLE bl (bk LONG, x INT, w LONG)");
+            execute("INSERT INTO bl VALUES (5, 1, 100), (6, 2, 200), (7, 3, 300), (null, 4, 400)");
+            execute("CREATE TABLE dq (x INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3), (4), (9)");
+            execute("CREATE VIEW uv AS (SELECT k, v FROM ui UNION ALL SELECT k, v FROM ul)");
+
+            final String expected = """
+                    k\tv\tbk\tw\tdx
+                    5\t1\t5\t100\t1
+                    5\t10\t5\t100\t1
+                    """;
+            for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                final String tail = " u JOIN bl ON bl.bk = u.k " + joinType + " JOIN dq ON dq.x = bl.x WHERE u.k = 5 ORDER BY u.v";
+                for (String source : new String[]{
+                        "(SELECT k, v FROM ui UNION ALL SELECT k, v FROM ul)",
+                        "(SELECT k, v FROM ul UNION ALL SELECT k, v FROM ui)",
+                        "(SELECT k, v FROM ui UNION SELECT k, v FROM ul)",
+                        "uv"
+                }) {
+                    assertQuery("SELECT u.k, u.v, bl.bk, bl.w, dq.x dx FROM " + source + tail)
+                            .noLeakCheck()
+                            .withPlanContaining("filter: bk=5")
+                            .returns(expected);
+                }
+                assertQuery("WITH u AS (SELECT k, v FROM ui UNION ALL SELECT k, v FROM ul) SELECT u.k, u.v, bl.bk, bl.w, dq.x dx FROM" + tail)
+                        .noLeakCheck()
+                        .withPlanContaining("filter: bk=5")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinAfterInnerOverMixedTypeUnionDerivesKeyFilterOnWidenedType() throws Exception {
+        // The union widens BYTE, SHORT and INT to INT, whose NULL record fails u.k = 0, so the key filters bi
+        // below the RIGHT JOIN. The BYTE type of the first branch has no NULL: its NULL record, 0, passes
+        // u.k = 0, so the type of the first branch alone would keep the full scan of bi.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ub (k BYTE, v LONG)");
+            execute("INSERT INTO ub VALUES (0, 1), (5, 2)");
+            execute("CREATE TABLE ush (k SHORT, v LONG)");
+            execute("INSERT INTO ush VALUES (0, 10), (6, 20)");
+            execute("CREATE TABLE ui (k INT, v LONG)");
+            execute("INSERT INTO ui VALUES (0, 100), (null, 200)");
+            execute("CREATE TABLE bi (bk INT, x INT, w LONG)");
+            execute("INSERT INTO bi VALUES (0, 1, 1000), (5, 2, 2000), (6, 3, 3000), (null, 4, 4000)");
+            execute("CREATE TABLE dq (x INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3), (4), (9)");
+            assertQuery("""
+                    SELECT u.k, u.v, bi.bk, bi.w, dq.x dx
+                    FROM (SELECT k, v FROM ub UNION ALL SELECT k, v FROM ush UNION ALL SELECT k, v FROM ui) u
+                    JOIN bi ON bi.bk = u.k RIGHT JOIN dq ON dq.x = bi.x
+                    WHERE u.k = 0 ORDER BY u.v""")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: bk=0")
+                    .returns("""
+                            k\tv\tbk\tw\tdx
+                            0\t1\t0\t1000\t1
+                            0\t10\t0\t1000\t1
+                            0\t100\t0\t1000\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testRightJoinAfterInnerOverMixedTypeUnionDerivesStringKeyFilter() throws Exception {
+        // The union widens SYMBOL with VARCHAR to VARCHAR and SYMBOL with STRING to STRING. Both NULL records
+        // fail u.k = 'a', so the key filters bv below the RIGHT JOIN.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE us (k SYMBOL, v LONG)");
+            execute("INSERT INTO us VALUES ('a', 1), ('b', 2), (null, 3)");
+            execute("CREATE TABLE uvc (k VARCHAR, v LONG)");
+            execute("INSERT INTO uvc VALUES ('a', 10), ('c', 20), (null, 30)");
+            execute("CREATE TABLE ust (k STRING, v LONG)");
+            execute("INSERT INTO ust VALUES ('a', 10), ('c', 20), (null, 30)");
+            execute("CREATE TABLE bv (bk VARCHAR, x INT, w LONG)");
+            execute("INSERT INTO bv VALUES ('a', 1, 100), ('b', 2, 200), ('c', 3, 300), (null, 4, 400)");
+            execute("CREATE TABLE dq (x INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3), (4), (9)");
+
+            final String expected = """
+                    k\tv\tbk\tw\tdx
+                    a\t1\ta\t100\t1
+                    a\t10\ta\t100\t1
+                    """;
+            for (String source : new String[]{
+                    "(SELECT k, v FROM us UNION ALL SELECT k, v FROM uvc)",
+                    "(SELECT k, v FROM uvc UNION ALL SELECT k, v FROM us)",
+                    "(SELECT k, v FROM us UNION ALL SELECT k, v FROM ust)"
+            }) {
+                assertQuery("SELECT u.k, u.v, bv.bk, bv.w, dq.x dx FROM " + source
+                        + " u JOIN bv ON bv.bk = u.k RIGHT JOIN dq ON dq.x = bv.x WHERE u.k = 'a' ORDER BY u.v")
+                        .noLeakCheck()
+                        .withPlanContaining("filter: bk='a'")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinAfterInnerOverMixedTypeUnionKeepsNullConstant() throws Exception {
+        // The union widens BYTE and INT to INT, whose NULL record passes u.k = NULL: the rows that RIGHT JOIN dq
+        // NULL-extends survive the filter, so the constant must not filter bi below the join. A check on the type
+        // of the BYTE branch, first or last, finds no NULL and filters bi: dq 2, 3 and 4 then lose their matches
+        // and return three extra NULL-extended rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ub (k BYTE, v LONG)");
+            execute("INSERT INTO ub VALUES (0, 1), (5, 2)");
+            execute("CREATE TABLE ui (k INT, v LONG)");
+            execute("INSERT INTO ui VALUES (null, 10), (5, 20), (7, 30)");
+            execute("CREATE TABLE bi (bk INT, x INT, w LONG)");
+            execute("INSERT INTO bi VALUES (null, 1, 100), (5, 2, 200), (7, 3, 300), (0, 4, 400)");
+            execute("CREATE TABLE dq (x INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3), (4), (9)");
+
+            final String expected = """
+                    k\tv\tbk\tw\tdx
+                    null\t10\tnull\t100\t1
+                    null\tnull\tnull\tnull\t9
+                    """;
+            for (String source : new String[]{
+                    "(SELECT k, v FROM ub UNION ALL SELECT k, v FROM ui)",
+                    "(SELECT k, v FROM ui UNION ALL SELECT k, v FROM ub)"
+            }) {
+                assertQuery("SELECT u.k, u.v, bi.bk, bi.w, dq.x dx FROM " + source
+                        + " u JOIN bi ON bi.bk = u.k RIGHT JOIN dq ON dq.x = bi.x WHERE u.k = NULL ORDER BY dx")
+                        .noLeakCheck()
+                        .withPlanNotContaining("filter: bk=null")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testRightJoinAfterInnerOverMixedTypeUnionKeepsZeroOfTypeWithoutNull() throws Exception {
+        // The union widens BYTE or CHAR with SHORT to SHORT, which has no NULL: RIGHT JOIN dq NULL-extends u.k to
+        // 0, which passes u.k = 0 and u.k = '0', so the constant must not filter bsh below the join. Filtering bsh
+        // would drop the rows that dq 2 and 3 match and return two extra NULL-extended rows. The CHAR type of the
+        // first branch has a NULL, which fails u.k = '0', so a check on it filtered bsh.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ub (k BYTE, v LONG)");
+            execute("INSERT INTO ub VALUES (0, 1), (5, 2)");
+            execute("CREATE TABLE uc (k CHAR, v LONG)");
+            execute("INSERT INTO uc VALUES ('0', 1), ('5', 2)");
+            execute("CREATE TABLE ush (k SHORT, v LONG)");
+            execute("INSERT INTO ush VALUES (0, 10), (7, 20)");
+            execute("CREATE TABLE bsh (bk SHORT, x INT, w LONG)");
+            execute("INSERT INTO bsh VALUES (0, 1, 100), (5, 2, 200), (7, 3, 300)");
+            execute("CREATE TABLE dq (x INT)");
+            execute("INSERT INTO dq VALUES (1), (2), (3), (4)");
+
+            final String expected = """
+                    k\tv\tbk\tw\tdx
+                    0\t1\t0\t100\t1
+                    0\t10\t0\t100\t1
+                    0\tnull\t0\tnull\t4
+                    """;
+            for (String[] sourceAndConstant : new String[][]{
+                    {"(SELECT k, v FROM ub UNION ALL SELECT k, v FROM ush)", "0"},
+                    {"(SELECT k, v FROM ush UNION ALL SELECT k, v FROM ub)", "0"},
+                    {"(SELECT k, v FROM uc UNION ALL SELECT k, v FROM ush)", "'0'"}
+            }) {
+                assertQuery("SELECT u.k, u.v, bsh.bk, bsh.w, dq.x dx FROM " + sourceAndConstant[0]
+                        + " u JOIN bsh ON bsh.bk = u.k RIGHT JOIN dq ON dq.x = bsh.x WHERE u.k = " + sourceAndConstant[1]
+                        + " ORDER BY dx, u.v")
+                        .noLeakCheck()
+                        .withPlanNotContaining("filter: bk=0")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testRightJoinAfterOuterJoinOnKeysSharingColumn() throws Exception {
         // The LEFT JOIN f5 keys share b5, so its outer join expression reads f2. Without the ordering edge
         // of the dropped key the optimiser misordered the chain, and the unmatched f3 rows lost their

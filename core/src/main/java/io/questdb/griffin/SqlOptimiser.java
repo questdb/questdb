@@ -6687,18 +6687,35 @@ public class SqlOptimiser implements Mutable {
     }
 
     // A set operation outputs each column in the type that it widens over the branches, which match columns by
-    // position. Returns the type when every branch has the column in that same type, and -1 when the branches
-    // differ, so no caller reads the type of one branch as the type of the output.
+    // position. Returns that type, widened in branch order with SqlCodeGenerator.getUnionCastType() as
+    // generateSetFactory() widens it, or -1 when the type of a branch is unknown, so no caller reads the type of
+    // one branch as the type of the output. A type that the next branch shares stays as it is: getUnionCastType()
+    // widens SYMBOL and SYMBOL to STRING, but a UNION outputs a column that is SYMBOL on every branch as SYMBOL.
     private int getSetOperationColumnType(IQueryModel model, QueryColumn column) {
         final int index = model.getColumns().indexOf(column);
-        final int type = getQueryColumnType(model, column);
+        int type = getQueryColumnType(model, column);
         if (index < 0 || type < 0) {
             return -1;
         }
         for (IQueryModel branch = model.getUnionModel(); branch != null; branch = branch.getUnionModel()) {
             final ObjList<QueryColumn> branchColumns = branch.getColumns();
-            if (index >= branchColumns.size() || getQueryColumnType(branch, branchColumns.getQuick(index)) != type) {
+            if (index >= branchColumns.size()) {
                 return -1;
+            }
+            final int branchType = getQueryColumnType(branch, branchColumns.getQuick(index));
+            if (branchType < 0) {
+                return -1;
+            }
+            if (branchType != type) {
+                try {
+                    type = SqlCodeGenerator.getUnionCastType(type, branchType);
+                } catch (SqlException e) {
+                    // arrays of unknown dimensionality, which code generation rejects as well
+                    return -1;
+                }
+                if (type < 0) {
+                    return -1;
+                }
             }
         }
         return type;
