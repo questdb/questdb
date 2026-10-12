@@ -1,4 +1,5 @@
-use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
+use super::{compression_from_i64, version_from_i32};
+use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::{
     ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
@@ -17,9 +18,7 @@ use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
 use jni::sys::{jboolean, jdouble, jint, jlong};
 use jni::JNIEnv;
-use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
-use parquet2::write::Version;
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroup(
@@ -970,43 +969,6 @@ fn build_bloom_filter_set(
         out.insert(i as usize);
     }
     Ok(out)
-}
-
-fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
-    match value {
-        1 => Ok(Version::V1),
-        2 => Ok(Version::V2),
-        _ => Err(fmt_err!(Unsupported, "unsupported parquet version {value}")),
-    }
-}
-
-/// The `i64` value is expected to encode two `i32` values:
-/// - The higher 32 bits represent the `level_id`.
-/// - The lower 32 bits represent the optional `codec_id`.
-///   `let value: i64 = (3 << 32) | 2;` Gzip with level 3.
-fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> {
-    let codec_id = value as i32;
-    let level_id = (value >> 32) as i32;
-    match codec_id {
-        0 => Ok(CompressionOptions::Uncompressed),
-        1 => Ok(CompressionOptions::Snappy),
-        2 => Ok(CompressionOptions::Gzip(Some(GzipLevel::try_new(
-            level_id as u8,
-        )?))),
-        3 => Ok(CompressionOptions::Lzo),
-        4 => Ok(CompressionOptions::Brotli(Some(BrotliLevel::try_new(
-            level_id as u32,
-        )?))),
-        5 => Ok(CompressionOptions::Lz4),
-        6 => Ok(CompressionOptions::Zstd(Some(ZstdLevel::try_new(
-            level_id,
-        )?))),
-        7 => Ok(CompressionOptions::Lz4Raw),
-        _ => Err(fmt_err!(
-            Unsupported,
-            "unsupported compression codec id: {codec_id}"
-        )),
-    }
 }
 
 struct BufferWriter {
