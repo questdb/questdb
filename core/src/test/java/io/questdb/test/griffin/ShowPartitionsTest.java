@@ -789,6 +789,47 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowPartitionsSubQueryAsLateralOuterSource() throws Exception {
+        // A LATERAL join that correlates its outer source by plain column equality reads that source
+        // once, so the cursor of the SHOW statement serves the join like any other outer source.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            execute("CREATE TABLE picks (name SYMBOL)");
+            execute("INSERT INTO picks VALUES ('2023-01'), ('2023-03'), ('2023-01')");
+            assertQuery("SELECT o.name, l.c FROM (SHOW PARTITIONS FROM '" + tableName + "') o" +
+                    " JOIN LATERAL (SELECT count() c FROM picks p WHERE p.name = o.name) l ON true")
+                    .noRandomAccess()
+                    .returns("""
+                            name\tc
+                            2023-01\t2
+                            2023-02\t0
+                            2023-03\t1
+                            2023-04\t0
+                            2023-05\t0
+                            2023-06\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowPartitionsSubQueryFreedWhenNeverRead() throws Exception {
+        // The optimiser builds the cursor of a SHOW statement in a declared variable that nothing
+        // reads, and code generation never takes it over, so the compile must free it.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            assertQuery("DECLARE @n := (SELECT count() FROM (SHOW PARTITIONS FROM '" + tableName + "')) SELECT x FROM long_sequence(2)")
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
     public void testShowPartitionsSubQueryFreedWhenOptimiseFails() throws Exception {
         // The optimiser builds the cursor of a SHOW statement before it resolves the rest of the
         // query, so a failure after that must free it, like the cursor of a table function.
@@ -797,6 +838,20 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             createTable(tableName);
             final String sql = "SELECT * FROM (SHOW PARTITIONS FROM '" + tableName + "') WHERE no_such_col = 1";
             assertQuery(sql).fails(sql.indexOf("no_such_col"), "Invalid column: no_such_col");
+        });
+    }
+
+    @Test
+    public void testShowPartitionsSubQueryReadTwiceByLateralJoinFails() throws Exception {
+        // A non-equality correlation makes the LATERAL join read its outer source twice: as its left
+        // side and as the outer references of its right side. The SHOW statement has one cursor, which
+        // the first read takes over, so the plan rejects the second read instead of sharing the cursor.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            final String sql = "SELECT o.name, l.c FROM (SHOW PARTITIONS FROM '" + tableName + "') o" +
+                    " JOIN LATERAL (SELECT count() c FROM '" + tableName + "' t WHERE t.symbol <= o.name) l ON true";
+            assertQuery(sql).fails(sql.indexOf("SHOW"), "SHOW statement cannot be read more than once in a query");
         });
     }
 
