@@ -79,6 +79,7 @@ final class OrderPlanning implements OptimiserPass {
     private final FunctionFactoryCache functionFactoryCache;
     private final ObjectPool<SortPlan> sorts;
     private boolean isJoinSlaveInput;
+    private boolean isRandomAccessRequired;
 
     OrderPlanning(FunctionFactoryCache functionFactoryCache, ObjectPool<SortPlan> sorts) {
         this.functionFactoryCache = functionFactoryCache;
@@ -90,6 +91,7 @@ final class OrderPlanning implements OptimiserPass {
         markMarkoutHorizons(plan);
         final LogicalPlan root = removeReorderedSorts(plan);
         isJoinSlaveInput = false;
+        isRandomAccessRequired = false;
         requireNothing(root);
         return root;
     }
@@ -377,9 +379,14 @@ final class OrderPlanning implements OptimiserPass {
     /**
      * Records what the consumer of {@code plan} requires and pushes it on to the inputs: rows ordered by
      * {@code orderColumnId} in {@code direction}, an {@code order} an access path may deliver, a {@code limit} on the
-     * rows read, and whether the row order matters at all.
+     * rows read, and whether the row order matters at all. A SPLICE join reads its slave by random access, which a
+     * merged UNION ALL does not provide, so a set operation the slave reads through projections, filters, limits and
+     * sorts gets no order request, and the sort over it sorts.
      */
     private void require(LogicalPlan plan, int orderColumnId, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
+        final boolean wasRandomAccessRequired = isRandomAccessRequired;
+        isRandomAccessRequired = wasRandomAccessRequired
+                && (plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof LimitPlan || plan instanceof SortPlan);
         switch (plan) {
             case WindowPlan window -> requireWindow(window, orderColumnId, direction, order,
                     window.isSelectOrdered() && order != null && order.getInput() == plan, isRowOrderRequired);
@@ -409,10 +416,12 @@ final class OrderPlanning implements OptimiserPass {
             case AggregatePlan aggregate -> requireAggregate(aggregate, orderColumnId, direction, order);
             case JoinPlan join -> requireJoin(join, orderColumnId, direction, order, isRowOrderRequired);
             case WindowJoinPlan windowJoin -> requireWindowJoin(windowJoin);
+            case SetOperationPlan operation when wasRandomAccessRequired -> requireSetOperation(operation, -1, null, isRowOrderRequired);
             case SetOperationPlan operation ->
                     requireSetOperation(operation, orderColumnId, direction, isRowOrderRequired);
             default -> requireUnary(plan, orderColumnId, direction, order, limit, isRowOrderRequired);
         }
+        isRandomAccessRequired = wasRandomAccessRequired;
     }
 
     private void requireAggregate(AggregatePlan aggregate, int orderColumnId, SortDirection direction, SortPlan order) {
@@ -466,16 +475,19 @@ final class OrderPlanning implements OptimiserPass {
             require(master, -1, null, null, null, isMasterTimestampRequired || isRowOrderRequired);
         }
         final boolean wasJoinSlaveInput = isJoinSlaveInput;
+        final boolean wasRandomAccessRequired = isRandomAccessRequired;
         isJoinSlaveInput = true;
         try {
             for (int i = 1, n = ordered.size(); i < n; i++) {
                 final JoinInput step = ordered.getQuick(i);
                 if (step.getJoinType() != JoinKind.UNNEST) {
+                    isRandomAccessRequired = step.getJoinType() == JoinKind.SPLICE;
                     require(step.getInput(), -1, null, null, null, step.getJoinType().isTemporal() || isRowOrderRequired);
                 }
             }
         } finally {
             isJoinSlaveInput = wasJoinSlaveInput;
+            isRandomAccessRequired = wasRandomAccessRequired;
         }
     }
 

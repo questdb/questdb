@@ -267,6 +267,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    // The re-parses of the statement left to absorb a table going out of date, shared by binding and code generation.
+    private int remainingRecompileAttempts;
     private LogicalPlan root;
 
     public SqlCompilerImpl(CairoEngine engine) {
@@ -276,6 +278,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.engine = engine;
             this.configuration = engine.getConfiguration();
             this.maxRecompileAttempts = configuration.getMaxSqlRecompileAttempts();
+            this.remainingRecompileAttempts = maxRecompileAttempts;
             this.queryBuilder = new QueryBuilder(this);
             this.ff = configuration.getFilesFacade();
             this.messageBus = engine.getMessageBus();
@@ -429,6 +432,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @Override
     public void clear() {
+        remainingRecompileAttempts = maxRecompileAttempts;
         try {
             clearExceptSqlText();
         } finally {
@@ -611,14 +615,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean generateProgressLogger
     ) throws SqlException {
         QueryModel queryModel = initialQueryModel;
-        int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
             try {
-                return generateSelectOneShot(queryModel.getReferencedViews(), executionContext, generateProgressLogger);
+                return generateSelectOneShot(queryModel, null, executionContext, generateProgressLogger);
             } catch (TableReferenceOutOfDateException e) {
-                if (--remainingRetries < 0) {
-                    throw tooManyRetries(0, e);
-                }
+                consumeRecompileAttempt(e);
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).I$();
                 clearExceptSqlText();
                 lexer.restart();
@@ -712,6 +713,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public int getViewLexerMaxPoolCapacity() {
         return parser.getViewLexerMaxPoolCapacity();
+    }
+
+    @TestOnly
+    public int getWithClausesCopyPoolCapacity() {
+        return parser.getWithClausesCopyPoolCapacity();
     }
 
     /**
@@ -2277,7 +2283,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
                 // test the cursor, if no exception thrown viewSql is working
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                // Nobody is handed the row this reads, so the open is flagged like the probe in
+                // executeCreateView: an audited view in the new body must not record a read.
+                final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                executionContext.setMetadataProbe(true);
+                final RecordCursor cursor;
+                try {
+                    cursor = factory.getCursor(executionContext);
+                } finally {
+                    executionContext.setMetadataProbe(wasMetadataProbe);
+                }
+                try (cursor) {
                     cursor.hasNext();
                 }
             }
@@ -3270,6 +3286,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int viewSqlPosition = lexer.getPosition();
         final String viewSql = parser.parseViewSql(lexer, this);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
@@ -3759,14 +3780,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
-        int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
             try {
                 return compileExecutionModelOnce(executionContext, generateCompileViewEvents);
             } catch (TableReferenceOutOfDateException e) {
-                if (--remainingRetries < 0) {
-                    throw tooManyRetries(0, e);
-                }
+                consumeRecompileAttempt(e);
                 LOG.info().$("retrying binding [fd=").$(executionContext.getRequestFd()).I$();
                 clearExceptSqlText();
                 lexer.restart();
@@ -4821,6 +4839,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofCompileView();
     }
 
+    private void consumeRecompileAttempt(TableReferenceOutOfDateException e) throws SqlException {
+        if (--remainingRecompileAttempts < 0) {
+            throw tooManyRetries(0, e);
+        }
+    }
+
     private void copy(SqlExecutionContext executionContext, ExportModel exportModel) throws SqlException {
         if (!exportModel.isCancel() && Chars.equalsLowerCaseAscii(exportModel.getFileName().token, "stdin")) {
             // no-op implementation
@@ -5055,7 +5079,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             compileCreateSelect(executionContext, createMatViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
-                            newCursor = newFactory.getCursor(executionContext);
+                            // Opened to validate the metadata, and closed with no row read. Flagged
+                            // like the probe in executeCreateView, so that an audited view in the
+                            // SELECT does not record a read that never happened.
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            try {
+                                newCursor = newFactory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -5170,7 +5203,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         executionContext.pushTimestampRequiredFlag(createTableOp.isTimestampRequired());
                         try {
                             lexer.of(createTableOp.getSelectText());
-                            clearExceptSqlText();
+                            clear();
                             compileInner(executionContext, createTableOp.getSelectText(), false);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
@@ -5357,7 +5390,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             compileCreateSelect(executionContext, createViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
-                            newCursor = newFactory.getCursor(executionContext);
+                            // This cursor exists to report column types, not to hand anyone rows.
+                            // Flag it so that an audited view in the SELECT does not record a read.
+                            // The flag covers the cursor open only: the compile above runs with it
+                            // clear, so whatever consumes it has to emit at open, not at generate.
+                            // Restored rather than cleared - any execution context may set this, so
+                            // an outer probe has to survive an inner one.
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            try {
+                                newCursor = newFactory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -5427,10 +5472,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         securityContext.authorizeLiveViewDrop(tableToken);
                     } else if (tableToken.isView()) {
                         securityContext.authorizeViewDrop(tableToken);
+                        if (isAuditedView(tableToken)) {
+                            securityContext.authorizeAuditView();
+                        }
                     } else if (tableToken.isMatView()) {
                         securityContext.authorizeMatViewDrop(tableToken);
                     } else {
                         securityContext.authorizeTableDrop(tableToken);
+                        // Same veto executeDropTable applies. DROP ALL TABLES skips system tables,
+                        // which an undroppable table need not be, so without this the one route
+                        // that drops every table at once would be the route around the veto. The
+                        // throw lands in dropAllTablesFailures below, so the rest still drop.
+                        engine.checkTableDroppable(tableToken);
                     }
                     if (tableToken.isLiveView()) {
                         // A live view carries state the generic drop does not know about:
@@ -5544,6 +5597,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(op.getEntityNamePosition(), "table name expected, got ").put(tableToken.getType().keyword()).put(" name: ").put(op.getEntityName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        engine.checkTableDroppable(tableToken);
 
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
@@ -5582,6 +5636,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(op.getEntityNamePosition(), "cannot drop a system view");
         }
         sqlExecutionContext.getSecurityContext().authorizeViewDrop(tableToken);
+        if (isAuditedView(tableToken)) {
+            // Dropping is the only route by which an audited view loses its marking, so it is gated
+            // like setting it. Redefinition is not such a route: ALTER VIEW and CREATE OR REPLACE
+            // VIEW over an existing view both land in ViewGraph.updateView - compileCreate
+            // intercepts the latter and executes it as an alter - and that carries the current flag
+            // forward rather than taking one from the statement. Only a CREATE over a name that
+            // does not exist yet sets the flag from the statement, and there is nothing to lose
+            // there. Asserted by ViewAuditTest.testRedefiningAnAuditedViewKeepsTheFlag.
+            sqlExecutionContext.getSecurityContext().authorizeAuditView();
+        }
 
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
@@ -5659,8 +5723,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
-        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
-            QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
+        final ExecutionModel innerModel = model.getInnerExecutionModel();
+        if (innerModel.getModelType() == ExecutionModel.UPDATE) {
+            QueryModel updateQueryModel = innerModel.getQueryModel();
             final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                     updateTarget.getTableToken(),
                     updateQueryModel,
@@ -5668,12 +5733,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             );
             return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
         }
-        final ExecutionModel innerModel = model.getInnerExecutionModel();
+        final QueryModel queryModel = innerModel.getQueryModel();
         executionContext.setLiveViewCompile(innerModel.getModelType() == ExecutionModel.CREATE_LIVE_VIEW);
         final RecordCursorFactory factory;
         try {
-            factory = innerModel.getQueryModel() == null
-                    ? null : generatePlan(executionContext);
+            factory = queryModel == null ? null : generateSelectOneShot(queryModel, null, executionContext, false);
         } finally {
             executionContext.setLiveViewCompile(false);
         }
@@ -5708,7 +5772,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @Transient QueryModel updateQueryModel,
             @Transient SqlExecutionContext executionContext
     ) throws SqlException {
-        RecordCursorFactory updateToDataCursorFactory = generateSelectOneShot(updateQueryModel.getReferencedViews(), executionContext, false);
+        RecordCursorFactory updateToDataCursorFactory = generateSelectOneShot(updateQueryModel.getNestedModel(), null, executionContext, false);
         try {
             if (!updateToDataCursorFactory.supportsUpdateRowId(tableToken)) {
                 // in theory this should never happen because all valid UPDATE statements should result in
@@ -5802,6 +5866,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
         Misc.free(function, exception);
         throw exception;
+    }
+
+    private boolean isAuditedView(TableToken tableToken) {
+        if (!tableToken.isView()) {
+            return false;
+        }
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(tableToken);
+        return viewDefinition != null && viewDefinition.isAudited();
     }
 
     private boolean isCompatibleColumnTypeChange(int from, int to) {
@@ -6015,6 +6087,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         executionContext.getSecurityContext().authorizeResumeWal(tableToken);
+        if (fromTxn > 0) {
+            // Only a positive transaction can skip anything, see TableSequencerAPI.resumeTable().
+            engine.checkTableResumableFromTxn(tableToken, tableNamePosition);
+        }
         alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
     }
 
@@ -6060,6 +6136,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
+        engine.checkTableSuspendable(tableToken, tableNamePosition);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 
@@ -6307,7 +6384,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final int viewSqlPosition = lexer.getPosition();
-        final String viewSql = parser.parseViewSql(lexer, this);
+        final String viewSql = parser.parseViewSql(lexer, this, executionContext, viewToken);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
@@ -6336,27 +6418,47 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         subqueries.setPos(first);
         optimiser.planAccessPaths(subquery.getRoot(), codeGenerator.getGenerationDepth(), false, executionContext);
-        return generateSubquery(subquery, executionContext);
+        return generateSelectOneShot(model, subquery, executionContext, false);
     }
 
     protected AlterOperationBuilder createAlterOperationBuilder() {
         return new AlterOperationBuilder();
     }
 
+    /**
+     * Generates the plan of {@code queryModel}. With a null {@code subquery} that is the statement's plan: the plan of
+     * a SELECT, of the SELECT of an INSERT, CREATE TABLE, CREATE VIEW or CREATE MATERIALIZED VIEW, of an EXPLAIN, or
+     * of the rows an UPDATE selects. Otherwise it is the plan of {@code subquery}, whose rows binding consumes, such as
+     * a {@code PIVOT ... FOR ... IN (SELECT ...)} sub-query or one in the arguments of a table function, see
+     * {@link #compileSubqueryFactory}. The sub-queries that {@link SubqueryCompiler#generateSubquery} generates for
+     * {@code FunctionInstantiator} and {@code ScanFactoryGenerator} are parts of an enclosing plan and do not pass
+     * through here.
+     */
     protected RecordCursorFactory generateSelectOneShot(
-            ObjList<ViewDefinition> views,
+            QueryModel queryModel,
+            @Nullable Subquery subquery,
             SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
-        RecordCursorFactory factory = generatePlan(executionContext);
-        if (views.size() > 0) {
-            factory = new StaleViewCheckFactory(factory, views, engine);
+        RecordCursorFactory factory = subquery != null ? generateSubquery(subquery, executionContext) : generatePlan(executionContext);
+        try {
+            final ObjList<ViewDefinition> views = queryModel.getReferencedViews();
+            if (views.size() > 0) {
+                factory = new StaleViewCheckFactory(factory, views, engine);
+            }
+            return generateProgressLogger ? new QueryProgress(queryRegistry, sqlText, factory) : factory;
+        } catch (Throwable th) {
+            Misc.free(factory, th);
+            throw th;
         }
-        if (generateProgressLogger) {
-            return new QueryProgress(queryRegistry, sqlText, factory);
-        } else {
-            return factory;
-        }
+    }
+
+    /**
+     * Exposed so that a subclass can compile expressions the base compiler captured but does not
+     * itself consume - the audited-view parameters, which Enterprise turns into functions.
+     */
+    protected FunctionParser getFunctionParser() {
+        return functionParser;
     }
 
     /**
@@ -6494,6 +6596,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("cancel", this::compileCancel);
         keywordBasedExecutors.put("refresh", this::compileRefresh);
         keywordBasedExecutors.put("backup", this::compileBackup);
+    }
+
+    /**
+     * Checks the body {@code ALTER VIEW} or {@code CREATE OR REPLACE VIEW} gives an audited view,
+     * before it replaces the current one. The model is the body as parsed from the statement, so
+     * positions in it are the statement's. A no-op here: Enterprise, which consumes the AUDITED
+     * declarations, overrides it to refuse the ones no read of the view could audit.
+     */
+    protected void validateAuditedViewBody(
+            TableToken viewToken,
+            QueryModel viewModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
     }
 
     @FunctionalInterface

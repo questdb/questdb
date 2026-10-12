@@ -300,7 +300,7 @@ final class TemporalJoinBinder {
     }
 
     private static void validateWindowJoinStep(WindowJoinStep step, OutputSchema master) throws SqlException {
-        JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), master.getTimestampColumnId(), step.getSlave().getOutput());
+        JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), master.getTimestampColumnId(), step.getSlave());
         final int timestampType = master.getColumnType(master.getTimestampIndex());
         long lo = step.getLo();
         long hi = step.getHi();
@@ -777,7 +777,7 @@ final class TemporalJoinBinder {
             final HorizonJoinSlave step = ctx.planNodes.horizonJoinSlaves.next().of(slave, slaveAlias, occurrence.getJoinKeywordPosition());
             plan.getSlaves().add(step);
             final OutputSchema slaveOutput = slave.getOutput();
-            JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getTimestampColumnId(), slaveOutput);
+            JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getTimestampColumnId(), slave);
             output.addColumnsFrom(slaveOutput, slaveAlias);
             final ExpressionNode slaveFilter = bindHorizonKeys(occurrence.getJoinCriteria(), null, step, masterOutput, masterAlias,
                     slaveOutput, slaveAlias);

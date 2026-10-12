@@ -135,7 +135,7 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(18, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "tried to use undeclared variable `@x`");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: @x");
                     }
                     Assert.assertEquals(0, compiler.getLexerStashSize());
                 }
@@ -258,17 +258,15 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (1), (2)");
             execute("CREATE VIEW v1 AS (SELECT x FROM t)");
             execute("CREATE VIEW v2 AS (SELECT x FROM v1 UNION ALL SELECT x FROM v1)");
-            drainWalAndViewQueues();
+            // A view expanded inside another holds its lexer until the outer expansion returns,
+            // so a chain of views nested deeper than the pool's capacity grows the pool.
             final int ceiling = configuration.getViewLexerPoolCapacity();
-            final StringSink sql = new StringSink();
-            sql.put("SELECT count() FROM (");
-            for (int i = 0; i < ceiling; i++) {
-                if (i > 0) {
-                    sql.put(" UNION ALL ");
-                }
-                sql.put("SELECT x FROM v2");
+            execute("CREATE VIEW c0 AS (SELECT x FROM v2)");
+            for (int i = 1; i <= ceiling; i++) {
+                execute("CREATE VIEW c" + i + " AS (SELECT x FROM c" + (i - 1) + ")");
             }
-            sql.put(')');
+            drainWalAndViewQueues();
+            final String sql = "SELECT count() FROM c" + ceiling;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compileAndClose(compiler, sql);
                 Assert.assertTrue(compiler.getViewLexerCapacity() > ceiling);
@@ -405,6 +403,35 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                                 3\t4
                                 """);
                 Assert.assertEquals(ceiling, compiler.getSqlNodePoolCapacity());
+            }
+        });
+    }
+
+    @Test
+    public void testWideWithReturnsWithClauseCopies() throws Exception {
+        assertMemoryLeak(() -> {
+            final int ceiling = configuration.getWithClauseModelPoolCapacity();
+            final StringSink sql = new StringSink();
+            sql.put("WITH c0 AS (SELECT 0 x FROM long_sequence(1))");
+            for (int i = 1, n = ceiling + 8; i < n; i++) {
+                sql.put(", c").put(i).put(" AS (SELECT ").put(i).put(" x FROM long_sequence(1))");
+            }
+            sql.put(" SELECT x FROM c").put(ceiling + 7);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                compileAndClose(compiler, sql);
+                Assert.assertTrue(compiler.getWithClausesCopyPoolCapacity() > ceiling);
+                compiler.clear();
+                Assert.assertEquals(ceiling, compiler.getWithClausesCopyPoolCapacity());
+
+                assertQuery("WITH a AS (SELECT 1 x FROM long_sequence(1)), b AS (SELECT x + 1 x FROM a) SELECT x FROM b")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x
+                                2
+                                """);
+                Assert.assertEquals(ceiling, compiler.getWithClausesCopyPoolCapacity());
             }
         });
     }

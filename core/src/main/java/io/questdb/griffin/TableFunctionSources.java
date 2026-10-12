@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowDateStyleCursorFactory;
@@ -231,6 +232,34 @@ public final class TableFunctionSources implements Closeable, Mutable {
         return tableToken;
     }
 
+    /**
+     * Whether a factory created again from the call of a bound source still returns the columns binding read: a call
+     * that reads external data, such as a file, can return other columns by the time the plan is generated.
+     */
+    private static boolean hasBoundColumnTypes(FunctionSourcePlan plan, RecordMetadata metadata) {
+        if (plan.getRecordName() != null) {
+            final OutputSchema record = plan.getRecordSchema();
+            if (record.getColumnCount() != metadata.getColumnCount()) {
+                return false;
+            }
+            for (int i = 0, n = record.getColumnCount(); i < n; i++) {
+                if (record.getColumnType(i) != metadata.getColumnType(i)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        final IntList sourceIndexes = plan.getSourceColumnIndexes();
+        final OutputSchema output = plan.getOutput();
+        for (int i = 0, n = sourceIndexes.size(); i < n; i++) {
+            final int sourceIndex = sourceIndexes.getQuick(i);
+            if (sourceIndex >= metadata.getColumnCount() || output.getColumnType(i) != metadata.getColumnType(sourceIndex)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private void closeSlot(int slot, Throwable primary) {
         if (resources.isOwned(slot)) {
             Misc.free(resources.detach(slot), primary);
@@ -269,9 +298,15 @@ public final class TableFunctionSources implements Closeable, Mutable {
             if (show != null) {
                 return createShowFactory(show, executionContext, callback, path());
             }
-            final Function function = parser.parseFunction(expressions.getQuick(index), AnyRecordMetadata.INSTANCE, executionContext);
+            final ExpressionNode expression = expressions.getQuick(index);
+            final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
             if (!(function instanceof CursorFunction)) {
                 final SqlException exception = SqlException.$(plan.getPosition(), "function must return CURSOR");
+                Misc.free(function, exception);
+                throw exception;
+            }
+            if (!hasBoundColumnTypes(plan, function.getRecordCursorFactory().getMetadata())) {
+                final TableReferenceOutOfDateException exception = TableReferenceOutOfDateException.of(expression.token);
                 Misc.free(function, exception);
                 throw exception;
             }

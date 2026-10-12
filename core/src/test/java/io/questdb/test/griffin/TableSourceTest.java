@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -43,13 +42,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -190,14 +192,15 @@ public class TableSourceTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                 @Override
                 protected RecordCursorFactory generateSelectOneShot(
-                        ObjList<ViewDefinition> views,
+                                QueryModel queryModel,
+                                @Nullable Subquery subquery,
                         SqlExecutionContext executionContext,
                         boolean generateProgressLogger
                 ) throws SqlException {
                     if (++attempts[0] == 1) {
                         engine.execute("ALTER TABLE lp_source DROP COLUMN unused", executionContext);
                     }
-                    return super.generateSelectOneShot(views, executionContext, generateProgressLogger);
+                    return super.generateSelectOneShot(queryModel, subquery, executionContext, generateProgressLogger);
                 }
             }) {
                 try (RecordCursorFactory factory = compiler.compile(

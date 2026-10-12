@@ -72,10 +72,14 @@ public class DeclareMacroTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createRows();
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                assertError(compiler, "DECLARE @values := (1,2,3) SELECT id FROM lp_declare WHERE id IN @values", 19, "value list is not allowed here");
+                assertError(compiler, "DECLARE @values := (1,2,3) SELECT @values FROM lp_declare", 19, "declared list can only be used on the right-hand side of IN");
                 assertError(compiler, "DECLARE @value := 2 SELECT @missing FROM lp_declare", 27, "tried to use undeclared variable `@missing`");
                 assertError(compiler, "DECLARE @value = 2 SELECT @value", 15, "unexpected token [=] - expected variable assignment operator `:=`");
-                assertError(compiler, "DECLARE @member := (id IN (1,2,3)) SELECT @member FROM lp_declare", 23, "too few arguments for 'in' [found=1,expected=2]");
+                try (RecordCursorFactory factory = compiler.compile(
+                        "DECLARE @member := (id IN (1,2,3)) SELECT id, @member AS member FROM lp_declare WHERE id < 5", sqlExecutionContext
+                ).getRecordCursorFactory()) {
+                    assertRowsOnly(factory, "id\tmember\n1\ttrue\n2\ttrue\n3\ttrue\n4\tfalse\n");
+                }
                 try (RecordCursorFactory ignored = compiler.compile(
                         "DECLARE @value := lp_missing_fn(i) SELECT @value FROM lp_declare", sqlExecutionContext
                 ).getRecordCursorFactory()) {

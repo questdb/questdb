@@ -37,10 +37,12 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -48,6 +50,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -453,7 +456,8 @@ public class SqlBinderTest extends AbstractCairoTest {
                         "EXPLAIN CREATE VIEW lp_explained AS (SELECT * FROM lp_source)", actual);
                 TestUtils.assertContains(actual, "Create view table: lp_explained");
                 TestUtils.assertContains(actual, "Frame forward scan on: lp_source");
-                Assert.assertEquals(queriesAfterViewCompilation, generatedQueries[0]);
+                // EXPLAIN generates the plan it explains, and nothing else.
+                Assert.assertEquals(queriesAfterViewCompilation + 1, generatedQueries[0]);
                 Assert.assertNull(statementEngine.getTableTokenIfExists("lp_explained"));
 
                 // Reading a view still uses the existing view-expansion path.
@@ -465,7 +469,7 @@ public class SqlBinderTest extends AbstractCairoTest {
                             2\tfalse\t2020-01-01T00:00:01.000000Z
                             """, actual);
                 }
-                Assert.assertEquals(queriesAfterViewCompilation, generatedQueries[0]);
+                Assert.assertEquals(queriesAfterViewCompilation + 1, generatedQueries[0]);
             }
         });
     }
@@ -545,14 +549,15 @@ public class SqlBinderTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                 @Override
                 protected RecordCursorFactory generateSelectOneShot(
-                        ObjList<ViewDefinition> views,
+                                QueryModel queryModel,
+                                @Nullable Subquery subquery,
                         SqlExecutionContext executionContext,
                         boolean generateProgressLogger
                 ) throws SqlException {
                     final LogicalPlan plan = getPlanForTesting();
                     Assert.assertNotNull(plan);
                     final String before = describePlan(plan);
-                    final RecordCursorFactory factory = super.generateSelectOneShot(views, executionContext, generateProgressLogger);
+                    final RecordCursorFactory factory = super.generateSelectOneShot(queryModel, subquery, executionContext, generateProgressLogger);
                     try {
                         Assert.assertSame(plan, getPlanForTesting());
                         Assert.assertEquals(before, describePlan(plan));
@@ -672,14 +677,15 @@ public class SqlBinderTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                 @Override
                 protected RecordCursorFactory generateSelectOneShot(
-                        ObjList<ViewDefinition> views,
+                                QueryModel queryModel,
+                                @Nullable Subquery subquery,
                         SqlExecutionContext executionContext,
                         boolean generateProgressLogger
                 ) throws SqlException {
                     if (++attempts[0] == 1) {
                         engine.execute("ALTER TABLE lp_rows ADD COLUMN added INT", executionContext);
                     }
-                    return super.generateSelectOneShot(views, executionContext, generateProgressLogger);
+                    return super.generateSelectOneShot(queryModel, subquery, executionContext, generateProgressLogger);
                 }
             }) {
                 try (RecordCursorFactory factory = compiler.compile(
@@ -1048,13 +1054,14 @@ public class SqlBinderTest extends AbstractCairoTest {
                     final SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                         @Override
                         protected RecordCursorFactory generateSelectOneShot(
-                                ObjList<ViewDefinition> views,
+                                QueryModel queryModel,
+                                @Nullable Subquery subquery,
                                 SqlExecutionContext executionContext,
                                 boolean generateProgressLogger
                         ) throws SqlException {
                             Assert.assertNotNull(getPlanForTesting());
                             generatedQueries[0]++;
-                            return super.generateSelectOneShot(views, executionContext, generateProgressLogger);
+                            return super.generateSelectOneShot(queryModel, subquery, executionContext, generateProgressLogger);
                         }
                     };
                     return compiler;

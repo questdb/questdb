@@ -25,8 +25,32 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.ResourcePoolSupervisor;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class PivotTest extends AbstractSqlParserTest {
 
@@ -190,6 +214,76 @@ public class PivotTest extends AbstractSqlParserTest {
              ('ETH-USDC','sell',3675.72,0.064412,'2024-12-19T08:10:00.937999Z'),
              ('ETH-USDT','sell',3678.0,0.2,'2024-12-19T08:10:00.950000Z'),
              ('ETH-USD','sell',3678.0,0.2,'2024-12-19T08:10:00.950000Z');""";
+    private static final String PIVOT_RACE_RESULT = """
+            grp\tX\tY
+            A\t10\t20
+            B\t30\t40
+            """;
+    private static final String PIVOT_RACE_SQL = """
+            SELECT * FROM data
+            PIVOT (
+                SUM(val)
+                FOR cat IN (SELECT c FROM cats)
+                GROUP BY grp
+            ) ORDER BY grp""";
+    private static final String SQL_HIJACK_DDL = "CREATE TABLE hijack (x INT)";
+    private static final String SQL_HIJACK_SELECT = "SELECT 'HIJACK' other_statement FROM long_sequence(1)";
+    // the PIVOT IN sub-query race hooks, inert until a test arms them, see setUpStatic()
+    private static final AtomicReference<String> raceBorrowedCompilerSql = new AtomicReference<>();
+    private static final AtomicInteger raceSchemaChangesLeft = new AtomicInteger();
+
+    /**
+     * Stages the race a PIVOT IN sub-query can lose. While {@code raceSchemaChangesLeft} is
+     * positive, each open of a reader on {@code cats} at a known metadata version adds a column
+     * to {@code cats} just before the open and decrements it, as a concurrent ALTER would just
+     * before the compiler opens the reader. While
+     * {@code raceBorrowedCompilerSql} is set, every compiler the engine hands out has compiled
+     * that statement last, as a pooled compiler has after serving another connection.
+     */
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractCairoTest.engineFactory = configuration -> new CairoEngine(configuration) {
+            @Override
+            public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                if (metadataVersion > -1
+                        && raceSchemaChangesLeft.get() > 0
+                        && Chars.equals(tableToken.getTableName(), "cats")) {
+                    try (TableWriter writer = TestUtils.getWriter(this, "cats")) {
+                        writer.addColumn("extra" + raceSchemaChangesLeft.decrementAndGet(), ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                    }
+                }
+                return super.getReader(tableToken, metadataVersion, readerPoolSupervisor);
+            }
+
+            @Override
+            public SqlCompiler getSqlCompiler() {
+                final SqlCompiler compiler = super.getSqlCompiler();
+                final String sql = raceBorrowedCompilerSql.get();
+                if (sql != null) {
+                    try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(this)) {
+                        final CompiledQuery cq = compiler.compile(sql, context);
+                        if (cq.getType() == CompiledQuery.SELECT) {
+                            Misc.free(cq.getRecordCursorFactory());
+                        } else {
+                            Misc.free(cq.getOperation());
+                        }
+                    } catch (Throwable th) {
+                        compiler.close();
+                        throw new AssertionError("could not compile the borrowed compiler's last statement", th);
+                    }
+                }
+                return compiler;
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        raceBorrowedCompilerSql.set(null);
+        raceSchemaChangesLeft.set(0);
+        super.tearDown();
+    }
 
     @Test
     public void testBasicPivot() throws Exception {
@@ -294,6 +388,36 @@ public class PivotTest extends AbstractSqlParserTest {
                             A\t10\t20
                             B\t30\t40
                             """);
+        });
+    }
+
+    @Test
+    public void testPivotCastOfSubQueryFailsCleanly() throws Exception {
+        // Regression: PIVOT names its IN values, FOR expressions, GROUP BY keys and aggregates
+        // through ExpressionNode.toSink(), whose cast branch read the token of a sub-query operand,
+        // which is null, and threw a NullPointerException. Each statement must fail with the
+        // positioned function resolution error instead, as the same cast does outside PIVOT.
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+            execute("CREATE VIEW v AS (SELECT * FROM cities)");
+            drainWalAndViewQueues();
+
+            assertQuery("SELECT * FROM cities PIVOT (SUM(population) FOR year IN ((SELECT max(year) FROM v)::INT) GROUP BY country)")
+                    .noLeakCheck()
+                    .fails(82, "there is no matching function `cast` with the argument types: (CURSOR, INT)");
+            assertQuery("SELECT * FROM cities PIVOT (SUM(population) FOR year IN (CAST((SELECT max(year) FROM cities) AS INT)) GROUP BY country)")
+                    .noLeakCheck()
+                    .fails(57, "there is no matching function `cast` with the argument types: (CURSOR, INT)");
+            assertQuery("SELECT * FROM cities PIVOT (SUM(population) FOR (SELECT 'NL')::VARCHAR IN ('NL') GROUP BY year)")
+                    .noLeakCheck()
+                    .fails(61, "there is no matching function `cast` with the argument types: (CURSOR, VARCHAR)");
+            assertQuery("SELECT * FROM cities PIVOT (SUM(population) FOR year IN (2000) GROUP BY (SELECT 'NL')::VARCHAR)")
+                    .noLeakCheck()
+                    .fails(85, "there is no matching function `cast` with the argument types: (CURSOR, VARCHAR)");
+            assertQuery("SELECT * FROM cities PIVOT (SUM((SELECT 1)::INT) FOR year IN (2000) GROUP BY country)")
+                    .noLeakCheck()
+                    .fails(42, "there is no matching function `cast` with the argument types: (CURSOR, INT)");
         });
     }
 
@@ -1209,6 +1333,131 @@ public class PivotTest extends AbstractSqlParserTest {
                             B	20
                             """);
         });
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateDoesNotReparseBorrowedDdl() throws Exception {
+        // Every compiler the engine hands out last compiled a CREATE TABLE. The PIVOT used to
+        // borrow one, and re-parsing its lexer on the sub-query's behalf would hand the PIVOT a
+        // CREATE TABLE model.
+        assertCompileRetriesPivotOutOfDate(null, SQL_HIJACK_DDL, assertQuery(PIVOT_RACE_SQL), PIVOT_RACE_RESULT);
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateDoesNotReparseBorrowedSelect() throws Exception {
+        // Every compiler the engine hands out last compiled another SELECT. The PIVOT used to
+        // borrow one, and re-parsing its lexer on the sub-query's behalf would pivot on that
+        // statement's values.
+        assertCompileRetriesPivotOutOfDate(null, SQL_HIJACK_SELECT, assertQuery(PIVOT_RACE_SQL), PIVOT_RACE_RESULT);
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateExhaustsCreateTableAsSelectRetries() throws Exception {
+        // Every attempt of the statement loses the race. Each one must cost the statement's retry
+        // loop exactly one attempt and leave nothing open when the loop gives up.
+        assertMemoryLeak(() -> {
+            createPivotRaceTables();
+            raceBorrowedCompilerSql.set(SQL_HIJACK_SELECT);
+            final int schemaChangeBudget = 1_000;
+            final String createSql = "CREATE TABLE pivoted AS (" + PIVOT_RACE_SQL + ")";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(createSql, sqlExecutionContext);
+                raceSchemaChangesLeft.set(schemaChangeBudget);
+                try (Operation op = cq.getOperation()) {
+                    try (OperationFuture ignore = op.execute(sqlExecutionContext, null)) {
+                        Assert.fail("expected the CREATE TABLE AS SELECT retries to run out");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table schema has changed [table=cats");
+                        // the start of the SELECT text
+                        Assert.assertEquals(createSql.indexOf('(') + 1, e.getPosition());
+                    }
+                }
+            }
+            Assert.assertEquals(
+                    configuration.getMaxSqlRecompileAttempts() + 1,
+                    schemaChangeBudget - raceSchemaChangesLeft.get()
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("pivoted"));
+            assertNothingBusy();
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateRetriedByAlterView() throws Exception {
+        assertExecuteRetriesPivotOutOfDate(
+                "CREATE VIEW pv AS (SELECT 'A' grp)",
+                "ALTER VIEW pv AS (" + PIVOT_RACE_SQL + ")"
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateRetriedByCreateTableAsSelect() throws Exception {
+        // CREATE TABLE AS SELECT recompiles its SELECT when it executes, and retries that compile
+        // when a table it reads goes out of date. A schema change racing the PIVOT IN sub-query
+        // must reach that retry.
+        assertMemoryLeak(() -> {
+            createPivotRaceTables();
+            raceBorrowedCompilerSql.set(SQL_HIJACK_SELECT);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("CREATE TABLE pivoted AS (" + PIVOT_RACE_SQL + ")", sqlExecutionContext);
+                // armed after the compile, so the schema changes under the SELECT that the
+                // execution recompiles
+                raceSchemaChangesLeft.set(1);
+                try (
+                        Operation op = cq.getOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, null)
+                ) {
+                    fut.await();
+                }
+            }
+            Assert.assertEquals(0, raceSchemaChangesLeft.get());
+            assertQuery("pivoted")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PIVOT_RACE_RESULT);
+            assertNothingBusy();
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateRetriedByCreateView() throws Exception {
+        assertExecuteRetriesPivotOutOfDate(null, "CREATE VIEW pv AS (" + PIVOT_RACE_SQL + ")");
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateRetriedByExplain() throws Exception {
+        // EXPLAIN runs the PIVOT IN sub-query to learn the plan's columns.
+        assertCompileRetriesPivotOutOfDate(
+                null,
+                SQL_HIJACK_SELECT,
+                assertQuery("EXPLAIN " + PIVOT_RACE_SQL).noRandomAccess(),
+                """
+                        QUERY PLAN
+                        Encode sort light
+                          keys: [grp]
+                            GroupBy vectorized: false
+                              keys: [grp]
+                              values: [first_not_null(case([SUM(val),nullL,cat,switch(cat,'X',SUM(val),nullL)])),first_not_null(case([SUM(val),nullL,cat,switch(cat,'Y',SUM(val),nullL)]))]
+                                Async JIT Group By workers: 1
+                                  keys: [grp,cat]
+                                  values: [sum(val)]
+                                  filter: cat in [X,Y]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: data
+                        """
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryOutOfDateRetriedByViewExpansion() throws Exception {
+        // A view body's PIVOT is bound as part of the statement that reads the view.
+        assertCompileRetriesPivotOutOfDate(
+                "CREATE VIEW pv AS (" + PIVOT_RACE_SQL + ")",
+                SQL_HIJACK_SELECT,
+                assertQuery("SELECT * FROM pv ORDER BY grp"),
+                PIVOT_RACE_RESULT
+        );
     }
 
     @Test
@@ -4397,7 +4646,7 @@ public class PivotTest extends AbstractSqlParserTest {
 
     @Test
     public void testPivotWithWrappedAggregate() throws Exception {
-        // Regression test: hasGroupByFunc() in SqlOptimiser did not traverse rhs
+        // Regression test: hasGroupByFunc() did not traverse rhs
         // and args of non-aggregate FUNCTION nodes. abs(sum(x)) is a valid
         // aggregate expression for PIVOT, but abs has paramCount=1 and its
         // argument is stored in rhs, which the FUNCTION case did not traverse.
@@ -4421,6 +4670,85 @@ public class PivotTest extends AbstractSqlParserTest {
                             NL\t1005\t1065\t1158
                             US\t8579\t8783\t9510
                             """);
+        });
+    }
+
+    private static void assertNothingBusy() {
+        Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
+        Assert.assertEquals(0, engine.getBusyReaderCount());
+        Assert.assertEquals(0, engine.getBusyWriterCount());
+    }
+
+    private static void createPivotRaceTables() throws SqlException {
+        execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT)");
+        execute("CREATE TABLE cats (c SYMBOL)");
+        execute("INSERT INTO cats VALUES ('X'), ('Y')");
+        execute("""
+                INSERT INTO data VALUES
+                    ('A', 'X', 10),
+                    ('A', 'Y', 20),
+                    ('B', 'X', 30),
+                    ('B', 'Y', 40)
+                """);
+    }
+
+    /**
+     * Compiles the statement of {@code query}, which reaches the PIVOT IN sub-query of
+     * {@link #PIVOT_RACE_SQL}, while a schema change races that sub-query's plan and every compiler
+     * the engine hands out last compiled {@code borrowedCompilerSql}. The sub-query's plan runs
+     * while the statement binds, so the compiler must re-parse and bind the same statement again,
+     * never the one it compiled last, and return {@code expected} from the changed table.
+     */
+    private void assertCompileRetriesPivotOutOfDate(
+            @Nullable String setupSql,
+            String borrowedCompilerSql,
+            QueryAssertion query,
+            String expected
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotRaceTables();
+            if (setupSql != null) {
+                execute(setupSql);
+                drainWalAndViewQueues();
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                raceBorrowedCompilerSql.set(borrowedCompilerSql);
+                raceSchemaChangesLeft.set(1);
+                query.withCompiler(compiler)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expected);
+                Assert.assertEquals(0, raceSchemaChangesLeft.get());
+                Assert.assertEquals(1, engine.getSqlCompilerPool().getBusyCount());
+            }
+            assertNothingBusy();
+        });
+    }
+
+    /**
+     * Executes {@code sql}, which defines view {@code pv} as {@link #PIVOT_RACE_SQL}, through
+     * {@link CairoEngine#execute(CharSequence, SqlExecutionContext)} while a schema change races
+     * the PIVOT IN sub-query's plan and every compiler the engine hands out last compiled a
+     * CREATE TABLE. The statement's retry must absorb the race, and {@code pv} must pivot the real
+     * data.
+     */
+    private void assertExecuteRetriesPivotOutOfDate(@Nullable String setupSql, String sql) throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotRaceTables();
+            if (setupSql != null) {
+                execute(setupSql);
+                drainWalAndViewQueues();
+            }
+            raceBorrowedCompilerSql.set(SQL_HIJACK_DDL);
+            raceSchemaChangesLeft.set(1);
+            engine.execute(sql, sqlExecutionContext);
+            Assert.assertEquals(0, raceSchemaChangesLeft.get());
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM pv ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(PIVOT_RACE_RESULT);
+            assertNothingBusy();
         });
     }
 

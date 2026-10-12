@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 /**
@@ -54,6 +55,10 @@ import org.junit.Assert;
  * counts every {@code close()} call rather than every effective release, because the guard in
  * {@code AbstractRecordCursorFactory} swallows repeated closes and would hide the double close these
  * tests exist to catch.
+ * <p>
+ * A function registered with a close failure hands out factories that throw it from every
+ * {@code close()}, after they counted the call and closed what they wrap. That is the fixture for the
+ * cleanup paths that have to carry on, and report, when a close fails.
  */
 public final class TableFunctionTestUtils {
 
@@ -65,6 +70,16 @@ public final class TableFunctionTestUtils {
             String functionName,
             int executionRequirements,
             ObjList<CloseCountingRecordCursorFactory> instantiatedFactories
+    ) throws SqlException {
+        register(engine, functionName, executionRequirements, instantiatedFactories, null);
+    }
+
+    public static void register(
+            CairoEngine engine,
+            String functionName,
+            int executionRequirements,
+            ObjList<CloseCountingRecordCursorFactory> instantiatedFactories,
+            @Nullable RuntimeException closeFailure
     ) throws SqlException {
         final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
         descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
@@ -94,7 +109,7 @@ public final class TableFunctionTestUtils {
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 metadata.add(new TableColumnMetadata("permission", ColumnType.VARCHAR));
                 final CloseCountingRecordCursorFactory factory =
-                        new CloseCountingRecordCursorFactory(new EmptyTableRecordCursorFactory(metadata));
+                        new CloseCountingRecordCursorFactory(new EmptyTableRecordCursorFactory(metadata), closeFailure);
                 instantiatedFactories.add(factory);
                 return new CursorFunction(factory);
             }
@@ -108,17 +123,22 @@ public final class TableFunctionTestUtils {
     }
 
     public static class CloseCountingRecordCursorFactory implements RecordCursorFactory {
+        private final @Nullable RuntimeException closeFailure;
         private final RecordCursorFactory delegate;
         private int closeCount;
 
-        private CloseCountingRecordCursorFactory(RecordCursorFactory delegate) {
+        private CloseCountingRecordCursorFactory(RecordCursorFactory delegate, @Nullable RuntimeException closeFailure) {
             this.delegate = delegate;
+            this.closeFailure = closeFailure;
         }
 
         @Override
         public void close() {
             closeCount++;
             delegate.close();
+            if (closeFailure != null) {
+                throw closeFailure;
+            }
         }
 
         public int getCloseCount() {

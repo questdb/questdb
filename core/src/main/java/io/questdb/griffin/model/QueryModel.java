@@ -116,6 +116,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceHashSet auditedDecls = new LowerCaseCharSequenceHashSet();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
@@ -146,6 +147,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ObjList<CharSequence>> unnestJsonColumnNames = new ObjList<>();
     private final ObjList<IntList> unnestJsonColumnTypes = new ObjList<>();
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
+    private final ObjList<ViewAuditModel> viewAudits = new ObjList<>();
     private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
     private final WindowJoinContext windowJoinContext = new WindowJoinContext();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
@@ -365,6 +367,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         subsample = null;
         subsamplePosition = 0;
         decls.clear();
+        auditedDecls.clear();
         overridableDecls.clear();
         hintsMap.clear();
         asOfJoinTolerance = null;
@@ -375,6 +378,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         cacheable = true;
         pivotGroupByColumnHasNoAlias = false;
         referencedViews.clear();
+        viewAudits.clear();
     }
 
     public void clearSampleBy() {
@@ -435,6 +439,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Nullable
     public ExpressionNode getAsOfJoinTolerance() {
         return asOfJoinTolerance;
+    }
+
+    public LowerCaseCharSequenceHashSet getAuditedDecls() {
+        return auditedDecls;
     }
 
     public ObjList<QueryColumn> getBottomUpColumns() {
@@ -695,6 +703,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return viewNameExpr;
     }
 
+    public ObjList<ViewAuditModel> getViewAudits() {
+        return viewAudits;
+    }
+
     public ExpressionNode getWhereClause() {
         return whereClause;
     }
@@ -765,6 +777,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isUpdate() {
         return isUpdateModel;
+    }
+
+    public void recordViewAudits(ObjList<ViewAuditModel> viewAudits) {
+        for (int i = 0, n = viewAudits.size(); i < n; i++) {
+            final ViewAuditModel viewAudit = viewAudits.getQuick(i);
+            if (!this.viewAudits.contains(viewAudit)) {
+                this.viewAudits.add(viewAudit);
+            }
+        }
     }
 
     public void recordViews(LowerCaseCharSequenceObjHashMap<ViewDefinition> viewDefinitions) {

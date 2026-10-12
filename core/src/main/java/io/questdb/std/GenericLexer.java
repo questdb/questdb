@@ -171,6 +171,10 @@ public class GenericLexer implements ImmutableIterator<CharSequence>, Mutable {
         return _pos;
     }
 
+    /**
+     * Returns how many entries {@link #stash()} holds for {@link #unstash()}: the tokens and the
+     * positions together. Zero whenever every stash() has met its unstash().
+     */
     @TestOnly
     public int getStashSize() {
         return stashedNumbers.size() + stashedStrings.size();

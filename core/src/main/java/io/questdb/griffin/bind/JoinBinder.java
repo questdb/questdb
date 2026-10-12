@@ -38,15 +38,19 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.JoinDependency;
 import io.questdb.griffin.plan.logical.JoinEquality;
 import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.UnnestSpec;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -351,6 +355,33 @@ final class JoinBinder implements Mutable {
     }
 
     /**
+     * Rejects a time series join input that wraps a UNION in a column-selecting query block or in the set operation's
+     * trailing LIMIT: the wrapper requires the designated timestamp the UNION does not provide. The error points at
+     * the innermost query block, or at the first model of the set operation when its trailing LIMIT wraps it.
+     */
+    private static void validateProvidedTimestamp(LogicalPlan input) throws SqlException {
+        int position = -1;
+        for (LogicalPlan plan = input; plan.getOutput().getTimestampIndex() < 0; plan = plan.inputAt(0)) {
+            switch (plan) {
+                case ProjectPlan project when LogicalPlans.isColumnProjection(project) -> position = project.getPosition();
+                case LimitPlan _ -> position = -1;
+                case FilterPlan _ -> {
+                }
+                case SetOperationPlan operation when operation != input && operation.getOperation().isUnion() -> {
+                    SetOperationPlan first = operation;
+                    while (first.getLeft() instanceof SetOperationPlan left) {
+                        first = left;
+                    }
+                    throw SqlException.$(position < 0 ? first.getPosition() : position, "TIMESTAMP column is required but not provided");
+                }
+                default -> {
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
      * Rejects an ASOF or LT step with several keys that keys the designated timestamp of its master
      * ({@code masterTimestampId}) or its own.
      */
@@ -453,14 +484,19 @@ final class JoinBinder implements Mutable {
         final BindScope scope = ctx.scope();
         final ObjList<JoinInput> inputs = join.getInputs();
         boolean hasBarriers = false;
+        boolean hasTemporalStep = false;
         for (int i = 1, n = inputs.size(); i < n; i++) {
             hasBarriers |= inputs.getQuick(i).getJoinType().isBarrier();
+            hasTemporalStep |= inputs.getQuick(i).getJoinType().isTemporal();
         }
         final JoinGraph graph = ctx.planNodes.joinGraphs.next();
         try {
             final ExpressionNode constantFilter = collectJoinGraph(join, graph, source, where, dependencyBase, modelBase, hasBarriers);
             scope.joinDerivedEqualities.addAll(joinGraphBuilder.getSourceFilters());
             joinGraphBuilder.clear();
+            if (hasTemporalStep) {
+                validateProvidedTimestamp(inputs.getQuick(0).getInput());
+            }
             final int firstTimestampId = inputs.getQuick(0).getSourceOutput().getTimestampColumnId();
             int timestampId = firstTimestampId;
             boolean hasMasterNullingJoin = false;
@@ -468,7 +504,7 @@ final class JoinBinder implements Mutable {
                 final JoinInput step = inputs.getQuick(i);
                 final JoinDependency dependency = graph.getDependencies().getQuick(i);
                 if (step.getJoinType().isTemporal()) {
-                    validateTimeSeriesTimestamps(step.getPosition(), timestampId, step.getSourceOutput());
+                    validateTimeSeriesTimestamps(step.getPosition(), timestampId, step.getInput());
                 }
                 validateJoinKeys(join, dependency);
                 validateTemporalKeys(step, dependency, timestampId);
@@ -1411,11 +1447,12 @@ final class JoinBinder implements Mutable {
         }
     }
 
-    static void validateTimeSeriesTimestamps(int position, int masterTimestampId, OutputSchema slave) throws SqlException {
+    static void validateTimeSeriesTimestamps(int position, int masterTimestampId, LogicalPlan slave) throws SqlException {
+        validateProvidedTimestamp(slave);
         if (masterTimestampId < 0) {
             throw SqlException.$(position, "left side of time series join has no timestamp");
         }
-        if (slave.getTimestampIndex() < 0) {
+        if (slave.getOutput().getTimestampIndex() < 0) {
             throw SqlException.$(position, "right side of time series join has no timestamp");
         }
     }
